@@ -50,6 +50,7 @@ interface HarnessState {
     readonly enabled: boolean;
     readonly mode: string;
     readonly resourceLibraryId: string;
+    readonly itemLimit?: number;
   }>;
   readonly grant: { readonly status: string; readonly grantId: string } | null;
   readonly occurrenceTotal: number;
@@ -424,15 +425,26 @@ test("a retained candidate survives refresh without being silently repinned", as
   // The retained input is still shown — no silent value replacement.
   await expect(page.getByLabel("Name")).toHaveValue("Unsaved operator name");
   await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
-  // The deliberate re-adoption replaces the candidate with the current
-  // durable values and the current authority.
+  // The deliberate re-adoption re-reads the definition with the authority its
+  // values were read against: the peer's durable item limit 9 is loaded with
+  // a matching fence, never the stale cached limit 5 paired to the newer
+  // identity.
   await page
     .getByRole("button", { name: "Review current values and re-adopt them" })
     .click();
   await expect(page.getByLabel("Name")).toHaveValue("Harness automation");
+  await expect(page.getByLabel("Item limit")).toHaveValue("9");
   await expect(page.getByRole("button", { name: "保存" })).toBeEnabled();
+  // Saving the re-adopted candidate publishes exactly the reviewed values:
+  // the peer's durable item limit 9 survives, never overwritten by the stale
+  // cached value.
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
   const state = await harnessState(page);
   expect(state.definitions[0]?.name).toBe("Harness automation");
+  expect(state.definitions[0]?.itemLimit).toBe(9);
   await first.close();
 });
 

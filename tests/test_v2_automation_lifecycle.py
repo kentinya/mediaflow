@@ -517,6 +517,38 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(empty["committed"])
 
+    def test_copy_intent_resolves_a_committed_copy_beyond_the_recent_audit_window(
+        self,
+    ) -> None:
+        """P1 regression: absence from a bounded recent scan is not proof.
+
+        A Copy commits durably through the real API; hundreds of ordinary
+        supported focused edits then push the original command far outside any
+        recent global audit window. The reconciliation must still locate the
+        submitted command through the targeted durable audit trail and prove
+        its candidate's publication from that revision's activation evidence.
+        """
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        status, published = self.request("POST", f"{BASE}/nightly/copy", self.authority())
+        self.assertEqual(status, 200)
+        copy_id = published["definition"]["id"]
+        for index in range(300):
+            status, _body = self.request(
+                "PUT",
+                f"{BASE}/nightly",
+                {**self.authority(), "object": {"id": "nightly", "name": f"Edit {index}"}},
+            )
+            self.assertEqual(status, 200)
+        status, intent = self.request("GET", f"{BASE}/nightly/copy-intent")
+        self.assertEqual(status, 200)
+        self.assertTrue(intent["committed"])
+        self.assertEqual(intent["committedDefinitionId"], copy_id)
+        self.assertIsNotNone(intent["lastObserved"])
+        self.assertTrue(intent["lastObserved"]["published"])
+        self.assertEqual(intent["lastObserved"]["candidateId"], copy_id)
+        self.assertTrue(intent["sourcePresent"])
+
     def test_removal_persistence_failure_reports_preserved_authority(self) -> None:
         """P1 regression: a known failed removal inside the real publication
         boundary preserves the live grant and reports the durable truth.
@@ -729,6 +761,233 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             body = json.loads(result)
             self.assertEqual(body["error"]["code"], "configuration_unavailable")
             self.assertEqual(body["error"]["details"]["reason"], "active_missing")
+
+
+class SameFileRemovalAuthorityTests(unittest.TestCase):
+    """The production database arrangement: one shared SQLite file.
+
+    Configuration and runtime/grant state live in the same database file in
+    production, so any foreign writer holding that file's write lock blocks
+    every write — including a compensating grant write. These tests drive the
+    real API and the real Worker assembly on that exact arrangement.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / "source").mkdir(parents=True)
+        (self.root / "target").mkdir(parents=True)
+        self.environment = patch.dict(
+            os.environ,
+            {"TMDB_ACCESS_TOKEN": "sentinel-tmdb", "OPENLIST_TOKEN": "sentinel-openlist"},
+            clear=False,
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+        self.database = self.root / "mediaflow.sqlite3"
+        self.repository = SQLiteConfigurationRepository(self.database)
+        self.addCleanup(self.repository.close)
+        self.runtime = SQLiteTaskRepository(str(self.database))
+        self.addCleanup(self.runtime.close)
+        self.document = _document(self.root)
+        # The exact production arrangement: one database file for the managed
+        # configuration authority AND the runtime/grant state, so the bootstrap
+        # locator must resolve to the same file the repositories open.
+        self.document["persistence"]["databasePath"] = str(self.database)
+        self.managed = ManagedConfigurationService(
+            self.repository,
+            bootstrap_database_path=str(self.database),
+        )
+        self.objects = ConfigurationObjectService(
+            self.managed,
+        )
+        self.grants = UnattendedExecutionGrantService(self.runtime, permission_authority=None)
+        draft = self.managed.import_draft(self.document, actor="tester")
+        validated = self.managed.validate(draft.revision_id, actor="tester")
+        self.managed.activate(
+            validated.revision_id, expected_version=validated.version, actor="tester"
+        )
+        self.api = MediaFlowApi(
+            self.runtime,
+            None,
+            principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
+            configuration_service=self.managed,
+            bootstrap_document=self.document,
+        )
+
+    def request(self, method: str, path: str, body: object | None = None):
+        payload = b"" if body is None else json.dumps(body).encode("utf-8")
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(payload)),
+            "wsgi.input": io.BytesIO(payload),
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": f"Bearer {ADMIN_TOKEN}",
+        }
+        result = b"".join(self.api(environ, lambda status, _headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), (json.loads(result) if result else {})
+
+    def authority(self) -> dict:
+        active = self.managed.active()
+        assert active is not None
+        return {
+            "expectedRevisionId": active.revision_id,
+            "expectedVersion": active.revision_sequence or active.version,
+            "expectedDigest": active.digest,
+        }
+
+    def ids(self) -> list[str]:
+        active = self.managed.active()
+        assert active is not None
+        return [item["id"] for item in active.document.get("automationTaskDefinitions", [])]
+
+    def _seed_active_grant(self, definition_id: str) -> None:
+        from datetime import UTC, datetime
+
+        from mediaflow.domain.automation import AutomationTaskDefinition
+        from mediaflow.domain.unattended_execution import (
+            UnattendedExecutionGrant,
+            UnattendedExecutionGrantAudit,
+            UnattendedExecutionGrantStatus,
+        )
+
+        active = self.managed.active()
+        stored = active.document["automationTaskDefinitions"][0]
+        domain = AutomationTaskDefinition.from_document(stored)
+        grant = UnattendedExecutionGrant(
+            f"grant-{definition_id}",
+            definition_id,
+            domain.resource_library_id,
+            domain.source_scope,
+            domain.run_mode,
+            domain.item_limit,
+            UnattendedExecutionGrantStatus.ACTIVE,
+            "admin",
+            datetime.now(UTC),
+            domain.definition_fingerprint,
+            active.revision_id,
+            active.digest,
+            active.version,
+        )
+        self.runtime.create_unattended_execution_grant(
+            grant,
+            UnattendedExecutionGrantAudit(
+                f"grant-{definition_id}-audit",
+                grant.grant_id,
+                "granted",
+                datetime.now(UTC),
+                "admin",
+                {},
+            ),
+        )
+
+    def test_known_failed_removal_preserves_the_live_grant_on_the_shared_file(self) -> None:
+        """P1 regression: a foreign writer's write lock on the SAME SQLite file
+        that holds both configuration and grants cannot revoke the live
+        authority of a known failed removal.
+
+        The review reproduced this with the production arrangement: real exact
+        Preview, confirmed grant, real Scheduler admission, then a second
+        SQLite writer holding ``BEGIN IMMEDIATE`` between runtime preparation
+        and activation. The prior compensation design wrote its restore into
+        the same locked database and the admitted Job failed in the real
+        Worker with ``unattended_execution_grant_revoked``. The corrected
+        removal revokes only AFTER a proven publication, so a failed
+        activation never touches authority at all: the definition stays
+        published, the grant stays active, and the admitted Job's authority
+        still authorizes.
+        """
+
+        from mediaflow.domain.automation import AutomationTaskRunMode
+
+        status, _created = self.request(
+            "POST",
+            BASE,
+            {
+                **self.authority(),
+                "object": _definition(mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION.value),
+            },
+        )
+        self.assertEqual(status, 200)
+        status, _enabled = self.request("POST", f"{BASE}/nightly/enable", self.authority())
+        self.assertEqual(status, 200)
+        self._seed_active_grant("nightly")
+
+        # One ordinary production writer holds the ONE production database's
+        # write lock — the same file holds configuration, grants and Jobs —
+        # between runtime preparation and the activation transaction.
+        holder: list = []
+
+        def contention(_successor):
+            import sqlite3
+            import time
+
+            time.sleep(0.05)
+            connection = sqlite3.connect(str(self.database), timeout=0.05)
+            connection.execute("BEGIN IMMEDIATE")
+            holder.append(connection)
+
+        import mediaflow.interfaces.service_api as service_api_module
+
+        original_remove = service_api_module.AutomationWorkspaceCommandService.remove_object
+
+        def remove_with_contention(workspace, definition_id, **kwargs):
+            kwargs["before_publish"] = contention
+            return original_remove(workspace, definition_id, **kwargs)
+
+        try:
+            with patch.object(
+                service_api_module.AutomationWorkspaceCommandService,
+                "remove_object",
+                remove_with_contention,
+            ):
+                status, body = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        finally:
+            for connection in holder:
+                try:
+                    connection.rollback()
+                    connection.close()
+                except Exception:
+                    pass
+        self.assertEqual(status, 503)
+        error = body["error"]
+        self.assertEqual(error["code"], "automation_definition_removal_not_published")
+        self.assertIn(
+            error["details"]["durableState"],
+            {"active_preserved", "commit_state_unknown"},
+        )
+        # The definition is still published...
+        self.assertEqual(self.ids(), ["nightly"])
+        # ...and its live authority survived the failed removal untouched.
+        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+        # The admitted Job's authority still authorizes against the live grant
+        # through the grant service's own match/snapshot boundary.
+        from types import SimpleNamespace
+
+        from mediaflow.domain.automation import AutomationTaskDefinition
+
+        active_now = self.managed.active()
+        assert active_now is not None
+        stored = active_now.document["automationTaskDefinitions"][0]
+        job = SimpleNamespace(
+            definition_id=stored["id"],
+            resource_library_id=stored["resourceLibraryId"],
+            source_scope=stored.get("sourceScope"),
+            run_mode=stored["mode"],
+            limit=stored["itemLimit"],
+            configuration_snapshot_id=active_now.revision_id,
+            configuration_snapshot_digest=active_now.digest,
+            configuration_snapshot_version=active_now.version,
+        )
+        grant = self.grants._get_active("nightly")
+        self.assertIsNotNone(grant)
+        self.assertEqual(grant.status.value, "active")
+        self.grants._assert_match(grant, job, AutomationTaskDefinition.from_document(stored))
 
 
 if __name__ == "__main__":

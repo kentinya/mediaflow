@@ -530,10 +530,9 @@ class AutomationPublicationTests(unittest.TestCase):
         class _RegrantingGrants:
             """Restores live authority after the removal's residual proof.
 
-            The removal invokes the grant boundary twice: the pre-publication
-            revocation and the post-publication residual revocation. The
-            delegated revoke idempotently returns the already-revoked row on
-            the second call, so this wrapper hooks ``get_for_definition`` for
+            The reordered removal reads the grant boundary twice: the
+            fail-closed pre-publication preflight and the post-publication
+            residual revocation. This wrapper hooks ``get_for_definition`` for
             that second boundary: it persists one fresh ACTIVE grant row first,
             exactly like a legitimate concurrent regrant that won against the
             residual revocation. The removal must then report its durable
@@ -547,18 +546,18 @@ class AutomationPublicationTests(unittest.TestCase):
                 self._reads = 0
 
             def get_for_definition(self, definition_id):
-                # The grant service's removal boundary reads the current grant
-                # three times: the prior-grant capture, the pre-publication
-                # revocation lookup, and the residual re-revoke lookup. On the
-                # third read a legitimate concurrent regrant has just gone
-                # live: re-grant live authority right before the read, so the
-                # residual revocation races against a real active grant.
+                # The reordered removal reads the current grant twice: the
+                # fail-closed pre-publication preflight and the residual
+                # re-revoke lookup. On the second read a legitimate concurrent
+                # regrant has just gone live: re-grant live authority right
+                # before the read, so the residual revocation races against a
+                # real active grant.
                 self._reads += 1
-                if self._reads == 3:
-                    # Third read = the removal's residual re-revoke lookup:
-                    # the grant is revoked (first read), the pre-publication
-                    # revoke observed it, and now the residual proof reads it
-                    # again. Re-grant live authority before the service reads.
+                if self._reads == 2:
+                    # Second read = the removal's residual re-revoke lookup:
+                    # the grant was active at the preflight, the publication
+                    # succeeded, and now the residual proof reads it. Re-grant
+                    # live authority before the service reads.
                     from datetime import UTC, datetime
 
                     from mediaflow.domain.unattended_execution import (
@@ -594,7 +593,7 @@ class AutomationPublicationTests(unittest.TestCase):
                 return self._inner.get_for_definition(definition_id)
 
             def revoke(self, **kwargs):
-                if self._reads >= 3:
+                if self._reads >= 2:
                     # The residual revocation loses its persistence race
                     # against the re-grant: the durable revoke write fails.
                     raise RuntimeError("simulated residual revocation persistence failure")
@@ -761,8 +760,11 @@ class AutomationPublicationTests(unittest.TestCase):
         locked`` escape after its revocation had already committed, so the
         definition stayed Active but its grant was revoked and the admitted
         Job then failed in the real Worker with
-        ``unattended_execution_grant_revoked``. The corrected removal restores
-        the exact prior live grant on that path and reports the durable truth.
+        ``unattended_execution_grant_revoked``. The corrected removal revokes
+        only after a *proven* publication, so a failed activation never
+        touches authority at all — no compensation write is needed or
+        attempted, and the lock on the shared database can never strand a
+        revoked grant behind an Active definition.
         """
 
         self.save(definition("nightly", mode="automatic-organization"))
@@ -778,6 +780,13 @@ class AutomationPublicationTests(unittest.TestCase):
             import time
 
             time.sleep(0.05)
+            # The SAME SQLite file the fixture's configuration and runtime
+            # repositories share is not possible here — this fixture keeps
+            # them separate, and the same-file production arrangement is
+            # proven by tests.test_v2_automation_lifecycle.
+            # SameFileRemovalAuthorityTests. This test proves the application
+            # ordering itself: the activation fails and no grant write was
+            # attempted through the grant boundary at all.
             connection = sqlite3.connect(str(self.root / "configuration.sqlite3"), timeout=0.05)
             connection.execute("BEGIN IMMEDIATE")
             writer.append(connection)
@@ -928,6 +937,69 @@ class AutomationPublicationTests(unittest.TestCase):
         )
         self.assertFalse(stale_fence["committed"])
         self.assertIsNone(stale_fence["committedDefinitionId"])
+
+    def test_copy_intent_resolves_a_committed_copy_beyond_the_recent_audit_window(self) -> None:
+        """P1 regression: absence from a bounded recent scan is not proof.
+
+        A Copy commits durably; hundreds of ordinary supported focused edits
+        then push the original command far outside any recent global audit
+        window. The reconciliation must still locate the submitted command
+        through the targeted durable audit trail and prove its candidate's
+        publication from that revision's activation evidence — and, symmetric
+        to that, it must never report "no copy was published" merely because
+        the command is outside a bounded window.
+        """
+
+        self.save(definition("nightly"))
+        published = self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        copy_id = published.document[AUTOMATION_DEFINITION_SECTION][-1]["id"]
+        # 300 ordinary supported focused edits, far beyond any recent window.
+        for index in range(300):
+            self.save({"id": "nightly", "name": f"Edit {index}"}, object_id="nightly")
+        intent = self.commands.copy_intent("nightly")
+        self.assertTrue(intent["committed"])
+        self.assertEqual(intent["committedDefinitionId"], copy_id)
+        self.assertIsNotNone(intent["lastObserved"])
+        self.assertTrue(intent["lastObserved"]["published"])
+        self.assertEqual(intent["lastObserved"]["candidateId"], copy_id)
+        self.assertTrue(intent["lastObserved"].get("publishedRevisionId"))
+        self.assertTrue(intent["sourcePresent"])
+
+    def test_copy_intent_keeps_an_unknown_outcome_when_publication_cannot_be_proven(self) -> None:
+        """A located command whose publication cannot be proven stays unknown.
+
+        A copy command is audited (its Draft edit exists) but the activation
+        evidence for its recorded revision does not exist — the honest report
+        is an unknown outcome, never "genuinely unpublished", so the operator
+        reconciles against the durable inventory instead of blindly
+        resubmitting a second copy.
+        """
+
+        self.save(definition("nightly"))
+        # Record a real copy command, then hide its activation evidence from
+        # the reconciliation reads only (the publication boundary itself is
+        # untouched): the located command's candidate can then not be proven
+        # published from durable evidence.
+        real_audits = self.repository.list_recent_command_audits
+
+        def activation_hidden(_repository, actions, *, limit=200):
+            if "activate" in actions:
+                return ()
+            return real_audits(actions, limit=limit)
+
+        self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        with patch.object(type(self.repository), "list_recent_command_audits", activation_hidden):
+            intent = self.commands.copy_intent("nightly")
+        # The command is located and observed...
+        self.assertEqual(intent["observedCommands"], 1)
+        self.assertIsNotNone(intent["lastObserved"])
+        self.assertFalse(intent["lastObserved"]["published"])
+        # ...but the outcome stays unknown: no committed identity is named and
+        # the next action directs the operator to reconcile, not to blindly
+        # treat the copy as never published.
+        self.assertFalse(intent["committed"])
+        self.assertIsNone(intent["committedDefinitionId"])
+        self.assertIn("reconcile", intent["nextAction"].lower())
 
     def test_no_active_configuration_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1848,6 +1848,7 @@ def automation_lifecycle_state(state: AppState) -> dict[str, object]:
                 "enabled": item.get("enabled"),
                 "mode": item.get("mode"),
                 "resourceLibraryId": item.get("resourceLibraryId"),
+                "itemLimit": item.get("itemLimit"),
             }
             for item in active.document.get("automationTaskDefinitions", [])
         ]

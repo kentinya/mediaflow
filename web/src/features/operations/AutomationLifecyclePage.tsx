@@ -45,6 +45,7 @@ import {
   AUTOMATION_RUN_MODES,
   type AutomationRunMode,
 } from "../../entities/operations/automation";
+import type { AutomationEditProjectionModel } from "../../entities/operations/automation-lifecycle";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -743,41 +744,71 @@ export function AutomationLifecyclePage() {
               } as CandidateAuthority),
           });
         // Deliberate re-adoption: replace the stale retained candidate with the
-        // current durable values and the current authority. Nothing is
-        // published by this action; it only makes the reviewed current state
-        // the next Save's candidate.
+        // current durable values and the authority those exact values were read
+        // with. Re-adoption always re-reads the definition first: a cached
+        // edit projection may be older than the publication the latest
+        // authority reports, and joining cached values to a newer fence would
+        // silently overwrite a peer's concurrent edit. The re-read resolves the
+        // definition and its own Active identity together, so the offered
+        // fence always belongs to the values the operator actually reviewed.
+        // Nothing is published by this action; it only makes the reviewed
+        // current state the next Save's candidate.
         const adoptCurrentValues = () => {
-          if (loadedForRoute !== null) {
-            setFormEntry({
-              key: formContextKey,
-              form: {
-                id: loadedForRoute.id,
-                name: loadedForRoute.name,
-                enabled: loadedForRoute.enabled,
-                resourceLibraryId: loadedForRoute.resourceLibraryId,
-                mode: loadedForRoute.mode,
-                sourceScope: loadedForRoute.sourceScope ?? "",
-                itemLimit: String(loadedForRoute.itemLimit),
-                scheduleType: loadedForRoute.scheduleType,
-                intervalSeconds:
-                  loadedForRoute.intervalSeconds !== null
-                    ? String(loadedForRoute.intervalSeconds)
-                    : "",
-                cron: loadedForRoute.cron ?? "",
-                timezone: loadedForRoute.timezone ?? "UTC",
-              },
-              authority: latestAuthority ?? {
-                revisionId: "",
-                version: 0,
-                digest: "",
-              },
+          void queryClient
+            .refetchQueries({
+              queryKey: [
+                "operations.automation-lifecycle-edit",
+                definitionId ?? "",
+              ],
+              exact: true,
+            })
+            .then(() => {
+              const fresh = queryClient.getQueryData<
+                | {
+                    readonly ok: true;
+                    readonly model: AutomationEditProjectionModel;
+                  }
+                | { readonly ok: false }
+              >(["operations.automation-lifecycle-edit", definitionId ?? ""]);
+              if (
+                fresh === undefined ||
+                !fresh.ok ||
+                fresh.model.definition.id !== (definitionId ?? "")
+              ) {
+                // The definition cannot be re-read right now: discard the
+                // stale input instead of repinning it with a fence its
+                // values were never read against.
+                setFormEntry(null);
+                setError(null);
+                return;
+              }
+              const projection = fresh.model;
+              const projected = projection.definition;
+              setFormEntry({
+                key: formContextKey,
+                form: {
+                  id: projected.id,
+                  name: projected.name,
+                  enabled: projected.enabled,
+                  resourceLibraryId: projected.resourceLibraryId,
+                  mode: projected.mode,
+                  sourceScope: projected.sourceScope ?? "",
+                  itemLimit: String(projected.itemLimit),
+                  scheduleType: projected.scheduleType,
+                  intervalSeconds:
+                    projected.intervalSeconds !== null
+                      ? String(projected.intervalSeconds)
+                      : "",
+                  cron: projected.cron ?? "",
+                  timezone: projected.timezone ?? "UTC",
+                },
+                authority: {
+                  revisionId: projection.active.revisionId,
+                  version: projection.active.revisionSequence,
+                  digest: projection.active.digest,
+                },
+              });
             });
-            return;
-          }
-          // A retained candidate whose definition is no longer resolvable from
-          // the current read: discard the stale input instead of repinning it.
-          setFormEntry(null);
-          setError(null);
         };
         const preview = previewMutation.data;
         const previewModel =
@@ -1217,20 +1248,28 @@ export function AutomationLifecyclePage() {
                         </Button>
                       </div>
                     )}
-                    {copyIntent !== null && copyIntent.committed === false && (
-                      <div className="mf-actions">
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            setPendingCopyIntent(null);
-                            setReconcileCopyFor(null);
-                            setError(null);
-                          }}
-                        >
-                          Reconciled: no copy was published
-                        </Button>
-                      </div>
-                    )}
+                    {copyIntent !== null &&
+                      copyIntent.committed === false &&
+                      // A genuinely unpublished outcome is proven: no submitted
+                      // command was ever observed for this intent, so the
+                      // resubmission block is released. A located command
+                      // whose publication could not be proven stays an
+                      // unknown outcome — the block holds and the operator
+                      // reconciles from the durable inventory instead.
+                      copyIntent.observedCommands === 0 && (
+                        <div className="mf-actions">
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              setPendingCopyIntent(null);
+                              setReconcileCopyFor(null);
+                              setError(null);
+                            }}
+                          >
+                            Reconciled: no copy was published
+                          </Button>
+                        </div>
+                      )}
                   </StatusBanner>
                 )}
                 <h3>Reference-safe removal</h3>

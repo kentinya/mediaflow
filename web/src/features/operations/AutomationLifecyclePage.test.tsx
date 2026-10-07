@@ -827,6 +827,7 @@ describe("AutomationLifecyclePage", () => {
     // Another writer publishes; every authority read after the original render
     // observes the newer revision.
     let authorityReads = 0;
+    const peerPublished = true;
     const secondAuthority = jsonResponse({
       ...formAuthority(),
       active: {
@@ -853,7 +854,23 @@ describe("AutomationLifecyclePage", () => {
           url.endsWith("/automation/definitions/nightly") &&
           method === "GET"
         ) {
-          return jsonResponse(editProjection());
+          // The real edit projection always resolves the definition and its
+          // own exact Active identity together, so after the peer published
+          // the re-read carries the newer fence with the current values.
+          return peerPublished
+            ? jsonResponse({
+                definition: definition(),
+                active: {
+                  ...ACTIVE,
+                  revisionId: "revision-active-2",
+                  version: 4,
+                  revisionSequence: 3,
+                  digest: "b".repeat(64),
+                },
+                definitionState: "active",
+                sideEffects: "none",
+              })
+            : jsonResponse(editProjection());
         }
         if (url.endsWith("/nightly/removal-impact")) {
           return jsonResponse(removalImpact());
@@ -893,6 +910,131 @@ describe("AutomationLifecyclePage", () => {
     expect(freshSave).toBeEnabled();
   });
 
+  it("re-adoption re-reads the definition with its own fence and preserves the peer's fields", async () => {
+    // P1 regression: open a definition (item limit 5), change only its Name
+    // without saving. Another legitimate writer publishes item limit 9.
+    // Refresh blocks Save; pressing re-adoption must load the *current*
+    // durable values (limit 9) together with the fence they were read with —
+    // never the cached limit 5 paired with the newer fence — so the operator's
+    // Save preserves the peer's durable field.
+    let peerPublished = false;
+    const savedBodies: Record<string, unknown>[] = [];
+    const dynamicFetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/v1/auth/principal") {
+          return principalResponse();
+        }
+        if (url.endsWith("/automation/definitions") && method === "GET") {
+          // The authority read observes the peer's publication once it lands.
+          return peerPublished
+            ? jsonResponse({
+                ...formAuthority(),
+                active: {
+                  ...ACTIVE,
+                  revisionId: "revision-active-2",
+                  version: 4,
+                  revisionSequence: 3,
+                  digest: "b".repeat(64),
+                },
+              })
+            : jsonResponse(formAuthority());
+        }
+        if (
+          url.endsWith("/automation/definitions/nightly") &&
+          method === "GET"
+        ) {
+          // The edit projection resolves the definition and its own exact
+          // Active identity together: the peer's limit 9 travels with the
+          // peer's fence, so the reviewed values and the offered authority
+          // always belong to the same publication.
+          return peerPublished
+            ? jsonResponse({
+                definition: definition({ itemLimit: 9 }),
+                active: {
+                  ...ACTIVE,
+                  revisionId: "revision-active-2",
+                  version: 4,
+                  revisionSequence: 3,
+                  digest: "b".repeat(64),
+                },
+                definitionState: "active",
+                sideEffects: "none",
+              })
+            : jsonResponse(editProjection());
+        }
+        if (url.endsWith("/nightly/removal-impact")) {
+          return jsonResponse(removalImpact());
+        }
+        if (
+          url.endsWith("/automation/definitions/nightly") &&
+          method === "PUT"
+        ) {
+          savedBodies.push(
+            JSON.parse(String(init?.body)) as Record<string, unknown>,
+          );
+          return jsonResponse(
+            publication(
+              "edit",
+              definition({ itemLimit: 9, name: "Nightly retained" }),
+            ),
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    );
+    vi.stubGlobal("fetch", dynamicFetch);
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    expect(screen.getByLabelText("Item limit")).toHaveValue("10");
+    // The operator changes only the Name; the candidate is composed against
+    // the observed Active revision.
+    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    // Another legitimate writer publishes item limit 9.
+    peerPublished = true;
+    // Refresh re-reads the newer Active.
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Refresh" })[0],
+    );
+    await screen.findByText(
+      /unsaved edits are based on an older configuration/i,
+    );
+    await expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    // Deliberate re-adoption re-reads the definition: the current durable
+    // values (the peer's limit 9) are loaded with the fence they were read
+    // with, and the operator's retained Name is discarded — the re-read is
+    // the values the operator reviews before saving again.
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Review current values and re-adopt them",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Item limit")).toHaveValue("9"),
+    );
+    await expect(screen.getByLabelText("Name")).toHaveValue("Nightly");
+    const freshSave = screen.getByRole("button", { name: "保存" });
+    await waitFor(() => expect(freshSave).toBeEnabled());
+    await userEvent.click(freshSave);
+    await screen.findByText(/published definition is the Active/);
+    // The Save submitted the reviewed current values with the matching fence:
+    // the peer's durable limit 9 survives; only the Name changed.
+    expect(savedBodies).toHaveLength(1);
+    const save = savedBodies[0] as {
+      expectedRevisionId: string;
+      expectedDigest: string;
+      object: { itemLimit: number; name: string };
+    };
+    expect(save.expectedRevisionId).toBe("revision-active-2");
+    expect(save.expectedDigest).toBe("b".repeat(64));
+    expect(save.object.itemLimit).toBe(9);
+    // The reviewed current Name is what Save publishes; the peer's durable
+    // item limit 9 was preserved through the re-adoption.
+    expect(save.object.name).toBe("Nightly");
+  });
+
   it("keeps an unknown Copy outcome blocking after a real page reload", async () => {
     // P1 regression: a Copy whose response was lost stays unknown across a
     // reload. The intent persists in session storage (identity + observed
@@ -921,22 +1063,18 @@ describe("AutomationLifecyclePage", () => {
       }
       if (call.url.includes("/nightly/copy-intent")) {
         copyIntentCalls.push(call.url);
+        // A genuinely unpublished outcome: no submitted copy command was ever
+        // observed in durable evidence, so the resubmission block is released.
         return jsonResponse({
           definitionId: "nightly",
           sourcePresent: true,
           committed: false,
           committedDefinitionId: null,
-          lastObserved: {
-            auditId: "audit-2",
-            action: "copy",
-            occurredAt: "2026-01-01T00:00:00+00:00",
-            candidateId: "nightly-copy",
-            published: false,
-          },
-          observedCommands: 1,
+          lastObserved: null,
+          observedCommands: 0,
           active: ACTIVE,
           sideEffects: "none",
-          nextAction: "no durable publication evidence",
+          nextAction: "no submitted copy command was observed",
         });
       }
       return undefined;
@@ -973,7 +1111,7 @@ describe("AutomationLifecyclePage", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
     );
-    await screen.findByText(/No durable publication evidence/);
+    await screen.findByText(/genuinely unpublished/);
     expect(copyIntentCalls[0]).toContain(
       `expectedRevisionId=${encodeURIComponent(ACTIVE_REVISION)}`,
     );
@@ -988,6 +1126,86 @@ describe("AutomationLifecyclePage", () => {
         screen.getByRole("button", { name: "Copy as disabled definition" }),
       ).toBeEnabled(),
     );
+    sessionStorage.clear();
+  });
+
+  it("keeps the Copy block when the located command's publication is unproven", async () => {
+    // P1 regression: a bounded recent scan must never turn a committed Copy
+    // into a "genuinely unpublished" outcome. When the backend reports a
+    // located command whose publication could not be proven from durable
+    // evidence, the outcome stays unknown: the block holds, no release button
+    // is offered, and the operator reconciles from the durable inventory.
+    sessionStorage.clear();
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (call.url.includes("/nightly/copy-intent")) {
+        // A located command whose publication cannot be proven: committed
+        // false with observed evidence stays an unknown outcome.
+        return jsonResponse({
+          definitionId: "nightly",
+          sourcePresent: true,
+          committed: false,
+          committedDefinitionId: null,
+          lastObserved: {
+            auditId: "audit-3",
+            action: "copy",
+            occurredAt: "2026-01-01T00:00:00+00:00",
+            candidateId: "nightly-copy",
+            published: false,
+          },
+          observedCommands: 1,
+          active: ACTIVE,
+          sideEffects: "none",
+          nextAction:
+            "the submitted copy command's publication could not be proven from durable evidence; reconcile the current Active Automation inventory",
+        });
+      }
+      return undefined;
+    });
+    sessionStorage.setItem(
+      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
+      JSON.stringify({
+        sourceId: "nightly",
+        authority: {
+          revisionId: ACTIVE_REVISION,
+          version: 3,
+          digest: DIGEST,
+        },
+      }),
+    );
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await expect(
+      screen.getByRole("button", { name: "Copy as disabled definition" }),
+    ).toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+    );
+    await screen.findByText(/No durable publication evidence/);
+    // No release action exists for an unproven outcome.
+    expect(
+      screen.queryByRole("button", {
+        name: "Reconciled: no copy was published",
+      }),
+    ).toBeNull();
     sessionStorage.clear();
   });
 });

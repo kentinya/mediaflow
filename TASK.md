@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 43.1
 Parent Slice: 43
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 79544d9aba697036405b06054c0c56a740281bab
 Difficulty: High
 Test Level: T4
@@ -814,81 +814,285 @@ Head SHA: bb4367fad6cd94a7d3781e5ab096f7b02760ccea
 ## B Review Result
 
 ```text
-Reviewed: 79544d9aba697036405b06054c0c56a740281bab..94e1858b8cf1eb30b432eb11fb1af64a73e29ffc
+Reviewed: 79544d9aba697036405b06054c0c56a740281bab..bb4367fad6cd94a7d3781e5ab096f7b02760ccea
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Refresh silently repins retained stale input and overwrites a concurrent edit
-  (AC-T2/T6; Shared publication and lifecycle 1; RO-2 stale/focused publication).**
-  In the actual built Web/Python journey, open `r2-stale` with item limit 5 and change only
-  Name. A second legitimate API writer publishes item limit 9. Press Refresh, then Save:
-  the retained form still contains 5, but the command uses the refreshed Active identity,
-  succeeds with HTTP 200 and durably changes the peer's limit back to 5. Evidence:
-  `refresh-repins-stale-form` in `/tmp/mediaflow-b-review-43-1-r2-browser.log`, produced by
-  `node /tmp/mediaflow-b-review-43-1-r2-browser.mjs`. That script uses the real built Web
-  and `.venv/bin/python scripts/operations_inventory_harness.py --port 4190` on temporary
-  data. `AutomationLifecyclePage.tsx` now keys input by route, but still derives its command
-  fence from the latest authority query rather than the snapshot belonging to that retained
-  input. Preserve the candidate's observed authority, reject stale intent, and make refresh
-  or reconciliation expose the current values before a deliberately reviewed resubmission;
-  do not silently give an old candidate a newer publication fence. Verify concurrent edits
-  on the same definition and retained-input recovery through the real Web/API journey.
+- **P1 — Known failed removal still revokes authority in the current production database
+  arrangement (AC-T2/T5/T6; Shared publication and lifecycle 5; RO-2 removal).**
+  Re-ran `.venv/bin/python /tmp/mediaflow-b-review-43-1-r2-python.py` against this checkpoint;
+  evidence is `/tmp/mediaflow-b-review-43-1-r3-python.log`, case
+  `known-activation-write-lock-failure`. The fixture keeps all real services/guards and places
+  configuration and runtime repositories in the same SQLite file, matching production.
+  Real exact Preview, confirmed API grant and Scheduler admission succeed; a second actual
+  SQLite writer holds `BEGIN IMMEDIATE` after real runtime preparation and before activation.
+  Removal now raises a bounded `AutomationDefinitionSaveError`, but Active is unchanged,
+  the grant is still `revoked`, and the previously authorized Job fails in the real Worker
+  with `unattended_execution_grant_revoked` before Task creation or media mutation. The new
+  compensation writes cannot restore authority while that same database remains locked.
+  The added application/API lock tests instead hold `configuration.sqlite3` while grant
+  restoration writes a different runtime database, so their PASS does not establish the
+  reported production result. Preserve known-failure authority and admitted work at the
+  actual shared persistence/concurrency boundary, covering live Worker observation and
+  activation rollback. Reuse the existing configuration/grant persistence boundary; do not
+  rely on another best-effort automatic replacement grant after committed revocation. Test
+  this same-file production assembly and report actual/unknown durable state truthfully.
 
-- **P1 — A known failed removal still revokes live authority and breaks admitted work
-  (AC-T2/T5/T6; Shared publication and lifecycle 5; RO-2 removal/failure recovery).**
-  `.venv/bin/python /tmp/mediaflow-b-review-43-1-r2-python.py` runs real exact Preview,
-  confirmed API grant, Scheduler admission, runtime preparation and Worker against the
-  production arrangement of configuration/runtime repositories in one SQLite file. A
-  second real SQLite writer holds `BEGIN IMMEDIATE` between runtime preparation and
-  activation, exercising ordinary production write contention without replacing a guard
-  or adapter. Removal raises `OperationalError: database is locked`; its prior Active is
-  unchanged, but the grant remains `revoked`. The previously authorized admitted Job then
-  fails in the real Worker with `unattended_execution_grant_revoked`, before any Task or
-  media effect. Evidence: `known-activation-write-lock-failure` in
-  `/tmp/mediaflow-b-review-43-1-r2-python-confirmed.log`. `remove_object` commits revocation
-  first and restores only two conflict exception types; the persistence failure escapes
-  without preserving authority or explaining that durable change. Protect checked removal
-  at the actual shared persistence/concurrency boundary so known publication failures leave
-  existing authority and admitted work intact. Include persistence/runtime failure and live
-  Worker boundaries, and distinguish genuinely unknown commit state with truthful readback.
-  A best-effort replacement grant after an admitted Job has already failed does not undo
-  that user-visible failure; do not add another automatic grant/replay workaround.
+- **P1 — Stale recovery adopts cached old values with a newer publication fence and still
+  overwrites the concurrent edit (AC-T2/T6; Shared publication and lifecycle 1; RO-2 recovery).**
+  The real Web/Python reproduction opens `r3-stale` with item limit 5 and changes Name only.
+  Another legitimate API writer publishes item limit 9. Refresh blocks Save, but pressing
+  `Review current values and re-adopt them` loads the cached limit 5, pairs it with the new
+  Active fence, and enables Save. Save returns 200 and durably changes the peer's limit back
+  to 5. Evidence: `node /tmp/mediaflow-b-review-43-1-r3-browser.mjs`, case
+  `stale-recovery-repins-old-read` in `/tmp/mediaflow-b-review-43-1-r3-browser.log`.
+  This uses the actual built Web and temporary-data Python harness
+  (`npm --prefix web run build`; `.venv/bin/python scripts/operations_inventory_harness.py
+  --port 4190`). Refresh reads form authority, but `adoptCurrentValues` uses the separately
+  cached `loadedForRoute` definition with `latestAuthority`. The new browser regression
+  asserts the unchanged Name and enabled Save, but does not verify the peer's changed limit
+  or Save it again. Load the current definition and its associated immutable identity
+  together before offering re-adoption; every candidate fence must belong to the values
+  actually reviewed. Preserve correctable input without joining a new identity to an older
+  cached definition. Prove recovery followed by Save preserves the peer's durable fields.
 
-- **P1 — Retained history substitutes an unpublished Draft for the removed definition
-  (AC-T5/T6; Shared publication and lifecycle 6; RO-2 usable retained history).**
-  Publish and enable `r2-history` named `Published historical name`, emit an occurrence
-  with the real Scheduler, and keep a compatible open successor Draft whose name is
-  `NEVER PUBLISHED draft name`. Remove the published definition without activating that
-  unrelated Draft. Both detail APIs now return the unpublished name: V1 labels it
-  `historical`, while V2 labels it `draft-only`; the existing native definition/history
-  entry renders `Automation definition NEVER PUBLISHED draft name`. Evidence:
-  `node /tmp/mediaflow-b-review-43-1-r2-history.mjs` and
-  `/tmp/mediaflow-b-review-43-1-r2-history.log` against the same real harness. The Python
-  reproduction independently confirms the V2 substitution in
-  `/tmp/mediaflow-b-review-43-1-r2-python-confirmed.log`. `_automation_definition_resolution`
-  prefers any open Draft, and `historical_definition` accepts the newest non-Active
-  revision without proving it was ever published or belonged to the retained occurrence.
-  Resolve removed history from durable admission/published-pin evidence and label missing
-  legacy evidence honestly. Keep the unrelated Draft available for explicit correction,
-  but never use its candidate as the removed run's historical name/scope/mode or authority.
-  Verify API/Web agreement and the retained context after reopening the repositories.
+- **P1 — The bounded audit scan turns a committed Copy into a false unpublished outcome
+  and permits duplicate submission (AC-T6; RO-2 unknown-submission reconciliation).**
+  The same real browser reproduction executes Copy for `r3-bounded` through the actual
+  backend (200), drops only its response, then performs 105 ordinary supported focused
+  edits on an unrelated definition. The first copy `r3-bounded-copy` remains published and
+  readable. Its intent-bound reconciliation nevertheless returns `committed: false`,
+  `observedCommands: 0` because the original command is outside the newest 200 global audit
+  rows. Web offers `Reconciled: no copy was published`; after that action and Refresh,
+  another Copy succeeds as `r3-bounded-copy-2`. Evidence:
+  `committed-copy-outside-audit-window` in `/tmp/mediaflow-b-review-43-1-r3-browser.log`.
+  This requires no future adapter, unsupported configuration or capability-removing fake;
+  all intervening changes use current authenticated production API commands on temporary
+  data. Reconciliation must find the exact submitted command/publication through durable
+  intent-bound evidence, or retain an unknown/unavailable result when proof is missing.
+  Absence from a bounded recent scan is not proof of rejection or non-publication and cannot
+  release the resubmission block. Reuse targeted durable audit/revision reads rather than
+  increasing the global scan limit or introducing another copy engine. Cover committed
+  evidence beyond recent activity and distinguish proven-unpublished from unknown outcomes.
 
-- **P1 — Copy reconciliation identifies the latest copy rather than the submitted intent,
-  and reload bypasses reconciliation (AC-T6; RO-2 unknown submission; Task API/Web boundary).**
-  In the real browser journey, Copy commits `r2-reconcile-copy` with HTTP 200 and only its
-  response is dropped. A second legitimate submission then commits `r2-reconcile-copy-2`.
-  The first page's Reconcile/Open action opens the second submission's copy, falsely
-  identifying it as its own result. Separately, after a committed Copy loses its response,
-  reload and reconnect: Copy is enabled without any reconciliation and publishes
-  `r2-reload-copy-2` beside the first committed copy. Evidence:
-  `wrong-exact-copy-reconciliation` and `reload-loses-copy-intent` in
-  `/tmp/mediaflow-b-review-43-1-r2-browser.log`; both requests run through the actual Python
-  backend and only transport delivery is interrupted. `copy_intent` searches the latest
-  source-matching audit/current Active membership, without binding the submitted authority
-  or command identity; `pendingCopyIntent` survives only in component memory. Bind readback
-  to the exact submitted intent and observed authority, distinguish committed/unpublished/
-  unknown evidence, and retain bounded reconciliation context across reload/reconnect
-  without persisting credentials. Prevent deliberate duplicate submission until that intent
-  is reconciled; never substitute another tab's result or replay the command automatically.
+## Correction Report — Fix Loop 3 (B Decision: FIX REQUIRED, 79544d9..bb4367f)
+
+This correction addresses exactly the three P1 blockers listed in `## B Review Result` and their
+direct root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion,
+Contract wording or Task Base was altered.
+
+### Changed Files (fix loop 3)
+
+Modified:
+
+- `mediaflow/application/automation_workspace_commands.py` — the removal ordering is now
+  publish-then-revoke (fail-closed authority preflight before publication; durable revocation
+  only after a proven publication), the compensating `_restore_prior_grant` write is removed
+  entirely, and the copy-intent reconciliation is a targeted, window-independent durable-evidence
+  read (`_definition_command_audits` + `_candidate_publication`).
+- `mediaflow/infrastructure/sqlite_configuration_management.py` — two additive bounded
+  repository readers: `list_command_audits_before` (newest-first audits strictly older than a
+  sequence anchor) and `latest_command_audit_sequence`. No schema change.
+- `web/src/features/operations/AutomationLifecyclePage.tsx` — deliberate re-adoption now
+  re-reads the edit projection first and pairs the loaded values with the projection's own
+  Active identity; the "Reconciled: no copy was published" release is offered only for a
+  genuinely unpublished outcome (no observed command), never for an unproven one.
+- `scripts/operations_inventory_harness.py` — the lifecycle-state route now reports each
+  definition's `itemLimit` (read-only projection field for the browser proof).
+- `tests/test_automation_definition_publication.py` — the residual wrapper follows the reordered
+  boundary (preflight + residual reads); 2 new regressions (32 total): committed copy beyond the
+  recent audit window, and an unproven publication stays unknown.
+- `tests/test_v2_automation_lifecycle.py` — a new `SameFileRemovalAuthorityTests` class driving
+  the real API on the production same-file SQLite arrangement (foreign `BEGIN IMMEDIATE` writer
+  between runtime preparation and activation); 1 new API regression (21 total): the known failed
+  removal preserves the definition and its live grant, and the admitted Job's authority still
+  authorizes; plus the beyond-window copy-intent API regression.
+- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — the existing stale-candidate
+  regression's stub now returns the projection's newer fence (real projection semantics); 2 new
+  component regressions (14 total): re-adoption re-reads with its own fence and preserves the
+  peer's durable limit, and an unproven Copy outcome keeps the block with no release action.
+- `web/tests/e2e/automation-lifecycle.python.spec.ts` — the stale-candidate journey now proves
+  the real backend outcome: after re-adoption the peer's item limit 9 is loaded with the
+  matching fence, Save publishes exactly the reviewed values, and the durable inventory reads
+  `itemLimit: 9`.
+- `TASK.md` — Status and this correction report.
+
+### Implemented (fix loop 3)
+
+- **P1 — Known failed removal preserves authority at the same-file production boundary
+  (AC-T2/T5/T6).** The removal no longer revokes before publication. The new ordering is:
+  (1) persist and validate the removal successor — a persistence/validation failure there is a
+  pure configuration failure, authority untouched; (2) a fail-closed authority *preflight* read
+  refuses to publish when the grant state cannot be read (an unreadable grant is never treated
+  as no authority); (3) atomically activate — a known rejected or known failed activation is a
+  known failed removal whose Active pointer never moved, so the definition and its live
+  authority are preserved *by construction* and reported truthfully (`active_preserved`, or
+  `commit_state_unknown` only when the pointer read-back matches the attempted successor);
+  (4) only a *proven* publication is followed by the durable revocation, and a revocation that
+  cannot prove the revoked state is reported as `automation_definition_removal_authority_live`
+  on the already-published removal. The compensating restore grant is gone: no best-effort
+  replacement grant after a committed revocation is attempted anywhere, and grant/revoke API
+  routes remain serialized with publication on `_runtime_binding_lock`, so a residual regrant
+  in the published window is still re-revoked by the post-publication revocation. Proven by the
+  new same-file API regression (real API, one shared SQLite file, foreign writer lock) and the
+  updated application regressions; the DB-lock B-reproduction scenario now reports
+  `authorityState: active` with the definition published and the grant active.
+- **P1 — Stale recovery loads current values with their own fence (AC-T2/T6).** Re-adoption no
+  longer joins the separately cached `loadedForRoute` values to the latest authority. It first
+  re-reads the edit projection (which resolves the definition and its exact Active identity
+  together) and builds the candidate from that fresh read: the fence belongs to the values the
+  operator actually reviews. If the definition cannot be re-read, the stale input is discarded
+  instead of repinned. Proven by the new component regression (peer publishes limit 9 → refresh
+  blocks → re-adoption loads limit 9 with the peer's fence → Save submits the matching fence and
+  the peer's durable field survives) and the extended real-browser journey (durable inventory
+  reads `itemLimit: 9` after the Save).
+- **P1 — Copy reconciliation finds committed evidence beyond recent activity (AC-T6).** The
+  reconciliation no longer scans a bounded recent window to decide publication. It now walks the
+  definition's targeted durable audit trail newest-first (`list_recent_command_audits` +
+  `list_command_audits_before` paged by sequence anchor, no increased global limit), locates the
+  exact submitted create/copy command, and proves its candidate's publication from that
+  command revision's activation evidence (`_candidate_publication`: revision exists, has an
+  `activate` audit row, and its activated document contains the candidate). Three outcomes are
+  now honestly distinguished: committed (proven publication — including copies submitted far
+  beyond any recent window), unproven (a located command whose publication cannot be proven —
+  an unknown outcome that keeps the resubmission block and offers no release), and genuinely
+  unpublished (no observed command at all — the only case that releases the block). The intent
+  fence binding is unchanged. Proven by application and real-API regressions (300 intervening
+  supported edits; the committed copy is still resolved; the unproven case stays unknown), and
+  the component regression that verifies no release action is offered for an unproven outcome.
+
+### Tests and Results (fix loop 3)
+
+- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_v2_automation_lifecycle` — 54 tests (32 + 22).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
+  tests.test_v2_automation_operations tests.test_configuration_successor_draft
+  tests.test_configuration_management tests.test_configuration_destination_activation
+  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
+- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler
+  tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview
+  tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant
+  tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix
+  tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
+- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,248 tests, 7 skipped (the same
+  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures.
+- PASS — `.venv/bin/python -m unittest tests.test_release_security` — 6 tests.
+- PASS — `.venv/bin/python -m unittest tests.test_migration_rehearsal
+  tests.test_upgrade_preflight` — 10 tests (schema unchanged; run as a belt-and-braces check).
+- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
+- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `--config config/mediaflow.phase13.2.example.json config validate`.
+- PASS — `npm --prefix web run test -- run` — 67 files / 1,033 tests.
+- PASS — `npm --prefix web run test -- run
+  src/features/operations/AutomationLifecyclePage.test.tsx` — 14 tests.
+- PASS — `npm --prefix web run test -- run src/entities/operations/automation.test.ts
+  src/features/operations/AutomationRouter.test.tsx` — 24 tests.
+- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run
+  format:check`; `npm --prefix web run build`.
+- PASS — `npm --prefix web run test:e2e` — 202 Node-fake tests.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-lifecycle.python.spec.ts` — 9/9, including the extended stale-recovery
+  journey (re-adoption → Save → the peer's durable item limit 9 survives) on the real
+  Python/API/SQLite/browser harness.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — 21/21. (The first run recorded 1 failed /
+  20 passed for `server-side filtered selection and return keep the list context`; an
+  immediate clean rerun passed 21/21 with no repository change in between — the first run
+  overlapped with concurrent Playwright jobs on this machine. Reported for B to assess.)
+- PASS — `npm --prefix web run test:e2e --
+  --config=playwright.python.unicode-principal.config.ts
+  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
+- PASS — B-reproduction scenarios re-run against the implemented code: the same-file DB-lock
+  removal scenario now returns the bounded 503 with `durableState: active_preserved` and
+  `authorityState: active`; the definition stays published, the grant stays `active`, and the
+  admitted Job's authority still authorizes; the bounded-audit-window scenario (real committed
+  copy + 300 supported edits) resolves `committed: true` with the exact copy identity.
+- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: the image
+  build, image inspection and Compose rendering stages completed; the four-service stack start
+  failed because the Docker daemon cannot see the harness-created bind sources. Verified with
+  an instrumented run: at `compose up` time the process's own environment reported
+  `MEDIAFLOW_CONFIG_FILE`/`MEDIAFLOW_ENV_FILE` paths that exist (`EXISTS: True`), while the
+  daemon rejected a *different, stale-looking* temp path from the same run. A fresh
+  `docker run -v <fresh temp file>` probe succeeds, a 20-second-delayed probe succeeds, so the
+  limitation is specifically the daemon's view of this run's bind sources, consistent with the
+  bind-source limitation recorded at the original checkpoint. Not a code failure and not
+  called PASS.
+- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and
+  `git ls-files config/alist.json` (empty).
+- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` and `pyproject.toml`
+  (`grep -rni`, exit 1 with no matches).
+- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
+- Schema unchanged: no migration rehearsal required.
+
+### Decisions (fix loop 3)
+
+- **Publish-then-revoke with a fail-closed preflight.** The previous revoke-before-publish
+  order created the exact hazard the review found: a known failed activation left the
+  definition Active while its authority was durably revoked, and because configuration and
+  grants live in the SAME SQLite file in production, the compensating restore write could not
+  even commit while the foreign lock was held. The corrected order makes "failed removal
+  preserves authority" true by construction — the activation transaction that never committed
+  leaves both the Active pointer and the grant untouched, so no compensation write exists to
+  fail. The residual hazard (authority live on a published removal) is strictly smaller and is
+  handled by the post-publication revocation plus the serialized `_runtime_binding_lock`
+  window, with any unprovable revocation reported truthfully on the published outcome. The
+  preflight keeps the fail-closed rule that an unreadable grant state never publishes.
+- **Targeted durable evidence instead of a bigger window.** The copy-intent reconciliation now
+  pages the definition's own `draft_edit` audit trail newest-first through the additive
+  sequenced repository readers (bounded per page, unbounded only by the trail's real length)
+  and proves publication from the located command revision's activation evidence. Absence from
+  recent activity is never evidence of non-publication; only "no observed command at all" is
+  proven-unpublished, and every located-but-unprovable command stays an unknown outcome that
+  keeps the resubmission block.
+- **Re-adoption re-reads before it offers.** The stale-recovery action now treats the cached
+  edit projection as exactly what it is — a possibly outdated read — and re-reads the
+  definition (whose projection carries its own Active identity) before offering the current
+  values. The offered fence therefore always belongs to the reviewed values, which is what
+  makes "Save preserves the peer's durable fields" provable rather than assumed.
+- **Harness state exposes `itemLimit`.** One read-only field added to the browser harness's
+  lifecycle-state projection so the real-browser journey can assert the durable peer field the
+  blocker requires; no product route changed.
+
+### Remaining In-Slice Work
+
+Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
+metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
+plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based
+`AutomationNewPage`/`AutomationEditorPage` routes and the existing `/activate-draft` path
+remain in place and working alongside the native focused surface.
+
+### Risks / Deviations (fix loop 3)
+
+- UNAVAILABLE — the Docker release-security smoke gate (see Tests; the harness bind-source
+  mount limitation, instrumented and re-confirmed this round). Reported honestly for B to
+  assess.
+- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
+- The first `operations-inventory.python.spec.ts` e2e run had 1 failed / 20 passed; a clean
+  immediate rerun passed 21/21 with no repository change in between (resource contention with
+  concurrently running Playwright jobs on this machine). Evidence retained in this report;
+  B decides whether further isolation is required.
+- The removal's error contract changed on one path: a persistence failure *before* activation
+  still reports `automation_definition_persistence_failed`, but a persistence failure *inside*
+  activation now reports `automation_definition_removal_not_published` with
+  `durableState: active_preserved`/`commit_state_unknown` exactly as before — however the
+  pre-publication revocation codes (`automation_definition_authority_revoke_failed`,
+  `automation_definition_authority_unavailable`) can no longer abort a removal after
+  publication; the preflight keeps `automation_definition_authority_unavailable` as a
+  pre-publication abort, and the residual post-publication case reports
+  `automation_definition_removal_authority_live`. The Web page renders removal failures by
+  code/message and needs no change.
+- No schema change; no migration rehearsal required (the rehearsal suites were still run and
+  pass).
+- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
+  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
+
+### Checkpoint (fix loop 3)
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: PENDING_COMMIT
+```
