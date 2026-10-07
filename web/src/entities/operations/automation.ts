@@ -22,6 +22,7 @@ import {
   normalizeBoundedCount,
   normalizeBoundedText,
   normalizeEnum,
+  normalizeOptionalFiniteNumber,
   normalizeOptionalText,
   normalizeTextArray,
   readRecord,
@@ -47,7 +48,11 @@ export const AUTOMATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
  * document without this exact state marker is malformed so no Draft can ever
  * be rendered as Active.
  */
-export const AUTOMATION_DEFINITION_STATES = ["active", "draft-only"] as const;
+export const AUTOMATION_DEFINITION_STATES = [
+  "active",
+  "draft-only",
+  "historical",
+] as const;
 
 export const AUTOMATION_GRANT_STATUSES = ["none", "active", "revoked"] as const;
 
@@ -376,6 +381,20 @@ function optionalCount(
     return null;
   }
   return count(source, field);
+}
+
+function optionalFiniteNumber(
+  source: Record<string, unknown>,
+  field: string,
+): number | null {
+  if (source[field] === null || source[field] === undefined) {
+    return null;
+  }
+  try {
+    return normalizeOptionalFiniteNumber(source[field], field);
+  } catch {
+    return fail(field);
+  }
 }
 
 function optionalRecord(
@@ -818,7 +837,10 @@ export function normalizeAutomationDefinitionDocument(
   field = "definition",
 ): AutomationDefinitionDocumentModel {
   const source = readRecord(value, field);
-  const intervalSeconds = optionalCount(source, "intervalSeconds");
+  // Interval durations are finite positive numbers on the backend; an
+  // integer-only guard would reject a supported value such as 1.5 as
+  // malformed and hide the definition from its operator.
+  const intervalSeconds = optionalFiniteNumber(source, "intervalSeconds");
   const cron = optionalText(source, "cron");
   if ((intervalSeconds === null) === (cron === null)) {
     // Exactly one schedule form is canonical; anything else is malformed.

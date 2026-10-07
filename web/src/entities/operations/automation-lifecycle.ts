@@ -153,6 +153,7 @@ export interface AutomationDefinitionFormAuthorityModel {
     readonly itemLimitMinimum: number;
     readonly itemLimitMaximum: number;
     readonly intervalMinimum: number;
+    readonly intervalExclusiveMinimum: boolean;
     readonly intervalMaximum: number;
   };
 }
@@ -235,6 +236,10 @@ export function normalizeAutomationFormAuthority(
       itemLimitMinimum: count(itemLimit, "minimum"),
       itemLimitMaximum: count(itemLimit, "maximum"),
       intervalMinimum: count(interval, "minimum"),
+      intervalExclusiveMinimum:
+        interval["exclusiveMinimum"] === undefined
+          ? false
+          : flag(interval, "exclusiveMinimum"),
       intervalMaximum: count(interval, "maximum"),
     },
   };
@@ -243,7 +248,7 @@ export function normalizeAutomationFormAuthority(
 export interface AutomationEditProjectionModel {
   readonly definition: AutomationDefinitionDocumentModel;
   readonly active: AutomationActiveIdentityModel;
-  readonly definitionState: "active" | "draft-only";
+  readonly definitionState: "active" | "draft-only" | "historical";
 }
 
 export function normalizeAutomationEditProjection(
@@ -256,6 +261,7 @@ export function normalizeAutomationEditProjection(
     definitionState: enumOrFail(source["definitionState"], "definitionState", [
       "active",
       "draft-only",
+      "historical",
     ] as const),
   };
 }
@@ -286,6 +292,76 @@ export function normalizeAutomationCopyCandidate(
       "active",
       "draft-only",
     ] as const),
+  };
+}
+
+/**
+ * Durable reconciliation evidence for one submitted Copy command.
+ *
+ * A Copy whose HTTP response was lost is an unknown publication outcome, not
+ * a rejection: the backend may have committed it. This read resolves the exact
+ * outcome from durable audit evidence so the page never allocates a second
+ * copy or replays the command automatically.
+ */
+export interface AutomationCopyIntentModel {
+  readonly definitionId: string;
+  readonly sourcePresent: boolean;
+  readonly committed: boolean;
+  readonly committedDefinitionId: string | null;
+  readonly lastObserved: {
+    readonly auditId: string;
+    readonly action: string;
+    readonly occurredAt: string;
+    readonly candidateId: string;
+    readonly published: boolean;
+  } | null;
+  readonly observedCommands: number;
+  readonly active: AutomationActiveIdentityModel;
+  readonly nextAction: string;
+}
+
+function boundedOptionalRecord(
+  value: unknown,
+  field: string,
+): Record<string, unknown> | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return readRecord(value, field);
+}
+
+export function normalizeAutomationCopyIntent(
+  payload: unknown,
+): AutomationCopyIntentModel {
+  const source = readRecord(payload, "automation_copy_intent");
+  const observed = boundedOptionalRecord(
+    source["lastObserved"],
+    "lastObserved",
+  );
+  const committedId = optionalText(source, "committedDefinitionId");
+  if (source["committed"] === true && committedId === null) {
+    // A committed reconciliation without its identity is malformed: the page
+    // could not name what to inspect instead of resubmitting.
+    return fail("committedDefinitionId");
+  }
+  return {
+    definitionId: text(source, "definitionId"),
+    sourcePresent: flag(source, "sourcePresent"),
+    committed: flag(source, "committed"),
+    committedDefinitionId: committedId,
+    lastObserved:
+      observed === null
+        ? null
+        : {
+            auditId: text(observed, "auditId"),
+            action: text(observed, "action"),
+            occurredAt: text(observed, "occurredAt"),
+            candidateId: text(observed, "candidateId"),
+            published: flag(observed, "published"),
+          },
+    observedCommands: count(source, "observedCommands"),
+    active: normalizeAutomationActiveIdentity(source["active"]),
+    nextAction: text(source, "nextAction"),
   };
 }
 

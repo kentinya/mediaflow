@@ -10,6 +10,11 @@
  * unattended-authority state come from the backend projection. Reads create
  * nothing, and every mutation disables automatic retry so an ambiguous outcome
  * is reconciled by reading durable truth rather than by replaying the request.
+ *
+ * Form state, retained input and the command target are all bound to the
+ * current definition route context: navigating between definition routes —
+ * including Copy navigation — never applies one definition's unsaved input or
+ * observed authority fence to another definition.
  */
 
 import { useState } from "react";
@@ -20,6 +25,7 @@ import {
   copyAutomationDefinitionFocused,
   createAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
+  fetchAutomationCopyIntent,
   fetchAutomationEditProjection,
   fetchAutomationFormAuthority,
   fetchAutomationRemovalImpact,
@@ -66,6 +72,30 @@ const NEW_FORM: FormState = {
   timezone: "UTC",
 };
 
+/**
+ * The route context a form instance belongs to. Form state never outlives its
+ * context: switching from editing one definition to another (including Copy
+ * navigation) discards the previous context's unsaved input instead of
+ * letting a Save publish it against the new definition.
+ */
+type FormContextKey = string;
+
+/**
+ * Typed schedule conveniences. Daily/weekly compile to the exact Cron
+ * semantics the Scheduler already consumes; advanced Cron remains available.
+ */
+type ScheduleConvenience = "interval" | "daily" | "weekly" | "cron";
+
+function convenienceOf(form: FormState): ScheduleConvenience {
+  if (form.scheduleType === "interval") return "interval";
+  if (form.cron.trim() === "0 8 * * *") return "daily";
+  if (form.cron.trim() === "0 8 * * 1") return "weekly";
+  return "cron";
+}
+
+const DAILY_CRON = "0 8 * * *";
+const WEEKLY_CRON = "0 8 * * 1";
+
 function buildCandidate(form: FormState): Record<string, unknown> {
   return {
     id: form.id.trim(),
@@ -74,9 +104,10 @@ function buildCandidate(form: FormState): Record<string, unknown> {
     resourceLibraryId: form.resourceLibraryId,
     mode: form.mode,
     itemLimit: Number(form.itemLimit),
-    ...(form.sourceScope.trim()
-      ? { sourceScope: form.sourceScope.trim() }
-      : {}),
+    // The scope field is always submitted: clearing the input publishes the
+    // cleared value (the ResourceLibrary root) instead of silently keeping a
+    // previously stored scope.
+    sourceScope: form.sourceScope.trim(),
     ...(form.scheduleType === "interval"
       ? {
           intervalSeconds: Number(form.intervalSeconds),
@@ -91,15 +122,23 @@ function buildCandidate(form: FormState): Record<string, unknown> {
   };
 }
 
+/** A supported interval value: any finite positive decimal number. */
+const INTERVAL_PATTERN = /^\d+(\.\d+)?$/;
+
 function formIsValid(form: FormState, editing: boolean): boolean {
+  const itemLimit = Number(form.itemLimit);
+  const intervalValue = Number(form.intervalSeconds);
   return (
     (editing || form.id.trim().length > 0) &&
     form.name.trim().length > 0 &&
     form.resourceLibraryId.length > 0 &&
     /^\d+$/.test(form.itemLimit) &&
-    Number(form.itemLimit) > 0 &&
+    Number.isFinite(itemLimit) &&
+    itemLimit > 0 &&
     (form.scheduleType === "interval"
-      ? /^\d+$/.test(form.intervalSeconds) && Number(form.intervalSeconds) > 0
+      ? INTERVAL_PATTERN.test(form.intervalSeconds) &&
+        Number.isFinite(intervalValue) &&
+        intervalValue > 0
       : form.cron.trim().length > 0 && form.timezone.trim().length > 0)
   );
 }
@@ -111,6 +150,8 @@ export function AutomationLifecyclePage() {
   const params = useParams({ strict: false }) as { definitionId?: string };
   const definitionId = params.definitionId;
   const editing = typeof definitionId === "string" && definitionId.length > 0;
+  // The exact route context this page's form and commands belong to.
+  const formContextKey: FormContextKey = definitionId ?? "__new__";
 
   const authorityQuery = useQuery({
     queryKey: ["operations.automation-lifecycle-authority"],
@@ -127,38 +168,67 @@ export function AutomationLifecyclePage() {
     refetchOnWindowFocus: false,
   });
 
-  const [form, setForm] = useState<FormState | null>(null);
+  // Form state carries its context key. A retained form whose key does not
+  // match the current route context is invisible stale input, never the
+  // candidate a Save would publish.
+  const [formEntry, setFormEntry] = useState<{
+    readonly key: FormContextKey;
+    readonly form: FormState;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // One submitted-but-unconfirmed Copy command per definition: while its
+  // outcome is unknown, no second Copy is offered until it is reconciled
+  // from durable evidence.
+  const [pendingCopyIntent, setPendingCopyIntent] = useState<string | null>(
+    null,
+  );
+  // The reconciliation read for an unknown Copy outcome.
+  const [reconcileCopyFor, setReconcileCopyFor] = useState<string | null>(null);
 
   const authority = authorityQuery.data;
-  const editProjection = editQuery.data;
+  const editQueryResult = editQuery.data;
   const authorityModel =
     authority !== undefined && authority.ok ? authority.model : null;
+  const editFailed = editQueryResult !== undefined && !editQueryResult.ok;
   const loaded =
-    editProjection !== undefined && editProjection.ok
-      ? editProjection.model.definition
+    editQueryResult !== undefined && editQueryResult.ok
+      ? editQueryResult.model.definition
       : null;
+  // A loaded edit projection belongs to this route only when its definition
+  // matches the route identity.
+  const loadedForRoute =
+    loaded !== null &&
+    loaded.id === (definitionId ?? "") &&
+    formContextKey === (definitionId ?? "")
+      ? loaded
+      : null;
+
+  const retainedForm =
+    formEntry !== null && formEntry.key === formContextKey
+      ? formEntry.form
+      : null;
+
   const currentForm: FormState | null =
-    form !== null
-      ? form
-      : loaded !== null
+    retainedForm !== null
+      ? retainedForm
+      : loadedForRoute !== null
         ? {
-            id: loaded.id,
-            name: loaded.name,
-            enabled: loaded.enabled,
-            resourceLibraryId: loaded.resourceLibraryId,
-            mode: loaded.mode,
-            sourceScope: loaded.sourceScope ?? "",
-            itemLimit: String(loaded.itemLimit),
-            scheduleType: loaded.scheduleType,
+            id: loadedForRoute.id,
+            name: loadedForRoute.name,
+            enabled: loadedForRoute.enabled,
+            resourceLibraryId: loadedForRoute.resourceLibraryId,
+            mode: loadedForRoute.mode,
+            sourceScope: loadedForRoute.sourceScope ?? "",
+            itemLimit: String(loadedForRoute.itemLimit),
+            scheduleType: loadedForRoute.scheduleType,
             intervalSeconds:
-              loaded.intervalSeconds !== null
-                ? String(loaded.intervalSeconds)
+              loadedForRoute.intervalSeconds !== null
+                ? String(loadedForRoute.intervalSeconds)
                 : "",
-            cron: loaded.cron ?? "",
-            timezone: loaded.timezone ?? "UTC",
+            cron: loadedForRoute.cron ?? "",
+            timezone: loadedForRoute.timezone ?? "UTC",
           }
         : editing
           ? null
@@ -181,11 +251,15 @@ export function AutomationLifecyclePage() {
       readonly digest: string;
       readonly revisionId: string;
       readonly version: number;
+      readonly targetId: string;
     }) =>
       editing
         ? saveAutomationDefinitionFocused(token, {
-            definitionId: input.form.id,
-            object: buildCandidate(input.form),
+            // The route's definition identity is the command target. A
+            // retained form can never retarget a Save at another definition,
+            // even after Copy navigation changed the route.
+            definitionId: input.targetId,
+            object: buildCandidate({ ...input.form, id: input.targetId }),
             authority: {
               expectedRevisionId: input.revisionId,
               expectedVersion: input.version,
@@ -292,6 +366,7 @@ export function AutomationLifecyclePage() {
         setNotice(
           "The copy was published as a new, disabled definition without authority.",
         );
+        setPendingCopyIntent(null);
         invalidate();
         if (result.model.definition?.id) {
           void navigate({
@@ -301,8 +376,29 @@ export function AutomationLifecyclePage() {
         }
         return;
       }
+      if (result.status === 0 || result.code === "transport_unavailable") {
+        // The response was lost: the command may or may not have committed.
+        // This is an unknown outcome, never a rejection. Keep the submitted
+        // intent and require reconciliation before any resubmission.
+        setPendingCopyIntent(routeTargetId || null);
+        setError(
+          "Copying the definition returned no confirmed outcome (transport_unavailable). The copy may or may not have been published; reconcile before submitting Copy again.",
+        );
+        return;
+      }
       setError(`Copying the definition was rejected (${result.code}).`);
     },
+  });
+
+  const copyIntentQuery = useQuery({
+    queryKey: [
+      "operations.automation-lifecycle-copy-intent",
+      reconcileCopyFor ?? "",
+    ],
+    queryFn: () => fetchAutomationCopyIntent(token, reconcileCopyFor ?? ""),
+    enabled: token !== null && reconcileCopyFor !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const removeMutation = useMutation({
@@ -376,6 +472,12 @@ export function AutomationLifecyclePage() {
   const revisionId = activeIdentity?.revisionId ?? "";
   const canManage =
     authorityModel !== null && activeIdentity !== null && digest.length > 0;
+  // The command target for this route's definition-bound commands.
+  const routeTargetId = definitionId ?? "";
+  const copyBlocked = pendingCopyIntent !== null;
+
+  const convenience =
+    currentForm === null ? "interval" : convenienceOf(currentForm);
 
   return (
     <AuthorizedReadBoundary
@@ -384,6 +486,31 @@ export function AutomationLifecyclePage() {
     >
       {({ data, isFetching, refresh }) => {
         if (data === undefined || currentForm === null) {
+          if (editing && editFailed) {
+            return (
+              <StatusBanner
+                variant="error"
+                title="The definition could not be read"
+              >
+                <p>
+                  {editQueryResult !== undefined && !editQueryResult.ok
+                    ? editQueryResult.code === "not_found"
+                      ? "This definition is not present in the current Active configuration. Refresh the Automation inventory to find its current identity or history."
+                      : `Reading the definition failed (${editQueryResult.code}). Refresh after the Active configuration is available; no input was lost.`
+                    : "Reading the definition failed. Refresh after the Active configuration is available."}
+                </p>
+                <div className="mf-actions">
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to="/operations/automation"
+                  >
+                    Back to Automation
+                  </Link>
+                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
+                </div>
+              </StatusBanner>
+            );
+          }
           return (
             <StatusBanner variant="info" title="Loading the definition">
               <p>
@@ -416,7 +543,10 @@ export function AutomationLifecyclePage() {
         }
         const valid = formIsValid(currentForm, editing);
         const update = (patch: Partial<FormState>) =>
-          setForm({ ...currentForm, ...patch });
+          setFormEntry({
+            key: formContextKey,
+            form: { ...currentForm, ...patch },
+          });
         const preview = previewMutation.data;
         const previewModel =
           preview !== undefined && preview.ok ? preview.model : null;
@@ -427,6 +557,10 @@ export function AutomationLifecyclePage() {
         const copyCandidate =
           copyCandidateQuery.data !== undefined && copyCandidateQuery.data.ok
             ? copyCandidateQuery.data.model
+            : null;
+        const copyIntent =
+          copyIntentQuery.data !== undefined && copyIntentQuery.data.ok
+            ? copyIntentQuery.data.model
             : null;
         return (
           <div className="mf-dashboard">
@@ -510,6 +644,10 @@ export function AutomationLifecyclePage() {
                 placeholder="empty for the ResourceLibrary root"
                 maxLength={1024}
               />
+              <p className="mf-dashboard-meta">
+                Clearing this field and saving publishes the cleared scope: the
+                definition then covers the ResourceLibrary root.
+              </p>
               <p className="mf-label">
                 <label htmlFor="lifecycle-mode">Run mode</label>
               </p>
@@ -558,20 +696,41 @@ export function AutomationLifecyclePage() {
             <section className="mf-count-section">
               <h3>Schedule</h3>
               <p className="mf-label">
-                <label htmlFor="lifecycle-schedule-type">Schedule type</label>
+                <label htmlFor="lifecycle-schedule-convenience">Schedule</label>
               </p>
               <select
-                id="lifecycle-schedule-type"
-                value={currentForm.scheduleType}
-                onChange={(event) =>
+                id="lifecycle-schedule-convenience"
+                value={convenience}
+                onChange={(event) => {
+                  const value = event.target.value as ScheduleConvenience;
+                  if (value === "daily") {
+                    update({
+                      scheduleType: "cron",
+                      cron: DAILY_CRON,
+                    });
+                    return;
+                  }
+                  if (value === "weekly") {
+                    update({
+                      scheduleType: "cron",
+                      cron: WEEKLY_CRON,
+                    });
+                    return;
+                  }
                   update({
-                    scheduleType:
-                      event.target.value === "cron" ? "cron" : "interval",
-                  })
-                }
+                    scheduleType: value === "interval" ? "interval" : "cron",
+                    cron:
+                      value === "cron" &&
+                      currentForm.scheduleType === "interval"
+                        ? ""
+                        : currentForm.cron,
+                  });
+                }}
               >
                 <option value="interval">interval (seconds)</option>
-                <option value="cron">Cron with IANA timezone</option>
+                <option value="daily">daily at 08:00</option>
+                <option value="weekly">Mondays at 08:00</option>
+                <option value="cron">advanced Cron with IANA timezone</option>
               </select>
               {currentForm.scheduleType === "interval" ? (
                 <>
@@ -584,11 +743,21 @@ export function AutomationLifecyclePage() {
                     onChange={(event) =>
                       update({ intervalSeconds: event.target.value })
                     }
-                    inputMode="numeric"
+                    inputMode="decimal"
                   />
+                  <p className="mf-dashboard-meta">
+                    Any positive number of seconds, including fractional values
+                    such as 1.5.
+                  </p>
                 </>
               ) : (
                 <>
+                  {convenience !== "cron" && (
+                    <p className="mf-dashboard-meta">
+                      This convenience schedule compiles to the Cron expression
+                      below; edit it as advanced Cron for exact control.
+                    </p>
+                  )}
                   <p className="mf-label">
                     <label htmlFor="lifecycle-cron">Cron expression</label>
                   </p>
@@ -621,7 +790,7 @@ export function AutomationLifecyclePage() {
                   }
                 >
                   {previewMutation.isPending
-                    ? "Calculating…"
+                    ? "Calculating..."
                     : "Preview upcoming times"}
                 </Button>
               </div>
@@ -656,10 +825,11 @@ export function AutomationLifecyclePage() {
                     digest,
                     revisionId,
                     version,
+                    targetId: routeTargetId,
                   })
                 }
               >
-                {saveMutation.isPending ? "Publishing…" : "保存"}
+                {saveMutation.isPending ? "Publishing..." : "保存"}
               </Button>
               <Link
                 className="mf-button mf-button-secondary"
@@ -685,7 +855,7 @@ export function AutomationLifecyclePage() {
                     disabled={!canManage || toggleMutation.isPending}
                     onClick={() =>
                       toggleMutation.mutate({
-                        id: currentForm.id,
+                        id: routeTargetId,
                         enabled: !currentForm.enabled,
                         digest,
                         revisionId,
@@ -694,17 +864,19 @@ export function AutomationLifecyclePage() {
                     }
                   >
                     {toggleMutation.isPending
-                      ? "Updating…"
+                      ? "Updating..."
                       : currentForm.enabled
                         ? "Disable schedule"
                         : "Enable schedule"}
                   </Button>
                   <Button
                     type="button"
-                    disabled={!canManage || copyMutation.isPending}
+                    disabled={
+                      !canManage || copyMutation.isPending || copyBlocked
+                    }
                     onClick={() =>
                       copyMutation.mutate({
-                        id: currentForm.id,
+                        id: routeTargetId,
                         digest,
                         revisionId,
                         version,
@@ -712,7 +884,7 @@ export function AutomationLifecyclePage() {
                     }
                   >
                     {copyMutation.isPending
-                      ? "Copying…"
+                      ? "Copying..."
                       : "Copy as disabled definition"}
                   </Button>
                 </div>
@@ -722,9 +894,72 @@ export function AutomationLifecyclePage() {
                     {copyCandidate.definition.enabled ? "enabled" : "disabled"})
                   </p>
                 )}
+                {copyBlocked && (
+                  <StatusBanner variant="error" title="Copy outcome unknown">
+                    <p>
+                      The last Copy command for {pendingCopyIntent} returned no
+                      confirmed outcome. It may have been published durably;
+                      reconciling allocates no new copy and replays nothing.
+                    </p>
+                    <div className="mf-actions">
+                      {!reconcileCopyFor && (
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setReconcileCopyFor(pendingCopyIntent);
+                          }}
+                        >
+                          Reconcile the submitted Copy
+                        </Button>
+                      )}
+                      <Link
+                        className="mf-button mf-button-secondary"
+                        to="/operations/automation"
+                      >
+                        Refresh the Automation inventory
+                      </Link>
+                    </div>
+                    {reconcileCopyFor !== null && (
+                      <p className="mf-dashboard-meta">
+                        {copyIntent === null
+                          ? "Reading the durable copy evidence..."
+                          : copyIntent.committed
+                            ? `The copy committed durably as ${copyIntent.committedDefinitionId}. Refresh the inventory; no second copy is created.`
+                            : copyIntent.observedCommands > 0
+                              ? "No durable publication evidence exists for the submitted copy; after refreshing the inventory you may deliberately submit the copy again."
+                              : "No submitted copy command was observed in durable evidence; the outcome is genuinely unpublished."}
+                      </p>
+                    )}
+                    {copyIntent?.committed === true && (
+                      <div className="mf-actions">
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setPendingCopyIntent(null);
+                            setReconcileCopyFor(null);
+                            setError(null);
+                            if (copyIntent.committedDefinitionId) {
+                              void navigate({
+                                to: "/operations/automation/lifecycle/$definitionId",
+                                params: {
+                                  definitionId:
+                                    copyIntent.committedDefinitionId,
+                                },
+                              });
+                            }
+                          }}
+                        >
+                          Open the committed copy
+                        </Button>
+                      </div>
+                    )}
+                  </StatusBanner>
+                )}
                 <h3>Reference-safe removal</h3>
                 {removal === null ? (
-                  <p className="mf-dashboard-meta">Reading removal evidence…</p>
+                  <p className="mf-dashboard-meta">
+                    Reading removal evidence...
+                  </p>
                 ) : (
                   <>
                     <p className="mf-dashboard-meta">
@@ -759,7 +994,7 @@ export function AutomationLifecyclePage() {
                         }
                         onClick={() =>
                           removeMutation.mutate({
-                            id: currentForm.id,
+                            id: routeTargetId,
                             digest,
                             revisionId,
                             version,
@@ -767,7 +1002,7 @@ export function AutomationLifecyclePage() {
                         }
                       >
                         {removeMutation.isPending
-                          ? "Removing…"
+                          ? "Removing..."
                           : "Remove definition"}
                       </Button>
                     </div>

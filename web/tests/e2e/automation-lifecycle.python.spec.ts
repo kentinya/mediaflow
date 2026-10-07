@@ -253,3 +253,125 @@ test("removal revokes live unattended authority and retains its audit", async ({
   expect(state.definitions).toEqual([]);
   expect(state.grant?.status).toBe("revoked");
 });
+
+test("retained history stays readable after removal through the detail route", async ({
+  page,
+}) => {
+  // P1-3 regression: the operator's existing definition detail route
+  // resolves a removed definition from durable evidence, truthfully
+  // labelled historical, and never presents it as Active authority.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  // A real Scheduler tick emits one due occurrence for the published,
+  // enabled definition through the production emission boundary.
+  await page.request.post("/__harness__/reset-automation-definitions");
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByRole("button", { name: "Enable schedule" }).click();
+  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  const tick = await page.request.post(
+    "/__harness__/run-automation-scheduler-tick",
+  );
+  const tickBody = (await tick.json()) as {
+    emitted?: string[];
+    occurrenceTotal?: number;
+  };
+  expect(tickBody.emitted).toContain(DEFINITION_ID);
+
+  // The operator's existing occurrences route reads the emitted history.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: /occurrences/i }),
+  ).toBeVisible();
+
+  // After removal the exact same history route still resolves the durable
+  // occurrence through historical evidence.
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByLabel(/I confirm removing this definition/).check();
+  await page.getByRole("button", { name: "Remove definition" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+  let state = await harnessState(page);
+  expect(state.definitions).toEqual([]);
+  expect(state.occurrenceTotal).toBe(1);
+
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: /occurrences/i }),
+  ).toBeVisible();
+
+  // The removed definition's detail route renders the retained history,
+  // labelled historical and never as Active authority.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: /Harness automation/ }),
+  ).toBeVisible();
+  await expect(page.getByText(/removed · retained history/)).toBeVisible();
+  state = await harnessState(page);
+  expect(state.definitions).toEqual([]);
+  expect(state.occurrenceTotal).toBe(1);
+});
+
+test("navigating to the copy route never applies the origin's unsaved input", async ({
+  page,
+}) => {
+  // P1-1 regression: open the origin, change its Name without saving, then
+  // navigate to another definition route. A Save there publishes that
+  // route's definition, never the origin's retained input.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  // Publish a real copy through the explicit Copy command first, so the
+  // second route exists.
+  await openLifecycle(page, DEFINITION_ID);
+  await page
+    .getByRole("button", { name: "Copy as disabled definition" })
+    .click();
+  await expect(page.getByText(/new, disabled definition/)).toBeVisible();
+
+  // Open the origin again, change its Name without saving.
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByLabel("Name").fill("Unsaved origin name");
+  // Navigate to the copy route without saving the origin.
+  await openLifecycle(page, `${DEFINITION_ID}-copy`);
+  // The copy route shows the copy's own loaded values, not the origin's
+  // retained name.
+  await expect(page.getByLabel("Name")).toHaveValue(/copy/);
+  await expect(page.getByLabel("Name")).not.toHaveValue("Unsaved origin name");
+  // Saving publishes the copy's own values under the copy identity.
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+  const state = await harnessState(page);
+  const copy = state.definitions.find(
+    (item) => item.id === `${DEFINITION_ID}-copy`,
+  );
+  expect(copy).toBeDefined();
+  expect(copy?.name).not.toBe("Unsaved origin name");
+  const origin = state.definitions.find((item) => item.id === DEFINITION_ID);
+  expect(origin).toBeDefined();
+  expect(origin?.name).toBe("Harness automation");
+});

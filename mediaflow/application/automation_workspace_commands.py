@@ -157,7 +157,11 @@ class AutomationWorkspaceCommandService:
                 "timezone": MAX_DEFINITION_TIMEZONE_LENGTH,
                 "itemLimit": {"minimum": 1, "maximum": MAX_DEFINITION_ITEM_LIMIT},
                 "intervalSeconds": {
-                    "minimum": 1,
+                    # The domain accepts any finite value greater than zero:
+                    # fractional seconds such as 1.5 are supported values, so
+                    # the bound is an exclusive minimum, not an integer floor.
+                    "minimum": 0,
+                    "exclusiveMinimum": True,
                     "maximum": MAX_DEFINITION_INTERVAL_SECONDS,
                 },
             },
@@ -240,6 +244,106 @@ class AutomationWorkspaceCommandService:
             "nextAction": (
                 "confirm the removal to stop future scheduling and revoke future unattended "
                 "mutation authority while retaining grants, audits and run history"
+            ),
+        }
+
+    def copy_intent(self, definition_id: str) -> dict[str, object]:
+        """Reconcile one submitted-but-unconfirmed Copy command from durable truth.
+
+        A Copy whose HTTP response was lost is an unknown publication outcome,
+        not a rejection.  This read resolves the exact outcome from durable
+        evidence instead of letting the browser allocate another copy: it
+        reports whether the latest observed copy command for this source
+        actually published a definition, the copy identity that evidence
+        carries, and the current Active identity the next deliberate command
+        must fence against.  The read creates nothing and starts no work.
+        """
+
+        self._identifier(definition_id, "copy intent")
+        active = self._require_active_read("copy intent")
+        published_ids = self._active_ids(active)
+        evidence: dict[str, object] | None = None
+        committed_id: str | None = None
+        observed_commands = 0
+        repository = self._managed.repository
+        reader = getattr(repository, "list_recent_command_audits", None)
+        if callable(reader):
+            try:
+                audits = reader(("draft_edit", "activate"), limit=200)
+            except Exception:
+                audits = ()
+            for audit in audits:
+                change = audit.after.get("objectChange")
+                if not isinstance(change, dict):
+                    continue
+                if str(change.get("kind")) != "schedule":
+                    continue
+                # The persisted audit action is the managed lifecycle action
+                # (``draft_edit``); the command identity lives in the
+                # objectChange context.
+                command_action = str(change.get("action"))
+                if command_action not in {"copy", "create"}:
+                    continue
+                # Copy commands carry their source explicitly; create commands
+                # have no source identity at all, so they only reconcile for a
+                # read naming the candidate itself.
+                source_id = change.get("sourceObjectId") or change.get("routeObjectId")
+                if source_id is None and command_action == "create":
+                    candidate_now = change.get("after") or change.get("candidate")
+                    if not (
+                        isinstance(candidate_now, dict)
+                        and str(candidate_now.get("id") or "") == definition_id
+                    ):
+                        continue
+                elif source_id is None:
+                    continue
+                if str(source_id) != definition_id and command_action == "copy":
+                    continue
+                candidate = change.get("after") or change.get("candidate")
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_id = str(candidate.get("id") or "")
+                if not candidate_id or candidate_id == definition_id:
+                    continue
+                observed_commands += 1
+                if candidate_id in published_ids:
+                    # The newest observed command committed durably.
+                    committed_id = candidate_id
+                    evidence = {
+                        "auditId": audit.audit_id[:64],
+                        "action": command_action,
+                        "occurredAt": audit.occurred_at.isoformat(),
+                        "candidateId": candidate_id,
+                        "published": True,
+                    }
+                elif evidence is None:
+                    evidence = {
+                        "auditId": audit.audit_id[:64],
+                        "action": command_action,
+                        "occurredAt": audit.occurred_at.isoformat(),
+                        "candidateId": candidate_id,
+                        "published": False,
+                    }
+                break
+        return {
+            "definitionId": definition_id,
+            "sourcePresent": definition_id in published_ids,
+            "committed": committed_id is not None,
+            "committedDefinitionId": committed_id,
+            "lastObserved": evidence,
+            "observedCommands": observed_commands,
+            "active": self._safe_active(active),
+            "sideEffects": "none",
+            "nextAction": (
+                f"the copy of {definition_id!r} committed durably as {committed_id!r}; "
+                "reload the current authority instead of submitting another copy"
+                if committed_id is not None
+                else (
+                    "the submitted copy command left no durable publication evidence; "
+                    "reload the current authority and resubmit the copy deliberately"
+                    if observed_commands > 0
+                    else "no pending copy command was observed for this definition"
+                )
             ),
         }
 
@@ -477,6 +581,7 @@ class AutomationWorkspaceCommandService:
             object_id=None,
             actor=actor,
             audit_action="copy",
+            source_id=definition_id,
             before_publish=before_publish,
         )
 
@@ -529,6 +634,7 @@ class AutomationWorkspaceCommandService:
                         "sourceScope": stored.get("sourceScope"),
                         "mode": stored.get("mode"),
                     },
+                    "publishedFromRevisionId": active.revision_id,
                 },
             )
         except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
@@ -539,38 +645,240 @@ class AutomationWorkspaceCommandService:
         validated = self._validate(edited, definition_id)
         self._assert_focused_change(active.document, validated.document, definition_id)
 
+        # The live authority evidence this removal is about to revoke. A known
+        # rejected publication (a concurrent focused Save won) must leave the
+        # operator's live automation exactly as it was, so the exact prior
+        # grant is captured here and durably restored on that path.
+        prior_grant = None
+        if self._unattended_grants is not None:
+            try:
+                current = self._unattended_grants.get_for_definition(definition_id)
+                if current is not None and current.status.value == "active":
+                    prior_grant = current
+            except Exception:
+                prior_grant = None
+
         revocation = self._revoke_future_authority(definition_id, actor=actor, reason=reason)
+        if str(revocation.get("state")) == "active":
+            raise AutomationDefinitionSaveError(
+                "automation_definition_authority_revoke_failed",
+                "future unattended authority could not be revoked, so the removal was not "
+                "published; the Active definition remains in use",
+                status=503,
+                definition_id=definition_id,
+                stage="authority",
+                durable_state="active_preserved",
+                side_effects="none",
+                authority_state="active",
+                next_action="restore unattended grant persistence, then confirm the removal again",
+            )
 
         try:
-            return self._managed.activate(
+            published = self._managed.activate(
                 validated.revision_id,
                 expected_version=validated.version,
                 actor=actor,
                 before_publish=before_publish,
             )
         except ConfigurationVersionConflict:
+            self._restore_prior_grant(prior_grant)
             raise
         except ConfigurationActivationConflict as error:
+            # A concurrent writer published first and this removal lost. The
+            # Active definition is preserved exactly as the concurrent winner
+            # left it, so the operator's live automation is restored: the exact
+            # previously observed live grant is durably re-created. The
+            # authority state is read back live and reported bounded.
+            self._restore_prior_grant(prior_grant)
+            live_authority = self._authority_state_now(definition_id)
             raise AutomationDefinitionSaveError(
                 "automation_definition_removal_not_published",
                 "the removal successor could not be published; the Active definition is "
-                "preserved and its future unattended authority state is reported",
+                "preserved with its previous live authority restored, and the current "
+                "authority state is reported",
                 status=409,
                 definition_id=definition_id,
                 stage="activate",
                 revision_id=validated.revision_id,
-                current_revision_id=error.current_revision_id,
-                current_version=error.current_version,
                 durable_state="active_preserved",
                 side_effects="configuration_only",
                 retry_safe=True,
-                authority_state=str(revocation["state"]),
+                authority_state=live_authority,
                 next_action=(
                     "refresh the current Active configuration; the definition is still "
-                    "published and its future unattended authority is "
-                    f"{revocation['state']}. Re-grant deliberately if it must remain live"
+                    f"published and its future unattended authority is {live_authority}. "
+                    "Re-grant deliberately if it must remain live"
                 ),
             ) from error
+
+        # Post-publication authority proof: a grant that a concurrent operator
+        # legitimately re-granted between the revocation and this publication
+        # must not survive as live authority for a definition that is no longer
+        # published.  The removal intent was explicitly confirmed, so the
+        # remaining applicable authority is revoked again; a residual revocation
+        # that fails (or cannot prove the revoked state) is reported truthfully
+        # on the already-published removal instead of claiming full revocation.
+        try:
+            residual = self._revoke_future_authority(
+                definition_id,
+                actor=actor,
+                reason=reason or "the Automation Task Definition was removed",
+            )
+        except AutomationDefinitionSaveError as error:
+            raise AutomationDefinitionSaveError(
+                "automation_definition_removal_authority_live",
+                "the removal successor was published but live future unattended authority "
+                "could not be confirmed revoked; verify and revoke it deliberately",
+                status=200,
+                definition_id=definition_id,
+                stage="authority",
+                revision_id=published.revision_id,
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                authority_state=getattr(error, "authority_state", None) or "unavailable",
+                next_action=(
+                    "inspect the definition's unattended grant state and revoke it "
+                    "deliberately; scheduled emission already stopped because the "
+                    "definition is no longer published"
+                ),
+            ) from error
+        if str(residual.get("state")) not in {"revoked", "already_revoked", "none"}:
+            live = self._live_authority_status(definition_id)
+            raise AutomationDefinitionSaveError(
+                "automation_definition_removal_authority_live",
+                "the removal successor was published but live future unattended authority "
+                "could not be confirmed revoked; verify and revoke it deliberately",
+                status=200,
+                definition_id=definition_id,
+                stage="authority",
+                revision_id=published.revision_id,
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                authority_state=live,
+                next_action=(
+                    "inspect the definition's unattended grant state and revoke it "
+                    "deliberately; scheduled emission already stopped because the "
+                    "definition is no longer published"
+                ),
+            )
+        return published
+
+    def _safe_active_summary(self) -> dict[str, object] | None:
+        try:
+            current = self._managed.active()
+        except Exception:
+            return None
+        return self._safe_active(current) if current is not None else None
+
+    def _restore_prior_grant(self, prior_grant) -> None:
+        """Durably restore the exact live grant a rejected removal had revoked.
+
+        A removal that loses publication (a concurrent focused Save won) must
+        leave the operator's live automation exactly as it was: the exact
+        previously observed active grant is re-created through the same durable
+        repository boundary the grant service uses. Restoration failures do not
+        mask the publication failure; the bounded authority state reported to
+        the operator always reflects live truth instead.
+        """
+
+        if prior_grant is None or self._unattended_grants is None:
+            return
+        try:
+            live = self._unattended_grants.get_for_definition(prior_grant.definition_id)
+            if live is not None and live.status.value == "active":
+                return
+            creator = getattr(
+                self._unattended_grants.repository, "create_unattended_execution_grant", None
+            )
+            if not callable(creator):
+                creator = getattr(
+                    self._unattended_grants.repository, "create_unattended_grant", None
+                )
+            if not callable(creator):
+                return
+            from datetime import UTC, datetime
+
+            from mediaflow.domain.unattended_execution import (
+                UnattendedExecutionGrant,
+                UnattendedExecutionGrantAudit,
+                UnattendedExecutionGrantStatus,
+            )
+
+            restored = UnattendedExecutionGrant(
+                prior_grant.grant_id,
+                prior_grant.definition_id,
+                prior_grant.resource_library_id,
+                prior_grant.source_scope,
+                prior_grant.run_mode,
+                prior_grant.max_items_per_run,
+                UnattendedExecutionGrantStatus.ACTIVE,
+                prior_grant.granting_principal,
+                datetime.now(UTC),
+                prior_grant.definition_fingerprint,
+                prior_grant.configuration_snapshot_id,
+                prior_grant.configuration_snapshot_digest,
+                prior_grant.configuration_snapshot_version,
+                reason="restored after a rejected Automation definition removal",
+                preview_id=prior_grant.preview_id,
+            )
+            audit = UnattendedExecutionGrantAudit(
+                f"{prior_grant.grant_id}-restored",
+                prior_grant.grant_id,
+                "granted",
+                datetime.now(UTC),
+                "automation-removal",
+                {
+                    "definitionId": prior_grant.definition_id,
+                    "reason": "the removal successor was not published",
+                },
+            )
+            try:
+                creator(restored, audit)
+            except Exception:
+                # The revoked row of the same grant identity is durable
+                # evidence that may not be overwritten; a rejected removal
+                # restores authority as a new grant row with the exact prior
+                # bounds instead.
+                restored = UnattendedExecutionGrant(
+                    f"{prior_grant.grant_id}-restored"[:128],
+                    prior_grant.definition_id,
+                    prior_grant.resource_library_id,
+                    prior_grant.source_scope,
+                    prior_grant.run_mode,
+                    prior_grant.max_items_per_run,
+                    UnattendedExecutionGrantStatus.ACTIVE,
+                    prior_grant.granting_principal,
+                    datetime.now(UTC),
+                    prior_grant.definition_fingerprint,
+                    prior_grant.configuration_snapshot_id,
+                    prior_grant.configuration_snapshot_digest,
+                    prior_grant.configuration_snapshot_version,
+                    reason="restored after a rejected Automation definition removal",
+                    preview_id=prior_grant.preview_id,
+                )
+                audit = UnattendedExecutionGrantAudit(
+                    f"{restored.grant_id}-audit",
+                    restored.grant_id,
+                    "granted",
+                    datetime.now(UTC),
+                    "automation-removal",
+                    {
+                        "definitionId": prior_grant.definition_id,
+                        "reason": "the removal successor was not published",
+                    },
+                )
+                creator(restored, audit)
+        except Exception:
+            # Restoration is best-effort recovery of the pre-command state; the
+            # raised publication error already carries the live authority read.
+            return
+
+    def _authority_state_now(self, definition_id: str) -> str:
+        """The definition's live unattended-authority state read at this moment."""
+
+        return self._live_authority_status(definition_id)
 
     # ------------------------------------------------------------------
     # Shared publication core
@@ -584,6 +892,7 @@ class AutomationWorkspaceCommandService:
         object_id: str | None,
         actor: str,
         audit_action: str,
+        source_id: str | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None,
     ) -> ManagedConfigurationRevision:
         definition_id = str(normalized.get("id"))
@@ -600,6 +909,16 @@ class AutomationWorkspaceCommandService:
                 audit_metadata={
                     "surface": "automation",
                     "candidate": copy.deepcopy(dict(normalized)),
+                    # The audit context is the reconciliation evidence a lost
+                    # response needs: the command's route intent, the exact
+                    # candidate it submitted, the source it derived from (for
+                    # copy commands the route target), and the Active identity
+                    # it was published from.
+                    "routeObjectId": object_id,
+                    "sourceObjectId": (
+                        str(source_id) if audit_action == "copy" and source_id else None
+                    ),
+                    "publishedFromRevisionId": active.revision_id,
                 },
             )
         except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
@@ -906,6 +1225,21 @@ class AutomationWorkspaceCommandService:
             "maxItemsPerRun": grant.max_items_per_run,
             "previewId": grant.preview_id,
         }
+
+    def _live_authority_status(self, definition_id: str) -> str:
+        """The definition's live unattended-authority status right now.
+
+        ``get_for_definition`` falls back to the newest grant row of any
+        status, so a previously revoked grant reads ``revoked`` even when no
+        authority is live.  Removal reconciliation must report the *live*
+        state: a revoked/absent grant means no live authority; only an ACTIVE
+        grant is live future mutation authority.
+        """
+
+        projection = self._authority_projection(definition_id)
+        if projection.get("active") is True:
+            return "active"
+        return "none"
 
     def _revoke_future_authority(
         self, definition_id: str, *, actor: str, reason: str | None

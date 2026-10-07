@@ -1576,6 +1576,42 @@ class SQLiteConfigurationRepository:
             ),
         )
 
+    def list_recent_command_audits(
+        self,
+        actions: tuple[str, ...],
+        *,
+        limit: int = 50,
+    ) -> tuple[ConfigurationChangeAudit, ...]:
+        """The newest lifecycle-command audits across all revisions, bounded.
+
+        Lifecycle-command reconciliation (for example, resolving whether an
+        Automation definition copy was actually published after its HTTP
+        response was lost) reads durable change evidence directly instead of
+        guessing from today's Active document.  The result is newest-first and
+        bounded, and every row passes through the same redaction the per-object
+        audit path uses.
+        """
+
+        if (
+            not actions
+            or any(not isinstance(action, str) or not action.strip() for action in actions)
+            or len(actions) > 16
+        ):
+            raise ValueError("recent command audit actions must be bounded non-empty strings")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("recent command audit limit must be between 1 and 500")
+        placeholders = ", ".join("?" for _ in actions)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT * FROM configuration_change_audits
+                WHERE action IN ({placeholders})
+                ORDER BY occurred_at DESC, sequence DESC LIMIT ?
+                """,
+                (*actions, limit),
+            ).fetchall()
+        return tuple(self._audit(row) for row in rows)
+
     @staticmethod
     def _row_integrity_valid(row: sqlite3.Row) -> bool:
         try:

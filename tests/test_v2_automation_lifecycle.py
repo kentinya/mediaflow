@@ -315,6 +315,112 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             )
         )
 
+    def test_retained_history_is_readable_after_removal(self) -> None:
+        """P1-3 regression: removed-definition history stays readable through
+        the operator detail and occurrence routes after removal."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        # The definition must first be published, then removed.
+        status, removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        self.assertEqual(self.ids(), [])
+
+        status, detail = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+        self.assertEqual(detail["definition"]["historicalState"], "removed")
+        self.assertEqual(detail["definition"]["name"], "Automation nightly")
+
+        status, occurrences = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly/occurrences"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(occurrences["definitionId"], "nightly")
+        self.assertEqual(occurrences["historicalState"], "removed")
+
+        # The V1 detail and grant surfaces also resolve the removed history.
+        status, legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+        self.assertEqual(status, 200)
+        self.assertEqual(legacy["definition"]["definitionState"], "historical")
+
+        status, grant_state = self.request(
+            "GET", "/api/v1/automation/task-definitions/nightly/grant"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(grant_state["historicalState"], "removed")
+
+    def test_retained_history_is_read_only(self) -> None:
+        """A removed definition must not be grantable or previewable."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        status, _body = self.request(
+            "POST", "/api/v1/automation/task-definitions/nightly/grant", {}
+        )
+        self.assertEqual(status, 404)
+
+    def test_fractional_interval_round_trips(self) -> None:
+        """P1-4 regression: the backend supports fractional interval seconds;
+        the API accepts and returns the exact value."""
+
+        status, created = self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition("sub-second", intervalSeconds=1.5)},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(created["definition"]["intervalSeconds"], 1.5)
+        status, edited = self.request("GET", f"{BASE}/sub-second")
+        self.assertEqual(status, 200)
+        self.assertEqual(edited["definition"]["intervalSeconds"], 1.5)
+        self.assertIsNone(edited["definition"].get("cron"))
+
+    def test_clearing_scope_publishes_the_cleared_value(self) -> None:
+        """P1-4 regression: an explicit scope clear publishes the cleared
+        scope instead of silently keeping the previously stored value."""
+
+        self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition(sourceScope="incoming")},
+        )
+        status, edited = self.request(
+            "PUT",
+            f"{BASE}/nightly",
+            {
+                **self.authority(),
+                "object": {
+                    "id": "nightly",
+                    "name": "Automation nightly",
+                    "sourceScope": "",
+                },
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertIsNone(edited["definition"].get("sourceScope"))
+
+    def test_copy_intent_reconciliation(self) -> None:
+        """P1-5 regression: the copy-intent read resolves the committed copy
+        identity from durable evidence, with zero side effects."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        revisions_before = len(self.repository.list_revisions())
+        status, copied = self.request("POST", f"{BASE}/nightly/copy", self.authority())
+        self.assertEqual(status, 200)
+        status, intent = self.request("GET", f"{BASE}/nightly/copy-intent")
+        self.assertEqual(status, 200)
+        self.assertTrue(intent["committed"])
+        self.assertEqual(intent["committedDefinitionId"], copied["definition"]["id"])
+        # The reconciliation read creates nothing.
+        self.assertEqual(len(self.repository.list_revisions()), revisions_before + 1)
+        # An unknown-submission outcome without publication evidence.
+        status, empty_intent = self.request("GET", f"{BASE}/ghost/copy-intent")
+        self.assertEqual(status, 200)
+        self.assertFalse(empty_intent["committed"])
+
     def test_stale_authority_conflicts_without_publishing(self) -> None:
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
         stale = self.authority()

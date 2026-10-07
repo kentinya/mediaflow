@@ -2010,6 +2010,60 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     }
 
 
+def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
+    """Invoke the real managed-definition Scheduler once against the Active.
+
+    The retained-history proof needs a real due occurrence emitted by the
+    production Scheduler — not a database edit — so this control constructs
+    the exact resident Scheduler assembly (one repository, the managed
+    snapshot resolver, the Active definitions) and calls ``tick`` once. The
+    emitted occurrence, Job and due-state advance are the same durable rows
+    the resident service writes.
+    """
+
+    from mediaflow.application.automation import IntervalScheduler
+    from mediaflow.domain.automation import SchedulerConfigurationSnapshot
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    try:
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                active.document,
+                bootstrap_database_path=str(state.database),
+            ),
+            snapshot_id=active.revision_id,
+            digest=active.digest,
+            version=active.version,
+        )
+    except Exception as error:
+        return {"error": f"runtime configuration did not load: {type(error).__name__}"}
+    scheduler = IntervalScheduler(
+        state.repository,
+        (),
+        configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+            active.revision_id,
+            active.digest,
+            (),
+            runtime.automation_maximum_active_jobs,
+            tuple(runtime.automation_task_definitions),
+            active.version,
+            tuple(item.library_id for item in runtime.resource_libraries),
+            tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
+        ),
+    )
+    emitted = scheduler.tick()
+    occurrences = state.repository.list_automation_definition_occurrences(
+        AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20
+    )
+    return {
+        "emitted": [job.definition_id for job in emitted],
+        "occurrenceTotal": len(occurrences),
+    }
+
+
 def continuation_journey_state(state: AppState) -> dict[str, object]:
     """Report the durable state of the continuation journey (bounded reads only)."""
 
@@ -2205,6 +2259,8 @@ def application(environ, start_response):
             document = seed_automation_definition_grant(STATE)
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":
             document = reset_automation_definitions(STATE)
+        elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
+            document = run_automation_scheduler_tick(STATE)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}

@@ -1795,12 +1795,14 @@ import {
 import {
   normalizeAutomationFormAuthority,
   normalizeAutomationCopyCandidate,
+  normalizeAutomationCopyIntent,
   normalizeAutomationEditProjection,
   normalizeAutomationPublication,
   normalizeAutomationRemovalImpact,
   normalizeAutomationSchedulePreview,
   type AutomationDefinitionFormAuthorityModel,
   type AutomationCopyCandidateModel,
+  type AutomationCopyIntentModel,
   type AutomationEditProjectionModel,
   type AutomationPublicationModel,
   type AutomationRemovalImpactModel,
@@ -6961,6 +6963,27 @@ export async function fetchAutomationCopyCandidate(
     token,
     `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-candidate`,
     normalizeAutomationCopyCandidate,
+    fetchImpl,
+  );
+}
+
+/**
+ * Reconcile one submitted-but-unconfirmed Copy command from durable truth.
+ * A transport-lost Copy response is an unknown outcome, not a rejection; this
+ * read resolves whether the command actually published before any deliberate
+ * resubmission is allowed.
+ */
+export async function fetchAutomationCopyIntent(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationCopyIntentModel>> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return fetchAutomationDocument(
+    token,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-intent`,
+    normalizeAutomationCopyIntent,
     fetchImpl,
   );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AutomationLifecycleNormalizationError,
   normalizeAutomationCopyCandidate,
+  normalizeAutomationCopyIntent,
   normalizeAutomationEditProjection,
   normalizeAutomationFormAuthority,
   normalizeAutomationPublication,
@@ -124,11 +125,116 @@ describe("normalizeAutomationEditProjection", () => {
         definitionState: "draft-only",
       }).definitionState,
     ).toBe("draft-only");
+    expect(
+      normalizeAutomationEditProjection({
+        ...base,
+        definitionState: "historical",
+      }).definitionState,
+    ).toBe("historical");
     for (const state of ["published", null, 1]) {
       expect(() =>
         normalizeAutomationEditProjection({ ...base, definitionState: state }),
       ).toThrow(AutomationLifecycleNormalizationError);
     }
+  });
+
+  it("accepts a fractional interval value as a finite number", () => {
+    const base = {
+      definition: {
+        id: "sub-second",
+        name: "Sub-second",
+        enabled: false,
+        resourceLibraryId: "source",
+        mode: "scan-only",
+        itemLimit: 10,
+        sourceScope: null,
+        intervalSeconds: 1.5,
+        cron: null,
+        timezone: null,
+      },
+      active: {
+        revisionId: "rev-1",
+        version: 1,
+        revisionSequence: 1,
+        status: "active",
+        digest: "b".repeat(64),
+      },
+      definitionState: "active",
+    };
+    const model = normalizeAutomationEditProjection(base);
+    expect(model.definition.intervalSeconds).toBe(1.5);
+    // A non-finite interval is malformed data, not a valid schedule.
+    expect(() =>
+      normalizeAutomationEditProjection({
+        ...base,
+        definition: { ...base.definition, intervalSeconds: Number.NaN },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("normalizeAutomationCopyIntent", () => {
+  const active = {
+    revisionId: "rev-2",
+    version: 2,
+    revisionSequence: 2,
+    status: "active",
+    digest: "c".repeat(64),
+  };
+
+  it("projects a committed copy reconciliation", () => {
+    const model = normalizeAutomationCopyIntent({
+      definitionId: "nightly",
+      sourcePresent: true,
+      committed: true,
+      committedDefinitionId: "nightly-copy",
+      lastObserved: {
+        auditId: "audit-1",
+        action: "copy",
+        occurredAt: "2026-01-01T00:00:00+00:00",
+        candidateId: "nightly-copy",
+        published: true,
+      },
+      observedCommands: 1,
+      active,
+      sideEffects: "none",
+      nextAction: "the copy committed durably",
+    });
+    expect(model.committed).toBe(true);
+    expect(model.committedDefinitionId).toBe("nightly-copy");
+    expect(model.lastObserved?.candidateId).toBe("nightly-copy");
+  });
+
+  it("projects a genuinely unpublished unknown outcome", () => {
+    const model = normalizeAutomationCopyIntent({
+      definitionId: "nightly",
+      sourcePresent: true,
+      committed: false,
+      committedDefinitionId: null,
+      lastObserved: null,
+      observedCommands: 0,
+      active,
+      sideEffects: "none",
+      nextAction: "no pending copy command was observed",
+    });
+    expect(model.committed).toBe(false);
+    expect(model.committedDefinitionId).toBeNull();
+  });
+
+  it("fails closed on a committed outcome without its identity", () => {
+    expect(() =>
+      normalizeAutomationCopyIntent({
+        definitionId: "nightly",
+        sourcePresent: true,
+        committed: true,
+        committedDefinitionId: null,
+        lastObserved: null,
+        observedCommands: 1,
+        active,
+        sideEffects: "none",
+        nextAction: "committed",
+      }),
+    ).toThrow(AutomationLifecycleNormalizationError);
   });
 });
 

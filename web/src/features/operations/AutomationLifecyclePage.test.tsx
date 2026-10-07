@@ -411,4 +411,336 @@ describe("AutomationLifecyclePage", () => {
     await screen.findByText("Automation authority unavailable");
     expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
+
+  it("targets the route definition after Copy navigation, not retained input", async () => {
+    // P1-1 regression: open the origin, change its Name without saving, then
+    // navigate to the copy route (as the real Copy action does). A later Save
+    // must publish the route's definition (the copy), never apply the
+    // origin's retained input.
+    const calls = recordingFetch((call) => {
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly-copy") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse({
+          definition: definition({
+            id: "nightly-copy",
+            name: "Nightly copy",
+          }),
+          active: { ...ACTIVE, revisionId: "revision-active-2" },
+          definitionState: "active",
+          sideEffects: "none",
+        });
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly-copy") &&
+        call.method === "PUT"
+      ) {
+        return jsonResponse(
+          publication("edit", definition({ id: "nightly-copy" })),
+        );
+      }
+      if (call.url.endsWith("/nightly-copy/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      return undefined;
+    });
+    await connect();
+    const { router } = renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    // Change the origin's name without saving.
+    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    // Navigate to the copy route the way Copy navigation does.
+    await router.navigate({
+      to: "/operations/automation/lifecycle/$definitionId",
+      params: { definitionId: "nightly-copy" },
+    });
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.url.endsWith("/automation/definitions/nightly-copy") &&
+            call.method === "GET",
+        ),
+      ).toBe(true),
+    );
+    // The retained origin input is not applied to the copy route; the Save
+    // publishes the copy's own loaded values under the copy identity.
+    await screen.findByDisplayValue("Nightly copy");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url.endsWith("/automation/definitions/nightly-copy"),
+        ),
+      ).toBe(true),
+    );
+    const save = calls.find(
+      (call) =>
+        call.method === "PUT" &&
+        call.url.endsWith("/automation/definitions/nightly-copy"),
+    );
+    expect(save?.body).toMatchObject({
+      object: { id: "nightly-copy", name: "Nightly copy" },
+    });
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "PUT" &&
+          call.url.endsWith("/automation/definitions/nightly"),
+      ),
+    ).toBe(false);
+  });
+
+  it("publishes a cleared source scope instead of keeping the stored value", async () => {
+    // P1-4 regression: the scope field is always submitted, so clearing it
+    // and saving publishes the cleared scope.
+    const calls = recordingFetch((call) => {
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse({
+          definition: definition({ sourceScope: "incoming" }),
+          active: ACTIVE,
+          definitionState: "active",
+          sideEffects: "none",
+        });
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "PUT"
+      ) {
+        return jsonResponse(publication("edit", definition()));
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByDisplayValue("incoming");
+    await userEvent.clear(screen.getByLabelText("Relative source scope"));
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url.endsWith("/automation/definitions/nightly"),
+        ),
+      ).toBe(true),
+    );
+    const save = calls.find(
+      (call) =>
+        call.method === "PUT" &&
+        call.url.endsWith("/automation/definitions/nightly"),
+    );
+    expect(save?.body).toMatchObject({ object: { sourceScope: "" } });
+  });
+
+  it("accepts a fractional interval value", async () => {
+    // P1-4 regression: interval seconds are finite positive numbers.
+    const calls = recordingFetch((call) => {
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse({
+          definition: definition({ intervalSeconds: 1.5 }),
+          active: ACTIVE,
+          definitionState: "active",
+          sideEffects: "none",
+        });
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "PUT"
+      ) {
+        return jsonResponse(publication("edit", definition()));
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await screen.findByDisplayValue("1.5");
+    // The form accepts and saves the supported fractional value.
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url.endsWith("/automation/definitions/nightly"),
+        ),
+      ).toBe(true),
+    );
+    const save = calls.find(
+      (call) =>
+        call.method === "PUT" &&
+        call.url.endsWith("/automation/definitions/nightly"),
+    );
+    expect(save?.body).toMatchObject({ object: { intervalSeconds: 1.5 } });
+  });
+
+  it("offers daily and weekly schedule conveniences compiled to Cron", async () => {
+    const calls = recordingFetch((call) => {
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "PUT"
+      ) {
+        return jsonResponse(publication("edit", definition()));
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await userEvent.selectOptions(
+      screen.getByLabelText("Schedule"),
+      "daily at 08:00",
+    );
+    // The daily convenience compiles to the exact Cron expression and keeps
+    // the timezone field.
+    await screen.findByDisplayValue("0 8 * * *");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "PUT" &&
+            call.url.endsWith("/automation/definitions/nightly"),
+        ),
+      ).toBe(true),
+    );
+    const save = calls.find(
+      (call) =>
+        call.method === "PUT" &&
+        call.url.endsWith("/automation/definitions/nightly"),
+    );
+    expect(save?.body).toMatchObject({
+      object: { cron: "0 8 * * *", intervalSeconds: null },
+    });
+  });
+
+  it("blocks Copy resubmission until an unknown outcome is reconciled", async () => {
+    // P1-5 regression: a transport-lost Copy response is an unknown outcome.
+    // The page retains the submitted intent, offers reconciliation from
+    // durable evidence, and never allocates a second copy automatically.
+    let copyCalls = 0;
+    recordingFetch((call) => {
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (call.url.endsWith("/nightly/copy")) {
+        copyCalls += 1;
+        // First request is committed but its response is lost; the reconciliation
+        // read then proves the committed copy.
+        if (copyCalls === 1) {
+          throw new Error("network dropped");
+        }
+        return jsonResponse(
+          publication("copy", definition({ id: "nightly-copy" })),
+        );
+      }
+      if (call.url.endsWith("/nightly/copy-intent")) {
+        return jsonResponse({
+          definitionId: "nightly",
+          sourcePresent: true,
+          committed: true,
+          committedDefinitionId: "nightly-copy",
+          lastObserved: {
+            auditId: "audit-1",
+            action: "copy",
+            occurredAt: "2026-01-01T00:00:00+00:00",
+            candidateId: "nightly-copy",
+            published: true,
+          },
+          observedCommands: 1,
+          active: ACTIVE,
+          sideEffects: "none",
+          nextAction: "the copy committed durably",
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Copy as disabled definition" }),
+    );
+    await screen.findByText(/outcome unknown/i);
+    // The blocked state offers reconciliation, not a second Copy.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+    );
+    await screen.findByText(/committed durably as nightly-copy/);
+    // Opening the committed copy clears the intent.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open the committed copy" }),
+    );
+  });
 });
