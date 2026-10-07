@@ -30,7 +30,7 @@ only in [the development workflow](development-workflow.md).
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
-| 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; other page contents pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
+| 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; other page contents pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 
 ## Current boundary
 
@@ -144,8 +144,9 @@ authorized A to include ordinary file-operation consistency on ResourceLibrary a
 Files, reference-aligned Rules presentation and classification destinations using MediaLibrary plus
 `path`, including explicit legacy conversion and pinned-work/authority protection, and object-scoped
 Rules offline tests with a separately labelled complete-flow check. Local conclusions and downstream
-readiness are distinct; full publication/execution checks remain required. Other page contents
-remain pending. These are TARGET outcomes, not new CURRENT delivery or retroactive changes
+readiness are distinct; full publication/execution checks remain required. Both library pages also
+include usable long-name breadcrumbs/toolbars while preserving exact paths and normal browsing.
+Other page contents remain pending. These are TARGET outcomes, not new CURRENT delivery or retroactive changes
 to Slice 37/41 closure. Slice 44 is PLANNED, not ACTIVE. The current working branch is
 `slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code.
 Only after A completes and checkpoints an ACTIVE Contract may B plan a Task. Explicit A

@@ -4,8 +4,9 @@ This is an A-owned planning Contract for one Slice covering functional improveme
 already implemented pages. The user has selected consistent ordinary file-operation behavior for
 ResourceLibrary Files and MediaLibrary Files, reference-aligned organizing-rules presentation, and
 classification destinations defined by MediaLibrary plus `path`, plus object-scoped Rules tests
-with a separate complete-flow check. Other page contents remain unspecified; this document does
-not yet constitute an ACTIVE implementation Contract.
+with a separate complete-flow check, and usable long-name breadcrumbs/toolbars on both library
+pages. Other page contents remain unspecified; this document does not yet constitute an ACTIVE
+implementation Contract.
 
 ```text
 Slice ID: 44
@@ -14,7 +15,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PLANNED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: NOT SET
-Contract Revision: 2026-10-07 — A clarifies mandatory file-operation parity on both library pages; RO-1 through RO-4 retained
+Contract Revision: 2026-10-07 — A incorporates long-name library-page toolbar recovery as RO-5; RO-1 through RO-4 retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for selected outcomes; reassess complete boundary before activation
@@ -65,6 +66,12 @@ selected outcome. This decision does not weaken permanent permission, intent, co
 snapshot, ownership, conflict, audit or non-replay invariants, and does not revise media Organize
 Preview/source-authority rules or accepted historical closure records.
 
+The user subsequently reviewed the long-name toolbar repair proposal and explicitly authorized A
+to incorporate it into Slice 44. RO-5 selects that browsing/layout outcome on both library pages,
+including the reported Docker-served presentation. This scope amendment does not activate the
+Slice, create an implementation Task or authorize deployment. Earlier metadata-score/manual-review
+questions and mixed file/directory Organize behavior are not additional selected outcomes.
+
 Applicable guidance includes canonical Storage management/abstraction, direct file commands,
 MediaLibrary file management and file-list journeys; UX-001 through UX-010; REQ-STO-001/002/003/006,
 REQ-TASK-002/003/005/006/007, REQ-API-002/003 and REQ-SAFE-001 through REQ-SAFE-007/009; and
@@ -99,6 +106,8 @@ Slice 43, silently repin its Task, merge its rejected code or rewrite its review
 An operator can maintain real files through the existing ResourceLibrary and MediaLibrary pages
 using the actual operations supported by Local, SMB, OpenList and S3/R2, without a missing provider
 fingerprint alone disabling a supported ordinary command.
+When names or paths are long, the operator can still identify the current directory, navigate its
+ancestors, refresh and change view without toolbar controls overlapping or being clipped by entries.
 
 An operator can also find, search and maintain the complete organizing-rule graph through the
 reference-aligned workspace, and configure a destination using the selected MediaLibrary and one
@@ -108,7 +117,8 @@ object without first completing unrelated downstream configuration, understand w
 matched or did not match, and deliberately check the complete flow when needed.
 
 The following direct-file journey belongs to RO-1; Rules presentation, destination and testing
-journeys are defined separately under RO-2, RO-3 and RO-4 with their own state, outcome and recovery.
+journeys are defined separately under RO-2, RO-3 and RO-4, and long-name browsing under RO-5,
+with their own state, outcome and recovery.
 
 - **Entry:** existing `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, their row/selection
   actions, text editor, transfer dialog and linked Task/Operations recovery.
@@ -187,6 +197,19 @@ unrecognized. The shared sample form also exposes title/type fields that the str
 does not consume. These are CURRENT coupling and explanation gaps, not evidence that recognition
 itself failed. RO-4 separates object analysis from complete-flow readiness without changing the
 production recognition algorithm or publication checks.
+
+### CURRENT long-name library-page audit and selected TARGET
+
+Both library pages use the same Files toolbar/breadcrumb/control classes. The current shared CSS
+allows toolbar and breadcrumb wrapping while a later rule fixes the toolbar height at 52 px.
+Ordinary long breadcrumb names lack a sufficient shrinking/overflow boundary. A wrapped control
+row can therefore extend below the toolbar into the file viewport; an unbroken name can also exceed
+the pane width. Read-only browser reconstruction using the deployed Docker CSS reproduced the
+overlap on both page compositions with long mixed-language and unbroken synthetic names.
+
+RO-5 selects bounded breadcrumb overflow, usable controls and toolbar height that accommodates its
+actual rows. This is a frontend layout defect; the audit does not establish a Docker-only cause or
+a Storage/refresh failure. No corrected application code or Docker artifact is claimed here.
 
 ## Required Outcomes
 
@@ -548,14 +571,54 @@ DryRun and execution/authority semantics remain compatible. Existing historical 
 readable with its original scope; never reinterpret an old strategy result as a new object-only
 result, alter stored pins or let a local test authorize media mutation.
 
+### RO-5 — Usable long-name paths and toolbars on both library pages
+
+- **Goal/entry:** browse `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, including valid
+  directory deep links, with long names or many path segments while keeping navigation and controls
+  usable in list and grid views.
+- **Visible state:** exact current-directory context, bounded breadcrumbs, complete-name access,
+  normal control availability, live entries and existing loading/read-error state.
+- **Action:** inspect a full name by pointer or keyboard focus, navigate to root/ancestors, refresh,
+  and switch list/grid through visible, reachable controls.
+- **Success:** long names do not push controls over entries or outside the pane; the list starts
+  below the actual toolbar, and every breadcrumb still navigates to its exact original path.
+- **Failure:** an unavailable/denied/stale directory remains an actionable read failure with its
+  recovery controls visible. Visual shortening cannot make two distinct paths share an identity
+  or turn failed reads into an empty successful directory.
+- **Recovery:** reveal the complete name, reach an ancestor/root, or deliberately refresh the
+  bounded read through the existing journey. Preserve correct path/selection reconciliation and
+  existing per-item recovery; inspecting names, resizing or changing view starts no media work.
+
+The toolbar must accommodate its actual contents. At normal desktop width, preserve the existing
+path-left/control-right composition and short-name visual density. Let the path region shrink while
+controls retain complete labels and usable targets. When the pane becomes too narrow for one row,
+allow rows to reflow and reserve their actual height; a fixed-height wrapper must not conceal or
+overlap a wrapped row. Keep entries scrolling in their existing bounded viewport with the toolbar
+and footer usable outside that scroll.
+
+Keep breadcrumbs on one line within their own bounded region. Visually shorten an overlong single
+segment; provide local horizontal access when the combined path still exceeds the available width,
+with the current segment visible on navigation and all ancestors reachable. Path overflow must not
+move the control group or introduce page-wide horizontal scrolling. Full exact names must be
+available on hover and keyboard focus, with meaningful accessible names and preserved boundary
+whitespace disambiguation. Visual elision never changes raw names, route state, API paths or command
+intent; do not trim, normalize, rename or substitute a displayed abbreviation for Storage identity.
+
+Deliver the same behavior on both pages through consistent Files-workspace presentation, scoped
+so shared styles do not change Rules or unrelated page composition. Preserve root/ancestor links,
+refresh semantics, control disabled states, create actions, view toggles, tree/selection, paging,
+dialogs and existing ResourceLibrary Organize entry. This outcome adds no backend operation,
+Storage mutation, MediaLibrary Organize entry or new global navigation design.
+
 Other existing-page contents remain unselected. A will incorporate them and assess the complete
 boundary before activation; B must not invent additional outcomes or field/operation-sized Task
-ladders. RO-2 through RO-4 are outcomes, not pre-created implementation Tasks.
+ladders. RO-2 through RO-5 are outcomes, not pre-created implementation Tasks.
 
 ## Required Surfaces
 
 - ResourceLibrary Files and MediaLibrary Files: existing entry menus, selection actions, dialogs,
-  text editor, live refresh/tree/selection and native operation failure/recovery.
+  text editor, live refresh/tree/selection, native operation failure/recovery, and usable long-name
+  breadcrumbs/toolbars in list/grid, including production-built Docker-served presentation.
 - Their typed authenticated APIs and shared application/domain/Storage/OrganizerExecutor behavior;
   both library kinds and existing API compatibility must use the same rules.
 - Existing Task/Worker/Operations: admission, pinned scope, ownership, durable per-item transfer/
@@ -564,8 +627,9 @@ ladders. RO-2 through RO-4 are outcomes, not pre-created implementation Tasks.
   unrelated-page redesign is selected.
 - Rules workspace: all eight navigation sections, full-width inventories, Add/copy drawers,
   existing Edit routes, purpose-built forms, exact previews and native publication recovery.
-- Shared V2 shell/header and control styling only as necessary for Rules composition; preserve
-  ResourceLibrary/MediaLibrary Files, Storage, Settings, Operations and existing Automation routes.
+- Shared V2 shell/header and control styling only as necessary for Rules composition and scoped
+  Files-workspace toolbar recovery; preserve Storage, Settings, Operations and Automation routes
+  and the existing ResourceLibrary/MediaLibrary commands.
 - Shared classification/configuration/Planner/API/CLI and existing scheduled/pinned consumers,
   including legacy document/preview/plan/result readback and affected authority recovery.
 - Rules family-specific test controls/results and Overview complete-flow entry; shared typed API,
@@ -613,6 +677,11 @@ It never substitutes current configuration for historical pins or silently exten
 a new destination. Known path conflicts, unsafe relative components and missing/disabled libraries
 remain refused; no name-derived routing, silent overwrite or automatic relocation is introduced.
 
+RO-5 changes presentation only. Exact names/paths, whitespace disambiguation, backend authority,
+library-kind isolation and read/refresh behavior remain binding. Truncation, focus, horizontal path
+scrolling and responsive reflow must not submit commands, grant authority or automatically replay
+work. Full-name disclosure remains confined to the operator's existing authorized path context.
+
 ### Rules visual references and preservation
 
 `整理规则需修复.png` marks the shared header/navigation repair region in the Recognition Types
@@ -650,6 +719,8 @@ checkpoint. Missing references are reported, not replaced with generated approxi
   execution, bulk rule import/diff/rollback or V1 retirement.
 - Automatic relocation of previously organized media, in-place historical configuration/result/pin
   rewriting, and automatic replay/regrant/republication during classification conversion.
+- General long-text redesign outside the two Files workspaces, metadata-score/manual-review or
+  mixed-selection Organize fixes, and changing the user's live Docker deployment for this amendment.
 
 ## Slice Acceptance Criteria
 
@@ -751,7 +822,24 @@ The selected RO-4 is accepted only when:
     pinned work keep their scope and authority across compatible readback/restart; zero mutation,
     no executable work and no automatic replay hold for every analysis path.
 
-Additional-page acceptance is pending selection. RO-1 through RO-4 are not marked complete by
+The selected RO-5 is accepted only when:
+
+23. Both routes keep root/ancestor navigation, refresh, create controls and list/grid toggles visible
+    and usable with short names, long Chinese/English/mixed names, unbroken names and multilevel
+    paths. Toolbar rows stay inside the toolbar; entries and error/recovery states start below it
+    without overlap or clipping. Narrow pane reflow does not introduce page-wide horizontal overflow.
+24. Individual elision and local breadcrumb scrolling retain complete-name access by pointer and
+    keyboard, visible current-directory context and reachable ancestors. Boundary whitespace remains
+    distinguishable. Navigation, refresh and existing commands use the exact raw path, including
+    distinct names with the same visible prefix; no trimmed or abbreviated sibling is addressed.
+25. List/grid, directory changes, root return, refresh success and read-error recovery preserve their
+    existing state and behavior. Toolbar/footer and bounded entry scrolling remain usable. Files
+    dialogs/Organize and unrelated Rules/shared-shell pages have no affected-layout regressions.
+26. Real-browser geometry/interaction evidence covers both routes and the long-name/narrow-pane
+    cases, and confirms the corrected production-built assets through isolated Docker HTTP serving.
+    DOM-only rendering or a source-CSS change alone cannot prove the reported overlap is resolved.
+
+Additional-page acceptance is pending selection. RO-1 through RO-5 are not marked complete by
 this revision, and these acceptance groups are not a predetermined Task list.
 
 ## Final Validation Expectations
@@ -810,6 +898,19 @@ failed-Save isolation, evidence-purpose separation and old complete-test readbac
 Affected publication/runtime/Strategy Test/DryRun regressions and compatibility/migration gates
 remain required; no real credentials, production service or production media is needed.
 
+For RO-5, require automated real-browser layout and interaction checks on both native routes in
+list/grid at 1536 × 1024, 1024 × 900, 760 × 900 and 390 × 844, including actual pane width after the
+existing shell/tree layout. Cover short names, long Chinese/English/mixed and unbroken names,
+multilevel paths, shared visible prefixes and leading/trailing whitespace. Check bounding geometry
+for controls within toolbar, entry/error content below toolbar, and no page-wide horizontal overflow;
+then exercise complete-name hover/focus, keyboard ancestor navigation, current-segment visibility,
+root return, refresh and read-error recovery. Preserve row-viewport scrolling, footer, disabled-state
+semantics and exact route/API paths. Use controlled synthetic entries and read-only browsing fixtures,
+not production-media mutations or user-private paths. Include affected shared-style regressions and
+Web lint/type/build gates. Validate built assets via an isolated production Docker instance and
+record served-artifact/browser evidence; unavailable isolated evidence must be reported explicitly.
+B assigns the coherent Task's Test Level after activation; RO-5 does not reduce the final T4 gate.
+
 Reassess the complete Slice's final validation when remaining page contents are selected. Before
 activation, validate and checkpoint this planning Contract/Roadmap relationship with governance
 and diff checks; no runtime acceptance is claimed from those checks.
@@ -820,5 +921,5 @@ Not submitted. No Slice 44 implementation Task exists, and no Required Outcome i
 
 ## A Final Review
 
-Not performed. This is a PLANNED Contract with RO-1 through RO-4 selected; no Slice acceptance or
+Not performed. This is a PLANNED Contract with RO-1 through RO-5 selected; no Slice acceptance or
 closure is claimed.

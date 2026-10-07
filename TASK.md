@@ -14,6 +14,9 @@ MediaLibrary plus `path`, with explicit legacy conversion and historical snapsho
 protection; and RO-4: object-scoped Rules tests against the current unsaved candidate, relevant
 inputs and per-condition evidence, with separate downstream readiness and a native complete-flow
 check. Local passes never substitute for complete-flow, Save/activation or execution evidence.
+A has also incorporated RO-5: usable long-name breadcrumbs/toolbars on both library pages,
+preserving exact paths and complete-name access with responsive layout and production-Docker
+browser validation. This remains a planning outcome, not an implementation Task or deployment.
 Other page contents remain pending.
 RO-1's common policy and every applicable operation must be delivered and accepted on both
 ResourceLibrary Files and MediaLibrary Files, including their scoped APIs and Task/Worker recovery.
