@@ -808,7 +808,7 @@ working alongside the native focused surface.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING_COMMIT
+Head SHA: bb4367fad6cd94a7d3781e5ab096f7b02760ccea
 ```
 
 ## B Review Result
