@@ -322,6 +322,58 @@ Preview never renames, Classification Preview never creates/moves and Organize a
 Preview never grants execution. RecognitionType identity remains independent: C stays C when it
 uses policies associated with A.
 
+### TARGET — Object-scoped Rules tests and separate complete-flow checks (Slice 44)
+
+This is the selected RO-4 journey in [SLICE.md](../SLICE.md), not a CURRENT delivery claim or a
+change to the accepted Slice 41 record. Local testing answers whether the object being edited
+behaves as intended; complete-flow analysis answers whether the configured graph can produce an
+organize plan. Save retains full successor validation, applicable checks and atomic activation.
+
+- **Goal/entry:** test the current Add/copy/Edit candidate in its family-specific `测试与预览`
+  section; deliberately open `完整流程检查` from Rules Overview for combined analysis.
+- **Visible state:** current object/sample, relevant parsed fields and conditions, actual match or
+  calculated result, input errors, applicability and freshness. Full-flow readiness is separate.
+- **Action:** supply only relevant path/context or typed sample fields and explicitly run that
+  object's test. RecognitionType can optionally test its bounded associated rules. Complete-flow
+  and live Metadata tests are separate explicit actions, not automatic consequences of a local test.
+- **Success:** a valid type definition or locally correct rule/policy result remains successful
+  despite absent unrelated bindings/policies. A single-rule match does not imply it wins production
+  competition or that the complete organize journey is ready.
+- **Failure:** invalid current fields/references/sample, stale/denied/unavailable analysis and
+  explicit live Provider errors name the relevant object/stage. Non-match and not applicable are
+  normal conclusions; raw `PolicyResolutionError` is not useful recovery guidance.
+- **Recovery:** preserve input and known candidate/evidence, show which condition/reference needs
+  correction, refresh changed authority, then explicitly rerun. Unknown reads/test outcomes never
+  trigger automatic submission; tests leave Active and media unchanged.
+
+RecognitionType defines identity/name/description/enable state; RecognitionRule owns conditions.
+A new valid unbound type needs no sample just to validate its definition. With no associated rules,
+show `类型定义有效；暂无关联规则可供试识别`. Associated tests report actual rules, conditions and
+output identity without forcing the selected type or resolving downstream policies.
+
+A RecognitionRule test parses the submitted synthetic path and evaluates only that rule. Show
+each bounded condition/group's expected value, actual value and truth. For a path-contains-`电影`
+condition, `电影/Example.Movie.2024.mkv` matches and `Example.Movie.2024.mkv` does not. Neither
+requires a physical file or type binding. Missing downstream policies may yield separate readiness
+guidance but cannot turn that local match into a failure. Show exact tested context; choosing a
+ResourceLibrary does not silently prepend its root. Do not expose ignored title/type fields.
+
+Binding tests check type/uniqueness/four references. Offline Metadata checks its own configuration,
+not live credentials or a verified identity; explicit live testing applies that policy directly.
+Naming renders from typed identity/episode/tag inputs without other policies. Classification tests
+its own rules and referenced MediaLibrary/path without Naming or Storage probes. Organize explains
+its own effects/permissions/required capabilities; actual destination/conflict/execution readiness
+stays `未检查` until contextual full-flow analysis. Disabled state is visible rather than silently
+changed for a test. Relevant missing/invalid references still fail.
+
+All local offline tests perform zero Provider and media Storage I/O and create no executable work.
+Evidence identifies the non-Active submitted candidate/purpose/sample/context and becomes stale
+after relevant changes. Complete-flow analysis retains real rule competition, policy resolution
+and complete planning through shared backend semantics, exposes missing stages, labels supplied
+synthetic identity and requires explicit live Metadata intent. Necessary bounded destination reads
+remain read-only. Local evidence never grants publication or execution, and old strategy evidence
+retains its original scope.
+
 ## Real Storage Files
 
 ### Current

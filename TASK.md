@@ -9,9 +9,12 @@ Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
 Slice 44 is PLANNED for functional improvements across implemented pages. A has incorporated the
 user-authorized RO-1: consistent ordinary file operations on ResourceLibrary and MediaLibrary Files,
 using observable metadata and optional provider fingerprints; RO-2: reference-aligned Rules header,
-navigation, inventory controls and purpose-built forms; and RO-3: classification destinations using
+navigation, inventory controls and purpose-built forms; RO-3: classification destinations using
 MediaLibrary plus `path`, with explicit legacy conversion and historical snapshot/authority
-protection. Other page contents remain pending.
+protection; and RO-4: object-scoped Rules tests against the current unsaved candidate, relevant
+inputs and per-condition evidence, with separate downstream readiness and a native complete-flow
+check. Local passes never substitute for complete-flow, Save/activation or execution evidence.
+Other page contents remain pending.
 Neither B Task planning nor Developer implementation is currently authorized; A must first complete
 and checkpoint its ACTIVE Contract. The operation descriptions in SLICE.md are acceptance behavior,
 not pre-created implementation Tasks. The user-authorized Rules correction is part of Slice 44,

@@ -3,8 +3,9 @@
 This is an A-owned planning Contract for one Slice covering functional improvements across
 already implemented pages. The user has selected consistent ordinary file-operation behavior for
 ResourceLibrary Files and MediaLibrary Files, reference-aligned organizing-rules presentation, and
-classification destinations defined by MediaLibrary plus `path`. Other page contents remain
-unspecified; this document does not yet constitute an ACTIVE implementation Contract.
+classification destinations defined by MediaLibrary plus `path`, plus object-scoped Rules tests
+with a separate complete-flow check. Other page contents remain unspecified; this document does
+not yet constitute an ACTIVE implementation Contract.
 
 ```text
 Slice ID: 44
@@ -13,9 +14,9 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PLANNED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: NOT SET
-Contract Revision: 2026-10-07 — A incorporates Rules presentation and classification path correction
+Contract Revision: 2026-10-07 — A incorporates object-scoped Rules tests and separate complete-flow checks
 Working Branch: slice/44-page-improvements
-Risk: High for selected Storage mutations and classification/configuration compatibility
+Risk: High for Storage mutations, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for selected outcomes; reassess complete boundary before activation
 Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
 ```
@@ -33,6 +34,13 @@ correction into this existing Slice 44, then answered yes to including the earli
 `library/path` behavior correction as well. RO-2 and RO-3 record that authorization. This selects
 one coherent Rules improvement alongside RO-1; it does not activate the Slice, create a Task,
 resume frozen Slice 43, or retrospectively change the accepted Slice 37/41 closure records.
+
+The user subsequently granted A authority to incorporate the reviewed page-local offline-test
+proposal into current Slice 44. RO-4 records that authorization: each editor tests its current
+object and necessary inputs, while complete-flow checks have an explicit separate entry. This
+remains a PLANNED scope amendment, not Slice activation or permission to implement without B's
+active Task. It preserves the distinction between RecognitionType definition and RecognitionRule
+conditions, and does not weaken checked publication or runtime/execution prerequisites.
 
 This branch starts from `853973dbbf8289fa2ad40657033e94e870a690e4`, the factual closure checkpoint
 of accepted Slice 42 and the original Slice 43 Base. It therefore includes the accepted existing
@@ -59,9 +67,10 @@ REQ-TASK-002/003/005/006/007, REQ-API-002/003 and REQ-SAFE-001 through REQ-SAFE-
 V2-UX-001/002/003, V2-FILES-001/002/003, V2-AUTH-001/002/003 and V2-SAFE-001. Broader stable targets
 such as browser Upload/Download do not expand this selected Slice outcome.
 
-Rules improvements additionally apply V2-RULES-001 through V2-RULES-008, V2-SHELL-001,
-REQ-REC-004, REQ-CLASS-001/003/005, REQ-ORG-001/003/004 and the existing configuration, preview,
-Task/recovery and unattended-authorization invariants. RO-3 restores the canonical final-path
+Rules improvements additionally apply V2-RULES-001 through V2-RULES-009, V2-SHELL-001,
+REQ-REC-001/002/003/004, REQ-CONFIG-002/007/009, REQ-CLASS-001/003/005, REQ-ORG-001/003/004
+and the existing configuration, preview, Task/recovery and unattended-authorization invariants.
+RO-3 restores the canonical final-path
 formula; CURRENT descriptions of the older `library/path` prefix remain factual until delivery
 and acceptance. Reference layout does not authorize a different matching algorithm or mutation
 authority.
@@ -90,9 +99,12 @@ fingerprint alone disabling a supported ordinary command.
 An operator can also find, search and maintain the complete organizing-rule graph through the
 reference-aligned workspace, and configure a destination using the selected MediaLibrary and one
 safe classification path, without a media-library display name becoming an extra directory.
+While adding, copying or editing an individual rule or policy, they can also test that exact
+object without first completing unrelated downstream configuration, understand why its sample
+matched or did not match, and deliberately check the complete flow when needed.
 
-The following direct-file journey belongs to RO-1; Rules presentation and destination journeys
-are defined separately under RO-2 and RO-3 so each has its own state, outcome and recovery.
+The following direct-file journey belongs to RO-1; Rules presentation, destination and testing
+journeys are defined separately under RO-2, RO-3 and RO-4 with their own state, outcome and recovery.
 
 - **Entry:** existing `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, their row/selection
   actions, text editor, transfer dialog and linked Task/Operations recovery.
@@ -161,6 +173,16 @@ Classification currently requires `library` alongside `mediaLibraryId` and `path
 that value before the classification path in formal Planner and destination previews. The TARGET
 removes that prefix for the revised configuration contract while preserving the explicit library
 reference, safe relative path, naming contribution and exact historical snapshot semantics.
+
+The current shared Rules test panel routes RecognitionType and RecognitionRule tests through
+`preview_strategy` / `recognition_strategy_test`. Candidate staging validates a composed document,
+and strategy analysis loads a runtime, parses the synthetic path, runs configured recognition and
+resolves the winning type's downstream binding. A matched rule with no type binding therefore
+fails with `PolicyResolutionError`; a path without the required directory can complete as
+unrecognized. The shared sample form also exposes title/type fields that the strategy request
+does not consume. These are CURRENT coupling and explanation gaps, not evidence that recognition
+itself failed. RO-4 separates object analysis from complete-flow readiness without changing the
+production recognition algorithm or publication checks.
 
 ## Required Outcomes
 
@@ -290,8 +312,8 @@ search position or border style.
 - **Visible state:** active family, real inventory/references/enable state, current keyword/filter,
   published versus unsaved input, and exact-candidate test/preview freshness. Routine presentation
   uses business labels; revision/identity diagnostics remain available without dominating the page.
-- **Action:** navigate/search/filter/refresh; explicitly Add/copy/Edit; use the existing backend-
-  authorized lifecycle and tests/previews; publish with one checked Save.
+- **Action:** navigate/search/filter/refresh; explicitly Add/copy/Edit; use backend-authorized
+  lifecycle and the object-scoped tests/previews in RO-4; publish with one checked Save.
 - **Success:** the reference-aligned controls occupy consistent positions, entered values remain
   legible and correctable, and successful publication refreshes the actual Active inventory.
 - **Failure/recovery:** empty/partial/unavailable/denied states offer the existing dependency or
@@ -426,9 +448,89 @@ and provably unchanged pinned continuation are preserved. B must assess the comp
 runtime-version strategy and any necessary additive persistence evolution, restart behavior and
 upgrade rehearsal inside RO-3, rather than prescribing a second policy store or broad migration.
 
+### RO-4 — Object-scoped Rules tests with a separate complete-flow check
+
+- **Goal/entry:** from an Add/copy drawer or Edit page, verify the current unsaved object through
+  its own `测试与预览` section; use a separately labelled `完整流程检查` entry from Rules Overview
+  when checking the combined processing graph.
+- **Visible state:** identify the tested object, submitted candidate and sample, test purpose,
+  relevant parsed/input fields, condition/reference evidence, result and freshness. Separate the
+  current object's conclusion from downstream or complete-flow readiness.
+- **Action:** explicitly run the current object's test with only necessary inputs, correct that
+  object/sample and rerun; optionally test a type's existing associated rules or deliberately run
+  complete-flow analysis. Opening a page or changing fields does not submit a test.
+- **Success:** local analysis returns a valid definition, genuine rule match, binding resolution,
+  rendered name, classification decision or policy explanation appropriate to the current family.
+  Missing unrelated families cannot turn that local result into a failure or a complete-flow pass.
+- **Failure:** invalid current fields/references/sample, denied access, stale candidate, unavailable
+  analysis or an explicit live Provider failure identifies the relevant stage and corrective action.
+  A normal non-match or an inapplicable associated-rule test is not a technical failure.
+- **Recovery:** retain editor/sample input and known candidate/evidence state; correct the named
+  field/context, refresh changed authority or configure the relevant dependency, then explicitly
+  rerun the affected test. Do not require raw revision/token input or replay a test on reconnect.
+
+#### Family-specific scope and inputs
+
+| Editor | Default local test | Conclusion and boundary |
+|---|---|---|
+| RecognitionType | Validate ID, name, description and enable state against the exact candidate; optionally test its associated RecognitionRules with a sample. | A valid definition does not require a type binding or any downstream policy. No associated rule means `类型定义有效；暂无关联规则可供试识别`. Conditions remain on RecognitionRule; never force the selected type into a fabricated match. |
+| RecognitionRule | Parse a synthetic path and evaluate only the current submitted rule using the production condition engine and its actual output type. Source ResourceLibrary context is supplied when relevant to predicates. | Show match/non-match, output type, relevant parsed fields and each bounded condition's expected/actual values and truth, including nested AND/OR/NOT. Missing type binding, Metadata, Naming, Classification or Organize cannot fail this test. Invalid/missing/disabled output type remains a relevant error. |
+| Type binding | Check the selected RecognitionType, enabled-binding uniqueness and all four explicit policy references; explain resolved policy identities. | Missing/disabled references or duplicate enabled bindings are relevant failures. No file recognition, Provider search, naming/classification execution or destination probe is required to test the binding itself; C remains C. |
+| MetadataPolicy | Validate its own Provider reference, query/type, locale and bounded request/matching configuration and show effective settings. | Offline success proves local configuration only, not credentials/connectivity or an identified movie/show. Credential availability is separate readiness; an explicit live test uses this candidate policy directly with bounded query/path input, without requiring rule recognition or a type binding. |
+| NamingPolicy | Apply this candidate policy to a typed movie/TV sample containing the identity, episode and filename-tag fields it consumes. | Show directory/filename, variables and missing/unsafe-value explanations. No recognition rule, type binding, Classification, Organize, Provider or physical source file is required. |
+| ClassificationPolicy | Evaluate this candidate's internal rules against relevant typed identity, RecognitionType and source fields. | Show match/fallback/manual/no-match evidence, selected MediaLibrary and safe relative path under RO-3. Referenced destination libraries are necessary dependencies; Naming, Organize, Provider calls and Storage probes are not. |
+| OrganizePolicy | Validate and explain its operation, conflict, attachment, duplicate, rollback, cleanup, fallback and explicit high-risk permissions. | Explain intended effects and required capabilities without executing. Actual source/destination capability, conflict or execution readiness is `未检查` until a contextual complete-flow check; absent bindings or destinations cannot fail the policy's own definition check or yield a false execution-ready verdict. |
+
+Use fields appropriate to that test, with business labels and examples rather than one generic form
+for every family. RecognitionRule tests use the submitted path/context, not hidden title/type values
+that are silently ignored. A synthetic file need not exist. Show the exact tested path and relevant
+context; do not silently prepend a ResourceLibrary root or claim its selection changes the path.
+Require source context only when needed and never access Storage to fill a synthetic sample.
+
+An associated-rule test on RecognitionType evaluates the bounded set of rules targeting that type
+under the exact candidate context, preserves disabled/inapplicable state and explains each rule's
+result. It does not resolve downstream policies or claim victory over competing types. A local
+single-rule match is labelled accordingly; priority/score/stop/ambiguity across the configured rule
+set belongs to complete-flow analysis. Local and complete checks reuse the same Python semantics,
+not a browser evaluator or a changed runtime rule-selection algorithm.
+
+#### Result, evidence and complete-flow boundaries
+
+Distinguish valid definition, matched, not matched, configuration/sample invalid, test execution
+failed and not applicable; enabled/runtime eligibility is a separate fact. Non-match identifies
+the unsatisfied conditions, not just `NO_RULE_MATCH`. Relevant failure copy names the missing
+reference or invalid field and the next action instead of raw protocol/exception names. A separate
+readiness message may say `该类型尚未配置下游绑定，完整整理流程暂不可用` without changing a valid
+RecognitionType or matched RecognitionRule result. Do not claim untested downstream readiness.
+
+Every explicit test uses the submitted unsaved candidate and minimal relevant dependencies from
+one exact configuration context. Its evidence binds internally to purpose/object/candidate/sample
+and context, is visibly non-Active and becomes stale after relevant edits, sample changes or Active
+changes. Candidate/evidence persistence may reuse existing managed storage but must not require a
+whole-runtime validation/load or downstream resolver merely to analyze an independent object.
+Other families' unsaved drafts cannot enter the test. Permission, field/reference validation,
+bounded evidence, redaction and stale-authority checks remain backend-owned and shared by Web/API.
+
+`完整流程检查` reuses existing complete Strategy Test/DryRun/Planner behavior through a native
+separate entry. It covers configured rule competition, resulting RecognitionType, its downstream
+binding, applicable Metadata/Naming/Classification/Organize behavior and composed plan/target. It
+reports missing prerequisites as complete-flow blockers. Default offline analysis calls no Provider;
+any supplied identity is explicitly synthetic and cannot be reported as a verified TMDB match.
+Live Metadata testing is separately explicit. Necessary destination observations use existing
+bounded read-only Storage ports; no complete check grants execution or starts executable work.
+Do not relabel a limited recognition check as complete planning or remove the canonical full-chain
+Test Policy capability. Unsupported/incomplete stages stay visible rather than fabricating success.
+
+Local pass evidence is not interchangeable with complete-flow or publication evidence. Save still
+performs full successor-document validation, applicable exact-revision checks and atomic activation;
+the changed test boundary cannot activate a broken declared graph. Existing public Strategy Test,
+DryRun and execution/authority semantics remain compatible. Existing historical evidence stays
+readable with its original scope; never reinterpret an old strategy result as a new object-only
+result, alter stored pins or let a local test authorize media mutation.
+
 Other existing-page contents remain unselected. A will incorporate them and assess the complete
 boundary before activation; B must not invent additional outcomes or field/operation-sized Task
-ladders. RO-2 and RO-3 are outcomes, not pre-created implementation Tasks.
+ladders. RO-2 through RO-4 are outcomes, not pre-created implementation Tasks.
 
 ## Required Surfaces
 
@@ -446,6 +548,9 @@ ladders. RO-2 and RO-3 are outcomes, not pre-created implementation Tasks.
   ResourceLibrary/MediaLibrary Files, Storage, Settings, Operations and existing Automation routes.
 - Shared classification/configuration/Planner/API/CLI and existing scheduled/pinned consumers,
   including legacy document/preview/plan/result readback and affected authority recovery.
+- Rules family-specific test controls/results and Overview complete-flow entry; shared typed API,
+  backend candidate/analysis/evidence behavior, actionable dependency guidance and historical
+  complete Strategy Test/DryRun compatibility. Tests do not become a second publication authority.
 
 B determines coherent implementation units and Task Test Levels after A activation; A does not
 pre-plan a page-by-page implementation ladder or introduce simultaneous active Tasks here.
@@ -463,6 +568,12 @@ Save never starts media work. Tests/previews stay bounded, secret-free and zero 
 only explicit live Metadata testing may call its configured Provider. RecognitionType C remains C
 when reusing A Naming/Classification policies. Style, display labels and list ordering do not alter
 condition/priority resolution, permissions, references, conflict policy or execution authority.
+RO-4 local tests perform no Provider or media Storage I/O and cannot publish/activate configuration,
+create executable Task/Job work or grant mutation authority. Only explicitly requested live
+Metadata testing or bounded complete-flow read checks use the corresponding external ports.
+Evidence purpose is preserved: local validity cannot substitute for whole-graph publication,
+complete planning, capability checks or execution permission. A rule match must come from actual
+condition evaluation, not forced RecognitionType input.
 
 The optional-fingerprint decision applies only to the selected ordinary direct-file journey. Keep
 media Organize Preview/execution, RecognitionType/policy identity, unattended grants, configuration
@@ -589,7 +700,36 @@ The selected RO-3 is accepted only when:
     mutation. Old target evidence/grants never authorize revised destinations; current preview/
     authority recovery works without replaying completed or uncertain effects.
 
-Additional-page acceptance is pending selection. RO-1 through RO-3 are not marked complete by
+The selected RO-4 is accepted only when:
+
+17. Add/copy/Edit offer the family-specific tests above against the exact submitted unsaved object.
+    A valid unbound RecognitionType passes its definition check; no associated rules is explicitly
+    inapplicable. A genuine associated-rule match outputs that type without forcing it or requiring
+    downstream policies. Disabled candidates remain visibly excluded from runtime matching.
+18. A RecognitionRule requiring path `电影` matches `电影/Example.Movie.2024.mkv` and does not
+    match `Example.Movie.2024.mkv`, with per-condition/group expected/actual/truth evidence. Empty
+    type bindings and downstream families do not fail the matched local test. Changing the current
+    unsaved rule changes the tested result; invalid conditions/output types remain relevant errors.
+19. Binding, Metadata, Naming, Classification and Organize tests enforce only their relevant
+    dependencies and yield their documented results. Offline Metadata does not require live
+    credentials or claim Provider success; explicit live testing honors this policy directly.
+    No unrelated invalid or missing policy can break an independent local test. All local tests
+    prove zero Provider and Storage calls when offline, not merely zero mutations.
+20. Results distinguish non-match, invalid configuration/input, technical failure and not applicable;
+    readiness warnings remain separate. Relevant missing/stale/denied/unavailable errors offer
+    native correction with input retained. Candidate/sample/context changes mark old results stale,
+    and reads/refresh/reconnect do not repeat tests or publish candidates.
+21. The native separately labelled complete-flow entry retains actual rule competition, policy
+    resolution and complete-plan semantics with truthful missing-stage/graph blockers and explicit
+    synthetic/live Metadata status. Web/API agree; C using A policies remains C. Local single-rule
+    success cannot imply it wins configured competition or that complete organizing is ready.
+22. Local evidence cannot satisfy required complete-flow/publication/execution gates. A local pass
+    followed by invalid successor Save preserves prior Active and input; denied/stale/unknown
+    publication recovery stays intact. Existing full Strategy Test/DryRun, historical evidence and
+    pinned work keep their scope and authority across compatible readback/restart; zero mutation,
+    no executable work and no automatic replay hold for every analysis path.
+
+Additional-page acceptance is pending selection. RO-1 through RO-4 are not marked complete by
 this revision, and these acceptance groups are not a predetermined Task list.
 
 ## Final Validation Expectations
@@ -599,6 +739,9 @@ recovery and compatibility: the selected Slice final gate is T4. RO-2 normally r
 shared-shell integration evidence; B assigns Task levels from actual risk after activation rather
 than assuming all presentation changes are local CSS. This planning change does not stand in for
 product validation or create an implementation Task.
+RO-4 needs Application/API/Web integration evidence; changes touching candidate validation,
+publication evidence or historical compatibility receive T4 validation at those authority
+boundaries. A local test split is not permission to reduce the Slice's final T4 gate.
 
 Require focused domain/application/Executor/API tests with provider-neutral absent/present/changing
 fingerprint fakes; Local temporary directories; bounded OpenList/SMB/S3 semantics through fakes/local
@@ -624,6 +767,19 @@ work across restart. If persistence or compatibility format changes, run applica
 migration rehearsal preserving real historical pins/results/evidence. A fake newer-format document
 alone cannot prove legacy compatibility. Frozen Slice 43 code is not a dependency or test baseline.
 
+For RO-4, require production-engine object tests and authenticated API/native Web journeys for
+every family: unbound/new/disabled types, absent associated rules, genuine match/non-match with
+nested groups, current unsaved candidates, missing downstream graph, unrelated invalid objects,
+invalid relevant references/inputs, local Metadata without secrets, and explicit live success/
+failure through fake Providers. Test rule competition/ambiguity/stop behavior separately from
+local results, type C policy reuse, synthetic identity labelling and complete-flow blockers.
+Use Provider/Storage spies to prove no calls from local offline tests, and prove no mutation/work/
+activation/authority from any test. Verify freshness/input retention, stale/denied/unavailable
+responses, separate readiness and unknown-result recovery, native complete-plan entry, local-pass/
+failed-Save isolation, evidence-purpose separation and old complete-test readback across restart.
+Affected publication/runtime/Strategy Test/DryRun regressions and compatibility/migration gates
+remain required; no real credentials, production service or production media is needed.
+
 Reassess the complete Slice's final validation when remaining page contents are selected. Before
 activation, validate and checkpoint this planning Contract/Roadmap relationship with governance
 and diff checks; no runtime acceptance is claimed from those checks.
@@ -634,5 +790,5 @@ Not submitted. No Slice 44 implementation Task exists, and no Required Outcome i
 
 ## A Final Review
 
-Not performed. This is a PLANNED Contract with RO-1 through RO-3 selected; no Slice acceptance or
+Not performed. This is a PLANNED Contract with RO-1 through RO-4 selected; no Slice acceptance or
 closure is claimed.

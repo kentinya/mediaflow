@@ -12,12 +12,14 @@ product and authority boundaries.
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
-Current Contract: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
+Current Contract: Slice 44 — Existing V2 Pages Functional Improvements — PLANNED
+Working branch: slice/44-page-improvements
+Suspended Slice: 43 — V2 Automation Workspace and Engine Settings — PLANNED / USER FROZEN
 Slice 42 Base: ffee77348cebcb05e356c8111c5861ed64ca0388
 Slice 42 Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
 Slice 42 A Final Review: PASS / CLOSED — 2026-10-06
 Implementation Task: NO ACTIVE IMPLEMENTATION TASK
-Next action: A SELECTS THE NEXT LARGE SLICE
+Next action: A COMPLETES AND ACTIVATES SLICE 44 AFTER REMAINING SCOPE IS SET
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -41,6 +43,12 @@ contracts own implementation scope and acceptance. Slice 42 has delivered the Op
 requirements below, including task-scoped native recovery and safe Web continuation. Its reference
 is `docs/pics/操作与任务.png`; example data is not authority. Global Review, cross-task bulk review
 and arbitrary historical Reprocess remain deferred under the unchanged Slice boundary.
+
+Object-scoped Rules testing under `V2-RULES-009` is a selected Slice 44 TARGET, not delivered
+Slice 41 behavior. Each editor analyzes its exact candidate independently of unrelated downstream
+configuration, while complete-flow analysis and checked publication retain their own prerequisites
+and evidence purposes. Slice 44 remains PLANNED with no active implementation Task; frozen Slice
+43 is not an implementation dependency or accepted capability.
 
 The setup, empty-business configuration and resident-service requirements below are delivered Slice
 40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
@@ -70,6 +78,7 @@ during migration; earlier closed Slice scope is unchanged.
 | V2-RULES-006 | Rule and policy tests/previews are exact-revision, bounded, explainable and zero Storage mutation. | Recognition Strategy Test, Metadata test, Naming Preview, Classification Preview and Organize authority/whole-chain explanation identify the tested non-Active candidate, become stale after relevant edits, expose secret-free evidence and create no executable work or execution authority. Provider access occurs only through an explicit applicable test. |
 | V2-RULES-007 | Object lifecycle, references and automatic Save/activation remain backend authoritative and consistent across Web/API/runtime consumers. | Create/copy/edit/enable-disable/reference-safe delete and page-level Save use audit, RBAC, optimistic concurrency, validation/applicable evidence and atomic activation shared services. Files Organize, Automation, API and CLI consume the same published semantics; the frontend never resolves or caches policy as authority. |
 | V2-RULES-008 | Empty, partial, invalid and failed rule graphs provide actionable recovery. | Empty Active offers dependency guidance without generated defaults. Disabled/missing references, invalid conditions/templates/paths, Provider/secret failures, stale Save candidates, denied permission, malformed responses and automatic-activation failures state what is durable, whether Active changed and the explicit safe next action. |
+| V2-RULES-009 | Each Rules editor's default offline test analyzes its current object and necessary inputs; complete-flow checks have a separate explicit entry. | RecognitionType definition is independent of rule conditions and downstream bindings; absent associated rules is inapplicable. A RecognitionRule test evaluates actual conditions and output type without resolving downstream policies, explains match/non-match with bounded condition evidence and never forces recognition. Binding/Metadata/Naming/Classification/Organize checks use only relevant dependencies. Local results, downstream readiness and full-flow outcomes remain distinct; synthetic identities are labelled and offline local tests call no Provider or Storage. Candidate/sample/context evidence stays exact and stale-aware; local passes cannot replace whole-graph publication, complete planning or execution authority. Existing complete Test Policy/DryRun remains available through native Web and shared backend behavior. This is a selected TARGET until reviewed delivery. |
 | V2-RUNTIME-001 | MediaFlow Worker starts and registers without Active and consumes later eligible work without restart. | Keep FileTransfer consumption resident; no valid authorized published context means no processing/mutation. Preserve supported command readiness, exact admitted pins, claims/leases/fences and per-item uncertainty recovery. Current Active governs new admission and does not replace older valid pins. |
 | V2-RUNTIME-002 | Scheduler and Notification Worker remain resident through absent/empty/unavailable configuration and adopt current valid configuration without restart. | No eligible schedule means no Job; unavailable Active never uses cached schedules. No usable Webhook means no send or targetless claim; preserve target identity and delivery recovery without silent retargeting. Configuration read failures explain waiting while preserving process and durable state. |
 | V2-STO-001 | Every provider-valid Storage root round-trips through typed Save, inventory, detail and Edit. | OpenList's empty root and `/` both represent its service root; render a clear provider-root label without dropping the row or rejecting the whole inventory. Existing saved empty-root entries remain readable. Other provider and Local confinement rules stay intact; failed list rendering never implies Save rollback or triggers automatic resubmission. |

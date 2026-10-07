@@ -434,6 +434,54 @@ API/navigation and Python static entry. Only the exact allowlisted edit route tr
 final ID as identity data; unknown dotted assets and traversal still fail closed. Failed impact
 reads remain unavailable evidence rather than fabricated reference counts.
 
+## TARGET — Object-scoped Rules analysis and complete-flow separation (Slice 44)
+
+The existing Rules panel uses shared whole-runtime strategy analysis for RecognitionType and
+RecognitionRule tests. Candidate staging performs composed-document validation; strategy analysis
+parses the path, evaluates configured recognition and resolves the matched type's policy binding.
+A matched rule without that binding therefore raises a policy-resolution error before useful local
+evidence is returned. This CURRENT coupling is the selected RO-4 target in [SLICE.md](../SLICE.md);
+no object-analysis split is claimed as implemented.
+
+The target application boundary captures the exact submitted candidate and configuration context,
+validates that object and its necessary references, and dispatches a bounded analysis for its
+family. It reuses production normalization, Parser, condition evaluation, binding resolver,
+Metadata policy validation, Naming/Classification engines and Organize policy semantics. Python
+remains authoritative; neither React nor a test-specific alternate matching algorithm decides
+conditions, output types, enabled state or policy identity.
+
+RecognitionType definition analysis invokes no rule matcher unless associated-rule testing is
+explicit. RecognitionRule analysis supplies only the submitted rule and relevant type/context to
+the shared engine, records bounded condition/group truth including non-matches, and stops before
+downstream resolution. Associated-rule tests use the exact bounded relevant set and never claim
+victory over unrelated competing types. Complete-flow analysis retains global priority/score/
+stop/ambiguity behavior. No test manufactures a match by forcing RecognitionType.
+
+Binding analysis resolves its four references without invoking their processing engines. Offline
+Metadata analyzes settings without Provider construction or credential-dependent success; explicit
+live analysis uses the selected candidate policy directly through the Provider port. Naming and
+Classification consume typed samples independently; Classification still validates its destination
+references and uses the applicable legacy/revised path contract. Organize definition explanation
+does not need a binding/destination and cannot assert unobserved physical readiness. Local offline
+analysis makes no Provider or Storage calls and creates no executable Task/Job.
+
+Candidate/evidence persistence may reuse managed repositories, but a whole-runtime load/validation
+is not an admission requirement for an independent object test. An unrelated incomplete/invalid
+policy cannot invalidate that local analysis. RBAC, exact observed authority, object identity,
+field allowlists, relevant reference checks, bounded secret-free evidence and stale/concurrent
+fences remain mandatory. Evidence binds purpose, object/candidate, sample and configuration context;
+currentness changes on relevant edits or Active changes. Browser state never becomes authority.
+
+A separately labelled native complete-flow entry reuses existing Strategy Test/DryRun/Planner
+behavior, validates its actual processing prerequisites and reports unavailable stages. Offline
+synthetic identity is never a verified Provider match; live testing remains explicit. Destination
+observations use existing bounded read-only Storage ports. Neither local nor complete analysis
+grants execution. Save independently validates the whole successor and applicable publication
+evidence before atomic activation; local evidence cannot replace complete-flow/publication gates.
+Compatibility retains old full-test API behavior and the original scope of historical evidence,
+immutable revisions and Task/Job pins. No parallel runtime authority or weakened mutation gate is
+introduced; OrganizerExecutor remains the sole Storage mutator.
+
 ## Persistence
 
 The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, locks, review queues,
