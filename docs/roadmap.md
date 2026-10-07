@@ -29,6 +29,9 @@ only in [the development workflow](development-workflow.md).
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 
+| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
+| 44 — Existing V2 Pages Functional Improvements | One Slice for functional improvements across multiple previously implemented pages; user content and concrete boundary pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
+
 ## Current boundary
 
 The released V1 line is version `1.0.0`, maintained on `release/v1` at tag `v1.0.0`. `main` is now
@@ -116,8 +119,7 @@ This Roadmap does not retain the retired Slice 34–36 program rows.
 
 ## Current closed Slice boundary
 
-Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice under
-`SLICE.md`: PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
+Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice: PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
 Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. It uses `docs/pics/操作与任务.png`
 as a business/style reference, not fixed data. It delivered the task-center journey from live
 selected-file organization and queue visibility to
@@ -129,8 +131,19 @@ Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded f
 recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
 redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. No implementation Task or next Slice is active. A
-selects the next large Slice in a separate turn after closure; this Roadmap does not pre-split Tasks.
+and retired Slice boundaries are unchanged. Slice 44 is only reserved, and no implementation Task
+is active; this Roadmap does not pre-split Tasks.
+
+## Current planning and suspended boundary
+
+At the user's explicit request on 2026-10-07, Slice 43 is suspended and preserved on
+`frozen/slice-43-2026-10-07`. Its status is PLANNED with a development hold, not accepted or
+cancelled; its original scope, Base and unresolved review state remain recoverable in Git.
+Slice 44 is reserved under root `SLICE.md` for improvements across multiple implemented pages,
+with contents to be supplied later. It is PLANNED, not ACTIVE. The current working branch is
+`slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code.
+Only after A completes and checkpoints an ACTIVE Contract may B plan a Task. Explicit A
+activation is also required before resuming Slice 43; no automatic integration is authorized.
 
 ## Roadmap rules
 

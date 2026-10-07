@@ -8,12 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 42 — **V2 Operations and Tasks Workspace** — is PASS / CLOSED
-after A's 2026-10-06 final review of Base `ffee77348cebcb05e356c8111c5861ed64ca0388` through
-Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. The decision and validation
-reconciliation are in [`SLICE.md`](../SLICE.md). No implementation Task is active; the next action
-is **A SELECTS THE NEXT LARGE SLICE** in a separate turn. Earlier closure-ledger entries remain
-unchanged.
+Slice 44 — **Existing V2 Pages Functional Improvements** — is PLANNED under
+[`SLICE.md`](../SLICE.md), with contents pending the user's later input. No Task or implementation
+is authorized. The working branch `slice/44-page-improvements` starts from the accepted Slice 42
+closure and excludes the unaccepted Slice 43 implementation. Slice 43 is user-frozen on
+`frozen/slice-43-2026-10-07`, retaining its original Base, Task review and unresolved blockers.
+Suspension is not closure; Slice 42 and all earlier closure-ledger entries remain unchanged.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`

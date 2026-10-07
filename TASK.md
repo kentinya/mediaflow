@@ -2,15 +2,15 @@
 
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
-Parent Slice: 42 — V2 Operations and Tasks Workspace
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Parent Slice: 44 — Existing V2 Pages Functional Improvements
+Next Action: USER SUPPLIES CONTENT; A COMPLETES AND ACTIVATES THE CONTRACT
 ```
 
-Slice 42 is PASS / CLOSED after A's 2026-10-06 review of the entire immutable Base..Implementation
-Head. The Contract, Closure Packet, decision and validation reconciliation are in
-[SLICE.md](SLICE.md). Detailed Task/Developer/B review history remains reachable in Git, including
-the Developer report at `f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903` and B's closure submission at
-`df4391bd2ff351cbcfc34d24f193aff5abb59dbc`.
+Slice 44 is a PLANNED placeholder for functional improvements across multiple implemented pages.
+The user will add its contents later. Neither B Task planning nor Developer implementation is
+currently authorized; A must first complete and checkpoint its ACTIVE Contract.
 
-No implementation Task or next Slice is authorized. A selects the next large Slice in a separate
-turn after this closure.
+Slice 43 is frozen on `frozen/slice-43-2026-10-07`, checkpoint
+`8a41e131f3a668388381ab51c8876668108871d8`. The complete Task 43.1 and latest B review remain at
+`a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`, including its FIX REQUIRED decision and
+unresolved retained-history P1. Do not continue or re-plan that Task without explicit A resumption.
