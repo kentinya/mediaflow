@@ -4,9 +4,9 @@ This is an A-owned planning Contract for one Slice covering functional improveme
 already implemented pages. The user has selected consistent ordinary file-operation behavior for
 ResourceLibrary Files and MediaLibrary Files, reference-aligned organizing-rules presentation, and
 classification destinations defined by MediaLibrary plus `path`, plus object-scoped Rules tests
-with a separate complete-flow check, and usable long-name breadcrumbs/toolbars on both library
-pages. Other page contents remain unspecified; this document does not yet constitute an ACTIVE
-implementation Contract.
+with a separate complete-flow check, usable long-name breadcrumbs/toolbars on both library pages,
+and bounded ResourceLibrary folder/mixed-selection organization. Other page contents remain
+unspecified; this document does not yet constitute an ACTIVE implementation Contract.
 
 ```text
 Slice ID: 44
@@ -15,9 +15,9 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PLANNED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: NOT SET
-Contract Revision: 2026-10-07 — A incorporates long-name library-page toolbar recovery as RO-5; RO-1 through RO-4 retained
+Contract Revision: 2026-10-07 — A incorporates ResourceLibrary folder/mixed-selection organization as RO-6; RO-1 through RO-5 retained
 Working Branch: slice/44-page-improvements
-Risk: High for Storage mutations, classification compatibility and configuration/evidence authority
+Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for selected outcomes; reassess complete boundary before activation
 Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
 ```
@@ -69,8 +69,18 @@ Preview/source-authority rules or accepted historical closure records.
 The user subsequently reviewed the long-name toolbar repair proposal and explicitly authorized A
 to incorporate it into Slice 44. RO-5 selects that browsing/layout outcome on both library pages,
 including the reported Docker-served presentation. This scope amendment does not activate the
-Slice, create an implementation Task or authorize deployment. Earlier metadata-score/manual-review
-questions and mixed file/directory Organize behavior are not additional selected outcomes.
+Slice, create an implementation Task or authorize deployment. That amendment selected layout only;
+earlier metadata-score/manual-review questions and mixed file/directory Organize behavior remained
+outside it.
+
+The user subsequently reviewed the ResourceLibrary folder/mixed-selection organizing proposal and
+explicitly granted A authority to incorporate it into Slice 44. RO-6 selects recursive bounded
+discovery, mixed-selection deduplication, configured filtering/stability, background progress and
+safe continuation into the existing exact manual Preview/execution journey. The first delivery
+retains the existing 100-primary-media bound per organizing intent. This is a PLANNED scope
+amendment, not Slice activation, B Task planning, implementation or deployment authorization.
+MediaLibrary remains a destination/file-management surface, not an organizing source. RO-6 is
+separate from RO-1's direct-file optional-fingerprint policy and RO-5's presentation repair.
 
 Applicable guidance includes canonical Storage management/abstraction, direct file commands,
 MediaLibrary file management and file-list journeys; UX-001 through UX-010; REQ-STO-001/002/003/006,
@@ -85,6 +95,12 @@ RO-3 restores the canonical final-path
 formula; CURRENT descriptions of the older `library/path` prefix remain factual until delivery
 and acceptance. Reference layout does not authorize a different matching algorithm or mutation
 authority.
+
+Folder organization additionally applies REQ-LIB-001, REQ-SCAN-002/003/005,
+REQ-ATT-001/002/003, REQ-CONFIG-008, REQ-TASK-001 through REQ-TASK-007/009,
+REQ-RECOVERY-001/002/006/007/008/009, REQ-ORG-001/003/004/007/008/009/010/011/012,
+REQ-REC-004, REQ-WEB-001/005/007 and the existing API, redaction and mutation-safety requirements.
+Folder selection does not itself authorize execution, overwrite, source removal or directory cleanup.
 
 ## Frozen Slice 43 preservation and resumption
 
@@ -108,6 +124,9 @@ using the actual operations supported by Local, SMB, OpenList and S3/R2, without
 fingerprint alone disabling a supported ordinary command.
 When names or paths are long, the operator can still identify the current directory, navigate its
 ancestors, refresh and change view without toolbar controls overlapping or being clipped by entries.
+From ResourceLibrary Files, the operator can also select folders and files together, review the
+bounded discovered media and exclusions, and organize the exact reviewed items without opening
+every subdirectory and selecting each media file separately.
 
 An operator can also find, search and maintain the complete organizing-rule graph through the
 reference-aligned workspace, and configure a destination using the selected MediaLibrary and one
@@ -117,8 +136,9 @@ object without first completing unrelated downstream configuration, understand w
 matched or did not match, and deliberately check the complete flow when needed.
 
 The following direct-file journey belongs to RO-1; Rules presentation, destination and testing
-journeys are defined separately under RO-2, RO-3 and RO-4, and long-name browsing under RO-5,
-with their own state, outcome and recovery.
+journeys are defined separately under RO-2, RO-3 and RO-4, long-name browsing under RO-5, and
+ResourceLibrary folder/mixed-selection organization under RO-6, with their own state, outcome and
+recovery.
 
 - **Entry:** existing `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, their row/selection
   actions, text editor, transfer dialog and linked Task/Operations recovery.
@@ -210,6 +230,20 @@ overlap on both page compositions with long mixed-language and unbroken syntheti
 RO-5 selects bounded breadcrumb overflow, usable controls and toolbar height that accommodates its
 actual rows. This is a frontend layout defect; the audit does not establish a Docker-only cause or
 a Storage/refresh failure. No corrected application code or Docker artifact is claimed here.
+
+### CURRENT folder-organize audit and selected TARGET
+
+ResourceLibrary Files currently publishes `organizeEligible` only for ordinary files. Its folder
+entry menu offers Open without Organize; the batch button counts only eligible files and filters
+directories out of the submitted selection. A folder-only selection therefore cannot proceed.
+The Files admission application independently rejects directory paths with `source_not_file`.
+The current projection and admission tests explicitly assert these restrictions; existing directory
+walks elsewhere do not constitute a native folder-organize journey.
+
+RO-6 selects a bounded background discovery stage before the existing immutable manual intent,
+exact Preview, explicit execution admission and OrganizerExecutor. Backend Storage observations
+remain source authority. Neither enabling the button alone nor reusing a whole-library/indexed
+scan completes this outcome. No folder-organize implementation is claimed by this planning revision.
 
 ## Required Outcomes
 
@@ -610,9 +644,116 @@ refresh semantics, control disabled states, create actions, view toggles, tree/s
 dialogs and existing ResourceLibrary Organize entry. This outcome adds no backend operation,
 Storage mutation, MediaLibrary Organize entry or new global navigation design.
 
+### RO-6 — Bounded ResourceLibrary folder and mixed-selection organization
+
+- **Goal/entry:** select one or more folders, ordinary files, or a mixture on
+  `/ui-v2/resourcelib/files`; use a folder's explicit Organize menu action or the batch organizing
+  action. The Operations `新建整理任务` handoff uses this same journey and retains its return context.
+- **Visible state:** exact selected relative scopes, recursive-discovery progress, discovered media,
+  exclusions/unstable items/read failures and whether discovery is complete; then the existing
+  per-item choices, exact source/target/attachments, plan findings, conflicts and durable outcomes.
+- **Action:** deliberately start bounded discovery, pause/continue/cancel at safe boundaries,
+  inspect eligible items and explanations, generate exact Preview, select the reviewed items and
+  explicitly confirm execution through the existing native Web flow.
+- **Success:** every selected eligible source is admitted at most once; the reviewed items complete
+  through the normal policy/Planner/Executor chain, retain independent results and recovery, and
+  return to the correct live ResourceLibrary directory or linked Operations run.
+- **Failure:** empty scope, all-excluded content, unstable files, denied/inaccessible subtrees,
+  missing/changed sources, invalid scope, exceeded bounds, missing Worker/pin, policy/Metadata
+  blockers, conflicts and partial/uncertain effects remain distinguishable and actionable.
+- **Recovery:** retain the selection and durable discovery findings; narrow an oversized scope,
+  correct access/configuration, observe a file until stability is proven, continue a safe discovery
+  checkpoint or re-analyze the affected item. Completed and uncertain media effects are never replayed.
+
+#### Selection, discovery and filtering
+
+The Web sends the selected ResourceLibrary ID and exact ResourceLibrary-relative paths. Python
+resolves actual entry types, the enabled library/Storage binding, permissions and all limits.
+Malformed or unsafe submitted scope is rejected before durable admission; it cannot acquire a
+partial valid scope by silently dropping the invalid input.
+Directory selection means recursive discovery by default; opening a folder, selecting a checkbox,
+refreshing or switching views still performs no recursive discovery or organizing work. List and
+grid expose the same supported actions, with backend-authoritative availability and useful reasons.
+
+Normalize safe scope structure without trimming names or changing Storage identity. Deduplicate
+repeated paths and overlaps between selected parents, descendants and explicitly selected files;
+each ordinary source appears at most once in the resulting intent. Use Storage paging and confined
+list/stat observations, reject escapes and unsafe provider entries, never follow symbolic links,
+and do not let discovery leave the selected subtree or ResourceLibrary root.
+
+Apply the pinned ResourceLibrary media extensions, include/exclude rules, configured depth and
+file stability policy. Conditions and downstream Parser/Recognition retain the original
+ResourceLibrary-relative path and parent directories; selecting a folder must not rebase away a
+path component such as `电影` or `SP`. Temporary/download files and unsupported/non-media entries
+receive bounded exclusion explanations rather than becoming independent primary-media items.
+Existing subtitle/NFO/image/trailer attachment and main-versus-extra policy semantics remain intact;
+folder discovery does not independently execute sidecars or invent a new attachment matcher.
+
+Minimum age and modification threshold do not prove a required stable-size duration. When repeated
+observations are required, use bounded durable observations of the actual Storage source under
+this discovery context and expose waiting/not-yet-proven stability with a safe next action. Do not
+require FileIndex membership, use an index row as source/stability authority, fabricate elapsed
+stability, or add content reads/full-media hashing just to expand a folder.
+
+#### Bounds and truthful partial discovery
+
+Retain at most 100 primary media per organizing intent for this delivery. Also enforce backend
+bounds for submitted scopes, visited entries/directories, depth, paging and work duration; B must
+specify the concrete compatible budgets in the active Task. A candidate beyond the item bound,
+exhausted traversal budget, repeated/cyclic cursor or safety-depth truncation cannot silently produce
+an executable first-N subset or claim complete discovery. Show the limit and a native action to
+select a smaller scope; automatic splitting into arbitrarily many intents is not selected.
+Configured depth exclusions are explained as policy exclusions, distinct from exhausted safety budgets.
+
+An ordinary item/subtree read failure preserves independent findings for unaffected sources.
+Show the unavailable scope and incomplete-discovery state; known eligible sources may proceed only
+as an explicitly reviewed bounded subset, never as proof the entire folder was processed. An empty
+folder, all-excluded scope, unstable-only scope and unreadable scope remain different outcomes.
+Unknown totals stay unknown until discovery establishes them. Exclusions and errors do not count
+as successfully organized media and their bounded projection cannot hide an incomplete traversal.
+
+#### Background ownership, exact pins and Preview
+
+Long discovery uses existing durable Task/Job/Worker and Operations readback/control boundaries.
+HTTP returns durable admission promptly rather than recursively enumerating or calling Providers
+inside a long request. Show missing/stale/unsupported Worker and unavailable pinned-context reasons
+with a meaningful next action; API process health alone never implies discovery can run. No new
+queue, Scheduler, supervisor or parallel Task lifecycle is introduced.
+
+Capture the exact immutable Active snapshot at admission. Discovery, filtering, stability,
+source-identity creation and later manual analysis use that admitted pin, even after a new Active
+is published. An unavailable/corrupt/unpublished pin fails closed without falling back to current
+Active, Draft, JSON or FileIndex. Any historical-pin handoff must prove the durable admission and
+published revision; the browser cannot choose an arbitrary historical configuration as authority.
+
+Persist enough scope, observations, progress and ownership evidence to resume safe non-mutating
+discovery after pause/restart without duplicating intent items. Cooperative cancellation preserves
+known findings, creates no execution permission and does not promise immediate interruption of a
+provider call. Admission/readback must reconcile unknown responses before a deliberate new
+submission, preserving actor/scope/pin binding and preventing duplicate admitted work.
+
+Once discovery is finalized, freeze the exact source list and Storage-built source identities in
+the existing manual organizing journey. A completed walk is not an atomic provider snapshot;
+later directory changes cannot enlarge the frozen source list. The production
+Recognition/TypePolicy/Metadata/Naming/
+Classification/Organize/Planner behavior remains authoritative, including RO-3's applicable target
+contract and C retaining C when reusing A policies. Discovery itself performs only metadata reads
+and no Provider calls; later explicit analysis may read bounded NFO/attachments or call the
+configured MetadataProvider as the existing pipeline requires. All analysis remains zero mutation.
+
+Execute only the explicitly selected exact Preview items, under current permissions, normal
+capability/conflict/source revalidation, locks/fences and separate one-shot execution intent.
+Folder selection does not authorize moving a directory wholesale, silently overwriting targets,
+deleting excluded files or enabling source cleanup. New primary files after the source list was
+frozen are not automatically included; attachments remain bound to the exact reviewed Preview.
+Missing/changed sources stop the affected item. Recovery that discovers new sources creates
+explicit successor work and never rewrites a frozen list, historical pin, completed result or
+consumed execution authority. FileIndex synchronization remains post-result and its failure cannot
+trigger another media mutation.
+
 Other existing-page contents remain unselected. A will incorporate them and assess the complete
 boundary before activation; B must not invent additional outcomes or field/operation-sized Task
-ladders. RO-2 through RO-5 are outcomes, not pre-created implementation Tasks.
+ladders. RO-2 through RO-6 are outcomes, not pre-created implementation Tasks.
 
 ## Required Surfaces
 
@@ -623,6 +764,10 @@ ladders. RO-2 through RO-5 are outcomes, not pre-created implementation Tasks.
   both library kinds and existing API compatibility must use the same rules.
 - Existing Task/Worker/Operations: admission, pinned scope, ownership, durable per-item transfer/
   Delete checkpoints and readback/continuation affected by optional fingerprints.
+- ResourceLibrary folder/mixed-selection actions and scoped authenticated admission/readback APIs;
+  existing Task/Worker/Operations discovery progress, pause/continue/cancel, manual choices,
+  exact Preview/execution, per-item outcomes/recovery and Files/task-center return context.
+  MediaLibrary receives no Organize entry or source authority from this outcome.
 - Existing provider adapters and bounded fake/local-service verification. No new provider or
   unrelated-page redesign is selected.
 - Rules workspace: all eight navigation sections, full-width inventories, Add/copy drawers,
@@ -682,6 +827,14 @@ library-kind isolation and read/refresh behavior remain binding. Truncation, foc
 scrolling and responsive reflow must not submit commands, grant authority or automatically replay
 work. Full-name disclosure remains confined to the operator's existing authorized path context.
 
+RO-6 changes selected organizing-source discovery, not execution authority. Metadata-only folder
+discovery and all analysis remain zero media mutation; directory selection never supplies deletion,
+overwrite or unattended authority. Exact source identities, immutable admitted snapshots, live
+permission/capability gates, OrganizerExecutor-only mutation and per-item non-replay remain binding.
+RO-1's absent-provider-fingerprint rule for direct maintenance cannot substitute weaker source
+evidence for a media Preview or execution. Discovery/stability cannot acquire FileIndex authority,
+and neither bounds nor recoveries may silently extend the reviewed source/item set.
+
 ### Rules visual references and preservation
 
 `整理规则需修复.png` marks the shared header/navigation repair region in the Recognition Types
@@ -719,8 +872,11 @@ checkpoint. Missing references are reported, not replaced with generated approxi
   execution, bulk rule import/diff/rollback or V1 retirement.
 - Automatic relocation of previously organized media, in-place historical configuration/result/pin
   rewriting, and automatic replay/regrant/republication during classification conversion.
-- General long-text redesign outside the two Files workspaces, metadata-score/manual-review or
-  mixed-selection Organize fixes, and changing the user's live Docker deployment for this amendment.
+- General long-text redesign outside the two Files workspaces, metadata-score/manual-review
+  redesign, and changing the user's live Docker deployment for this amendment.
+- MediaLibrary organization, a new whole-library/root Organize entry, automatic large-folder
+  multi-intent splitting, increasing the existing 100-primary-media intent bound, a second
+  discovery/processing engine, and source cleanup merely because a folder was selected.
 
 ## Slice Acceptance Criteria
 
@@ -839,7 +995,35 @@ The selected RO-5 is accepted only when:
     cases, and confirms the corrected production-built assets through isolated Docker HTTP serving.
     DOM-only rendering or a source-CSS change alone cannot prove the reported overlap is resolved.
 
-Additional-page acceptance is pending selection. RO-1 through RO-5 are not marked complete by
+The selected RO-6 is accepted only when:
+
+27. ResourceLibrary list/grid folder menus and the batch action complete folder-only, file-only,
+    multiple-folder and mixed selections through native discovery, exact Preview and confirmed
+    execution. Parent/child/explicit-file overlaps produce one intent item per ordinary source.
+    Operations creation/return and original-directory context work without CLI or raw-token steps;
+    MediaLibrary has no new Organize source/entry.
+28. Pinned filtering, configured depth and genuine stability observations exclude temporary,
+    unsupported and actively written files with bounded explanations. Original paths/parents
+    reach Recognition unchanged, C remains C with A policies, and attachments retain existing
+    association/suffix/conflict semantics. No FileIndex lookup admits sources or proves stability.
+29. Pagination, source confinement and traversal budgets are enforced on the backend. Exactly 100
+    primary items are supported; 101, safety-depth/entry/time limits and cyclic cursors cannot yield
+    a silent executable prefix. Empty/all-excluded/unstable/unreadable scopes and partial discovery
+    remain distinct; unaffected known sources have independent reviewed outcomes and safe recovery.
+30. Long discovery is durably observable with truthful Worker waiting, progress and cooperative
+    pause/continue/cancel. Restart and unknown admission readback preserve exact actor/scope/pin,
+    prevent duplicate work/items, and never obtain execution authority from discovery or reads.
+    New activation does not repin admitted discovery or subsequent historical-pin handoff.
+31. Frozen source lists and exact Preview identities retain normal policy, permission, capability,
+    conflict, source and ownership gates. Added files are not implicitly executed; changed/missing
+    files stop their own item. Corrupt/unavailable pins fail closed; successor discovery/recovery
+    never rewrites old plans/results or replays completed/uncertain effects.
+32. Discovery uses metadata-only Storage observations and zero Provider calls; analysis/Preview
+    perform zero media mutation. Only OrganizerExecutor executes explicitly authorized reviewed
+    items. Overwrite/source removal/cleanup remain independently permitted, no silent operation
+    fallback occurs, and FileIndex sync failure cannot replay media work. Web/API agree throughout.
+
+Additional-page acceptance is pending selection. RO-1 through RO-6 are not marked complete by
 this revision, and these acceptance groups are not a predetermined Task list.
 
 ## Final Validation Expectations
@@ -852,6 +1036,9 @@ product validation or create an implementation Task.
 RO-4 needs Application/API/Web integration evidence; changes touching candidate validation,
 publication evidence or historical compatibility receive T4 validation at those authority
 boundaries. A local test split is not permission to reduce the Slice's final T4 gate.
+RO-6 affects core source admission, immutable pins, Worker ownership, persistence and execution
+handoff: its affected authority boundaries require T4 validation. No formal Task Difficulty or
+Task list is assigned before activation; B plans coherent units from the complete Contract.
 
 Require focused domain/application/Executor/API tests with provider-neutral absent/present/changing
 fingerprint fakes; Local temporary directories; bounded OpenList/SMB/S3 semantics through fakes/local
@@ -911,6 +1098,28 @@ Web lint/type/build gates. Validate built assets via an isolated production Dock
 record served-artifact/browser evidence; unavailable isolated evidence must be reported explicitly.
 B assigns the coherent Task's Test Level after activation; RO-5 does not reduce the final T4 gate.
 
+For RO-6, require application/authenticated API and real-Python native browser journeys for folder-
+only, file-only, multiple-folder and mixed selections in list/grid, plus Operations creation/return.
+Cover duplicate/overlapping parents/children/files, original recognition path context, subtitles/NFO
+and extras, exact whitespace names, empty/all-excluded/unstable scopes, independent subtree/read
+failures, unsafe/out-of-root provider entries and links. Exercise paging, 100/101 primary items,
+directory/entry/depth/time bounds, cyclic cursors and non-truncated completeness reporting.
+Use live-observation fakes and controlled clocks to prove age/mtime alone cannot satisfy a required
+stable-size duration; no FileIndex row is required or trusted for source admission/stability.
+
+Verify metadata-only/no-Provider discovery and zero-mutation analysis spies; normal movie/TV and
+C-to-A-policy planning; inter-item target conflicts, unsupported capabilities and denied execution;
+no Worker/stale Worker/unsupported command/pin readiness; exact old/new activation isolation;
+pause/cancel/safe continuation, crash/restart, ownership fencing and unknown-admission readback
+without duplicate sources/intents. Test source additions/removal/replacement after discovery,
+frozen-manifest readback, explicit successor recovery, completed/partial/uncertain execution and
+post-result index-sync failures without media replay. Use Local temporary roots and SMB/OpenList/
+S3-prefix fakes/local servers, no production credentials/media or frozen Slice 43 implementation.
+Any persistence evolution requires compatible legacy file-only intents/previews/results/pins and
+an actual migration/restart rehearsal; old work cannot gain directory scope or new authority.
+Include affected full regression, safety, packaging/migration and Web lint/type/build gates;
+existing direct commands, MediaLibrary isolation, RO-3 destinations and RO-5 toolbar remain covered.
+
 Reassess the complete Slice's final validation when remaining page contents are selected. Before
 activation, validate and checkpoint this planning Contract/Roadmap relationship with governance
 and diff checks; no runtime acceptance is claimed from those checks.
@@ -921,5 +1130,5 @@ Not submitted. No Slice 44 implementation Task exists, and no Required Outcome i
 
 ## A Final Review
 
-Not performed. This is a PLANNED Contract with RO-1 through RO-5 selected; no Slice acceptance or
+Not performed. This is a PLANNED Contract with RO-1 through RO-6 selected; no Slice acceptance or
 closure is claimed.

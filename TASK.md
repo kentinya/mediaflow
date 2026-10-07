@@ -17,6 +17,11 @@ check. Local passes never substitute for complete-flow, Save/activation or execu
 A has also incorporated RO-5: usable long-name breadcrumbs/toolbars on both library pages,
 preserving exact paths and complete-name access with responsive layout and production-Docker
 browser validation. This remains a planning outcome, not an implementation Task or deployment.
+A has also incorporated RO-6: bounded ResourceLibrary folder/mixed-selection organization with
+recursive backend discovery, deduplication, pinned filtering and proven stability, background
+Task/Worker progress/control and the existing exact manual Preview/confirmed execution journey.
+The delivery retains the 100-primary-media intent bound and independent exclusions/failures/
+recovery; FileIndex is not source/stability authority and MediaLibrary is not an organizing source.
 Other page contents remain pending.
 RO-1's common policy and every applicable operation must be delivered and accepted on both
 ResourceLibrary Files and MediaLibrary Files, including their scoped APIs and Task/Worker recovery.
