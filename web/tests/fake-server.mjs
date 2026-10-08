@@ -6832,29 +6832,28 @@ function storageInventoryMatches(storage, query, family) {
  * activation has an outstanding first setup, and the recovery route is one
  * fixed same-origin application path that carries no token or identifier.
  */
-function storageSetupAuthority(state) {
-  if (state.noActive) {
-    return {
-      setupRequired: true,
-      setupDraftExists: false,
-      managedActivation: false,
-      recoveryRequired: false,
-      health: "SETUP_REQUIRED",
-      setupPath: "/ui",
-    };
-  }
+function storageSetupAuthority(state, session) {
+  // Share the native Settings lifecycle as the authority for the Storage
+  // handoff, including the recoverable first-Draft state. The route and these
+  // flags mirror the real Storage inventory projection.
+  const status = configurationStatusDocument(
+    rulesState(session),
+    "e2e-viewer-token",
+  );
   return {
-    setupRequired: false,
-    setupDraftExists: false,
-    managedActivation: true,
-    recoveryRequired: false,
-    health: "HEALTHY",
-    setupPath: "/ui",
+    setupRequired: status.setupRequired === true,
+    setupDraftExists: status.setupDraft !== null,
+    managedActivation: status.managedActivation === true,
+    recoveryRequired: status.recoveryRequired === true,
+    health: status.health,
+    setupPath: "/ui-v2/configuration",
   };
 }
 
-function storageInventoryDocument(state, canManage, search) {
-  if (state.noActive) {
+function storageInventoryDocument(state, canManage, search, session) {
+  const rules = rulesState(session);
+  const configuration = configurationStatusDocument(rules, "e2e-viewer-token");
+  if (configuration.setupRequired === true) {
     return {
       available: false,
       reason: "no_active",
@@ -6873,7 +6872,7 @@ function storageInventoryDocument(state, canManage, search) {
       canManage,
       // The permission to start the first Draft is backend-authoritative.
       canStartSetup: canManage,
-      setup: storageSetupAuthority(state),
+      setup: storageSetupAuthority(state, session),
       actions: {
         check: {
           available: false,
@@ -6884,6 +6883,47 @@ function storageInventoryDocument(state, canManage, search) {
           durableOutcome: null,
           nextAction:
             "complete managed configuration setup, validate the Draft, and activate it",
+          requiresConfirmation: false,
+        },
+      },
+    };
+  }
+  if (configuration.emptyActive === true) {
+    const active = currentRuleActive(rules);
+    return {
+      available: true,
+      reason: null,
+      authority: "MANAGED",
+      active: {
+        revisionId: active.revisionId,
+        version: active.version,
+        revisionSequence: active.sequence,
+        digest: active.digest,
+        status: "active",
+      },
+      items: [],
+      total: 0,
+      matched: 0,
+      truncated: false,
+      returned: 0,
+      hasMore: false,
+      nextAfter: null,
+      families: {},
+      query: search.query,
+      family: search.family,
+      canManage,
+      canStartSetup: canManage,
+      setup: storageSetupAuthority(state, session),
+      actions: {
+        check: {
+          available: false,
+          reason: "the Active configuration contains no Storage objects",
+          method: "POST",
+          path: null,
+          sideEffects: "none",
+          durableOutcome: null,
+          nextAction:
+            "add a Storage object in a supported configuration journey",
           requiresConfirmation: false,
         },
       },
@@ -6920,7 +6960,7 @@ function storageInventoryDocument(state, canManage, search) {
     family: search.family,
     canManage,
     canStartSetup: canManage,
-    setup: storageSetupAuthority(state),
+    setup: storageSetupAuthority(state, session),
     actions: {
       check: {
         available: false,
@@ -6981,9 +7021,10 @@ function rulesState(session) {
       gaps: RULES_FIXTURE.ruleReadiness.gaps,
       available: true,
       reason: null,
+      emptyActive: false,
       // The no-Active first-setup lifecycle: `setupDraft` is created by
       // POST /api/v1/configuration/drafts/first, validated and activated by
-      // the revision routes, and activation publishes the fixture Active.
+      // the revision routes, and activation publishes an empty managed Active.
       setupDraft: null,
       published: null,
     };
@@ -6994,7 +7035,14 @@ function rulesState(session) {
 
 /** The Active identity the fake currently reports, after any advance. */
 function currentRuleActive(state) {
-  const base = RULES_FIXTURE.ruleReadiness.active;
+  const base = state.published
+    ? {
+        revisionId: state.published.revisionId,
+        version: state.published.version,
+        sequence: state.published.version,
+        digest: "e2e-rules-setup-active-digest",
+      }
+    : RULES_FIXTURE.ruleReadiness.active;
   const next =
     state.advance === 0
       ? base
@@ -7157,8 +7205,8 @@ function configurationStatusDocument(state, token) {
     runtimeConfigured: true,
     runtimeReady: true,
     workflowAvailable: true,
-    businessState: "READY",
-    emptyActive: false,
+    businessState: state.emptyActive === true ? "EMPTY_ACTIVE" : "READY",
+    emptyActive: state.emptyActive === true,
     recoveryRequired: false,
     unavailableReason: null,
     revisions: [],
@@ -7323,11 +7371,16 @@ const server = createServer(async (req, res) => {
       sendJson(
         res,
         200,
-        storageInventoryDocument(state, permissions.canManage, {
-          query: single("q")[0] ?? "",
-          family,
-          after: single("after")[0] ?? null,
-        }),
+        storageInventoryDocument(
+          state,
+          permissions.canManage,
+          {
+            query: single("q")[0] ?? "",
+            family,
+            after: single("after")[0] ?? null,
+          },
+          session,
+        ),
       );
       return;
     }
@@ -15974,6 +16027,7 @@ const server = createServer(async (req, res) => {
               },
             ]
           : [],
+      emptyActive: false,
       setupDraft: null,
       published: null,
       // Per-session object lifecycle state for the Task 41.6 identity proof.
@@ -16146,16 +16200,21 @@ const server = createServer(async (req, res) => {
       sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
       return;
     }
-    // Activation publishes the fixture Active and clears the setup state, so
-    // the next status read reports the managed authority with its readiness.
-    // The published revision itself stays readable, exactly like the real
-    // managed configuration: the activation answer is inspectable afterwards.
+    // The first Draft is an empty managed configuration. It must not invent
+    // Storage objects or successful media/rule readiness merely because the
+    // operator completed the configuration lifecycle.
     state.available = true;
     state.reason = null;
-    state.state = RULES_FIXTURE.ruleReadiness.state;
-    state.counts = RULES_FIXTURE.ruleReadiness.counts;
-    state.enabledCounts = RULES_FIXTURE.ruleReadiness.enabledCounts;
-    state.gaps = RULES_FIXTURE.ruleReadiness.gaps;
+    state.emptyActive = true;
+    state.sections = Object.fromEntries(
+      Object.keys(RULES_FIXTURE.inventory.sections).map((key) => [key, []]),
+    );
+    state.state = "EMPTY";
+    state.counts = Object.fromEntries(
+      Object.keys(RULES_FIXTURE.ruleReadiness.counts).map((key) => [key, 0]),
+    );
+    state.enabledCounts = { ...state.counts };
+    state.gaps = [];
     state.advance = 0;
     state.published = { ...draft, validated: true };
     state.setupDraft = null;

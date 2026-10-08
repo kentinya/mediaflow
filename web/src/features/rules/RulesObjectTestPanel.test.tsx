@@ -248,7 +248,97 @@ describe("Rules object-scoped local test", () => {
     await user.click(screen.getByRole("button", { name: "测试该元数据策略" }));
     await screen.findByText(/未调用 Provider/);
     expect(bodies[0]?.liveMetadata).toBe(false);
+    expect(bodies[0]?.sample).toBeNull();
+    expect(screen.queryByLabelText("测试样本标题")).toBeNull();
     expect(screen.getByText("TMDB_ACCESS_TOKEN: SET")).toBeVisible();
+  });
+
+  it("tests a RecognitionType definition without a path and opts into associated rules explicitly", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stubRulesRoutes((body) => {
+        bodies.push(body);
+        return new Response(
+          JSON.stringify(
+            analysisPayload({
+              family: "recognitionTypes",
+              applicability: "optional",
+              outcome: "valid",
+              conclusion: "类型定义有效;可选关联规则试识别未运行",
+              result: {
+                definition: { id: "C", name: "Special" },
+                associatedRules: [],
+              },
+            }),
+          ),
+        );
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+    await screen.findByRole("heading", { name: "测试与预览" });
+    expect(screen.queryByLabelText("测试合成路径")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "测试该识别类型" }));
+    await screen.findByText(/类型定义有效/);
+    expect(bodies[0]?.sample).toBeNull();
+
+    await user.click(screen.getByLabelText("试识别关联规则"));
+    expect(screen.getByLabelText("测试合成路径")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "测试该识别类型" }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]?.sample).toMatchObject({
+      path: "电影/Example.Movie.2024.mkv",
+    });
+  });
+
+  it("submits typed TV episode and filename-tag fields for NamingPolicy", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stubRulesRoutes((body) => {
+        bodies.push(body);
+        return new Response(
+          JSON.stringify(analysisPayload({ family: "namingPolicies" })),
+        );
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/namingPolicies/B");
+    await screen.findByRole("heading", { name: "测试与预览" });
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("测试样本媒体类型"), "tv");
+    fireEvent.change(screen.getByLabelText("测试样本季"), {
+      target: { value: "1" },
+    });
+    fireEvent.change(screen.getByLabelText("测试样本集"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText("测试样本多集编号"), {
+      target: { value: "2,3" },
+    });
+    fireEvent.change(screen.getByLabelText("测试样本剧集标题"), {
+      target: { value: "The Beginning" },
+    });
+    fireEvent.change(screen.getByLabelText("测试样本分辨率标签"), {
+      target: { value: "1080p" },
+    });
+    fireEvent.change(screen.getByLabelText("测试样本来源标签"), {
+      target: { value: "WEB-DL" },
+    });
+    await user.click(screen.getByRole("button", { name: "测试该命名策略" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.sample).toMatchObject({
+      title: "The Matrix",
+      mediaType: "tv",
+      season: 1,
+      episode: 2,
+      episodes: [2, 3],
+      episodeTitle: "The Beginning",
+      resolution: "1080p",
+      source: "WEB-DL",
+    });
   });
 
   it("requires no sample input for a definition or reference check", async () => {
@@ -443,6 +533,216 @@ describe("Rules complete-flow check", () => {
     expect(screen.getByText("完整计划就绪")).toBeVisible();
     expect(bodies[0]?.liveMetadata).toBe(false);
     expect(bodies[0]?.syntheticIdentity).toMatchObject({ mediaType: "movie" });
+  });
+
+  it("keeps the submitted evidence but marks input and refreshed Active changes stale", async () => {
+    let inventoryVersion = 1;
+    let inventorySequence = 1;
+    let authorityReads = 0;
+    let flowCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/form-authority")) {
+          authorityReads += 1;
+          return new Response(
+            JSON.stringify({
+              ...formAuthorityPayload,
+              resourceLibraries: [
+                ...formAuthorityPayload.resourceLibraries,
+                {
+                  id: "source-alt",
+                  name: "Alternate source",
+                  enabled: true,
+                  storageId: "media-source",
+                  rootPath: "/alternate",
+                },
+              ],
+              active: {
+                ...formAuthorityPayload.active,
+                version: inventoryVersion,
+                revisionSequence: inventorySequence,
+              },
+            }),
+          );
+        }
+        if (url.includes("/inventory"))
+          return new Response(
+            JSON.stringify({
+              ...rulesPayload,
+              active: {
+                status: "ACTIVE",
+                version: inventoryVersion,
+                sequence: inventorySequence,
+              },
+            }),
+          );
+        if (url.endsWith("/complete-flow")) {
+          flowCalls += 1;
+          return new Response(
+            JSON.stringify(
+              analysisPayload({
+                outcome: "valid",
+                conclusion: "完整流程检查通过:已生成完整整理计划",
+                readiness: "complete_plan_ready",
+                localOnly: false,
+                identityStatus: "synthetic_offline",
+                syntheticIdentity: true,
+                result: {
+                  recognition: { status: "recognized", recognitionType: "C" },
+                  naming: {
+                    status: "complete",
+                    directory: "Anime",
+                    filename: "Example.mkv",
+                  },
+                  classification: {
+                    status: "classified",
+                    mediaLibraryId: "movies",
+                    relativePath: "Anime",
+                  },
+                  plan: {
+                    target: "/Movies/Anime/Example.mkv",
+                    operation: "move",
+                    status: "ready",
+                    conflicts: [],
+                  },
+                },
+              }),
+            ),
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByText("完整流程检查");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
+    await screen.findByLabelText("完整流程来源资源库");
+    await user.selectOptions(
+      screen.getByLabelText("完整流程来源资源库"),
+      "source-alt",
+    );
+    await user.click(screen.getByRole("button", { name: "运行完整流程检查" }));
+    await screen.findByText("/Movies/Anime/Example.mkv");
+    expect(screen.getAllByText("Anime").length).toBeGreaterThan(0);
+    expect(screen.getByText("movies")).toBeVisible();
+    expect(flowCalls).toBe(1);
+
+    fireEvent.change(screen.getByLabelText("完整流程合成路径"), {
+      target: { value: "does-not-match-any-rule.mkv" },
+    });
+    expect(await screen.findByText(/过期结果/)).toBeVisible();
+    expect(screen.getByText("提交时完整计划就绪(已过期)")).toBeVisible();
+    expect(screen.getByText("/Movies/Anime/Example.mkv")).toBeVisible();
+    expect(flowCalls).toBe(1);
+    await user.click(screen.getByText("查看本次提交的输入与 Active 摘要"));
+    expect(screen.getByLabelText("完整流程合成路径")).toHaveValue(
+      "does-not-match-any-rule.mkv",
+    );
+    expect(screen.getByText("电影/Example.Movie.2024.mkv")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "刷新当前 Active" }));
+    await waitFor(() => expect(authorityReads).toBe(2));
+    expect(flowCalls).toBe(1);
+    expect(screen.getByLabelText("完整流程来源资源库")).toHaveValue(
+      "source-alt",
+    );
+    inventoryVersion = 2;
+    inventorySequence = 2;
+    await user.click(screen.getByRole("button", { name: "刷新 Active" }));
+    expect(
+      await screen.findByText(/Overview 已观察到更新的 Active/),
+    ).toBeVisible();
+    expect(screen.getByLabelText("完整流程合成路径")).toHaveValue(
+      "does-not-match-any-rule.mkv",
+    );
+    expect(flowCalls).toBe(1);
+    await user.click(screen.getByRole("button", { name: "刷新当前 Active" }));
+    await waitFor(() => expect(authorityReads).toBe(3));
+    expect(flowCalls).toBe(1);
+    expect(screen.getByLabelText("完整流程来源资源库")).toHaveValue(
+      "source-alt",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "显式重新运行完整流程检查" }),
+    );
+    await waitFor(() => expect(flowCalls).toBe(2));
+  });
+
+  it("marks a late complete-flow response stale when its sample changed in flight", async () => {
+    const pending: { resolve?: (response: Response) => void } = {};
+    let flowCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.includes("/inventory"))
+          return new Response(JSON.stringify(rulesPayload));
+        if (url.endsWith("/complete-flow")) {
+          flowCalls += 1;
+          return new Promise<Response>((resolve) => {
+            pending.resolve = resolve;
+          });
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByText("完整流程检查");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "打开完整流程检查" }));
+    await screen.findByLabelText("完整流程来源资源库");
+    await user.click(screen.getByRole("button", { name: "运行完整流程检查" }));
+    await waitFor(() => expect(pending.resolve).toBeTypeOf("function"));
+    fireEvent.change(screen.getByLabelText("完整流程合成路径"), {
+      target: { value: "changed-while-running.mkv" },
+    });
+    pending.resolve?.(
+      new Response(
+        JSON.stringify(
+          analysisPayload({
+            outcome: "valid",
+            conclusion: "完整流程检查通过:已生成完整整理计划",
+            readiness: "complete_plan_ready",
+            localOnly: false,
+            identityStatus: "synthetic_offline",
+            syntheticIdentity: true,
+            result: {
+              recognition: { status: "recognized", recognitionType: "C" },
+              naming: {
+                status: "complete",
+                directory: "Anime",
+                filename: "Example.mkv",
+              },
+              classification: {
+                status: "classified",
+                mediaLibraryId: "movies",
+                relativePath: "Anime",
+              },
+              plan: {
+                target: "/Movies/Anime/Example.mkv",
+                operation: "move",
+                status: "ready",
+                conflicts: [],
+              },
+            },
+          }),
+        ),
+      ),
+    );
+    expect(await screen.findByText(/该结果已过期/)).toBeVisible();
+    expect(screen.getByText("/Movies/Anime/Example.mkv")).toBeVisible();
+    expect(flowCalls).toBe(1);
   });
 
   it("shows exact missing-stage blockers instead of a fabricated plan", async () => {

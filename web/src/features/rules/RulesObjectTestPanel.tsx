@@ -105,22 +105,56 @@ interface AnalysisRun {
 
 interface IdentitySample {
   readonly title: string;
+  readonly originalTitle: string;
   readonly mediaType: "movie" | "tv";
+  readonly recognitionType: string;
+  readonly provider: string;
+  readonly providerId: string;
   readonly year: string;
   readonly season: string;
   readonly episode: string;
+  readonly episodes: string;
+  readonly episodeTitle: string;
+  readonly extension: string;
+  readonly resolution: string;
+  readonly source: string;
+  readonly videoCodec: string;
+  readonly audio: string;
+  readonly hdr: string;
+  readonly version: string;
+  readonly releaseGroup: string;
   readonly genres: string;
   readonly countries: string;
+  readonly languages: string;
+  readonly keywords: string;
+  readonly overview: string;
 }
 
 const INITIAL_IDENTITY: IdentitySample = {
   title: "The Matrix",
+  originalTitle: "",
   mediaType: "movie",
+  recognitionType: "",
+  provider: "",
+  providerId: "",
   year: "1999",
   season: "",
   episode: "",
+  episodes: "",
+  episodeTitle: "",
+  extension: "mkv",
+  resolution: "",
+  source: "",
+  videoCodec: "",
+  audio: "",
+  hdr: "",
+  version: "",
+  releaseGroup: "",
   genres: "",
   countries: "",
+  languages: "",
+  keywords: "",
+  overview: "",
 };
 
 function optionalInteger(value: string, label: string): number | undefined {
@@ -141,33 +175,124 @@ function compactList(value: string, label: string): string[] {
   return items;
 }
 
+function boundedText(
+  value: string,
+  label: string,
+  maxLength: number,
+): string | undefined {
+  const normalized = value.trim();
+  if (normalized.length > maxLength || normalized.includes("\0"))
+    throw new Error(`${label} 不能超过 ${maxLength} 个字符`);
+  return normalized || undefined;
+}
+
 function buildIdentitySample(
   fields: IdentitySample,
   recognitionType: string,
+  family: RuleFormFamily,
 ): Record<string, unknown> {
   if (!fields.title.trim()) throw new Error("样本标题不能为空");
   const sample: Record<string, unknown> = {
     title: fields.title.trim(),
     mediaType: fields.mediaType,
   };
-  if (recognitionType.trim()) sample.recognitionType = recognitionType.trim();
-  for (const [key, value, label] of [
-    ["year", fields.year, "年份"],
-    ["season", fields.season, "季"],
-    ["episode", fields.episode, "集"],
-  ] as const) {
+  const selectedRecognitionType =
+    recognitionType.trim() || fields.recognitionType.trim();
+  if (selectedRecognitionType) sample.recognitionType = selectedRecognitionType;
+  for (const [key, value, label] of [["year", fields.year, "年份"]] as const) {
     const parsed = optionalInteger(value, label);
     if (parsed !== undefined) sample[key] = parsed;
   }
-  for (const [key, value, label] of [
-    ["genres", fields.genres, "类型"],
-    ["countries", fields.countries, "国家/地区"],
-  ] as const) {
-    const items = compactList(value, label);
-    if (items.length > 0) sample[key] = items;
+  if (family === "namingPolicies") {
+    for (const [key, value, label] of [
+      ["season", fields.season, "季"],
+      ["episode", fields.episode, "集"],
+    ] as const) {
+      const parsed = optionalInteger(value, label);
+      if (parsed !== undefined) sample[key] = parsed;
+    }
+    const episodes = fields.episodes.trim()
+      ? fields.episodes.split(",").map((item) => {
+          const parsed = Number(item.trim());
+          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 9999)
+            throw new Error("多集编号须为逗号分隔的 0 到 9999 整数");
+          return parsed;
+        })
+      : [];
+    if (episodes.length > 32) throw new Error("多集编号最多 32 项");
+    if (episodes.length > 0) sample.episodes = episodes;
+    for (const [key, value, label, maxLength] of [
+      ["originalTitle", fields.originalTitle, "原始标题", 512],
+      ["provider", fields.provider, "Provider", 64],
+      ["providerId", fields.providerId, "Provider ID", 128],
+      ["episodeTitle", fields.episodeTitle, "剧集标题", 512],
+      ["extension", fields.extension, "扩展名", 16],
+      ["resolution", fields.resolution, "分辨率标签", 64],
+      ["source", fields.source, "来源标签", 64],
+      ["videoCodec", fields.videoCodec, "视频编码标签", 64],
+      ["audio", fields.audio, "音频标签", 64],
+      ["hdr", fields.hdr, "HDR 标签", 64],
+      ["version", fields.version, "版本标签", 64],
+      ["releaseGroup", fields.releaseGroup, "发布组", 128],
+    ] as const) {
+      const normalized = boundedText(value, label, maxLength);
+      if (normalized) sample[key] = normalized;
+    }
+  } else {
+    for (const [key, value, label] of [
+      ["genres", fields.genres, "类型"],
+      ["countries", fields.countries, "国家/地区"],
+      ["languages", fields.languages, "语言"],
+      ["keywords", fields.keywords, "关键词"],
+    ] as const) {
+      const items = compactList(value, label);
+      if (items.length > 0) sample[key] = items;
+    }
+    for (const [key, value, label, maxLength] of [
+      ["originalTitle", fields.originalTitle, "原始标题", 512],
+      ["overview", fields.overview, "简介", 2048],
+    ] as const) {
+      const normalized = boundedText(value, label, maxLength);
+      if (normalized) sample[key] = normalized;
+    }
   }
   return sample;
 }
+
+const NAMING_TEXT_FIELDS = [
+  ["originalTitle", "原始标题", 512],
+  ["provider", "Provider", 64],
+  ["providerId", "Provider ID", 128],
+  ["episodeTitle", "剧集标题", 512],
+  ["extension", "扩展名", 16],
+  ["resolution", "分辨率标签", 64],
+  ["source", "来源标签", 64],
+  ["videoCodec", "视频编码标签", 64],
+  ["audio", "音频标签", 64],
+  ["hdr", "HDR 标签", 64],
+  ["version", "版本标签", 64],
+  ["releaseGroup", "发布组", 128],
+] as const satisfies readonly (readonly [
+  keyof IdentitySample,
+  string,
+  number,
+])[];
+
+const CLASSIFICATION_TEXT_FIELDS = [
+  ["originalTitle", "原始标题", 512],
+  ["overview", "简介", 2048],
+] as const satisfies readonly (readonly [
+  keyof IdentitySample,
+  string,
+  number,
+])[];
+
+const CLASSIFICATION_LIST_FIELDS = [
+  ["genres", "类型"],
+  ["countries", "国家/地区"],
+  ["languages", "语言"],
+  ["keywords", "关键词"],
+] as const satisfies readonly (readonly [keyof IdentitySample, string])[];
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -623,6 +748,7 @@ export function RulesObjectTestPanel({
   const [resourceLibraryId, setResourceLibraryId] = useState(
     authority.resourceLibraries.find((item) => item.enabled)?.id ?? "",
   );
+  const [testAssociatedRules, setTestAssociatedRules] = useState(false);
   const [liveMetadata, setLiveMetadata] = useState(false);
   const [busy, setBusy] = useState(false);
   const [runs, setRuns] = useState<readonly AnalysisRun[]>([]);
@@ -639,10 +765,16 @@ export function RulesObjectTestPanel({
         : "";
   const currentnessKey = JSON.stringify({
     candidate,
-    identity,
-    syntheticPath,
-    resourceLibraryId,
-    liveMetadata,
+    sampleInput:
+      spec.input === "none"
+        ? null
+        : spec.input === "path"
+          ? family === "recognitionTypes" && !testAssociatedRules
+            ? { testAssociatedRules: false }
+            : { testAssociatedRules, syntheticPath, resourceLibraryId }
+          : family === "metadataPolicies" && !liveMetadata
+            ? { liveMetadata: false }
+            : { identity, liveMetadata },
     publicationEpoch,
   });
   const currentnessKeyRef = useRef(currentnessKey);
@@ -674,15 +806,15 @@ export function RulesObjectTestPanel({
     let sample: Record<string, unknown> | null = null;
     try {
       if (spec.input === "path") {
-        if (!syntheticPath.trim() || syntheticPath.length > 4096)
-          throw new Error("需要一个不超过 4096 个字符的合成路径");
-        sample = { path: syntheticPath.trim() };
-        if (resourceLibraryId) sample.resourceLibraryId = resourceLibraryId;
+        if (family !== "recognitionTypes" || testAssociatedRules) {
+          if (!syntheticPath.trim() || syntheticPath.length > 4096)
+            throw new Error("需要一个不超过 4096 个字符的合成路径");
+          sample = { path: syntheticPath.trim() };
+          if (resourceLibraryId) sample.resourceLibraryId = resourceLibraryId;
+        }
       } else if (spec.input === "identity") {
-        sample = buildIdentitySample(
-          identity,
-          boundRecognitionType || identity.mediaType,
-        );
+        if (family !== "metadataPolicies" || liveMetadata)
+          sample = buildIdentitySample(identity, boundRecognitionType, family);
       }
     } catch (error) {
       setRuns((items) => [
@@ -706,9 +838,11 @@ export function RulesObjectTestPanel({
     const sampleLabel =
       spec.input === "none"
         ? "对象定义/引用"
-        : spec.input === "path"
-          ? `${resourceLibraryId || "未选择来源库"} · ${syntheticPath}`
-          : `${String(sample?.title ?? "")} · ${String(sample?.mediaType ?? "")}`;
+        : sample === null
+          ? "离线本地配置(无身份样本)"
+          : spec.input === "path"
+            ? `${resourceLibraryId || "未选择来源库"} · ${syntheticPath}`
+            : `${String(sample?.title ?? "")} · ${String(sample?.mediaType ?? "")}`;
     setRuns((items) => [
       ...items,
       {
@@ -764,9 +898,21 @@ export function RulesObjectTestPanel({
         {objectId ? ` · ${objectId}` : " · 新建/复制候选"}
         。打开、编辑、导航、刷新或重连都不会自动提交测试。
       </p>
+      {family === "recognitionTypes" ? (
+        <label>
+          <input
+            type="checkbox"
+            aria-label="试识别关联规则"
+            checked={testAssociatedRules}
+            onChange={(event) => setTestAssociatedRules(event.target.checked)}
+          />
+          可选测试当前类型的关联规则(需要合成路径)
+        </label>
+      ) : null}
       {spec.input !== "none" ? (
         <div className="mf-rules-object-test-inputs">
-          {spec.input === "path" ? (
+          {spec.input === "path" &&
+          (family !== "recognitionTypes" || testAssociatedRules) ? (
             <>
               <label>
                 来源资源库
@@ -774,7 +920,6 @@ export function RulesObjectTestPanel({
                   aria-label="测试来源资源库"
                   value={resourceLibraryId}
                   onChange={(event) => setResourceLibraryId(event.target.value)}
-                  disabled={busy}
                 >
                   <option value="">不指定来源库</option>
                   {authority.resourceLibraries.map((item) => (
@@ -795,14 +940,19 @@ export function RulesObjectTestPanel({
                   value={syntheticPath}
                   maxLength={4096}
                   onChange={(event) => setSyntheticPath(event.target.value)}
-                  disabled={busy}
                 />
               </label>
             </>
-          ) : (
+          ) : spec.input === "identity" &&
+            (family !== "metadataPolicies" || liveMetadata) ? (
             <>
+              <p>
+                {family === "metadataPolicies"
+                  ? "实时测试只在明确启用后提交查询标题;离线校验不需要身份样本。"
+                  : "填写当前策略会消费的合成字段;未用到的字段可以留空。"}
+              </p>
               <label>
-                样本标题
+                {family === "metadataPolicies" ? "实时查询标题" : "样本标题"}
                 <input
                   aria-label="测试样本标题"
                   value={identity.title}
@@ -810,7 +960,6 @@ export function RulesObjectTestPanel({
                   onChange={(event) =>
                     changeIdentity("title", event.target.value)
                   }
-                  disabled={busy}
                 />
               </label>
               <label>
@@ -824,74 +973,133 @@ export function RulesObjectTestPanel({
                       event.target.value as "movie" | "tv",
                     )
                   }
-                  disabled={busy}
                 >
                   <option value="movie">电影</option>
                   <option value="tv">剧集</option>
                 </select>
               </label>
-              <label>
-                年份
-                <input
-                  aria-label="测试样本年份"
-                  value={identity.year}
-                  maxLength={4}
-                  onChange={(event) =>
-                    changeIdentity("year", event.target.value)
-                  }
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                季
-                <input
-                  aria-label="测试样本季"
-                  value={identity.season}
-                  maxLength={4}
-                  onChange={(event) =>
-                    changeIdentity("season", event.target.value)
-                  }
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                集
-                <input
-                  aria-label="测试样本集"
-                  value={identity.episode}
-                  maxLength={4}
-                  onChange={(event) =>
-                    changeIdentity("episode", event.target.value)
-                  }
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                类型
-                <input
-                  aria-label="测试样本类型"
-                  value={identity.genres}
-                  placeholder="逗号分隔"
-                  onChange={(event) =>
-                    changeIdentity("genres", event.target.value)
-                  }
-                  disabled={busy}
-                />
-              </label>
-              <label>
-                国家/地区
-                <input
-                  aria-label="测试样本国家"
-                  value={identity.countries}
-                  placeholder="逗号分隔"
-                  onChange={(event) =>
-                    changeIdentity("countries", event.target.value)
-                  }
-                  disabled={busy}
-                />
-              </label>
+              {family === "metadataPolicies" ? null : (
+                <>
+                  {family === "namingPolicies" ? (
+                    <>
+                      <label>
+                        识别类型样本
+                        <input
+                          aria-label="测试样本识别类型"
+                          value={
+                            boundRecognitionType || identity.recognitionType
+                          }
+                          maxLength={64}
+                          onChange={(event) =>
+                            changeIdentity(
+                              "recognitionType",
+                              event.target.value,
+                            )
+                          }
+                          readOnly={Boolean(boundRecognitionType)}
+                        />
+                      </label>
+                      {(["year", "season", "episode"] as const).map((field) => (
+                        <label key={field}>
+                          {{ year: "年份", season: "季", episode: "集" }[field]}
+                          <input
+                            aria-label={`测试样本${{ year: "年份", season: "季", episode: "集" }[field]}`}
+                            value={identity[field]}
+                            maxLength={4}
+                            inputMode="numeric"
+                            onChange={(event) =>
+                              changeIdentity(field, event.target.value)
+                            }
+                          />
+                        </label>
+                      ))}
+                      <label>
+                        多集编号
+                        <input
+                          aria-label="测试样本多集编号"
+                          value={identity.episodes}
+                          placeholder="逗号分隔,如 1,2,3"
+                          onChange={(event) =>
+                            changeIdentity("episodes", event.target.value)
+                          }
+                        />
+                      </label>
+                      {NAMING_TEXT_FIELDS.map(([field, label, maxLength]) => (
+                        <label key={field}>
+                          {label}
+                          <input
+                            aria-label={`测试样本${label}`}
+                            value={identity[field]}
+                            maxLength={maxLength}
+                            onChange={(event) =>
+                              changeIdentity(field, event.target.value)
+                            }
+                          />
+                        </label>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        识别类型样本
+                        <input
+                          aria-label="测试样本识别类型"
+                          value={identity.recognitionType}
+                          maxLength={64}
+                          onChange={(event) =>
+                            changeIdentity(
+                              "recognitionType",
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        年份
+                        <input
+                          aria-label="测试样本年份"
+                          value={identity.year}
+                          maxLength={4}
+                          inputMode="numeric"
+                          onChange={(event) =>
+                            changeIdentity("year", event.target.value)
+                          }
+                        />
+                      </label>
+                      {CLASSIFICATION_LIST_FIELDS.map(([field, label]) => (
+                        <label key={field}>
+                          {label}
+                          <input
+                            aria-label={`测试样本${label}`}
+                            value={identity[field]}
+                            placeholder="逗号分隔"
+                            onChange={(event) =>
+                              changeIdentity(field, event.target.value)
+                            }
+                          />
+                        </label>
+                      ))}
+                      {CLASSIFICATION_TEXT_FIELDS.map(
+                        ([field, label, maxLength]) => (
+                          <label key={field}>
+                            {label}
+                            <input
+                              aria-label={`测试样本${label}`}
+                              value={identity[field]}
+                              maxLength={maxLength}
+                              onChange={(event) =>
+                                changeIdentity(field, event.target.value)
+                              }
+                            />
+                          </label>
+                        ),
+                      )}
+                    </>
+                  )}
+                </>
+              )}
             </>
-          )}
+          ) : null}
         </div>
       ) : null}
       {spec.liveMetadata ? (
@@ -901,7 +1109,6 @@ export function RulesObjectTestPanel({
             aria-label="允许实时元数据测试"
             checked={liveMetadata}
             onChange={(event) => setLiveMetadata(event.target.checked)}
-            disabled={busy}
           />
           允许实时 Metadata Provider 测试(离线校验不需要凭据)
         </label>

@@ -52,6 +52,7 @@ from mediaflow.application.rules_workspace_commands import (
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
     StrategyTestResult,
+    file_context_from_path,
     strategy_runner_from_configuration,
 )
 from mediaflow.domain.classification import (
@@ -587,19 +588,13 @@ class RulesObjectAnalysisService:
             not isinstance(library_id, str) or not library_id.strip() or len(library_id) > 128
         ):
             raise ValueError("recognition rule sample resourceLibraryId must be bounded text")
-        normalized = path.replace("\\", "/")
-        pure = normalized.rsplit("/", 1)
-        filename = pure[-1]
-        directories = tuple(part for part in pure[0].split("/") if part not in {"", "."})
-        extension = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
-        context = FileContext(
-            "offline-preview",
-            library_id or "offline-preview",
-            normalized,
-            filename,
-            directories,
-            extension,
-            pure[0] if len(pure) > 1 else "",
+        # Use the same path-to-FileContext semantics as production strategy
+        # tests. In particular, a bare filename has no parent directories; it
+        # must not be reinterpreted as its own containing directory.
+        context = file_context_from_path(
+            path,
+            resource_library_id=library_id or "offline-preview",
+            storage_id="offline-preview",
         )
         overrides = {
             key: sample[key]
@@ -1273,6 +1268,41 @@ class RulesObjectAnalysisService:
             strategy, live_metadata=providers is not None
         )
         document["missingStages"] = [item["stage"] for item in blockers]
+        naming = strategy.naming
+        document["naming"] = (
+            {
+                "status": "complete",
+                "directory": _bounded(naming.directory, 4096),
+                "directorySegments": [
+                    _bounded(item, 512) for item in naming.directory_segments[:16]
+                ],
+                "filename": _bounded(naming.filename, 4096),
+                "warnings": [_bounded(item, 384) for item in naming.warnings[:8]],
+            }
+            if naming is not None
+            else {
+                "status": "failed" if strategy.naming_error else "missing",
+                "message": _bounded(strategy.naming_error, 384),
+            }
+        )
+        classification = strategy.classification
+        document["classification"] = (
+            {
+                "status": classification.status.value,
+                "mediaLibraryId": _bounded(classification.media_library_id, 128) or None,
+                "relativePath": _bounded(classification.relative_path, 2048),
+                "matchedRuleId": _bounded(classification.matched_rule_id, 128) or None,
+                "library": _bounded(classification.library, 512) or None,
+                "category": _bounded(classification.category, 512) or None,
+                "subcategory": _bounded(classification.subcategory, 512) or None,
+                "warnings": [_bounded(item, 384) for item in classification.warnings[:8]],
+            }
+            if classification is not None
+            else {
+                "status": "failed" if strategy.classification_error else "missing",
+                "message": _bounded(strategy.classification_error, 384),
+            }
+        )
         plan = strategy.organize_plan
         if plan is not None:
             document["plan"] = {

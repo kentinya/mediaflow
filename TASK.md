@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 44.3
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: b6a0f49b8337f61170aac1479e8aac3b63e4675e
 Difficulty: High
 Test Level: T4
@@ -79,6 +79,24 @@ Known non-blocking validation facts remain recorded, not promoted to new work:
 After this PASS, B rechecked every Slice outcome: RO-1 and RO-3 COMPLETE; RO-2, RO-4, RO-5 and
 RO-6 INCOMPLETE. This Task advances RO-4. Slice44 stays ACTIVE; no Closure Packet is submitted.
 
+### User-authorized default E2E repair — 2026-10-08
+
+The user explicitly requested: `规划修复方案并合入当前Task`. B adds one bounded repair of the
+existing default browser validation boundary to this same Task. Task ID, Task Base, Goal,
+Difficulty, Test Level and the five existing P1 review findings remain unchanged. This is test
+infrastructure supporting the assigned T4 gate and preserving existing journeys; it adds no
+Slice Required Outcome, production feature or authority and does not reopen accepted Tasks.
+
+B independently reran the default built-artifact/Node-fake suite at committed HEAD
+`edbc7f2724b835081fc752afb80bbcc2df3b19a1`: 235 tests, 203 PASS / 32 FAIL / 0 SKIP / 0 FLAKY,
+10.7 minutes, exit 1. The failed file/line/name set exactly matches the preceding Task baseline.
+The causes are 28 malformed Storage inventories from the fake's old `setupPath`, three obsolete
+navigation/migration expectations, and one Copy case sharing fake state with Delete. These remain
+baseline testing defects, not newly classified production P1s. Earlier reports retain their
+historical results; for the next checkpoint these repairs are assigned scope and the default suite
+must pass rather than being excluded as pre-existing. Unrelated unavailable gates retain their
+existing evidence/reporting rules.
+
 ## Implementation Scope
 
 Production domain engines → focused application candidate analysis/evidence → existing managed
@@ -128,6 +146,36 @@ persistence where necessary → authenticated typed API → Rules Add/copy/Edit 
    Local success cannot replace full successor validation, applicable exact-revision checks or
    atomic activation; failed Save keeps prior Active and correctable input. Ordinary operators
    neither copy raw revision/token/digest values nor repeat an uncertain request automatically.
+7. Repair the existing default E2E boundary as one coherent test-infrastructure unit, using current
+   production contracts and journeys as authority:
+   - **Storage contract and setup recovery:** align `storageSetupAuthority()` in
+     `web/tests/fake-server.mjs` with the production inventory's `/ui-v2/configuration` setup route
+     in both healthy and no-Active states. Preserve strict inventory normalization and existing
+     truthful read/write capability fields. Update the setup cases in
+     `web/tests/e2e/storage-management.spec.ts` to the current native Settings entry, first-Draft
+     create/resume state, allowlisted return and refreshed Storage authority. Navigation must not
+     create/activate a Draft or start media work; explicit creation/activation keeps its own intent.
+     Reuse the existing Settings fake behavior where possible; add only bounded per-session state
+     needed to represent this actual journey. An intentionally empty Active does not fabricate
+     Storage rows or imply media readiness. Diagnose any failures exposed after fixing the entry
+     against the actual Python contract before changing fixtures or assertions.
+   - **Current navigation and compatibility:** update `dashboard.spec.ts` and `deep-link.spec.ts`
+     to the actual `shellDestinations` and `ConfigurationPage`, retaining narrow-menu keyboard,
+     active-route, auth-continuation and memory-only token coverage. Test explicit route choice
+     with a currently supported sidebar destination. Preserve V1 handoff/security coverage through
+     the existing supported compatibility route (currently direct `/ui-v2/review`), independently
+     of the removed Review sidebar and native Settings. Do not restore obsolete navigation or
+     placeholder pages. Verify token absence from rendered content, URL, persistent stores and
+     cookies after the actual handoff; no credential check may be bypassed by fixture cookies.
+   - **ResourceLibrary fixture isolation:** use an existing test-only reset/session fixture before
+     stateful file journeys in `library-files.spec.ts`; audit related fake state consumers so fresh
+     contexts cannot silently use the global `shared` bucket for mutable scenarios. Initial reset
+     precedes user-command observers; explicit scenario-specific resets remain effective. Preserve
+     real Delete effects, the live destination picker and exactly one confirmed Copy submission.
+     Add deterministic two-context isolation coverage: deleting Movies in context A does not
+     remove Movies or alter transfer/effect state in independently initialized context B, whose
+     original Copy journey remains usable. Fixture IDs/cookies contain no API token and never
+     alter production authentication or grant authority. Avoid a generic fixture framework.
 
 ### Operator journey
 
@@ -147,9 +195,11 @@ persistence where necessary → authenticated typed API → Rules Add/copy/Edit 
 
 Do not change Slice Contract/Base, Roadmap, accepted historical closure records, frozen Slice 43 or
 recognition selection algorithms. Preserve Task 44.1 direct-file commands and Task 44.2 destination,
-conversion, checked Save, legacy pins and recovery. Files breadcrumbs/folder admission, provider
-implementations, shared-shell reference redesign and unrelated pages are outside this Task. Preserve
-all pre-existing untracked images; never include `config/alist.json`, real credentials or user media.
+conversion, checked Save, legacy pins and recovery. The user-authorized E2E addition permits only
+the related fake/test changes described in Scope 7; production Storage, Settings, shell/navigation
+and direct-file behavior remain frozen for that addition. Files breadcrumbs/folder admission,
+provider implementations, shared-shell reference redesign and unrelated pages are outside this Task.
+Preserve all pre-existing untracked images; never include `config/alist.json`, real credentials or user media.
 
 ## Acceptance Criteria
 
@@ -192,6 +242,17 @@ all pre-existing untracked images; never include `config/alist.json`, real crede
       where evidence/persistence changes. Report exact commands/counts/skips/unavailable gates and
       actual pre-existing failure proof. No removed tests, weakened assertions, hidden skips,
       invented Provider success or mutated production data/credentials.
+- [ ] AC-10: The default E2E suite passes using current built assets and its normal fake-server
+      configuration; all 32 previously failing scenarios retain their behavioral coverage through
+      current supported journeys, with an explicit old-to-updated case mapping if renamed/split.
+      Strict malformed-response rejection, Storage RBAC/capability/read-only checks, stale/failed/
+      unknown Save recovery and no-automatic-work/token checks remain effective. Native Settings
+      replaces old setup/placeholder expectations without fabricating successful readiness.
+- [ ] AC-11: ResourceLibrary fake mutation/effect/transfer state is isolated per test context;
+      deterministic Delete-A/Copy-B evidence and repeated affected suites pass with two workers.
+      The existing Delete effect and Copy impact/confirmation/submission/result assertions remain.
+      No reduced worker count, ordering dependency, timeout inflation, retries, skip/ignore/filter
+      change or assertion weakening may substitute for fixing fixture isolation and stale contracts.
 
 ## Required Tests
 
@@ -205,6 +266,7 @@ run their exact module names in the report, plus:
 .venv/bin/python -m unittest tests.test_media_parser tests.test_recognition tests.test_policy_mapping tests.test_metadata tests.test_naming tests.test_classification tests.test_classification_destination_contract tests.test_strategy_cli
 .venv/bin/python -m unittest tests.test_configuration_naming tests.test_configuration_classification tests.test_configuration_organize tests.test_configuration_destination tests.test_configuration_destination_activation tests.test_configuration_destination_precheck tests.test_configuration_snapshot tests.test_configuration_successor_draft tests.test_runtime_strategy_configuration
 .venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_migration_rehearsal tests.test_release_security
+.venv/bin/python -m unittest tests.test_v2_storage_operations tests.test_management_setup tests.test_v2_settings_rule_readiness
 ```
 
 Include Provider construction/call spies and Storage I/O spies, not merely mutation spies; missing/unrelated
@@ -247,6 +309,43 @@ npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-in
 npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
 ```
 
+#### Required default E2E repair evidence
+
+After implementing Scope 7, run from `web/` in this order, sequentially with the other browser suites:
+
+```bash
+npm run build
+npm run test:e2e -- tests/e2e/storage-management.spec.ts tests/e2e/dashboard.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/library-files.spec.ts --workers=2 --repeat-each=2
+npm run test:e2e
+```
+
+The last command is the unfiltered default gate above, not a replacement reduced selection. Record
+exact tests/pass/fail/skip/flaky totals, worker count and first failure/repeat evidence. The original
+235-case default coverage cannot shrink to obtain PASS; explain intentional renames/splits and
+map all 32 baseline failures to their updated assertions. Add any new isolation/contract cases to
+the report. Confirm the unchanged default configuration still selects the same test families and
+preserves parallel execution, strict failures and trace collection. Do not use increased timeout,
+new retries, `test.skip`, `test.fixme`, `testIgnore` or matching filters to hide a failure.
+
+Add focused automation through the existing Storage normalizer/API and shell/auth test modules
+for the affected contract and actual route behavior. Preserve valid healthy/no-Active inventory
+acceptance and invalid setup-path rejection. Use a deterministic independent-context browser case
+for server-state isolation, not just a fresh isolated Copy rerun. Run its actual committed command
+and retain the one-confirmation/one-submission assertions.
+
+Run the affected Web modules from `web/`:
+
+```bash
+npm run test -- --run src/entities/storage/storage-management.test.ts src/shared/api/storage-management-api.test.ts src/shared/navigation/destination-model.test.ts src/shared/navigation/settings-return.test.ts src/shared/auth/AuthBoundary.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx src/features/configuration/ConfigurationPage.test.tsx
+```
+
+Extend an existing committed real-Python browser proof, or add a small focused committed proof,
+for the actual native Storage→Settings→return journey using temporary Local roots/SQLite and
+current built assets. Cover no-Active and healthy/empty Active distinctions, explicit create/resume,
+read/navigation causing no Draft/activation/media work, allowlisted return and fresh authority,
+without credentials in URL/storage/cookies. Report its exact command. The fake-only suite cannot
+certify a substituted setup journey; normal production RBAC and strict normalizers stay intact.
+
 Add focused typed API/form/test-result/freshness tests and a committed real-Python browser harness
 or authenticated Python Playwright suite for all seven families in Add/copy/Edit plus Overview.
 Report its exact command. Serve current built assets with real production application/SQLite/Local
@@ -286,16 +385,24 @@ schema-39 expectation against Base schema 44 is a recorded pre-existing limitati
 
 ## Non-goals
 
-- Work outside Slice 44 RO-4, Slice closure/RESCOPE, Roadmap or accepted history changes.
+- Product behavior outside Slice 44 RO-4 or the explicitly user-authorized default E2E repair in
+  Scope 7; Slice closure/RESCOPE, Roadmap or accepted history changes.
 - RO-2's complete reference header/navigation/inventory/drawer visual redesign, RO-5 toolbar repair,
   RO-6 folder discovery, or merging/resuming frozen Slice 43.
 - A new recognition selection algorithm, Metadata Provider, storage adapter, global Rules search,
   second shell, parallel organizing engine or generic evidence/job framework.
 - Weaker checked Save/activation, relaxed references for publication, automatic live tests,
   synthetic identities labelled verified, or local results authorizing execution.
-- Optional wording, P2 cleanup or unrelated test-harness repair as independent work.
+- Optional wording, P2 cleanup or test-harness repair beyond the three diagnosed cause groups in
+  Scope 7. No production Storage/Settings/navigation redesign or new global Review capability.
 
 ## Developer Completion Report
+
+The following report describes checkpoint `e72da91375b59c73440f809d5f7bc1ff9b39cddc`; its results
+are historical. The user-authorized Scope 7 / AC-10 / AC-11 repair is planned and not yet implemented
+or validated. The next Developer checkpoint must report both the existing five P1 corrections
+and this added E2E scope with fresh results; the B Review below remains the decision on that earlier
+checkpoint and is not rewritten to classify baseline testing defects as production P1s.
 
 ### Changed Files
 
@@ -521,8 +628,70 @@ Head SHA: e72da91375b59c73440f809d5f7bc1ff9b39cddc
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: b6a0f49b8337f61170aac1479e8aac3b63e4675e..e72da91375b59c73440f809d5f7bc1ff9b39cddc
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — Web 强制要求本不必要的样本，阻断类型定义及离线 Metadata 检查。**
+  当前可达入口是原生「添加识别类型」「添加元数据策略」抽屉的局部测试；共用实现
+  `RulesObjectTestPanel.tsx:676` 对类型强制非空路径，对离线 Metadata 仍调用必需标题的
+  `buildIdentitySample`。用户清空与定义无关的样本后无法执行本地检查，Web/API 行为不一致。
+  违反 AC-1、AC-2、AC-4，以及 RO-4 家族输入边界和 Slice AC17/19。真实证据：
+  `.venv/bin/python /tmp/mediaflow-b44-3-probe.py`（结果
+  `/tmp/mediaflow-b44-3-probe-final.log`）在当前构建资产、生产 Python HTTP、SQLite 和合法
+  Local 配置中复现：两个 Web 操作均显示 `invalid_sample` 且 analysis POST 数为 0；
+  同一未保存候选的 API 请求使用 `sample:null` 均返回 HTTP200 / `valid`。修正方向：
+  类型默认允许无样本定义检查，关联规则试识别仅在显式选择时要求其必要样本；离线 Metadata
+  不要求身份/查询样本，仅实时测试要求实际消费的必要输入，并覆盖原生 Add/copy/Edit。
+
+- **P1 — 无父目录路径的局部 RecognitionRule 测试产生与生产语义不同的匹配。**
+  当前合法入口是识别规则的合成路径测试；`rules_object_analysis.py:593` 在路径没有 `/`
+  时把文件名放入 `parent_directories`。用户测试目录谓词会看到虚假的匹配，实际完整链路
+  对同一路径却不匹配。违反 AC-3 和 RO-4 的真实 Parser/共享 Python 语义要求。
+  同一复现命令通过真实 HTTP 提交合法 `directory contains Example.Movie.2024.mkv` 规则
+  与路径 `Example.Movie.2024.mkv`：局部结果 `matched`，条件实际值
+  `[Example.Movie.2024.mkv]`；现有生产 `file_context_from_path`、MediaParserService 和同一
+  RecognitionRuleEngine 对该规则/路径返回 `matched=False`、父目录为空。没有删减或替换
+  Storage/Provider 能力。修正方向：复用生产路径上下文语义，保持提交路径/context 不被
+  重定位；为无父目录与有父目录的目录条件补充局部/完整语义一致性回归。
+
+- **P1 — Naming 局部样本缺少模板消费的字段，当前 TV 测试失败后没有原生修正入口。**
+  当前合法入口为 `namingPolicies/B` 的全页 Edit；现有 B 模板消费 `episode_title`，
+  该策略支持 `missingVariableStrategy=error`。局部样本仅有标题、媒体类型、年、季、集、
+  题材、国家，用户无法提供剧集标题，因而不能测试这个有效的未保存候选。违反 AC-4、
+  Implementation Scope 2 的类型化 identity/episode/tag 输入及 RO-4 Naming 输入/恢复边界。
+  同一真实浏览器复现将缺失变量策略设为 `error`、样本设为 TV/S01E02，局部结果为
+  `invalid_input` / `required naming variable 'episode_title' is missing`；同一候选 API
+  补充 `episodeTitle: The Beginning` 返回 HTTP200 / `valid`，文件名为
+  `The Matrix - S01E02 - The Beginning.mkv`。修正方向：提供本家族实际消费的类型化身份、
+  episode/episodes 和 filename-tag 样本字段及原生纠正入口；不要求下游全链路或改模板/放宽
+  缺失变量策略来绕过，保留提交值并补充 Movie/TV 与缺失字段恢复的真实浏览器证明。
+
+- **P1 — 完整流程返回了计划，但遗漏实际命名/分类阶段，Web 错报这些结果为「无」。**
+  当前合法入口为 Rules Overview 的离线「完整流程检查」。`rules_object_analysis.py:1272`
+  复用的 `_strategy_result_document` 不包含 naming/classification，随后仅追加 plan；
+  `RulesCompleteFlowCheck.tsx:70` 却读取这两个不存在的字段。用户看到「完整计划就绪」与
+  非空目标，同时命名目录、命名文件、分类库、分类相对路径全部为「无」，无法核对真实阶段。
+  违反 AC-7、RO-4 完整流程可见结果/真实阶段边界及 Slice AC21。真实证据：同一复现的
+  `completeApiStages` 返回 `readiness=complete_plan_ready`、非空
+  `Movies/其他电影/Example Movie (2024) [tmdbid-synthetic]/Example Movie (2024).mkv`，
+  但 response keys 没有 naming/classification；浏览器 `completeFlowFreshness.before`
+  记录上述四项均为「无」。修正方向：从实际 StrategyTestResult 投影有界、无秘密的命名/
+  分类阶段结果并由原生 UI 展示；区分真实缺失与已有结果，测试直接对真实 Python 响应验收，
+  不仅使用当前 Web 单测中人为带有这些字段的响应。
+
+- **P1 — 完整流程结果不随样本或已刷新 Active 变化失效，继续误显示旧计划为当前就绪。**
+  当前合法入口为 Overview 完整流程检查后修改样本，或另一合法 Save 发布后点击
+  「刷新 Active」。`RulesCompleteFlowCheck.tsx` 只检查响应中的 `model.stale`，没有将
+  提交样本/context 绑定到显示结果，也没有接收已刷新 Active 的变化。用户会把旧目标/旧
+  配置的通过结果当成当前检查结果。违反 AC-6、RO-4 证据/恢复边界及 Slice AC20。
+  同一真实复现先生成完整计划，然后把路径改为 `does-not-match-any-rule.mkv`、标题改为
+  `Changed Title`：旧目标及「完整计划就绪」仍显示，`staleVisible=0`；随后通过真实 checked
+  Save（HTTP200）发布新类型并刷新页面 Active，实际 revision 从
+  `c1cb3f76-8d05-48f8-a496-ea6e8cf308e5` 变为
+  `ec56ef12-006f-4811-84b6-c858ac152712`，旧完整计划仍显示且 `staleVisible=0`。
+  修正方向：绑定并展示提交时的样本/context；相关输入与已观察到的 Active 变化明确标记
+  旧结果过期，保留输入并提供刷新 authority 后显式重跑的恢复；不自动重提/重放。覆盖
+  样本、Active 和晚到响应的真实浏览器回归。

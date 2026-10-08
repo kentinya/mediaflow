@@ -385,6 +385,8 @@ try {
   await open(page, '/ui-v2/rules/edit/recognitionTypes/A');
   await expect(page.getByRole('heading', { name: '测试与预览' })).toBeVisible();
   await expect(page.getByRole('button', { name: '测试该识别类型' })).toBeVisible();
+  await expect(page.getByLabel('测试合成路径')).toHaveCount(0);
+  await page.getByLabel('试识别关联规则').check();
   await expect(page.getByLabel('测试合成路径')).toBeVisible();
 
   // -- Overview: the separately labelled complete-flow check ----------------

@@ -183,6 +183,18 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         self.assertEqual(body["outcome"], "valid")
         self.assert_no_activation(before)
 
+    def test_associated_type_definition_is_valid_without_optional_sample(self) -> None:
+        before = self.harness.configuration.active()
+        status, body = self.analyze(
+            "recognitionTypes",
+            self.edit_candidate("recognitionTypes", "A"),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["outcome"], "valid")
+        self.assertEqual(body["applicability"], "optional")
+        self.assertTrue(body["result"]["associatedRules"])
+        self.assert_no_activation(before)
+
     def test_associated_rule_match_reports_real_result_without_forcing_type(self) -> None:
         before = self.harness.configuration.active()
         status, body = self.analyze(
@@ -509,6 +521,34 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         # The submitted path is reported exactly; no ResourceLibrary root was prepended.
         self.assertEqual(body["result"]["testedPath"], "Example.Movie.2024.mkv")
         self.assertEqual(body["outcome"], "not_matched")
+
+    def test_directory_condition_uses_production_parent_path_semantics(self) -> None:
+        candidate = self.create_candidate(
+            "recognitionRules",
+            id="directory-rule",
+            name="Directory rule",
+            condition={"field": "directory", "operator": "contains", "value": "Example"},
+            outputRecognitionType="A",
+            enabled=True,
+            priority=0,
+            score=1,
+            stopOnMatch=False,
+        )
+        status, bare = self.analyze(
+            "recognitionRules", candidate, sample={"path": "Example.Movie.2024.mkv"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(bare["outcome"], "not_matched")
+        self.assertEqual(bare["result"]["condition"]["actual"], "[]")
+
+        status, nested = self.analyze(
+            "recognitionRules",
+            candidate,
+            sample={"path": "Example/Example.Movie.2024.mkv"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(nested["outcome"], "matched")
+        self.assertEqual(nested["result"]["condition"]["actual"], "[Example]")
 
     # -- AC-4: binding / metadata / naming / classification / organize -----
 
@@ -910,6 +950,12 @@ class RulesObjectAnalysisApiTests(unittest.TestCase):
         self.assertIn("recognition", result)
         if body["outcome"] == "valid":
             self.assertEqual(body["readiness"], "complete_plan_ready")
+            self.assertEqual(result["naming"]["status"], "complete")
+            self.assertTrue(result["naming"]["directory"])
+            self.assertTrue(result["naming"]["filename"])
+            self.assertEqual(result["classification"]["status"], "classified")
+            self.assertTrue(result["classification"]["mediaLibraryId"])
+            self.assertTrue("relativePath" in result["classification"])
             self.assertIn("plan", result)
             self.assertTrue(result["plan"]["target"])
         else:

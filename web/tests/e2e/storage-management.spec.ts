@@ -28,6 +28,13 @@ async function connect(page: Page, token: string = VIEWER_TOKEN) {
 /** Reset the per-session Storage fixture so each test starts deterministically. */
 async function resetStorage(page: Page, query = "") {
   await page.request.post(`/__test__/reset-storage${query}`);
+  const noActive =
+    new URLSearchParams(query.startsWith("?") ? query.slice(1) : query).get(
+      "noActive",
+    ) === "1";
+  await page.request.post(
+    `/__test__/reset-rules${noActive ? "?noActive=1" : ""}`,
+  );
 }
 
 /**
@@ -494,47 +501,62 @@ test.describe("Storage management", () => {
     await expect(page.getByRole("table")).toHaveCount(0);
     // An explicit refresh is offered.
     await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
-    // The recovery the state previously lacked: one explicit action that
-    // continues the existing V1 setup workflow.
+    // Setup authority comes from the native Settings lifecycle and uses one
+    // fixed same-origin route with an allowlisted return target.
     await expect(
       page.getByRole("link", { name: "去完成设置" }),
-    ).toHaveAttribute("href", "/ui");
+    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=storage");
   });
 
-  test("the setup handoff reaches the workflow and returns to a refreshed inventory", async ({
+  test("the setup handoff reaches native Settings, explicitly creates or resumes Draft, and returns to refreshed inventory", async ({
     page,
   }) => {
     await resetStorage(page, "?noActive=1");
     await connect(page);
     await openStorageManagement(page);
 
-    // The handoff is a plain same-origin document navigation into the existing
-    // V1 configuration workflow, which owns first-Draft creation, guided setup,
-    // validation and checked activation.
+    const setupWrites: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() !== "GET" &&
+        request.url().includes("/api/v1/configuration")
+      )
+        setupWrites.push(
+          `${request.method()} ${new URL(request.url()).pathname}`,
+        );
+    });
     await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/ui$/);
+    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
     await expect(
-      page.getByRole("button", { name: "Create first Draft" }),
+      page.getByRole("heading", { name: "需要创建首个 Draft" }),
     ).toBeVisible();
-    // The workflow is reachable and offers the explicit way back.
     await expect(
-      page.getByRole("link", { name: "Return to Storage management" }),
-    ).toHaveAttribute("href", "/ui-v2/storage");
-    // No token ever crossed the navigation in a URL.
-    expect(page.url()).not.toContain("token");
-
-    // Returning re-reads the current Storage authority. Once the instance is
-    // initialized the workspace shows the real inventory, not the setup state.
-    await resetStorage(page);
-    await page
-      .getByRole("link", { name: "Return to Storage management" })
-      .click();
+      page.getByRole("button", { name: "创建首个 Draft" }),
+    ).toBeVisible();
+    // Merely opening Settings is a read. Creation is a separate, visible
+    // operator action and produces a resumable Draft without implying Active.
+    expect(setupWrites).toEqual([]);
+    await page.getByRole("button", { name: "创建首个 Draft" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Draft 可恢复" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "恢复 Draft" }),
+    ).toBeVisible();
+    expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
+    await page.getByRole("link", { name: "返回上一页" }).click();
     await expect(page).toHaveURL(/\/ui-v2\/storage$/);
-    await connect(page);
-    await openStorageManagement(page);
-    await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
-    await expect(page.getByText("本地媒体")).toBeVisible();
-    await expect(page.getByText("尚未完成首次设置")).toHaveCount(0);
+    await expect(page.getByText(/继续已有的设置草稿/)).toBeVisible();
+    await expect(page.getByRole("table")).toHaveCount(0);
+    await page.getByRole("link", { name: "去完成设置" }).click();
+    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    await expect(
+      page.getByRole("heading", { name: "Draft 可恢复" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "恢复 Draft" }),
+    ).toBeVisible();
+    expect(setupWrites).toEqual(["POST /api/v1/configuration/drafts/first"]);
   });
 
   test("setup navigation and return start no configuration or media work", async ({
@@ -553,7 +575,9 @@ test.describe("Storage management", () => {
     await openStorageManagement(page);
 
     await page.getByRole("link", { name: "去完成设置" }).click();
-    await expect(page).toHaveURL(/\/ui$/);
+    await expect(page).toHaveURL(/\/ui-v2\/configuration\?returnTo=storage$/);
+    await page.getByRole("link", { name: "返回上一页" }).click();
+    await expect(page).toHaveURL(/\/ui-v2\/storage$/);
     // Reading the recovery state and navigating to it issues no configuration
     // command, so it can never create a duplicate Draft, repeat a Save,
     // activate, or start a scan, Task or Storage write.
@@ -1097,7 +1121,7 @@ test.describe("Storage management", () => {
     await expect(page.getByRole("link", { name: "去完成设置" })).toHaveCount(0);
     await expect(
       page.getByRole("link", { name: "查看设置页面" }),
-    ).toHaveAttribute("href", "/ui");
+    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=storage");
     await expect(
       page.getByRole("button", { name: "+ 添加存储" }),
     ).toBeDisabled();

@@ -920,6 +920,13 @@ async function resetFakeResourceLibraries(
   }, FAKE_RESET + query);
 }
 
+test.beforeEach(async ({ page }) => {
+  // The fake's mutable command/delete/transfer state is bound to its session
+  // cookie. Pin a fresh session before any request observer or user command so
+  // this suite never falls back to the shared default bucket.
+  await resetFakeResourceLibraries(page);
+});
+
 test("normal entry keeps the Add ResourceLibrary drawer closed", async ({
   page,
 }) => {
@@ -1486,6 +1493,100 @@ test("copy completes through the live destination picker with one confirmed subm
   expect(transferBodies[0]).toContain('"conflictMode":"fail"');
   // The Web followed the durable transfer projection by polling.
   expect(projectionUrls.length).toBeGreaterThan(0);
+});
+
+test("Delete in one browser context does not change another context's Copy journey", async ({
+  browser,
+}) => {
+  const contextA = await browser.newContext();
+  const contextB = await browser.newContext();
+  try {
+    const pageA = await contextA.newPage();
+    const pageB = await contextB.newPage();
+    const deleteCommands: string[] = [];
+    const impactsB: string[] = [];
+    const transfersB: string[] = [];
+    const projectionsB: string[] = [];
+    pageA.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().includes("/files/commands")
+      ) {
+        deleteCommands.push(request.postData() ?? "");
+      }
+    });
+    pageB.on("request", (request) => {
+      const url = request.url();
+      if (url.includes("/files/transfer-impact")) impactsB.push(url);
+      if (request.method() === "POST" && url.includes("/files/transfers"))
+        transfersB.push(request.postData() ?? "");
+      if (request.method() === "GET" && /files\/transfers\/task-/.test(url))
+        projectionsB.push(url);
+    });
+
+    await resetFakeResourceLibraries(pageA);
+    await resetFakeResourceLibraries(pageB);
+    await openFiles(pageA);
+    await openFiles(pageB);
+
+    await pageA.getByRole("checkbox", { name: "选择 Movies" }).check();
+    const deleteImpact = pageA.waitForResponse((response) =>
+      response.url().includes("/files/delete-impact"),
+    );
+    await pageA.getByRole("button", { name: "删除", exact: true }).click();
+    const impact = (await (await deleteImpact).json()) as {
+      scopeDigest: string;
+    };
+    const deleteDialog = pageA.getByRole("dialog", { name: "删除确认" });
+    await expect(deleteDialog.getByText(/即将永久删除/)).toBeVisible();
+    await deleteDialog
+      .getByRole("button", { name: "删除", exact: true })
+      .click();
+    await expect(pageA.getByRole("dialog", { name: "删除结果" })).toBeVisible();
+    await expect(pageA.getByText(/删除已完成 3 项/)).toBeVisible();
+    await pageA
+      .getByRole("dialog", { name: "删除结果" })
+      .getByRole("button", { name: "关闭", exact: true })
+      .click();
+    expect(deleteCommands).toHaveLength(1);
+    expect(impact.scopeDigest).toMatch(/^[a-f0-9]{64}$/);
+
+    // The other session retains its independent source tree and destination.
+    await expect(
+      directoryTree(pageB).getByRole("button", { name: "Movies", exact: true }),
+    ).toBeVisible();
+    await pageB
+      .getByRole("row", { name: /文件条目 sample\.mkv/ })
+      .click({ button: "right", position: { x: 40, y: 20 } });
+    await pageB.getByRole("menuitem", { name: "复制" }).click();
+    const dialog = pageB.getByRole("dialog", { name: "复制到…" });
+    await expect(dialog).toBeVisible();
+    await dialog
+      .getByRole("listbox", { name: "目标子目录" })
+      .getByRole("option", { name: "Movies", exact: true })
+      .click();
+    await expect(dialog.getByText("目标：/Movies")).toBeVisible();
+    await dialog.getByRole("button", { name: "复制", exact: true }).click();
+    const progress = pageB.getByRole("dialog", { name: "复制进度" });
+    await expect(progress.getByText(/传输完成/)).toBeVisible({
+      timeout: 10_000,
+    });
+    await progress.getByRole("button", { name: "关闭", exact: true }).click();
+
+    expect(impactsB).toHaveLength(1);
+    expect(impactsB[0]).toContain("toPath=Movies");
+    expect(transfersB).toHaveLength(1);
+    expect(transfersB[0]).toContain('"operation":"copy"');
+    expect(transfersB[0]).toContain('"destinationDirectory":"Movies"');
+    expect(transfersB[0]).toContain('"conflictMode":"fail"');
+    expect(projectionsB.length).toBeGreaterThan(0);
+    expect(
+      projectionsB.every((url) => url.includes("task-e2e-transfer-1")),
+    ).toBe(true);
+  } finally {
+    await contextA.close();
+    await contextB.close();
+  }
 });
 
 test("move exposes the compound cross-storage truth and per-item outcomes", async ({

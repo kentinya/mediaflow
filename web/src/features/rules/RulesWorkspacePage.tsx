@@ -216,7 +216,7 @@ function Overview({
       </div>
       <ReadinessGaps model={model} />
       <OnboardingPath model={model} />
-      <RulesCompleteFlowCheck token={token} />
+      <RulesCompleteFlowCheck token={token} observedActive={model.active} />
     </section>
   );
 }

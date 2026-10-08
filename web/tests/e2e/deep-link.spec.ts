@@ -216,21 +216,21 @@ test("an explicit route choice at the boundary replaces an earlier intention", a
   await page.goto("/ui-v2/medialib/files");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
 
-  // Before connecting, the operator explicitly chooses Review & Recovery (a
-  // route still owned by a later Slice) from the shell navigation. The
-  // boundary must update continuation to the newest supported route instead of
-  // keeping the stale MediaLibrary Files intention.
-  await page.getByRole("link", { name: "Review & Recovery" }).click();
+  // Before connecting, the operator explicitly chooses the currently supported
+  // Organizing rules destination. The boundary must update continuation to
+  // this newest supported route instead of keeping the stale Files intention.
+  await page.getByRole("link", { name: "Organizing rules" }).click();
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
 
-  await expect(page).toHaveURL(/\/ui-v2\/review$/);
+  await expect(page).toHaveURL(/\/ui-v2\/rules$/);
   await expect(
-    page.getByRole("heading", {
-      name: "Review & Recovery is not available in V2 yet",
-    }),
+    page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Organizing rules", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("refresh keeps memory-only semantics and reconnects to the same supported path", async ({
@@ -478,31 +478,40 @@ test("unknown route preserves shell context and a meaningful title", async ({
   await expect(page.getByText("nonexistent-route")).toHaveCount(0);
 });
 
-test("V1 handoff does not leak the token into URL or persistent stores", async ({
+test("the supported Review compatibility handoff does not leak the token", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/");
+  await page.goto("/ui-v2/review");
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
-
-  // Navigate (client-side) to a route still owned by a later Slice as a
-  // connected operator.
-  await page.getByRole("link", { name: "Configuration" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "Configuration is not available in V2 yet",
+      name: "Review & Recovery is not available in V2 yet",
     }),
   ).toBeVisible();
+  expect(page.url()).toMatch(/\/ui-v2\/review$/);
   await page.getByRole("link", { name: "Open current Web UI" }).click();
   await expect(page).toHaveURL(/\/ui$/);
-  // The token must not appear in the V1 continuation page, its URL or stores.
+  // The token must not appear in the compatibility handoff's content, URL,
+  // browser stores or cookies. No fixture cookie supplied authorization.
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
   expect(page.url()).not.toContain(VIEWER_TOKEN);
-  const storage = await page.evaluate(() => ({
+  const storage = await page.evaluate(async () => ({
     local: window.localStorage.length,
     session: window.sessionStorage.length,
     cookie: document.cookie,
+    indexedDb:
+      typeof window.indexedDB.databases === "function"
+        ? (await window.indexedDB.databases()).length
+        : -1,
   }));
-  expect(storage).toEqual({ local: 0, session: 0, cookie: "" });
+  expect(storage.local).toBe(0);
+  expect(storage.session).toBe(0);
+  expect(storage.cookie).toBe("");
+  expect(storage.indexedDb).toBe(0);
+  const cookies = await page.context().cookies();
+  expect(cookies.every((cookie) => !cookie.value.includes(VIEWER_TOKEN))).toBe(
+    true,
+  );
 });

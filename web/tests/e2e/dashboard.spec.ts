@@ -83,7 +83,7 @@ test("a forbidden principal renders the distinct bounded permission state", asyn
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 });
 
-test("review and configuration destinations remain migration placeholders", async ({
+test("narrow-menu keyboard opens the native Configuration destination", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 640, height: 800 });
@@ -100,16 +100,19 @@ test("review and configuration destinations remain migration placeholders", asyn
   await expect(
     page.getByRole("button", { name: "Close menu" }),
   ).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("link", { name: "Review & Recovery Migration" }).focus();
+  await page.getByRole("link", { name: "Configuration" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/ui-v2\/review$/);
   await expect(
-    page.getByRole("heading", {
-      name: "Review & Recovery is not available in V2 yet",
-    }),
+    page.getByRole("heading", { name: "配置生命周期", exact: true }),
   ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/configuration$/);
+  // Navigation closes after a destination is selected; reopen it to inspect
+  // the active route state without changing the narrow-screen journey.
+  await page.getByRole("button", { name: "Open menu" }).click();
   await expect(
-    page.getByRole("link", { name: "Open current Web UI" }),
-  ).toHaveAttribute("href", "/ui");
-  await expect(page).toHaveTitle("Review & Recovery | MediaFlow");
+    page.getByRole("link", { name: "Configuration", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    page.getByText("Configuration is not available in V2 yet"),
+  ).toHaveCount(0);
 });

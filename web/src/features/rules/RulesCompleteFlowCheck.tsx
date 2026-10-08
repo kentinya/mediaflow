@@ -23,6 +23,26 @@ import {
 
 interface Props {
   readonly token: string;
+  readonly observedActive: {
+    readonly version: number;
+    readonly sequence: number;
+  } | null;
+}
+
+interface SubmittedRun {
+  readonly inputKey: string;
+  readonly input: {
+    readonly resourceLibraryId: string;
+    readonly syntheticPath: string;
+    readonly title: string;
+    readonly mediaType: "movie" | "tv";
+    readonly year: string;
+    readonly liveMetadata: boolean;
+  };
+  readonly activeKey: string;
+  readonly activeVersion: number;
+  readonly activeSequence: number;
+  readonly observedActiveKey: string;
 }
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -37,6 +57,26 @@ function text(value: unknown): string | null {
 
 function list(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function observedIdentityKey(active: Props["observedActive"]): string {
+  return active === null ? "no-active" : `${active.version}:${active.sequence}`;
+}
+
+function activeSequence(active: Readonly<Record<string, unknown>>): number {
+  const value = active.revisionSequence ?? active.sequence ?? active.version;
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : 0;
+}
+
+function activeVersion(active: Readonly<Record<string, unknown>>): number {
+  return typeof active.version === "number" &&
+    Number.isSafeInteger(active.version)
+    ? active.version
+    : 0;
+}
+
+function authorityKey(authority: RuleFormAuthority): string {
+  return JSON.stringify(authorityIdentity(authority.active));
 }
 
 function Blockers({ blockers }: { readonly blockers: readonly unknown[] }) {
@@ -95,14 +135,26 @@ function CompleteFlowEvidence({
       )}
       <h4>命名与分类</h4>
       <dl>
+        <dt>命名阶段</dt>
+        <dd>{text(naming?.status) ?? "未到达"}</dd>
         <dt>命名目录</dt>
-        <dd>{text(naming?.directory) ?? "无"}</dd>
+        <dd>{text(naming?.directory) ?? text(naming?.message) ?? "未生成"}</dd>
         <dt>命名文件</dt>
-        <dd>{text(naming?.filename) ?? "无"}</dd>
+        <dd>{text(naming?.filename) ?? text(naming?.message) ?? "未生成"}</dd>
+        <dt>分类阶段</dt>
+        <dd>{text(classification?.status) ?? "未到达"}</dd>
         <dt>分类库</dt>
-        <dd>{text(classification?.mediaLibraryId) ?? "无"}</dd>
+        <dd>
+          {text(classification?.mediaLibraryId) ??
+            text(classification?.message) ??
+            "未生成"}
+        </dd>
         <dt>分类相对路径</dt>
-        <dd>{text(classification?.relativePath) ?? "无"}</dd>
+        <dd>
+          {text(classification?.relativePath) ??
+            text(classification?.message) ??
+            "未生成"}
+        </dd>
       </dl>
       <h4>完整整理计划</h4>
       {plan ? (
@@ -135,7 +187,7 @@ function CompleteFlowEvidence({
   );
 }
 
-export function RulesCompleteFlowCheck({ token }: Props) {
+export function RulesCompleteFlowCheck({ token, observedActive }: Props) {
   // The complete-flow authority is read only when the operator deliberately
   // opens this entry, so merely landing on Rules Overview stays a single
   // read-only inventory request and never prepares or submits an analysis.
@@ -151,10 +203,39 @@ export function RulesCompleteFlowCheck({ token }: Props) {
   const [liveMetadata, setLiveMetadata] = useState(false);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<RulesAnalysisModel | null>(null);
+  const [submitted, setSubmitted] = useState<SubmittedRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nextAction, setNextAction] = useState<string | null>(null);
 
-  const open = async () => {
+  const currentInput = {
+    resourceLibraryId,
+    syntheticPath,
+    title,
+    mediaType,
+    year,
+    liveMetadata,
+  };
+  const currentInputKey = JSON.stringify(currentInput);
+  const currentAuthorityKey =
+    authority === null ? null : authorityKey(authority);
+  const currentObservedActiveKey = observedIdentityKey(observedActive);
+  const authorityStale =
+    authority !== null &&
+    (observedActive === null ||
+      observedActive.sequence > activeSequence(authority.active) ||
+      observedActive.version > activeVersion(authority.active));
+  const resultStale =
+    model !== null &&
+    submitted !== null &&
+    (model.stale ||
+      submitted.inputKey !== currentInputKey ||
+      submitted.activeKey !== currentAuthorityKey ||
+      submitted.observedActiveKey !== currentObservedActiveKey ||
+      observedActive === null ||
+      observedActive.sequence > submitted.activeSequence ||
+      observedActive.version > submitted.activeVersion);
+
+  const readAuthority = async () => {
     setOpening(true);
     setError(null);
     setNextAction(null);
@@ -166,9 +247,24 @@ export function RulesCompleteFlowCheck({ token }: Props) {
       return;
     }
     setAuthority(response.model);
-    setResourceLibraryId(
-      response.model.resourceLibraries.find((item) => item.enabled)?.id ?? "",
-    );
+    // Initialize the sample once. Refreshing authority must retain the
+    // operator's selected source; a removed/disabled source stays visible as
+    // the prior input until the operator deliberately chooses a current one.
+    if (authority === null) {
+      setResourceLibraryId(
+        response.model.resourceLibraries.find((item) => item.enabled)?.id ?? "",
+      );
+    }
+  };
+
+  const open = async () => {
+    await readAuthority();
+  };
+
+  const refreshAuthority = async () => {
+    // Keep every submitted input and the old result. A fresh authority read is
+    // explicit; it never replays the complete-flow request.
+    await readAuthority();
   };
 
   const run = async () => {
@@ -177,9 +273,22 @@ export function RulesCompleteFlowCheck({ token }: Props) {
       setNextAction("请先打开完整流程检查以读取当前 Active 与来源资源库");
       return;
     }
+    if (authorityStale) {
+      setError("active_changed");
+      setNextAction("刷新当前 Active 权限后,再显式重新运行完整流程检查");
+      return;
+    }
     if (!resourceLibraryId) {
       setError("invalid_input");
       setNextAction("请选择一个已启用的 ResourceLibrary");
+      return;
+    }
+    const selectedResourceLibrary = authority.resourceLibraries.find(
+      (item) => item.id === resourceLibraryId,
+    );
+    if (!selectedResourceLibrary?.enabled) {
+      setError("invalid_input");
+      setNextAction("请选择当前 Active 中已启用的来源资源库");
       return;
     }
     if (!syntheticPath.trim() || syntheticPath.length > 4096) {
@@ -192,27 +301,40 @@ export function RulesCompleteFlowCheck({ token }: Props) {
       !window.confirm("实时完整流程会访问已配置 Provider。确认继续吗?")
     )
       return;
-    const parsedYear = Number(year);
+    const input = { ...currentInput };
+    const inputKey = JSON.stringify(input);
+    const submittedAuthorityKey =
+      currentAuthorityKey ?? authorityKey(authority);
+    const submittedObservationKey = currentObservedActiveKey;
+    const parsedYear = Number(input.year);
     const opened = authority;
     setBusy(true);
     setError(null);
     setNextAction(null);
     const response = await runRulesCompleteFlow(token, {
       ...authorityIdentity(opened.active),
-      resourceLibraryId,
-      syntheticPath: syntheticPath.trim(),
-      liveMetadata,
-      syntheticIdentity: liveMetadata
+      resourceLibraryId: input.resourceLibraryId,
+      syntheticPath: input.syntheticPath.trim(),
+      liveMetadata: input.liveMetadata,
+      syntheticIdentity: input.liveMetadata
         ? null
         : {
-            title: title.trim() || "Example Movie",
-            mediaType,
+            title: input.title.trim() || "Example Movie",
+            mediaType: input.mediaType,
             ...(Number.isInteger(parsedYear) ? { year: parsedYear } : {}),
           },
     });
     setBusy(false);
     if (response.ok) {
       setModel(response.model);
+      setSubmitted({
+        inputKey,
+        input,
+        activeKey: submittedAuthorityKey,
+        activeVersion: activeVersion(opened.active),
+        activeSequence: activeSequence(opened.active),
+        observedActiveKey: submittedObservationKey,
+      });
       return;
     }
     setModel(null);
@@ -246,9 +368,16 @@ export function RulesCompleteFlowCheck({ token }: Props) {
               aria-label="完整流程来源资源库"
               value={resourceLibraryId}
               onChange={(event) => setResourceLibraryId(event.target.value)}
-              disabled={busy}
             >
               <option value="">请选择来源资源库</option>
+              {resourceLibraryId !== "" &&
+              !authority.resourceLibraries.some(
+                (item) => item.id === resourceLibraryId,
+              ) ? (
+                <option value={resourceLibraryId} disabled>
+                  {resourceLibraryId} (当前 Active 中不可用)
+                </option>
+              ) : null}
               {authority.resourceLibraries.map((item) => (
                 <option key={item.id} value={item.id} disabled={!item.enabled}>
                   {item.name} ({item.id}){item.enabled ? "" : " - 已停用"}
@@ -263,7 +392,6 @@ export function RulesCompleteFlowCheck({ token }: Props) {
               value={syntheticPath}
               maxLength={4096}
               onChange={(event) => setSyntheticPath(event.target.value)}
-              disabled={busy}
             />
           </label>
           <label>
@@ -273,7 +401,7 @@ export function RulesCompleteFlowCheck({ token }: Props) {
               value={title}
               maxLength={512}
               onChange={(event) => setTitle(event.target.value)}
-              disabled={busy || liveMetadata}
+              disabled={liveMetadata}
             />
           </label>
           <label>
@@ -284,7 +412,7 @@ export function RulesCompleteFlowCheck({ token }: Props) {
               onChange={(event) =>
                 setMediaType(event.target.value as "movie" | "tv")
               }
-              disabled={busy || liveMetadata}
+              disabled={liveMetadata}
             >
               <option value="movie">电影</option>
               <option value="tv">剧集</option>
@@ -297,7 +425,7 @@ export function RulesCompleteFlowCheck({ token }: Props) {
               value={year}
               maxLength={4}
               onChange={(event) => setYear(event.target.value)}
-              disabled={busy || liveMetadata}
+              disabled={liveMetadata}
             />
           </label>
         </div>
@@ -309,16 +437,35 @@ export function RulesCompleteFlowCheck({ token }: Props) {
             aria-label="完整流程允许实时元数据"
             checked={liveMetadata}
             onChange={(event) => setLiveMetadata(event.target.checked)}
-            disabled={busy}
           />
           使用实时 Metadata Provider(默认使用明确标注的离线合成身份)
         </label>
       ) : null}
       {authority !== null ? (
         <div className="mf-actions">
-          <button type="button" onClick={() => void run()} disabled={busy}>
-            {busy ? "正在运行完整流程..." : "运行完整流程检查"}
+          <button
+            type="button"
+            onClick={() => void refreshAuthority()}
+            disabled={busy || opening}
+          >
+            {opening ? "正在刷新当前 Active..." : "刷新当前 Active"}
           </button>
+          <button
+            type="button"
+            onClick={() => void run()}
+            disabled={busy || opening || authorityStale}
+          >
+            {busy
+              ? "正在运行完整流程..."
+              : model
+                ? "显式重新运行完整流程检查"
+                : "运行完整流程检查"}
+          </button>
+          {authorityStale ? (
+            <p role="status">
+              Overview 已观察到更新的 Active。请刷新当前 Active 权限后显式重跑。
+            </p>
+          ) : null}
         </div>
       ) : null}
       {error ? (
@@ -329,14 +476,19 @@ export function RulesCompleteFlowCheck({ token }: Props) {
       ) : null}
       {model ? (
         <article className="mf-rules-complete-flow-result" aria-live="polite">
-          <h4>{model.conclusion}</h4>
+          <h4>
+            {resultStale ? "过期结果 · " : ""}
+            {model.conclusion}
+          </h4>
           <dl>
             <dt>结果类别</dt>
             <dd>{model.outcome}</dd>
             <dt>完整流程就绪</dt>
             <dd>
               {model.readiness === "complete_plan_ready"
-                ? "完整计划就绪"
+                ? resultStale
+                  ? "提交时完整计划就绪(已过期)"
+                  : "完整计划就绪"
                 : model.readiness === "blocked"
                   ? "受阻"
                   : "未知"}
@@ -354,10 +506,39 @@ export function RulesCompleteFlowCheck({ token }: Props) {
             <dt>Provider 调用</dt>
             <dd>{model.providerCalls}</dd>
           </dl>
-          {model.stale ? (
+          {resultStale ? (
             <p role="status">
-              该结果已过期;当前 Active 已变化,请显式重新运行。
+              该结果已过期,仅代表提交时输入与 Active
+              的证据;它不表示当前输入/Active 已就绪。 请刷新当前 Active
+              权限并显式重新运行。当前输入会保留,不会自动重提。
             </p>
+          ) : null}
+          {submitted ? (
+            <details className="mf-rules-complete-flow-submitted-input">
+              <summary>查看本次提交的输入与 Active 摘要</summary>
+              <dl>
+                <dt>来源资源库</dt>
+                <dd>{submitted.input.resourceLibraryId}</dd>
+                <dt>来源路径</dt>
+                <dd>{submitted.input.syntheticPath}</dd>
+                <dt>身份</dt>
+                <dd>
+                  {submitted.input.title} · {submitted.input.mediaType} ·{" "}
+                  {submitted.input.year || "未提供年份"}
+                </dd>
+                <dt>Metadata 模式</dt>
+                <dd>
+                  {submitted.input.liveMetadata
+                    ? "显式实时 Provider"
+                    : "离线合成身份"}
+                </dd>
+                <dt>Active</dt>
+                <dd>
+                  版本 {submitted.activeVersion} · 序号{" "}
+                  {submitted.activeSequence}
+                </dd>
+              </dl>
+            </details>
           ) : null}
           {model.message ? <p>{model.message}</p> : null}
           {model.nextAction ? <p>下一步: {model.nextAction}</p> : null}

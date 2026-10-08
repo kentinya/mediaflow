@@ -24,7 +24,9 @@ export const rulesPayload = {
     classificationPolicies: ACTION,
     organizePolicies: TOGGLELESS,
   },
-  active: { status: "ACTIVE", version: 4, sequence: 2 },
+  // Keep the workspace observation on the same Active identity as the paired
+  // form-authority fixture used by complete-flow tests.
+  active: { status: "ACTIVE", version: 1, sequence: 1 },
   readiness: { state: "READY", gaps: [] },
   overview: {
     relationship: [
