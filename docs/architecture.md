@@ -516,6 +516,14 @@ use the same bounded current-source identity and authority rules.
 and relative path; Naming supplies directory and filename. The final target is composed from the
 MediaLibrary root, classification path and naming path, with path safety checks before planning.
 
+A revised classification rule carries `mediaLibraryId` and one safe relative `path`; neither the
+MediaLibrary display name nor its ID contributes a path segment. A rule created under the earlier
+contract additionally carries a `library` prefix, and the runtime composes
+`root/library/path/naming` for it so an existing snapshot, preview, plan, pin or result keeps its
+original meaning. The two contracts are distinguished by the presence of that prefix, so a
+published revised successor is a deliberate operator conversion rather than a schema change. A
+rule whose explicit `mediaLibraryId` is missing is never resolved from its display name.
+
 ## Tasks, Results and processing recovery
 
 Long-running work is represented by persisted Task and TaskItem records. Jobs are queue/admission

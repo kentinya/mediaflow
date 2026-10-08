@@ -15,6 +15,7 @@
 
 import type { ReactNode } from "react";
 import type {
+  MediaLibraryReference,
   RuleFormAuthority,
   RuleFormFamily,
   RuleFormValue,
@@ -848,6 +849,71 @@ const listConditions = new Set([
   "keywords",
 ]);
 
+/**
+ * Show the destination contract a stored rule currently resolves under.
+ *
+ * A legacy rule keeps its historical `library` prefix, so its published target
+ * is `root/library/path/...` rather than `root/path/...`.  The operator sees the
+ * old and the proposed contribution before deliberately removing the prefix;
+ * nothing here converts the rule by itself, and simply opening or saving the
+ * enclosing policy preserves the existing contract.
+ */
+function DestinationContractNotice({
+  index,
+  result,
+  libraries,
+  disabled,
+  onConvert,
+}: {
+  readonly index: number;
+  readonly result: Readonly<Record<string, unknown>>;
+  readonly libraries: readonly MediaLibraryReference[];
+  readonly disabled: boolean;
+  readonly onConvert: () => void;
+}) {
+  const legacyPrefix =
+    typeof result.library === "string" ? result.library.trim() : "";
+  const pathValue = Array.isArray(result.path)
+    ? result.path.join("/")
+    : typeof result.path === "string"
+      ? result.path
+      : "";
+  const libraryId =
+    typeof result.mediaLibraryId === "string" ? result.mediaLibraryId : "";
+  const selected = libraries.find((item) => item.id === libraryId);
+  const root = selected?.rootPath ?? "";
+  if (legacyPrefix === "") {
+    return (
+      <p className="mf-rules-field-hint" data-testid="destination-contract">
+        目标 = 媒体库根目录{root ? ` (${root})` : ""} + 相对路径
+        {pathValue ? ` (${pathValue})` : ""} + 命名策略。
+      </p>
+    );
+  }
+  return (
+    <div className="mf-rules-legacy-destination" role="status">
+      <p>
+        该规则仍使用旧版目标契约，发布目标为 媒体库根目录
+        {root ? ` (${root})` : ""} + 旧版前缀 ({legacyPrefix}) + 相对路径
+        {pathValue ? ` (${pathValue})` : ""} + 命名策略。
+      </p>
+      <p>
+        修订后的目标为 媒体库根目录{root ? ` (${root})` : ""} + 相对路径
+        {pathValue ? ` (${pathValue})` : ""} + 命名策略，不再包含「
+        {legacyPrefix}」目录。移除前缀并保存后才会生效。
+      </p>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onConvert}
+        aria-label={`移除规则 ${index + 1} 的旧版目标前缀`}
+      >
+        移除旧版前缀并改用修订目标
+      </button>
+    </div>
+  );
+}
+
 function ClassificationRules({
   authority,
   values,
@@ -899,7 +965,6 @@ function ClassificationRules({
                 conditions: { mediaType: ["movie"] },
                 result: {
                   mediaLibraryId: libraries[0]?.id ?? "",
-                  library: libraries[0]?.name ?? "",
                   path: ["未分类"],
                 },
               },
@@ -1087,15 +1152,14 @@ function ClassificationRules({
                         : undefined
                     }
                     onChange={(event) => {
-                      const chosen = libraries.find(
-                        (item) => item.id === event.target.value,
-                      );
+                      // The library selection contributes the destination root
+                      // only.  No display name is copied into a path segment, so
+                      // renaming a library cannot silently re-route new work.
                       patch(index, (item) => ({
                         ...item,
                         result: {
                           ...resultOf(item),
                           mediaLibraryId: event.target.value,
-                          library: chosen?.name ?? resultOf(item).library ?? "",
                         },
                       }));
                     }}
@@ -1109,46 +1173,6 @@ function ClassificationRules({
                   </select>
                 </label>
                 <label>
-                  分类
-                  <input
-                    type="text"
-                    value={
-                      typeof result.category === "string" ? result.category : ""
-                    }
-                    disabled={disabled}
-                    onChange={(event) =>
-                      patch(index, (item) => ({
-                        ...item,
-                        result: {
-                          ...resultOf(item),
-                          category: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
-                  子分类
-                  <input
-                    type="text"
-                    value={
-                      typeof result.subcategory === "string"
-                        ? result.subcategory
-                        : ""
-                    }
-                    disabled={disabled}
-                    onChange={(event) =>
-                      patch(index, (item) => ({
-                        ...item,
-                        result: {
-                          ...resultOf(item),
-                          subcategory: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-                <label>
                   相对路径
                   <input
                     type="text"
@@ -1159,7 +1183,7 @@ function ClassificationRules({
                           ? result.path
                           : ""
                     }
-                    placeholder="例如 Anime/剧场版"
+                    placeholder="例如 电影/华语"
                     disabled={disabled}
                     aria-invalid={
                       issues.has(`rules[${index}].path`) ? true : undefined
@@ -1179,6 +1203,24 @@ function ClassificationRules({
                   />
                 </label>
               </div>
+              <DestinationContractNotice
+                index={index}
+                result={result}
+                libraries={libraries}
+                disabled={disabled}
+                onConvert={() =>
+                  patch(index, (item) => ({
+                    ...item,
+                    result: {
+                      ...resultOf(item),
+                      // An explicit null is the deliberate conversion intent.
+                      // Omitting the key only means "no destination change", so
+                      // an unrelated cosmetic Save cannot switch the contract.
+                      library: null,
+                    },
+                  }))
+                }
+              />
               <div className="mf-rules-conditions">
                 {authority.enums.classificationConditions.map((field) => {
                   const errorKey = `rules[${index}].conditions.${field}`;
@@ -1232,7 +1274,7 @@ function ClassificationRules({
                   );
                 })}
               </div>
-              {["mediaLibraryId", "path", "library"].map((suffix) => {
+              {["mediaLibraryId", "path"].map((suffix) => {
                 const key = `rules[${index}].${suffix}`;
                 const message = issues.get(key);
                 return message ? (

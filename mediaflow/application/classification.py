@@ -69,20 +69,41 @@ class ClassificationEngine:
                 warnings=("no classification rule matched",),
             )
         rule, evidence = sorted(matches, key=lambda item: (-item[0].priority, item[0].rule_id))[0]
-        return ClassificationResult(
-            rule.media_library_id,
-            rule.relative_category_path or "",
+        return _result_for_rule(
+            rule,
             policy.policy_id,
             context.recognition_type_id,
-            ClassificationStatus.CLASSIFIED,
-            rule.rule_id,
-            rule.name,
-            rule.library,
-            rule.category,
-            rule.subcategory,
-            rule.confidence,
             evidence,
         )
+
+
+def _result_for_rule(
+    rule: ClassificationRule,
+    policy_id: str,
+    recognition_type_id: str,
+    evidence: tuple[str, ...],
+) -> ClassificationResult:
+    """Build the pure classification outcome for one selected rule.
+
+    A legacy rule keeps its historical prefix meaning and is explicitly marked
+    so no downstream consumer can reinterpret its destination as revised.
+    """
+
+    return ClassificationResult(
+        rule.media_library_id,
+        rule.path,
+        policy_id,
+        recognition_type_id,
+        ClassificationStatus.CLASSIFIED,
+        rule.rule_id,
+        rule.name,
+        rule.library,
+        rule.category,
+        rule.subcategory,
+        rule.confidence,
+        evidence,
+        legacy_destination=rule.legacy,
+    )
 
 
 class ClassificationPreviewService:
@@ -109,18 +130,10 @@ class ClassificationPreviewService:
                 ClassificationErrorCode.INVALID_RULE,
                 f"configured ClassificationRule {rule_id!r} is unavailable",
             )
-        return ClassificationResult(
-            rule.media_library_id,
-            rule.relative_category_path or "",
+        return _result_for_rule(
+            rule,
             policy.policy_id,
             context.recognition_type_id,
-            ClassificationStatus.CLASSIFIED,
-            rule.rule_id,
-            rule.name,
-            rule.library,
-            rule.category,
-            rule.subcategory,
-            rule.confidence,
             (f"manual configured rule={rule.rule_id}",),
         )
 

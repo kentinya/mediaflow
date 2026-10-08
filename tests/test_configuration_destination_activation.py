@@ -789,6 +789,13 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 )
 
     def test_library_slug_routing_requires_destination_evidence(self) -> None:
+        """A name-only rule is never silently routed to a guessed MediaLibrary.
+
+        The revised contract requires the explicit ``mediaLibraryId``.  A legacy
+        document that carries only the ``library`` display name must stay visibly
+        unresolved and fail closed rather than inferring a library from its name.
+        """
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self._document(root)
@@ -800,17 +807,20 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
             with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
                 managed = ManagedConfigurationService(repository)
                 objects = ConfigurationObjectService(managed)
-                revision = self._validated(managed, document)
-                self._save_existing_gates(repository, revision)
-                self.assertTrue(objects._destination_precheck_applicable(revision.document))
-                with self.assertRaisesRegex(
-                    ConfigurationActivationConflict, "current read-only destination precheck"
-                ):
-                    objects.activate_checked(
-                        revision.revision_id,
-                        expected_version=revision.version,
-                        actor="operator",
-                    )
+                draft = managed.import_draft(document, actor="operator")
+                validated = managed.validate(draft.revision_id, actor="operator")
+                self.assertEqual(validated.status.value, "draft")
+                self.assertTrue(
+                    any("mediaLibraryId" in error for error in validated.validation_errors),
+                    validated.validation_errors,
+                )
+                # The unresolved reference is never resolved from the display name.
+                self.assertEqual(
+                    objects._classification_rule_library_id(
+                        document["classificationPolicies"][0]["rules"][0]
+                    ),
+                    "",
+                )
 
     def test_activation_module_namespace_stays_free_of_construction_classes(self) -> None:
         namespace = vars(configuration_objects_module)

@@ -3372,6 +3372,9 @@ class ConfigurationObjectService:
                 "library": result.library,
                 "category": result.category,
                 "subcategory": result.subcategory,
+                "destinationContract": (
+                    "legacy_library_prefix" if result.legacy_destination else "media_library_path"
+                ),
                 "confidence": result.confidence,
                 "matchEvidence": [self._bounded_utf8(value, 384) for value in result.evidence[:32]],
                 "warnings": [self._bounded_utf8(value, 384) for value in warnings[:32]],
@@ -3607,6 +3610,12 @@ class ConfigurationObjectService:
                 "classificationRuleId": classification.matched_rule_id,
                 "classificationLibrary": classification.library,
                 "classificationRelativePath": classification.relative_path,
+                "destinationContract": (
+                    "legacy_library_prefix"
+                    if classification.legacy_destination
+                    else "media_library_path"
+                ),
+                "classificationPathContributes": composition.classification_contribution,
                 "namingDirectorySegments": list(naming.directory_segments),
                 "namingFilename": naming.filename,
                 "rootRelativeDestination": composition.relative_destination,
@@ -3778,7 +3787,7 @@ class ConfigurationObjectService:
             naming.directory,
             naming.directory_segments,
             naming.filename,
-            classification_library_prefix=classification.library,
+            classification_library_prefix=classification.destination_prefix,
         )
         if not composition.safe:
             owners = {
@@ -8254,14 +8263,18 @@ class ConfigurationObjectService:
 
     @staticmethod
     def _classification_rule_library_id(rule: Mapping[str, object]) -> str:
+        """Return the rule's explicit MediaLibrary reference, or an empty string.
+
+        The reference is never inferred from the legacy ``library`` display name:
+        an ambiguous or missing reference must stay visibly unresolved so the
+        operator corrects it, rather than silently resolving to a guessed library.
+        """
+
         result = rule.get("result")
         result = result if isinstance(result, Mapping) else rule
         explicit = result.get("mediaLibraryId")
         if isinstance(explicit, str) and explicit.strip():
             return explicit
-        library = result.get("library")
-        if isinstance(library, str):
-            return library.strip().casefold().replace(" ", "-")
         return ""
 
     def _strategy_test_document(
@@ -9066,8 +9079,23 @@ class ConfigurationObjectService:
             return raw
 
         media_library_id = bounded_string("mediaLibraryId", required=True, maximum=64)
-        library = bounded_string("library", required=True, maximum=200)
+        # The legacy prefix is optional in the revised contract.  It is accepted
+        # and preserved when present so a historical document keeps its exact
+        # original destination meaning, and it is never required for a newly
+        # authored rule and never inferred from the MediaLibrary display name.
+        library = bounded_string("library", maximum=200)
         path_value = result.get("path")
+        if path_value is None and isinstance(result.get("category"), str):
+            # Legacy documents that only carried category/subcategory still
+            # resolve to the same explicit relative path they always meant.
+            legacy_category = bounded_string("category")
+            legacy_subcategory = bounded_string("subcategory")
+            if legacy_category:
+                path_value = (
+                    [legacy_category, legacy_subcategory]
+                    if legacy_subcategory
+                    else [legacy_category]
+                )
         if isinstance(path_value, list):
             if not path_value or len(path_value) > 32:
                 raise ClassificationError(
@@ -9175,12 +9203,10 @@ class ConfigurationObjectService:
                 rule_id,
                 name,
                 media_library_id or "",
-                library or "",
-                category or "",
+                relative_path,
                 priority=priority,
                 enabled=enabled,
-                subcategory=subcategory,
-                relative_category_path=relative_path,
+                library=library,
                 media_types=media_types,
                 genres=condition_strings("genres"),
                 countries=condition_strings("countries"),
@@ -9218,9 +9244,13 @@ class ConfigurationObjectService:
                 normalized_conditions["yearMax"] = year_max
         normalized_result: dict[str, object] = {
             "mediaLibraryId": media_library_id or "",
-            "library": library or "",
             "path": list(path_parts),
         }
+        # A legacy prefix is preserved byte-for-byte in meaning so the stored
+        # historical contract keeps composing its original target.  A revised
+        # save never submits it, which is exactly what publishes the successor.
+        if library is not None:
+            normalized_result["library"] = library
         if result.get("category") is not None:
             normalized_result["category"] = category or ""
         if subcategory is not None:

@@ -127,7 +127,7 @@ class OrganizePlanner:
             naming.directory,
             naming.directory_segments,
             naming.filename,
-            classification_library_prefix=classification.library,
+            classification_library_prefix=classification.destination_prefix,
         )
         if not composition.safe:
             conflict = Conflict(
@@ -285,7 +285,7 @@ class OrganizePlanner:
                     naming.directory,
                     naming.directory_segments,
                     naming.filename,
-                    classification_library_prefix=classification.library,
+                    classification_library_prefix=classification.destination_prefix,
                 ).relative_destination
                 if target
                 else ""

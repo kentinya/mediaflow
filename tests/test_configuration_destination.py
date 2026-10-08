@@ -214,6 +214,9 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "A",
                         "C",
                         library=result["classificationLibrary"],
+                        legacy_destination=(
+                            result["destinationContract"] == "legacy_library_prefix"
+                        ),
                     ),
                 )
                 self.assertEqual(plan.target, result["composedStorageRelativeDestination"])
@@ -420,6 +423,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                     ("naming.filename", None, None, None),
                 )
                 for contribution, relative, segments, unsafe_root in unsafe_cases:
+                    legacy_prefix = contribution == "classification.library"
                     classification_result = ClassificationResult(
                         "movies",
                         relative or "Action",
@@ -427,9 +431,8 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "C",
                         ClassificationStatus.CLASSIFIED,
                         "action-movie",
-                        library=contribution == "classification.library"
-                        and "../Escape"
-                        or "Movies",
+                        library="../Escape" if legacy_prefix else "Movies",
+                        legacy_destination=legacy_prefix,
                     )
                     naming_result = NamingResult(
                         (

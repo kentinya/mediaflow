@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import posixpath
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -31,15 +31,28 @@ class ClassificationError(ValueError):
 
 @dataclass(frozen=True)
 class ClassificationRule:
+    """One classification destination rule.
+
+    The revised destination contract is ``media_library_id`` plus ``path``:
+    ``mediaLibraryId`` selects the configured Storage/root and never contributes
+    a path segment, so a display name or ID change cannot silently add a
+    directory.
+
+    ``library`` is the legacy destination prefix.  It is retained only so that a
+    document, preview, plan, pin or Task created before the revised contract keeps
+    its original meaning: when it is present the runtime composes
+    ``root/library/path/naming``, exactly as that historical rule always did.
+    Revised authoring never emits it, which is what makes a published successor
+    distinguishable from a legacy pinned contract without a schema change.
+    """
+
     rule_id: str
     name: str
     media_library_id: str
-    library: str
-    category: str
+    path: str
     priority: int = 0
     enabled: bool = True
-    subcategory: str | None = None
-    relative_category_path: str | None = None
+    library: str | None = None
     media_types: tuple[MediaType, ...] = ()
     genres: tuple[str, ...] = ()
     countries: tuple[str, ...] = ()
@@ -55,11 +68,6 @@ class ClassificationRule:
             raise ClassificationError(
                 ClassificationErrorCode.INVALID_RULE,
                 "classification rule ID, name, and media library ID are required",
-            )
-        if not self.library.strip() or not self.category.strip():
-            raise ClassificationError(
-                ClassificationErrorCode.INVALID_RULE,
-                "classification library and category are required",
             )
         if (
             self.year_min is not None
@@ -80,13 +88,43 @@ class ClassificationRule:
                     ClassificationErrorCode.INVALID_RULE,
                     "classification condition values must not be empty",
                 )
-        path = self.relative_category_path or _category_path(self.category, self.subcategory)
-        _validate_relative_path(path)
-        # The library prefix contributes the first relative destination
-        # segment(s), so it is validated with exactly the same bounded
-        # safe-relative-path rules as the rule's relative path.
-        _validate_relative_path(self.library)
-        object.__setattr__(self, "relative_category_path", path)
+        path, _segments = normalize_classification_path(self.path)
+        object.__setattr__(self, "path", path)
+        if self.library is not None:
+            # The legacy prefix contributes the first relative destination
+            # segment(s), so it is validated with exactly the same bounded
+            # safe-relative-path rules as the revised path.
+            if not isinstance(self.library, str) or not self.library.strip():
+                raise ClassificationError(
+                    ClassificationErrorCode.INVALID_RULE,
+                    "classification legacy library prefix must be non-empty text",
+                )
+            _validate_relative_path(self.library)
+
+    @property
+    def relative_category_path(self) -> str:
+        """Compatibility alias for the rule's safe relative destination path."""
+
+        return self.path
+
+    @property
+    def category(self) -> str:
+        """Display category derived from ``path``; never authored separately."""
+
+        return self.path.split("/")[0]
+
+    @property
+    def subcategory(self) -> str | None:
+        """Remaining display path below the derived category, or ``None``."""
+
+        remainder = "/".join(self.path.split("/")[1:])
+        return remainder or None
+
+    @property
+    def legacy(self) -> bool:
+        """Whether this rule still carries the legacy destination prefix contract."""
+
+        return self.library is not None
 
 
 @dataclass(frozen=True)
@@ -134,16 +172,61 @@ class ClassificationResult:
     status: ClassificationStatus = ClassificationStatus.CLASSIFIED
     matched_rule_id: str | None = None
     matched_rule_name: str | None = None
+    # The legacy destination prefix.  It is only ever populated from a legacy
+    # rule, so a result carrying it keeps composing its original historical
+    # target while a revised result leaves it empty.
     library: str | None = None
     category: str | None = None
     subcategory: str | None = None
     confidence: float = 0
     evidence: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    # Explicit legacy marker: the destination meaning of this result is the
+    # pre-revision contract and must not be reinterpreted as a revised target.
+    legacy_destination: bool = False
+
+    @property
+    def destination_prefix(self) -> str | None:
+        """The legacy prefix that may still contribute a destination segment.
+
+        Only a result explicitly marked as legacy returns its stored prefix, so a
+        revised result can never acquire a name-derived directory merely because
+        a stale ``library`` value survived somewhere.
+        """
+
+        return self.library if self.legacy_destination else None
 
 
-def _category_path(category: str, subcategory: str | None) -> str:
-    return posixpath.join(category, subcategory) if subcategory else category
+def normalize_classification_path(value: str | Sequence[str]) -> tuple[str, tuple[str, ...]]:
+    """Normalize one classification-relative destination path.
+
+    This is the single backend normalization every consumer uses, so a string
+    and its equivalent segment list can never disagree.  It accepts the bounded
+    string and segment-list compatibility forms and rejects absolute, traversal,
+    empty and separator-bearing components through the same safe-relative rules
+    the composer applies.
+    """
+
+    if isinstance(value, str):
+        raw_segments: Sequence[str] = value.split("/")
+    elif isinstance(value, (list, tuple)):
+        raw_segments = value
+    else:
+        raise ClassificationError(
+            ClassificationErrorCode.UNSAFE_PATH,
+            "classification path must be a string or an array of segments",
+        )
+    segments: list[str] = []
+    for segment in raw_segments:
+        if not isinstance(segment, str) or not segment.strip():
+            raise ClassificationError(
+                ClassificationErrorCode.UNSAFE_PATH,
+                "classification path must contain safe non-empty components",
+            )
+        segments.append(segment)
+    path = "/".join(segments)
+    _validate_relative_path(path)
+    return path, tuple(segments)
 
 
 def _validate_relative_path(value: str) -> None:

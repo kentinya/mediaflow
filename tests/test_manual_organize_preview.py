@@ -547,7 +547,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             "Any movie",
             "movies",
             "Movies",
-            "Movies",
+            library="Movies",
             priority=1,
             media_types=(MediaType.MOVIE,),
         )

@@ -57,14 +57,14 @@ def context(
     )
 
 
-def rule(rule_id, category, *, priority=0, **conditions):
+def rule(rule_id, path, *, priority=0, library=None, **conditions):
     return ClassificationRule(
         rule_id,
         rule_id,
         "movies",
-        "Movies",
-        category,
+        path,
         priority=priority,
+        library=library,
         **conditions,
     )
 
@@ -111,14 +111,16 @@ class ClassificationEngineTests(unittest.TestCase):
                     "tv-series",
                     "TV Series",
                     "tv",
-                    "TV Shows",
                     "Series",
+                    library="TV Shows",
                     media_types=(MediaType.TV,),
                 ),
             ),
         )
         result = self.engine.classify(context(media_type=MediaType.TV), policy)
         self.assertEqual((result.library, result.category), ("TV Shows", "Series"))
+        self.assertTrue(result.legacy_destination)
+        self.assertEqual(result.destination_prefix, "TV Shows")
 
     def test_anime_higher_priority_wins_animation_conflict(self) -> None:
         configuration = smoke_strategy_configuration()
@@ -205,9 +207,13 @@ class ClassificationEngineTests(unittest.TestCase):
 
     def test_invalid_paths_and_ranges_are_rejected(self) -> None:
         with self.assertRaises(ClassificationError):
-            rule("bad", "Bad", relative_category_path="../Bad")
+            rule("bad", "../Bad")
         with self.assertRaises(ClassificationError):
             rule("bad-year", "Bad", year_min=2025, year_max=2020)
+        with self.assertRaises(ClassificationError):
+            rule("bad-legacy", "Bad", library="../Movies")
+        with self.assertRaises(ClassificationError):
+            rule("empty-path", "")
 
     def test_strategy_preview_pipeline_is_read_only(self) -> None:
         guard = ReadOnlyStrategyStorage(DummyStorage())
@@ -244,7 +250,7 @@ class ClassificationEngineTests(unittest.TestCase):
         self.assertIn("RecognitionType: C", value)
         self.assertIn("ClassificationPolicy: A", value)
         self.assertIn("Matched Rule: anime-movie", value)
-        self.assertIn("Library: Movies", value)
+        self.assertIn("MediaLibrary: movies", value)
         self.assertIn("Category: Anime", value)
         self.assertIn("Classification execution calls: 1", value)
         self.assertIn("Organizer execution calls: 0", value)

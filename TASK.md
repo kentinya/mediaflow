@@ -1,13 +1,14 @@
-# Task 44.1 — Consistent direct file maintenance across both library kinds
+# Task 44.2 — Classification destinations and explicit legacy conversion
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](SLICE.md). It implements RO-1 and Slice Acceptance Criteria 1–8.
+[`SLICE.md`](SLICE.md). It completes RO-3 and Slice Acceptance Criteria 13–16 as one destination,
+publication and historical-authority boundary.
 
 ```text
-Task ID: 44.1
+Task ID: 44.2
 Parent Slice: 44
-Status: FIX REQUIRED
-Task Base: f57715c042ffa22c07d92950cc3de222946ed9b2
+Status: PLANNED
+Task Base: 78cddf8b4090e8da86c6e69ffd237c67959b70c7
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,181 +16,197 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete RO-1's ordinary file-maintenance journey on ResourceLibrary Files and MediaLibrary Files
-under one backend observable-metadata policy with optional provider fingerprints. Supported Rename,
-confirmed Delete and verified cross-Storage Move must not fail solely because fingerprints are
-unavailable. Deliver native success, failure and recovery on both kinds while preserving exact
-scope, permissions, immutable pins, ownership and independent effects.
+An operator creates or edits a classification destination using only a selected MediaLibrary and
+one safe relative `path`, previews its actual target and publishes through the existing checked
+Save. New work uses MediaLibrary root + classification path + naming contribution consistently
+across Web/API/CLI/manual/scheduled consumers. Legacy destinations convert only through explicit,
+explained successor publication; old snapshots, admitted pins, effects and execution authority keep
+their original meaning.
 
 ## Why This Task Exists
 
-Inspection at Task Base establishes these gaps:
+Actual code at Task Base still has RO-3's original gaps:
 
-- `DirectFileCommandService` requires a fingerprint for Rename evidence and Delete impact;
-  OrganizerExecutor repeats the requirement at the last mutation boundary.
-- Same-Storage Move already accepts absent fingerprints with observable-state checks. Cross-Storage
-  Move requires exact identity before source removal and can return PARTIAL after verified Copy
-  solely because that fingerprint is absent.
-- Production OpenList and SMB entry conversion supplies no fingerprint. Both native library pages
-  expose the refusal, so this is a supported production journey, not a hypothetical adapter.
-- Rename tokens and Delete digests bind kind/ID/path/metadata but lack the complete Storage/root/
-  configuration context required by RO-1's TARGET rule.
-- Bounded Delete currently executes its batch inside the request. Task/result recording alone does
-  not complete the promised long-work admission and native remaining-scope recovery journey.
+- `ClassificationRule` requires `library` and `category`.
+- `strategy_user_configuration._classification_rule` requires the legacy field and can infer a
+  MediaLibrary ID from its name; it also has overlapping path/category normalization.
+- `compose_destination` prefixes classification `library`, and formal Planner passes that prefix.
+- `RulesObjectForm` fills `library` from the MediaLibrary display name and exposes category and
+  subcategory destination fields alongside path.
 
-B ran six existing baseline probes: ResourceLibrary no-identity Rename/Delete refusal, MediaLibrary
-no-identity refusal, cross-Storage no-identity Move source retention, fingerprint-change rejection
-and replaced-directory rejection. All six passed. These establish baseline behavior only; the
-Contract changes the first four expectations and preserves the latter protections.
+Removing a form field alone would leave different runtime targets or change historical snapshot
+meaning. The largest independently acceptable next unit is the complete classification destination
+contract, its ordinary editing/conversion journey, common consumers and compatible authority.
+RO-2 workspace presentation and RO-4 object-test separation can subsequently reuse this boundary.
 
-The shared observation/confirmation/Executor/recovery boundary is one coherent vertical unit.
-Splitting by operation or library page would leave inconsistent authority and user behavior.
-RO-2 through RO-6 remain outstanding; this Task does not implement or close those outcomes.
+### Preceding Task review
+
+Task 44.1 B review: **PASS** for
+`f57715c042ffa22c07d92950cc3de222946ed9b2..a3a0eaebf99874f5f91d5bc96547b6c0d8486c62`.
+RO-1 is complete; Slice Required Outcomes all satisfied: **NO**; next: **NEXT TASK**.
+The current committed HEAD includes the legitimate completion-report commit after that source
+checkpoint; this Task Base records that actual HEAD, not a repin of Task 44.1 or Slice Base.
+
+B independently verified Python full regression (2,195 total, 7 skipped, OK), Web full unit
+regression (66 files / 1,011 passed), both-kind real-Python Files browser journeys (10 passed),
+real-Python Operations browser acceptance (complete repeat: 21 passed), required quality/config
+checks, actual Base-era state compatibility, wheel smoke, complete Docker release-security and
+transfer-lifecycle acceptance. Actual range/diff, production OpenList local-server coverage,
+metadata refusals and same-ID unknown-response recovery were inspected. The HTTP Delete blocker is
+resolved on both kinds without weakening scope or non-replay. Full evidence/review snapshot:
+`/tmp/mediaflow-task44-1-b-pass-review.md`; test logs use `/tmp/mediaflow-b44-r2-*`.
+
+Known non-blocking validation facts carried forward, without claiming a green default E2E suite:
+
+- Full default E2E: 203 passed / 32 failed. Twenty-eight Storage failures match actual committed
+  Task 44.1 Base failure contexts and unchanged Storage tests/source; three old placeholder/route
+  failures were independently rerun at that Base and failed identically. One Copy case waits for
+  Movies after a prior Delete removed it from shared Node fake state; no Copy POST is sent. The
+  unchanged Copy case passes with fresh fixture state. This is a P2 test-isolation issue with no
+  supported-production user defect, not a P1 or a separate implementation Task.
+- The unchanged Docker transfer-impact preparation fails with KeyError resourceLibraries at
+  actual Base and candidate; the unchanged generic Docker upgrade harness expects schema 39
+  although actual Base/candidate schema is 44. Actual schema-44 state, wheel migration/recovery
+  and the complete security/lifecycle gates passed. Do not label either failing harness PASS.
+- Initial Rules concurrency, Web unit, Operations timing and Docker health failures remain in
+  the recorded reports/logs. B's subsequent complete runs passed without removing tests, hiding
+  skips or relaxing checks. Production SMB/S3/TMDB endpoints were not certified by local/fake
+  tests; built JS retains its existing >500 KB advisory.
+
+Recheck all six Required Outcomes after this Task PASS. RO-2, RO-4, RO-5 and RO-6 remain separate
+outstanding coherent outcomes; this Task neither implements them nor closes the Slice.
 
 ## Implementation Scope
 
 ```text
-Direct-file domain evidence → compatible persistence/checkpoints → shared application services
-→ OrganizerExecutor → Task/Worker/Operations → scoped authenticated APIs → both Web pages → Tests
+Classification domain/normalization → immutable snapshot and compatible persistence semantics
+→ common destination composer/Planner → configuration and processing application services
+→ authenticated Rules/configuration/preview APIs + CLI/scheduled consumers
+→ native classification forms/conversion/recovery → Tests and historical-state rehearsal
 ```
 
-1. Apply the TARGET rule only to ordinary direct maintenance. Server-observed evidence remains
-   required when fingerprints are absent. Bind exact library kind/ID, Storage/root, relative path
-   and applicable immutable configuration context; preserve names including boundary whitespace.
-   Revalidate at submission and the last safe mutation boundary. An observed fingerprint stays
-   binding: disappearance/change cannot downgrade to weaker evidence.
-2. Share metadata-only validation. Files compare existence, supported type, size/time and any
-   observed fingerprint. Directories compare available stable identity, otherwise existence/type.
-   Confirmed child removal must not falsely invalidate a Local parent through changed ctime.
-   Directory Delete additionally requires complete confirmed scope and an empty final parent.
-3. Complete file/directory Rename, single/batch/recursive Delete and cross-Storage Move source
-   removal without mandatory fingerprints. Preserve RO-1's full operation semantics for browsing,
-   Create Folder/Text File, same/cross-Storage Copy/Move and bounded text Open/Edit/Save. Reuse
-   working behavior; change it only where required for consistency or promised failure/recovery.
-4. Keep existing concrete limits: Delete ≤50 submitted paths, ≤5,000 entries, depth ≤32 and
-   ≤20 GiB known bytes; transfers ≤50 paths, ≤5,000 entries and depth ≤32, with media byte totals
-   informational rather than an admission ceiling. Text remains allowlisted UTF-8 and ≤512 KiB.
-   Retain paging/path/control-plane bounds; truncated enumeration cannot authorize a prefix.
-5. Deliver durable admission/control for long/batch Delete using existing Task/Job/Worker and
-   Operations boundaries. Persist confirmed scope, kind/root/pin, item progress and effect certainty
-   for cooperative pause/cancel, restart and explicit safe continuation. Preserve transfer
-   checkpoints/ownership; do not reconstruct authority from a fresh expanded tree or add an engine.
-6. Evolve evidence/persistence only as necessary and compatibly. Old results/pins remain historical
-   facts; valid strong evidence keeps its original binding. Old no-fingerprint partial/refused work
-   does not gain source-delete authority upon upgrade. Where safe historical authority cannot be
-   proved, provide native current observation and explicit reconfirmation/successor recovery.
-7. Wire both `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, their separate API namespaces,
-   typed models/dialogs/text editor and Operations recovery to shared behavior. Preserve each
-   page's destination rules and return context. MediaLibrary Worker readback/continuation requires
-   direct acceptance evidence, not merely ResourceLibrary/shared-service coverage.
+1. Define the revised result with explicit `mediaLibraryId` and `path`. Use one backend safe-relative
+   normalization for supported string/segment-list paths; the library ID/name never contributes a
+   path segment. Derive category display from path where needed. Preserve condition semantics,
+   identity, priority, enabled state, confidence, no-match/manual handling and C identity.
+2. Carry the revised semantics through managed/bootstrap/import/export normalization, classification
+   decisions and manual configured-rule recovery, common composition, formal Planner, exact-
+   candidate classification/destination/complete-flow previews, API/CLI and existing scheduled
+   processing. Web renders backend results and does not calculate an alternate authoritative path.
+3. In existing Rules Add/copy/Edit classification forms, expose the destination selector and one
+   safe path; remove `library` and redundant editable category/subcategory output for revised
+   authoring. Preserve the remaining supported fields, typed conditions and normal checked Save.
+   Show selected root, classification and naming contributions, actual target and relevant errors.
+4. Deliver explicit legacy conversion through the same native editing/publication journey. Read
+   legacy configuration and diagnostics without silently converting it. Show the old and proposed
+   destination contributions before the operator deliberately saves the revised successor. Remove
+   the prefix, preserve the existing explicit path, and never automatically prepend the old prefix.
+   Missing/ambiguous library references or explicit paths require visible correction, not name/slug
+   guessing. An unrelated object's cosmetic Save cannot switch a legacy destination contract.
+5. Choose the smallest compatible format/runtime strategy that distinguishes a legacy pinned
+   contract from a revised publication. Preserve old revision bytes/digests, previews/plans/results,
+   Task/Job pins, completed/partial/uncertain effects and previously organized files. Add compatible
+   persistence evolution only if required; do not create a second policy store or execution engine.
+   Already authorized legacy work continues only under provable original semantics/authority;
+   otherwise refuse new mutation and provide native diagnosis and current-preview recovery.
+6. Preserve evidence purpose and authority. Old-target previews/checks/grants cannot authorize a
+   revised target. Affected new work obtains exact current preview/authorization through existing
+   journeys. Preserve unrelated valid authority and provably unchanged pinned continuation; avoid
+   blanket invalidation or replaying completed/uncertain effects. Checked activation remains atomic
+   and fails closed; failed/unknown publication preserves input and supports actual readback.
+7. Keep classification/Planner/analysis pure and OrganizerExecutor the sole mutator. Preserve live
+   permissions, Storage/root confinement, capabilities, conflicts, source identity, locks/fences and
+   destructive intent. Maintain RO-1's direct maintenance and both-kind recovery as regressions.
+   Document only necessary implemented compatibility/architecture facts in `docs/architecture.md`;
+   authoritative product/roadmap reconciliation remains A's closure responsibility.
 
 ### Operator journey
 
-- **Goal/entry:** maintain live entries or a bounded selection through existing menus/actions,
-  dialogs and text editor on either native library page.
-- **Visible state:** exact source/destination paths, observed facts, bounded impact, Worker readiness,
-  per-item durable stage and known/retained/partial/uncertain effects.
-- **Action:** supply name/destination/content/conflict intent; confirm Delete once; follow progress
-  and backend-advertised controls. Carry server evidence automatically with no unsafe-mode toggle,
-  CLI fallback or raw-token transfer.
-- **Success:** verify effects, persist truthful results, refresh live list/tree and reconcile exact
-  selection/current-directory/return context without another mutation.
-- **Failure:** explain the affected item's invalid/stale scope, conflict, denial, unsupported
-  capability, failed verification or unknown effect; retain input and successful siblings.
-- **Recovery:** correct input, refresh/reobserve/reconfirm changed intent or continue an attributable
-  safe checkpoint. Unknown admission/effects require native readback/investigation before another
-  deliberate action. Refresh/reconnect/restart never resubmits mutations.
+- **Goal/entry:** open Classification Policies in `/ui-v2/rules`, explicitly Add/copy or use the
+  existing Edit route, and choose a destination for the current rule.
+- **Visible state:** the selected configured MediaLibrary/root, one classification path, naming
+  contribution and exact candidate target; legacy conversion additionally shows old/new routing.
+- **Action:** edit destination/conditions, explicitly preview, correct relevant findings, and publish
+  with the existing one checked Save. Meaningful legacy target change is explicit; ordinary editing
+  requires no CLI, raw revisions/tokens or extra generic Validate/Activate ceremony.
+- **Success:** the published Active inventory and newly admitted work agree on the canonical target;
+  a display-name change does not alter a revised destination.
+- **Failure:** invalid path/reference, missing/disabled library, stale candidate/authority, denied
+  Save, unavailable context, target conflict or failed check names the affected rule/stage.
+- **Recovery:** preserve correctable form/old Active, resolve the named field/reference, repreview
+  and Save; read back an unknown publication. Historical work retains its original durable state
+  and offers safe existing continuation or explicit current-preview recovery without replay.
 
-Frozen: Slice Contract/Base, Roadmap, canonical requirements, accepted historical closure records,
-frozen Slice 43 and all supplied PNGs, including the four pre-existing untracked images. Do not
-inspect/stage/include `config/alist.json`, real credentials or user media. Document any necessary
-narrow architecture adjustment and its reason; A owns factual acceptance/closure reconciliation.
+### Frozen scope
+
+Do not modify Slice User Goal, Required Outcomes/Surfaces, Safety Invariants or Slice Base;
+`docs/roadmap.md`, `docs/progress.md`, the canonical Chinese specification, stable product/requirements
+contracts, reference images and frozen Slice 43 history remain outside implementation scope. Preserve
+all pre-existing untracked images and other user work. Never include `config/alist.json`, real
+configuration/credentials or production data.
 
 ## Acceptance Criteria
 
-- [ ] **AC-1 — Both surfaces.** Every applicable RO-1 operation completes on both native pages and
-  scoped authenticated APIs. OpenList/SMB-like providers without fingerprints support file/directory
-  Rename, bounded confirmed Delete and verified cross-Storage Move source removal. MediaLibrary has
-  its own required Task/Worker readback/continuation. Equal IDs/overlapping roots cannot exchange
-  cross-kind evidence, destinations or work.
-- [ ] **AC-2 — Observations.** Exact kind/library/Storage/root/path/configuration context binds
-  observations and confirmation. Missing evidence remains invalid. Observable existence/type/size/
-  time changes and observed-fingerprint changes/disappearance stop mutation at admission and final
-  checks. Stable directory identity/legitimate Local ctime changes follow the TARGET rule. Do not
-  fabricate exact identity from metadata; document indistinguishable replacement and external
-  check-to-write windows as accepted limitations rather than imposing new identity requirements.
-- [ ] **AC-3 — Delete.** Overlapping selections deduplicate; complete bounded impact shows counts/
-  known bytes. Added/removed/type-changed/observably changed entries invalidate confirmation.
-  Children precede parents; each item is revalidated and final parents must be empty. Links,
-  unsupported types, roots and exceeded limits fail closed. Sibling failure or unexpected contents
-  cannot cause recursive removal outside the confirmed effect.
-- [ ] **AC-4 — Short commands/text.** Browsing is bounded/live/read-only. Create requires valid
-  basename, writable existing parent and absent target; existing entries are conflicts. Rename
-  uses native operation without Copy/Delete fallback and verifies old absence/new presence.
-  Text Create/Open/Save retains allowlist/UTF-8/512-KiB bounds and loaded size/content-digest fences
-  at admission/final boundary; changed/missing Save cannot become Create. Verify content before
-  advancing editor evidence. Unknown creation/rename/save is read back without equating target
-  presence or equal metadata with ownership.
-- [ ] **AC-5 — Transfers.** Same-Storage Copy/Move retains native capabilities/conflict choices and
-  verification, including OpenList Move→Rename intermediate-name protection and truthful failed/
-  unknown compensation. Cross-Storage Copy verifies byte count/digest and preserves source on all
-  outcomes. Move persists Copy-written/destination-verified/source-deleted checkpoints, freshly
-  checks source plus live delete authority and verifies absence. No-fingerprint source removal
-  succeeds when gates pass; changes/denial/unknown removal preserve independent partial/uncertain
-  effects. Final empty source directories use the same policy. Skip/keep-both/manual resolution
-  and partial-target cleanup retain attribution/authority; no silent overwrite/fallback, transfer
-  Replace or aggregate-media-byte admission ceiling.
-- [ ] **AC-6 — Durable recovery.** Long/batch Delete and transfers expose durable admission, Worker
-  waiting reasons, progress, cooperative pause/cancel and native safe remaining-scope continuation
-  on both kinds. Restart/takeover retains exact published pins, locks/leases/fences and attributable
-  checkpoints; Active never repins admitted work. Expanded/changed scope requires renewed review/
-  confirmation. Completed siblings remain terminal, uncertain mutations investigation-only, and
-  unknown admissions are read back before an explicit repeat without duplicate work.
-- [ ] **AC-7 — Compatibility.** Actual Base-created evidence and pending/completed/partial/uncertain
-  work remain readable across candidate restart/upgrade under their original meaning. Valid strong
-  evidence is not downgraded/destroyed; previously refused source deletion cannot automatically
-  resume under newly relaxed authority. Native recovery explains durable effects and obtains
-  current intent when required. Necessary evidence/schema evolution has a real old-state rehearsal,
-  not solely fixtures invented in the candidate format.
-- [ ] **AC-8 — Safety.** Rename/Delete evidence, admission, confirmation, final checks and effect
-  verification read zero selected-file bytes and perform no FULL Hash. Transfer verification and
-  bounded text content fences remain intact for their own purposes. Only OrganizerExecutor mutates
-  Storage. Permission/read-only/capability/path refusals perform zero mutation. Direct maintenance
-  invokes no Recognition/Metadata/media-organize pipeline or Provider.
-- [ ] **AC-9 — Native feedback/regression.** Both pages retain correctable name/content/destination
-  input, expose independent action-oriented failure/recovery and refresh exact list/tree/selection/
-  path after known effects. Reads/reconnect/index-sync failure cause no replay. Preserve Organize
-  Preview source authority, C→A-policy identity, library configuration, Storage binding and other
-  pages. MediaLibrary gains no Organize entry or source authority.
-- [ ] **AC-10 — Verification/checkpoint.** T4 gates pass with actual commands/totals/skips/unavailable
-  evidence. Supply an operation × library-kind evidence map linking relevant cases to tests,
-  scoped APIs, native browser proof and recovery. Include the production OpenList adapter through
-  a local server, not only a fingerprint-stripped Local wrapper. Base..Head contains only this
-  coherent Task with no private/unrelated files.
+- [ ] **AC-1 — Revised authoring.** New classification results require explicit MediaLibrary ID and
+  safe path only, through one backend string/segment-list normalization. Both existing Add/copy
+  drawers and Edit support this form, without library/category/subcategory destination inputs or
+  name-derived routing. Preserve all actual condition/identity/priority/enable behavior.
+- [ ] **AC-2 — Target parity.** For root `/Media`, path `电影/华语` and naming
+  `影片目录/影片.mkv`, every revised consumer produces `/Media/电影/华语/影片目录/影片.mkv`.
+  Keeping a Movies prefix requires Movies explicitly in path. Library display-name/ID changes do
+  not implicitly add a segment. Web/API/CLI previews, formal Planner, manual decisions and existing
+  scheduled processing agree; C remains C when reusing A policies.
+- [ ] **AC-3 — Native success/error/recovery.** Form and exact-candidate evidence explain selected
+  root/path/naming/target, matched rule and relevant failure. Missing/disabled/unresolved libraries,
+  unsafe paths and no-match remain truthful outcomes. Checked Save succeeds atomically or preserves
+  input/old Active; stale/unknown Save uses existing repreview/readback without automatic replay.
+- [ ] **AC-4 — Explicit legacy publication.** Legacy read/bootstrap/import/export and diagnostics
+  remain supported. Conversion shows old/new contributions, removes library while preserving the
+  explicit path, and publishes only through deliberate checked successor Save. Missing ID/path
+  requires visible correction; no name guess, startup conversion, read-side publication or implicit
+  conversion through another object's Save. Full-document and page-local consumers agree.
+- [ ] **AC-5 — Historical contract integrity.** Actual Task-Base-created immutable documents,
+  digests, plans/previews/results and admitted Task/Job pins remain readable and unchanged across
+  candidate restart/upgrade. The runtime distinguishes legacy from revised target meaning. Legacy
+  continuation either proves and uses its original contract/authority or refuses new mutation with
+  native recovery. It never substitutes current Active or replays completed/uncertain effects.
+- [ ] **AC-6 — Exact authorization.** Old-target evidence/grants cannot authorize revised targets.
+  Affected current work has exact new preview/authority through existing manual/scheduled journeys;
+  unrelated authority and provably unchanged pinned work remain valid. Stale/revoked permission,
+  changed source, conflict and unsupported Storage capability remain enforced at execution.
+- [ ] **AC-7 — Safety/regression.** Classification/composition/Planner/analysis cause zero Storage
+  mutation. Only OrganizerExecutor executes authorized work; no silent overwrite/delete, new
+  fallback or relocation of prior files. Preserve pipeline separation, C identity, snapshot pinning,
+  fences, independently recoverable effects and RO-1's ordinary file operations on both kinds.
+- [ ] **AC-8 — Complete evidence/checkpoint.** Assigned T4 focused/integration/full/quality/safety/
+  packaging gates have truthful commands, totals, skips and actual candidate identities. Native
+  authenticated real-Python browser/API proof covers revised authoring, checked legacy conversion,
+  publication failure/readback and affected recovery. Real Base-era compatibility is rehearsed, not
+  replaced by fixtures authored in the new format. Any pre-existing/unrelated failure has actual
+  Base evidence; the scoped checkpoint contains no private/unrelated or frozen work.
 
 ## Required Tests
 
-Run Python commands from the repository root using `.venv/bin/python` (plain `python` is unavailable).
-Do not delete tests, weaken unchanged safety assertions or hide skips. Replace obsolete mandatory-
-fingerprint refusal assertions with specific new success/staleness/non-replay assertions while
-retaining strong-fingerprint protections. Record exact commands for all additional focused tests.
+Use `.venv/bin/python` from repository root. Keep unchanged safety assertions and report every skip,
+failure and unavailable gate. Replace old target expectations only where the selected revised
+contract applies; retain explicit legacy-target and pin-integrity assertions. Do not use production
+media, credentials or remote endpoints for these gates.
 
-### Focused and affected integration
+### Focused domain/configuration/publication integration
 
 ```bash
-.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_direct_file_transfers tests.test_media_library_transfers
-.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_scope_continuation tests.test_processing_worker_readiness tests.test_runtime_files_browser
-.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage tests.test_migration_rehearsal tests.test_release_security tests.test_release_validation tests.test_container_deployment
+.venv/bin/python -m unittest tests.test_classification tests.test_strategy_configuration tests.test_runtime_strategy_configuration tests.test_configuration_classification tests.test_configuration_destination tests.test_configuration_destination_activation tests.test_configuration_package_exchange tests.test_v2_rules_workspace_previews tests.test_v2_rules_workspace_commands
+.venv/bin/python -m unittest tests.test_organizer tests.test_classification_review tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_resource_library_pipeline tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_configuration_snapshot tests.test_migration_rehearsal tests.test_release_security
 ```
 
-Cover absent/present/changing/disappearing fingerprints at admission and final boundaries, metadata
-changes, no-content-read spies, recursive scope/final emptiness, exact whitespace paths, denied/root/
-link/alias/conflict failures, both API bindings, verified/partial/unknown source removal, pause/
-cancel/restart/stale owner and old/new activation isolation. Use Local temporary directories,
-production OpenList with a local HTTP server and SMB/S3-prefix fakes/local servers. Fake/local-server
-evidence cannot certify real remote services. No production credentials/media are prerequisites.
+Add focused tests in the relevant existing modules or a coherent compatibility test module and
+record its exact command. Cover safe/nested/string/segment-list and invalid paths, name changes,
+missing/disabled/ambiguous references, conditions/no-match/manual decisions, pure calculations and
+zero-mutation spies, formal/scheduled parity, C→A-policy identity, stale/failed/unknown publication,
+old/new targets and grants, pin reconstruction/denial, restart and independent partial/uncertain
+state. Tests must use the actual production engines, not an alternate preview path calculator.
 
-### Full regression and quality/safety gates
+### Full regression and quality/safety
 
 ```bash
 .venv/bin/python scripts/check_governance.py
@@ -204,12 +221,13 @@ git diff --check
 rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
 ```
 
-The forbidden-dependency audit requires no matches (rg exit 1). Inspect complete diff/manifest and
-staged files for scope/secrets/private files. Prove any claimed pre-existing/unrelated failure at Base.
+Forbidden-dependency audit requires no matches (rg exit 1). Inspect complete Task Base..Head and
+staged manifest for scope, frozen files and private data. Legacy examples must remain meaningful
+compatibility inputs; do not erase coverage to make revised normalization pass.
 
-### Web and real-Python browser acceptance
+### Web and real-Python acceptance
 
-Run in `web/`:
+From `web/`:
 
 ```bash
 npm run test -- --run
@@ -219,167 +237,249 @@ npm run typecheck
 npm run build
 npm run test:e2e
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
 ```
 
-Also add/run focused **real-Python native Files browser journeys on both library kinds** using
-temporary roots/SQLite, actual application/API/Worker and built assets. Reuse/extend existing harness
-or add a narrow isolated harness/config; report its exact reproducible invocation. Exclude Python-
-only specs from default fake-server runs. Existing Operations proof and mock-only Web coverage alone
-cannot establish AC-1/6/9.
+Run/add focused native Classification Add/copy/Edit/preview/publication/conversion checks and record
+exact invocations. Supply real-Python API/SQLite/runtime/browser journeys using temporary roots,
+actual checked configuration application behavior and built candidate assets. Reuse a suitable
+existing harness or add a narrow isolated Rules harness; exclude its real-Python spec from default
+fake-server runs. Cover legacy old/new visibility, preserved path, revised new work, stale/denied/
+unknown Save, historical recovery and no replay. Existing fake previews or direct-file browser
+proof alone cannot certify the destination contract. Keep evidence purpose/local-versus-complete
+analysis unchanged; RO-4 separation remains outside this Task.
 
-Cover applicable operations, file/directory Rename, single/batch/directory Delete and verified
-cross-Storage Move without fingerprints, retained input, source changes/conflicts/denials, partial/
-unknown readback, pause/continue and live tree/selection/return context. Check list/grid command
-reachability, keyboard and narrow use; RO-5's layout repair remains outside this Task. Save bounded
-browser evidence and the operation/kind map without exposing private paths or credentials.
+Run browser configs sequentially or use independent output directories so unrelated trace cleanup
+cannot invalidate results. Assess carried-forward failures against actual Task Base and current
+production reachability/impact; disclose them without inventing P1s or claiming failed suites green.
 
-### Packaging, Docker and compatibility
+### Compatibility, packaging and Docker
 
 ```bash
-.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-1-wheel
-.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-1-wheel/mediaflow-*.whl
-.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-1-lifecycle
-.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task44-1-impact
-.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-1-security
+.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-2-wheel
+.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-2-wheel/mediaflow-*.whl
+.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-2-security
+.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-2-lifecycle
 ```
 
-Use fresh candidate artifacts/image tags or clean only Task-owned stale outputs; record actual
-candidate build/served artifact identity. Use isolated temporary Compose state, synthetic media and
-generated test credentials, never the live deployment. Disclose every SKIP/tool/service/Docker
-unavailability explicitly; unavailable evidence is not PASS.
+Rehearse actual Task Base→candidate legacy configuration and admitted-work compatibility. Seed
+legacy documents, immutable revisions/digests, target previews/plans/evidence/grants and pending/
+completed/partial/uncertain work using actual Base code. Verify candidate restart/readback,
+provable old-target continuation or zero-mutation refusal, explicit successor conversion, revised
+new work and protection against old grants authorizing new targets. Report exact commands and
+state/artifact identity. An invented new-format fixture or generic schema-only rehearsal is
+insufficient. If persistence/format changes, run applicable upgrade/migration gates including
+`.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`; document its actual Base-existing
+schema expectation failure if still unchanged, alongside the real compatibility rehearsal.
 
-If evidence/persistence format/schema changes, perform an actual Task Base→candidate upgrade/restart
-rehearsal preserving old strong evidence, pins/results and partial/uncertain effects. Record exact
-seeding/upgrade commands and outcomes. Run the applicable generic Docker upgrade gate as well:
-`.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`. Its generic coverage does not
-replace the direct-work historical compatibility rehearsal.
+Use fresh Task-owned artifacts/isolated Compose projects, synthetic media and generated test
+credentials. Preserve the live deployment. Record unavailable Docker/services honestly, never PASS.
 
 ## Non-goals
 
-- RO-2 Rules presentation, RO-3 destinations, RO-4 object tests, RO-5 toolbar repair and RO-6 folder
-  organization; preserve their existing surfaces as affected regressions only.
-- Frozen Slice 43 implementation/integration or altering its unresolved Task/review history.
-- Upload/Download, transfer Replace, cross-kind direct transfer, new link UI/providers, unbounded
-  work, generic rollback, automatic uncertain replay or a second queue/execution engine.
-- Rename/Delete media hashing, provider-generation/conditional-operation redesign or universal
-  detection of indistinguishable replacement/external check-to-write races.
-- Changing media Organize fingerprint authority, publication/grant semantics or Slice scope;
-  A reconciliation, next-Task planning, Slice PASS/CLOSED and unrelated refactors/P2 polish.
+- RO-2 shared header/navigation/reference styling or wholesale Rules form redesign; RO-4 object-
+  scoped tests/complete-flow separation; RO-5 toolbar repair; RO-6 folder discovery/organization.
+- Frozen Slice 43 integration, dependency on its rejected implementation or alteration of its
+  Task/history; Slice/Task scope changes, A's reconciliation and Slice PASS/CLOSED.
+- Automatic legacy conversion/relocation, broad policy stores/migrations, blanket authority
+  revocation, replay/rollback of completed or uncertain media, or weakening source/ownership gates.
+- New providers/Storage operations, Upload/Download, transfer Replace, MediaLibrary Organize,
+  recognition algorithms, global search, unrelated cleanup or separate P2/test-only Tasks.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `TASK.md`, `docs/architecture.md`
-- `mediaflow/application/direct_file_commands.py`, `mediaflow/application/direct_file_transfers.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/application/organizer.py`, `mediaflow/domain/direct_files.py`, `mediaflow/final_cli.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`
-- `scripts/direct_files_browser_harness.py`, `scripts/direct_files_compatibility_rehearsal.py`, `scripts/operations_inventory_harness.py`
-- `tests/test_direct_file_operations.py`, `tests/test_direct_file_transfers.py`, `tests/test_media_library_direct_commands.py`, `tests/test_media_library_transfers.py`, `tests/test_release_security.py`
-- `web/playwright.config.ts`, `web/playwright.direct-files.python.config.ts`, `web/src/entities/library/direct-files.ts`, `web/src/features/library/delete-admission-session.ts`, `web/src/features/library/delete-admission-session.test.ts`, `web/src/features/library/FileCommandDialogs.tsx`, `web/src/features/library/MediaLibraryCommands.test.tsx`, `web/src/features/library/MediaLibraryFilesPage.tsx`, `web/src/features/library/StorageFilesPage.test.tsx`, `web/src/features/library/StorageFilesPage.tsx`, `web/src/shared/api/api-client.ts`, `web/src/shared/api/media-library-commands-api.test.ts`, `web/tests/e2e/direct-files.python.spec.ts`, `web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/medialib-commands.spec.ts`, `web/tests/fake-server.mjs`
+Domain / application:
+- `mediaflow/domain/classification.py` — `ClassificationRule` is now `media_library_id` + `path`
+  with an optional legacy `library` prefix; `category`/`subcategory`/`relative_category_path` become
+  derived read-only views; new `normalize_classification_path` is the single string/segment-list
+  normalization; `ClassificationResult.destination_prefix` returns the prefix only for an explicitly
+  legacy result.
+- `mediaflow/domain/organizer.py` — `compose_destination` documents the revised contract and reports
+  `classification_contribution` for old/new routing display.
+- `mediaflow/application/classification.py` — one `_result_for_rule` builder marks legacy results.
+- `mediaflow/application/configuration_objects.py` — legacy `library` is optional and preserved,
+  never inferred from a display name; `path` may be recovered from a legacy `category`/`subcategory`
+  document; classification/destination preview documents report `destinationContract`.
+- `mediaflow/application/rules_workspace_commands.py` — rule projection exposes the contract and
+  hides legacy editable outputs; `_preserve_unsubmitted_legacy_destinations` keeps an unsubmitted
+  legacy prefix and honors an explicit `null` as deliberate conversion; form authority exposes the
+  MediaLibrary `rootPath`.
+- `mediaflow/application/evidence_capture.py`, `mediaflow/application/organizer.py`,
+  `mediaflow/application/strategy_test.py`, `mediaflow/cli.py` — consumers report and compose the
+  contract explicitly.
+- `mediaflow/infrastructure/strategy_user_configuration.py`,
+  `mediaflow/infrastructure/strategy_configuration.py` — legacy parser stops requiring `library`
+  and stops deriving `mediaLibraryId` from the library name via `_slug`.
+
+Web:
+- `web/src/features/rules/RulesObjectForm.tsx` — revised destination selector + one path; removes the
+  library/category/subcategory inputs; adds `DestinationContractNotice` for explicit conversion.
+- `web/src/entities/rules/rules-form.ts` — drops the legacy `library` validation requirement, carries
+  `MediaLibraryReference.rootPath`.
+- `web/src/features/rules/rules-form-fixtures.ts`, `web/src/shared/ui/styles.css`.
+
+Tests / evidence:
+- `tests/test_classification_destination_contract.py` (new, 24 tests),
+  `web/src/features/rules/ClassificationDestinationForm.test.tsx` (new, 3 tests),
+  `scripts/classification_destination_browser_proof.py` (new real-Python acceptance harness).
+- Updated to the revised contract: `tests/test_classification.py`, `tests/test_classification_review.py`,
+  `tests/test_configuration_destination.py`, `tests/test_configuration_destination_activation.py`,
+  `tests/test_file_media_detail.py`, `tests/test_manual_organize_preview.py`, `tests/test_organizer.py`.
+- `docs/architecture.md` — records the implemented compatibility fact.
 
 ### Implemented
 
-- Completed direct Rename, confirmed single/batch/recursive Delete and same/cross-Storage Copy/Move journeys through the shared application and OrganizerExecutor boundary. Metadata-only observations work when fingerprints are absent, while observed fingerprints remain binding. Cross-Storage Move removes its source only after verified destination copy and fresh source checks.
-- Bound observations and confirmations to library kind/ID, Storage/root, path and applicable immutable configuration context. Preserved operation limits, independent outcomes, Worker ownership/fencing, durable checkpoints and historical authority.
-- Added durable Delete admission and per-item Task/Worker results on both library kinds. Both native pages expose progress, outcomes and Operations recovery; unknown effects remain investigation-only and are not automatically replayed.
-- For Delete admission, prefer `crypto.randomUUID()` and fall back to `crypto.getRandomValues()` when a supported non-secure HTTP origin does not expose `randomUUID`; the fallback creates a UUID v4. Fail closed when neither cryptographic source is available. Persist the request ID and exact confirmed scope before POST, read back that same durable Task after an uncertain response, reject conflicting request bindings, and require an explicit same-scope repeat to reuse the same ID.
-- Added real-browser coverage on non-localhost HTTP for ResourceLibrary and MediaLibrary, including normal Delete, a lost admission response, reconnect, same-ID durable readback, and no duplicate Delete POST. The localhost journeys assert their secure-context crypto behavior. Updated Delete API fixtures to use queued admission plus durable Task status readback, valid scope digests and independent per-item outcomes. Prevented terminal Delete results from triggering a stale impact read that presented a false missing-target error.
-- Impact and admission collapse duplicate and descendant selections to one normalized top-level scope. Known source-change and unexpected-directory-content refusals remain bounded through TaskItem, Result and API and receive localized guidance.
-- Added real-Python browser journeys and a Base-to-candidate persistence rehearsal. Documented the narrow direct-file behavior in `docs/architecture.md`.
+The revised classification destination contract is `MediaLibrary.RootPath + Classification.path +
+Naming.Directory + Naming.Filename`. `mediaLibraryId` selects the configured Storage/root and never
+contributes a path segment, so a display-name or ID change cannot add a directory. One backend
+normalization (`normalize_classification_path`) serves both the supported string and segment-list
+forms and rejects absolute/traversal/empty/separator-bearing components, and the domain, managed
+config, composer, Planner, previews, CLI and Web all consume that same result.
+
+Legacy compatibility is preserved without a schema change. A rule authored under the earlier contract
+keeps its `library` prefix and still composes `root/library/path/naming`, so existing revisions,
+digests, previews, plans, admitted pins and results keep their original meaning; the presence of that
+prefix is exactly what distinguishes a legacy pinned contract from a revised publication. Legacy
+documents stay readable (including category/subcategory-only rules), and a rule with no explicit
+`mediaLibraryId` now fails closed instead of resolving a library from its display name. Conversion is
+deliberate: the Rules edit projection shows the old and proposed contribution, an unrelated cosmetic
+Save carries the existing prefix forward, and only an explicit submitted `null` publishes the revised
+successor while preserving the explicit path. Stale Save keeps the previous Active and recovers by
+readback.
+
+Classification, composition, Planner and previews remain pure; only OrganizerExecutor mutates
+Storage, and no fallback, overwrite, delete or replay behavior was added or weakened.
 
 ### Tests and Results
 
-- PASS — `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_direct_file_transfers tests.test_media_library_transfers` — 215 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_scope_continuation tests.test_processing_worker_readiness tests.test_runtime_files_browser` — 122 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage tests.test_migration_rehearsal tests.test_release_security tests.test_release_validation tests.test_container_deployment` — 122 tests; OpenList production adapter exercised through local HTTP.
-- FAIL — `.venv/bin/python -m unittest discover -s tests` — 2,194 passed, 1 failed, 7 skipped. The unrelated Rules concurrency test `test_simultaneous_saves_never_publish_a_mixed_or_lost_successor` reported `rules_destination_check_failed`; its isolated rerun passed.
-- PASS — `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .` (341 files); `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required config validation commands; `git diff --check`.
-- PASS — `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` returned no matches (expected exit 1).
-- FAIL — from `web/`, `npm run test -- --run` — 999 passed, 12 failed across 4 files (1,011 total). Failures were in Storage Management, one ResourceLibrary drawer test, Configuration route and Automation route. The Task-focused rerun below passed.
-- PASS — from `web/`, `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm run build`. Build asset `web/dist/assets/index-DFzUlep2.js`, SHA-256 `726192940f5b6b6622ddede8255b4b128d4816ac7378cf929dd2c08624349fd7`; build retains the >500 KB chunk advisory.
-- PASS — from `web/`, `npm run test -- --run src/features/library/delete-admission-session.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryCommands.test.tsx` — 3 files / 66 tests.
-- PASS — from `web/`, `npm run test:e2e -- --grep='bounded delete shows|bounded multi-selection Delete|deleting requires one explicit confirmation|a partial delete keeps each item'` — 4 Delete acceptance cases, including multi-selection with an explicit fixture reset.
-- FAIL — from `web/`, full `npm run test:e2e` — 201 passed, 34 failed of 235. Thirty-one Dashboard/deep-link/Storage Management failures were recorded at Task Base. Three additional failures in this run were: the multi-selection Delete and Copy fake-server cases could not find the `Movies` fixture in the full parallel suite, and one narrow keyboard test encountered Playwright trace-artifact `ENOENT` while another Playwright config was running. The Delete-focused cases passed in the isolated run above; no full-suite PASS is claimed.
-- PASS — from `web/`, `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21 real-Python browser tests.
-- PASS — from `web/`, `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — 10 real-Python journeys across both library kinds. This includes localhost secure-context checks and non-localhost HTTP normal/lost-response Delete recovery; built asset SHA-256 is recorded above.
-- PASS — `.venv/bin/python /tmp/mediaflow-b44-review.py` — both library kinds normalize overlapping/repeated selections, retain changed files and new directory contents, and persist bounded `source_changed` / `directory_changed` through TaskItem, Result and API.
-- PASS — adapted browser repro `node /tmp/mediaflow-b44-unknown-delete-adapted.mjs`: both kinds issued one POST, read back the queued Task after the dropped response, exposed no second Delete action, and deleted only after one explicit Worker run. The supplied `/tmp/mediaflow-b44-unknown-delete.mjs` probe timed out on its old confirmation/alert selectors after the UI moved to durable progress.
-- PASS — Base-to-candidate compatibility rehearsal: `.venv/bin/python scripts/direct_files_compatibility_rehearsal.py seed-base --base-tree /tmp/mediaflow-task44-1-base --state-root /tmp/mediaflow-task44-1-correction-compat`; then `verify-candidate --state-root /tmp/mediaflow-task44-1-correction-compat` — schema 44 completed, partial, uncertain, pending and refused no-fingerprint work remained readable with original pins; refused source deletion did not gain authority.
-- PASS — wheel build/smoke: `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-1-wheel-correction-r2`; `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-1-wheel-correction-r2/mediaflow-2.0.0.dev0-py3-none-any.whl`. SHA-256: `08c983ac741a328897bddd077c8994e0c8448f8dca4a8f3cc89c7abe79dd16dc`.
-- PASS — `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-1-correction-r2-lifecycle` — image `sha256:7f1dfec1d5bc98505e7778c9d002c2c1ead55700c4aa42c1c862f4231918f9ae`.
-- FAIL — `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-1-correction-r2-security` — candidate image built and inspected; isolated Compose stack did not become healthy within 150 seconds. Image `sha256:2d120d91247593911ea639b2a1c198c461a8c2bffab4a1a3d1c4e02ff193cfe2`.
-- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task44-1-correction-r2-impact` — unchanged harness raises `KeyError: 'resourceLibraries'` before Compose; reproduced at Task Base. Image `sha256:990810d9e6ee251af3b1e4fbf10ed3e04cc37e4c7f6fadd26ced395d14dc54be`.
-- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — migration/recovery runs, then unchanged harness expects schema 39 while runtime reports 44; reproduced at Task Base.
-- FAIL — full default Web E2E was 199/235 passed, 36 failed. Thirty-one dashboard/deep-link placeholder and Storage Management failures were reproduced at Task Base. Four candidate-only direct Delete fake-server cases still expect an immediate terminal “删除结果”; the durable admission flow reads Task status instead. The exact four-case rerun failed on those expectations. The remaining failure was a paging-summary assertion caused by an intermediate zero-selection wording; the wording was corrected and its focused current E2E passed, but the full default suite was not rerun afterward. Base passed the five-case slice (the four Delete cases plus paging summary). No pass is claimed for the four candidate-only Delete failures.
-- PASS — candidate real-Python browser/API/SQLite/Worker journeys above cover both library kinds. Real production SMB/S3 services were not used; no production credentials or user media were required.
+Focused domain/configuration/publication integration (T4):
+- `.venv/bin/python -m unittest tests.test_classification tests.test_strategy_configuration tests.test_runtime_strategy_configuration tests.test_configuration_classification tests.test_configuration_destination tests.test_configuration_destination_activation tests.test_configuration_package_exchange tests.test_v2_rules_workspace_previews tests.test_v2_rules_workspace_commands` — **PASS** (157 tests, OK)
+- `.venv/bin/python -m unittest tests.test_organizer tests.test_classification_review tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_resource_library_pipeline tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_configuration_snapshot tests.test_migration_rehearsal tests.test_release_security` — **PASS** (174 tests, OK)
+- `.venv/bin/python -m unittest tests.test_classification_destination_contract` — **PASS** (24 tests, OK; new focused module)
 
-| Journey evidence | ResourceLibrary | MediaLibrary |
-| --- | --- | --- |
-| File/directory Rename; single Delete | `tests/test_direct_file_operations.py`; Python browser Rename/Delete journeys | `tests/test_media_library_direct_commands.py`; Python browser Rename/Delete journeys |
-| Batch/recursive Delete; Worker readback/continuation | `tests.test_direct_file_operations`; `tests.test_direct_file_transfers`; Python browser batch Delete | `tests.test_media_library_direct_commands`; `tests.test_media_library_transfers`; Python browser batch Delete |
-| Fingerprintless cross-Storage Move; pause/resume | `tests.test_direct_file_transfers`; Python browser cross-Storage Move | `tests.test_media_library_transfers`; Python browser cross-Storage Move |
-| Production OpenList adapter | `test_production_openlist_http_adapter_renames_and_deletes_without_fingerprints` uses local HTTP | Shared OpenList adapter coverage plus MediaLibrary-specific command/readback tests |
+Full regression and quality/safety:
+- `.venv/bin/python -m unittest discover -s tests` — **PASS** (2219 tests, OK, 7 skipped)
+- `.venv/bin/python scripts/check_governance.py` — **PASS**
+- `.venv/bin/ruff format --check .` — **PASS** (343 files already formatted)
+- `.venv/bin/ruff check .` — **PASS** (All checks passed)
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**
+- `.venv/bin/python -m pip check` — **PASS** (No broken requirements found)
+- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — **PASS**
+- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — **PASS**
+- `git diff --check` — **PASS**
+- `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` — **PASS / no matches** (`rg` is not installed in this
+  environment; `grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` returned exit 1, no matches)
+
+Web:
+- `npm run test -- --run` — **PASS** (67 files / 1014 tests passed)
+- `npm run format:check` — **PASS**; `npm run lint` — **PASS**; `npm run typecheck` — **PASS**
+- `npm run build` — **PASS** (existing >500 KB chunk advisory unchanged)
+- `npm run test:e2e` — 203 passed / 32 failed; identical counts to the recorded Task 44.1 baseline
+  (see Risks)
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS** (21 passed)
+- `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — **PASS** (10 passed)
+
+Real-Python classification destination acceptance (new):
+- `.venv/bin/python scripts/classification_destination_browser_proof.py` — **PASS**. Real
+  `mediaflow api serve` over temporary SQLite/Local roots and the built V2 artifact, real Chromium
+  plus real HTTP. Observed: legacy projection keeps prefix + explicit path; an unrelated cosmetic
+  Save preserves the legacy contract; the production destination preview composes
+  `Movies/电影/华语/...` under `legacy_library_prefix` and `电影/华语/...` under `media_library_path`
+  after explicit conversion (the explicit path is preserved); a stale Save is refused with durable
+  readback; the browser authors the revised contract with no library/category/subcategory inputs.
+
+Compatibility, packaging and Docker:
+- `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-2-wheel` — **PASS**
+- `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-2-wheel/mediaflow-*.whl` — **PASS** (schema 44)
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-2-security` — **FAIL / UNAVAILABLE (environment)**
+- `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-2-lifecycle` — **FAIL / UNAVAILABLE (environment)**
+- `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — **NOT RUN** (no persistence/format change)
+
+Both Docker gates fail while creating the isolated stack with `invalid mount config for type "bind":
+bind source path does not exist` for a path the script had just created. I verified this is an
+environment limitation independent of this Task: the Docker daemon resolves `/tmp` in a different
+mount namespace, so a host `/tmp` path is invisible to it. A minimal Compose file mounting a freshly
+created `/tmp` directory fails identically, `docker run -v <workspace path>` succeeds, and
+`docker run alpine ls /tmp` shows an unrelated empty `/tmp`. Neither Compose file, the Dockerfile nor
+either smoke script is modified by this Task (`git diff --name-only HEAD` over all of them is empty).
 
 ### Decisions
 
-- Optional fingerprints strengthen observation evidence but are not fabricated or replaced with content hashes. When absent, the shared policy uses existence/type/size/time and available stable directory identity.
-- Direct Delete reuses Task/Worker persistence, locks, leases and mutation fences. A cryptographic browser UUID identifies one durable admission across secure and supported non-secure HTTP origins; recovery checks the existing Task binding and immutable pin.
-- Duplicate and descendant paths normalize consistently for impact and admission. Known pre-mutation refusals preserve bounded categories; uncertain effects remain investigation-only and are never retried automatically.
-- Historical no-fingerprint partial/refused Move retains its original source-removal authority; the compatibility rehearsal seeded that state from actual Task Base.
-- Docker impact and generic upgrade failures are unchanged and Base-reproduced. The candidate release-security health timeout and full-suite Web failures remain visible above; direct Delete's native real-Python journeys pass for both library kinds.
+1. **No persistence or schema change.** Legacy and revised destinations are distinguished by the
+   presence of the stored `library` key, which already exists in every Base-era document. This keeps
+   old revision bytes/digests, `CONFIGURATION_SCHEMA_VERSION` 10, `SCHEMA_VERSION` 44 and the managed
+   document schema at 1 unchanged, so no migration or upgrade gate is required and every historical
+   snapshot keeps its exact meaning. The alternative — a new explicit version field — would have
+   rewritten stored documents and their digests, which the Contract forbids.
+2. **One shared normalization, derived display.** `normalize_classification_path` is the only path
+   normalization, and `category`/`subcategory` became derived read-only properties instead of stored
+   fields, so a string and an equivalent segment list cannot disagree and no second path authority
+   exists.
+3. **Explicit `null` means deliberate conversion; an absent key means "no destination change".**
+   Treating an absent key as removal would let an unrelated cosmetic Save silently republish a legacy
+   destination, which AC-4 forbids; an explicit `null` is unambiguous operator intent and keeps the
+   two cases distinguishable.
+4. **The legacy prefix survives only through an explicit marker.** `ClassificationResult` carries
+   `legacy_destination`, and `destination_prefix` returns the stored prefix only when that marker is
+   set, so a stale `library` value can never re-route a revised result.
+5. **A missing `mediaLibraryId` fails closed.** The name→ID `_slug` inference was removed from the
+   legacy parser and the reference collector rather than kept as a compatibility fallback, because
+   AC-4 requires visible correction instead of a name guess.
+6. **Test-only gates are reused, not bypassed.** The new tests seed the same shared
+   `_checked_successor_evidence` gates and bind real Local adapters, so the read-only Storage and
+   destination checks genuinely run.
 
 ### Remaining In-Slice Work
 
-RO-2 through RO-6 remain outstanding; Developer does not plan their Tasks.
+RO-2 (reference-aligned Rules workspace presentation and purpose-built forms), RO-4 (object-scoped
+Rules tests with a separate complete-flow check), RO-5 (long-name breadcrumbs/toolbars) and RO-6
+(ResourceLibrary folder/mixed-selection organization) remain outstanding. The Rules edit projection
+now exposes the destination contract, which RO-2/RO-4 presentation and object-test work can reuse.
+This Task did not implement those outcomes and does not close the Slice.
 
 ### Risks / Deviations
 
-- The full Web unit and default E2E commands have the failures and totals listed above; isolated Task-focused suites pass.
-- The supplied unknown-response browser script uses selectors for the former confirmation/error view; the adapted script verified one POST per library kind using the durable progress view.
-- Seven full-suite unittest skips are reported above. The full Python run had one unrelated concurrency failure whose isolated rerun passed. Production SMB/S3/TMDB endpoints were not exercised; OpenList adapter coverage used local HTTP. No production credentials or user media were used.
-- Build output retains the >500 KB chunk advisory. No Slice contract change or scope expansion was made.
+- **Pre-existing flaky test (not caused by this Task).** During the first full-regression run,
+  `tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+  failed once with `AssertionError: False is not true : ['rules_destination_check_failed']`. I
+  reproduced the **identical** failure at Task Base `78cddf8` in a separate worktree (2 of 40
+  isolated runs) and at the candidate, and both full-suite runs afterwards passed. The test's allowed
+  loser-code set omits the bounded `rules_destination_check_failed` code that the pre-existing
+  `_checked_successor_evidence` gate can return under concurrent Save. I did not widen that set,
+  because doing so would relax an existing assertion that this Task does not own; B should judge
+  whether it is an in-Scope correction or a separate P2 test-isolation item. All other full-regression
+  runs were green (2219 tests, 7 skipped).
+- **Docker gates unavailable in this environment** (both required gates), with the concrete cause and
+  the Base-independent reproduction recorded above. Neither is labelled PASS. The security and
+  transfer-lifecycle guarantees they cover were not certified by this Task.
+- **Default E2E is not green and was not made green**: 203 passed / 32 failed, matching the recorded
+  Task 44.1 counts and failure contexts. I did not remove tests, hide skips or relax assertions.
+- Two Web unit files (`AutomationRouter.test.tsx`, `OrganizeRouter.test.tsx`) failed once when the
+  full Python regression ran concurrently, then passed in isolation and in the following full Web run
+  (1014 passed). Recorded as load-related flakiness, not a product defect.
+- `docs/architecture.md` was updated only with the implemented compatibility fact; authoritative
+  product/roadmap reconciliation remains A's closure responsibility. `SLICE.md`, `docs/roadmap.md`,
+  `docs/progress.md`, the canonical Chinese specification, reference images and frozen Slice 43
+  history were not modified.
+- `config/alist.json` was never created, read, staged or committed; no real credentials, production
+  data or private paths are present in the checkpoint. The four pre-existing untracked `docs/pics/*.png`
+  files were preserved untouched and are not staged.
+- Production SMB/S3/TMDB endpoints were not certified by local/fake tests.
 
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
-Head SHA: a3a0eaebf99874f5f91d5bc96547b6c0d8486c62
+Status: NOT SUBMITTED
+Head SHA: NOT SET
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: f57715c042ffa22c07d92950cc3de222946ed9b2..8c03b9ff7aadb64b39603ecf568b8e4d99767192
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: NOT SET
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- **P1 — Native Delete is unavailable on the supported trusted-LAN HTTP surface
-  (AC-1/9; RO-1 mandatory native Delete on both library kinds).** This is introduced by the
-  correction checkpoint: `delete-admission-session.ts:newDeleteRequestId` calls
-  `crypto.randomUUID()` and returns null if unavailable; both Files pages require this ID before
-  submitting any Delete. `docs/deployment.md:140` explicitly permits trusted-LAN exposure and
-  states that MediaFlow does not supply TLS. A normal non-localhost HTTP browser origin has no
-  `crypto.randomUUID`, so clicking Delete on either page reports
-  `无法生成删除请求核对记录；未发送删除。请刷新页面后重试。`; refresh cannot fix the origin, no
-  POST is sent, and ordinary confirmed deletion cannot proceed.
-  **Evidence:** `npm --prefix web run build`; start
-  `.venv/bin/python -c 'import scripts.direct_files_browser_harness as harness; from mediaflow.infrastructure.local_storage import LocalStorage; harness.FingerprintlessStorage = LocalStorage; raise SystemExit(harness.main(["--port", "4186"]))'`;
-  run `node /tmp/mediaflow-b44-r1-http-delete.mjs`. The actual Chromium browser opens
-  `http://mediaflow.review.test:4186` mapped to the isolated loopback server, using the current
-  built pages, checked configuration, real API and complete production Local adapter. Browser
-  APIs/capabilities are unmodified. Both kinds report `isSecureContext=false`,
-  `typeof crypto.randomUUID=undefined`, `typeof crypto.getRandomValues=function`, available
-  sessionStorage, the error above, zero Delete POSTs and retained source files. Results:
-  `/tmp/mediaflow-b44-r1-http-delete.log`. Served JS is
-  `web/dist/assets/index-J5IMwk5e.js`, SHA-256
-  `8de7f0e526211466c7652299a7ef8e683c72ad05a697b8039ae530fd576673d9`.
-  **Correction:** generate a reliable request identity in supported HTTP browser environments
-  while retaining persistence-before-POST, exact scope/kind binding, same-request readback and
-  once-only admission. Keep identity handling automatic for the user. Preserve the current
-  deployment contract and uncertain-effect non-replay; do not bypass the recovery fence or
-  silently generate a new request on retry. Verify normal Delete and unknown-response recovery
-  on both kinds through a genuine non-localhost HTTP origin, alongside the existing supported
-  localhost/HTTPS behavior. Finish the Task's existing Required Tests truthfully, reconciling
-  affected Delete test fixtures with the actual durable API/evidence format without removing
-  cases, weakening safety assertions or hiding skips.

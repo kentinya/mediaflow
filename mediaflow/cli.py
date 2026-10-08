@@ -474,10 +474,10 @@ def render_strategy_result(result: StrategyTestResult) -> str:
             f"ClassificationPolicy: {_value(policy.classification_policy_id if policy else None)}",
             f"Status: {_classification_status(result)}",
             f"Matched Rule: {_value(classification.matched_rule_id if classification else None)}",
-            f"Library: {_value(classification.library if classification else None)}",
-            f"Category: {_value(classification.category if classification else None)}",
-            f"Subcategory: {_value(classification.subcategory if classification else None)}",
+            f"MediaLibrary: {_value(classification.media_library_id if classification else None)}",
             f"Path: {_value(classification.relative_path if classification else None)}",
+            f"Category: {_value(classification.category if classification else None)}",
+            f"Destination contract: {_destination_contract(classification)}",
             f"Confidence: {_value(classification.confidence if classification else None)}",
             f"Evidence: {list(classification.evidence) if classification else []}",
             f"Warnings: {_classification_warnings(result)}",
@@ -722,8 +722,8 @@ def _render_classification_directory_summary(summary: DirectoryStrategySummary) 
                     status,
                     _value(result.recognition.recognition_type_id),
                     identity.title if identity else result.parsed.title_candidate,
-                    _value(classification.library if classification else None),
-                    _value(classification.category if classification else None),
+                    _value(classification.media_library_id if classification else None),
+                    _value(classification.relative_path if classification else None),
                     detail,
                 )
             )
@@ -768,6 +768,21 @@ def _classification_status(result: StrategyTestResult) -> str:
     if result.classification:
         return result.classification.status.value
     return "unavailable: MediaIdentity required"
+
+
+def _destination_contract(classification) -> str:
+    """Name the destination contract this result actually resolves under.
+
+    A legacy result still composes its original prefix; a revised result does
+    not.  Reporting the fact avoids implying that a historical target and a
+    newly published target are interchangeable.
+    """
+
+    if classification is None:
+        return "unavailable"
+    if classification.legacy_destination:
+        return "LEGACY prefix + path"
+    return "MediaLibrary root + path"
 
 
 def _classification_warnings(result: StrategyTestResult) -> list[str]:

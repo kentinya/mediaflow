@@ -442,6 +442,24 @@ body {
   font-size: 0.76rem;
   line-height: 1.45;
 }
+/* Legacy classification destination conversion: the old and the proposed
+   routing are shown together before the operator deliberately converts. */
+.mf-rules-legacy-destination {
+  border: 1px solid #d8a63a;
+  border-radius: 6px;
+  background: #fffaf0;
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.mf-rules-legacy-destination p {
+  margin: 0 0 6px;
+  color: #6b4e12;
+}
+.mf-rules-legacy-destination button {
+  font: inherit;
+}
 .mf-rules-field-error,
 .mf-rules-save-failure p:first-child {
   color: #b3261e;

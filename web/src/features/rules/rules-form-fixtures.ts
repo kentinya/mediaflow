@@ -271,8 +271,20 @@ export const formAuthorityPayload = {
     },
   ],
   mediaLibraries: [
-    { id: "movies", name: "Movies", enabled: true, storageId: "media-target" },
-    { id: "tv", name: "TV Shows", enabled: true, storageId: "media-target" },
+    {
+      id: "movies",
+      name: "Movies",
+      enabled: true,
+      storageId: "media-target",
+      rootPath: "/Media",
+    },
+    {
+      id: "tv",
+      name: "TV Shows",
+      enabled: true,
+      storageId: "media-target",
+      rootPath: "/Media/TV",
+    },
   ],
   metadataProviders: [
     {

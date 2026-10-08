@@ -212,13 +212,22 @@ def _classification_rule(value: Mapping[str, Any]) -> ClassificationRule:
         relative_path = path_value
     else:
         raise ValueError("classification result path must be a string or array")
-    library = _string(result, "library")
-    category = str(
-        result.get("category")
-        or (path_value[0] if isinstance(path_value, list) and path_value else "")
-    )
-    if not category:
-        raise ValueError("classification rule category or result.path is required")
+    # The legacy prefix is optional.  It is preserved when a document supplies
+    # it, and it is never required and never derived from the library name.
+    library = _optional_string(result, "library", None)
+    if relative_path is None:
+        # Legacy documents that carried only category/subcategory still mean the
+        # same explicit relative path.
+        category = result.get("category")
+        if isinstance(category, str) and category.strip():
+            subcategory = result.get("subcategory")
+            relative_path = (
+                f"{category}/{subcategory}"
+                if isinstance(subcategory, str) and subcategory.strip()
+                else category
+            )
+    if not relative_path:
+        raise ValueError("classification rule result.path is required")
     media_types = conditions.get("mediaType", conditions.get("mediaTypes", []))
     if isinstance(media_types, str):
         media_types = [media_types]
@@ -233,13 +242,11 @@ def _classification_rule(value: Mapping[str, Any]) -> ClassificationRule:
     return ClassificationRule(
         _string(value, "id"),
         str(value.get("name") or value["id"]),
-        str(result.get("mediaLibraryId") or _slug(library)),
-        library,
-        category,
+        _string(result, "mediaLibraryId"),
+        relative_path,
         priority=_integer(value, "priority", 0),
         enabled=_boolean(value, "enabled", True),
-        subcategory=_optional_string(result, "subcategory", None),
-        relative_category_path=relative_path,
+        library=library,
         media_types=tuple(
             MediaType(item) for item in _string_list(normalized_conditions, "mediaTypes")
         ),

@@ -734,6 +734,9 @@ class RulesWorkspaceCommandService:
                 "name": _bounded(item.get("name"), 120),
                 "enabled": item.get("enabled", True) is not False,
                 "storageId": _bounded(item.get("storageId"), MAX_RULES_OBJECT_ID_LENGTH),
+                # The selected root is the first term of the revised destination
+                # formula, so the operator must be able to see the actual value.
+                "rootPath": _bounded(item.get("rootPath"), 512),
             }
             for item in self._objects._canonical_objects(active.document, "mediaLibraries")
         ]
@@ -1126,6 +1129,7 @@ class RulesWorkspaceCommandService:
                     f"{spec.label} candidate contains unsupported field {sorted(unknown)[0]!r}",
                 )
             self._validate_form_fields(spec, merged)
+            self._preserve_unsubmitted_legacy_destinations(spec, merged, stored)
             composed = self._normalize_or_reject(spec, merged)
             self._validate_references(spec, composed, active.document, object_id)
 
@@ -1447,7 +1451,106 @@ class RulesWorkspaceCommandService:
             values["id"] = stored.get("id")
         if spec.supports_enabled:
             values.setdefault("enabled", True)
+        if spec.family == "classificationPolicies":
+            values["rules"] = self._classification_rule_projection(values.get("rules"))
         return values
+
+    @staticmethod
+    def _classification_rule_projection(rules: object) -> object:
+        """Project classification rules with their explicit destination contract.
+
+        A revised rule exposes only ``mediaLibraryId`` and ``path``.  A legacy rule
+        keeps its original ``library`` prefix so the form can show the old and the
+        proposed contribution side by side and the operator can deliberately remove
+        it; the raw stored value is never rewritten here, so opening or cosmetically
+        saving an unrelated object cannot convert a legacy destination.
+        """
+
+        if not isinstance(rules, list):
+            return rules
+        projected: list[object] = []
+        for rule in rules:
+            if not isinstance(rule, Mapping):
+                projected.append(copy.deepcopy(rule))
+                continue
+            item = copy.deepcopy(dict(rule))
+            result = item.get("result")
+            if isinstance(result, Mapping):
+                normalized = copy.deepcopy(dict(result))
+                legacy = normalized.get("library")
+                normalized["destinationContract"] = (
+                    "legacy_library_prefix"
+                    if isinstance(legacy, str) and legacy.strip()
+                    else "media_library_path"
+                )
+                # The revised authoring surface never shows the legacy editable
+                # category/subcategory outputs; display is derived from path.
+                normalized.pop("category", None)
+                normalized.pop("subcategory", None)
+                item["result"] = normalized
+            projected.append(item)
+        return projected
+
+    @staticmethod
+    def _preserve_unsubmitted_legacy_destinations(
+        spec: _FamilySpec,
+        merged: dict[str, object],
+        stored: Mapping[str, object] | None,
+    ) -> None:
+        """Keep a legacy destination contract unless the operator explicitly changed it.
+
+        A rule that already carries the legacy ``library`` prefix keeps that exact
+        prefix when the submitted candidate does not mention the rule at all, or
+        mentions it without a destination change.  Otherwise an unrelated cosmetic
+        Save of the enclosing policy would silently republish a legacy destination
+        as a revised one.  Removing the prefix is therefore always a deliberate
+        submitted change, never a side effect.
+
+        Read-only projection keys are also dropped here so a value the form only
+        displays can never become a field the backend demands back.
+        """
+
+        if spec.family != "classificationPolicies":
+            return
+        submitted_rules = merged.get("rules")
+        if not isinstance(submitted_rules, list):
+            return
+        stored_rules = stored.get("rules") if isinstance(stored, Mapping) else None
+        stored_by_id = {
+            str(item.get("id")): item
+            for item in (stored_rules if isinstance(stored_rules, list) else [])
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        }
+        for index, rule in enumerate(submitted_rules):
+            if not isinstance(rule, Mapping):
+                continue
+            result = rule.get("result")
+            if not isinstance(result, Mapping):
+                continue
+            result_dict = dict(result)
+            # ``destinationContract`` is a read-only explanation of which contract
+            # the stored rule already has; it is never part of the persisted form.
+            result_dict.pop("destinationContract", None)
+            previous = stored_by_id.get(str(rule.get("id")))
+            previous_result = previous.get("result") if isinstance(previous, Mapping) else None
+            legacy = (
+                previous_result.get("library") if isinstance(previous_result, Mapping) else None
+            )
+            if not (isinstance(legacy, str) and legacy.strip()):
+                continue
+            if "library" not in result_dict:
+                # The candidate never expressed an intent about the prefix, so the
+                # historical contract is carried forward unchanged.
+                result_dict["library"] = legacy
+            elif result_dict["library"] is None:
+                # An explicit null is the operator's deliberate conversion: the
+                # legacy prefix is removed and the revised contract is published
+                # with the existing explicit path preserved.
+                result_dict.pop("library")
+            if result_dict != result:
+                rule_dict = dict(rule)
+                rule_dict["result"] = result_dict
+                submitted_rules[index] = rule_dict
 
     def _normalize_or_reject(
         self, spec: _FamilySpec, value: Mapping[str, object]

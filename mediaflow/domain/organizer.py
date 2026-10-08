@@ -29,6 +29,10 @@ class DestinationComposition:
     relative_destination: str
     target: str
     unsafe_contribution: str | None = None
+    # The exact root-relative contribution the classification stage makes.  For a
+    # revised rule this is only the rule's `path`; for a legacy rule it keeps the
+    # original prefix so old and proposed routing can be shown side by side.
+    classification_contribution: str = ""
 
     @property
     def safe(self) -> bool:
@@ -81,6 +85,15 @@ def compose_destination(
     naming_filename: str,
     classification_library_prefix: str | None = None,
 ) -> DestinationComposition:
+    """Compose the final destination under one explicit contract.
+
+    The revised contract is ``MediaLibrary.RootPath + Classification.path +
+    Naming.Directory + Naming.Filename``.  ``classification_library_prefix`` is
+    the legacy destination prefix and is only supplied when a rule still carries
+    the pre-revision contract; a revised rule passes ``None``, so neither the
+    MediaLibrary display name nor its ID can ever contribute a path segment.
+    """
+
     root = safe_destination_root(media_library_root)
     unsafe: str | None = None
     if root is None:
@@ -112,7 +125,12 @@ def compose_destination(
         *naming_directory_segments,
         naming_filename,
     )
-    return DestinationComposition(root, relative, posixpath.join(root, relative))
+    return DestinationComposition(
+        root,
+        relative,
+        posixpath.join(root, relative),
+        classification_contribution=posixpath.join(*prefix_segments, classification_relative_path),
+    )
 
 
 class PlanOperation(StrEnum):

@@ -417,6 +417,11 @@ def _classification_section(strategy) -> EvidenceSection:
             "library": _bounded(classification.library),
             "category": _bounded(classification.category),
             "subcategory": _bounded(classification.subcategory),
+            "destinationContract": (
+                "legacy_library_prefix"
+                if classification.legacy_destination
+                else "media_library_path"
+            ),
             "confidence": classification.confidence,
             "matchEvidence": _bounded_items(classification.evidence),
         },

@@ -138,9 +138,11 @@ class OrganizePlannerTest(unittest.TestCase):
         self.assertEqual(ConflictType.INVALID_DESTINATION, plan.conflicts[0].type)
 
     def test_classification_library_prefix_leads_the_relative_destination(self) -> None:
+        """A legacy result keeps composing its original prefixed target."""
+
         values = self._inputs(root="Media", relative="其他电影")
         values["classification"] = ClassificationResult(
-            "movies", "其他电影", "A", "A", library="Movies"
+            "movies", "其他电影", "A", "A", library="Movies", legacy_destination=True
         )
         plan = OrganizePlanner().plan(**values)
         self.assertEqual("Movies/其他电影/Movie (2001)/Movie (2001).mkv", plan.relative_destination)
@@ -150,7 +152,7 @@ class OrganizePlannerTest(unittest.TestCase):
     def test_classification_library_prefix_supports_multiple_safe_segments(self) -> None:
         values = self._inputs(root="Media", relative="Series")
         values["classification"] = ClassificationResult(
-            "movies", "Series", "A", "A", library="TV Shows"
+            "movies", "Series", "A", "A", library="TV Shows", legacy_destination=True
         )
         tv_inputs = dict(values)
         tv_inputs["naming"] = NamingResult(
@@ -185,7 +187,7 @@ class OrganizePlannerTest(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 values = self._inputs()
                 values["classification"] = ClassificationResult(
-                    "movies", "Animation", "A", "A", library=prefix
+                    "movies", "Animation", "A", "A", library=prefix, legacy_destination=True
                 )
                 plan = OrganizePlanner().plan(**values)
                 self.assertEqual(PlanStatus.INVALID, plan.status)
@@ -196,7 +198,7 @@ class OrganizePlannerTest(unittest.TestCase):
     def test_classification_prefix_does_not_change_media_library_resolution(self) -> None:
         values = self._inputs()
         values["classification"] = ClassificationResult(
-            "movies", "Animation", "A", "A", library="Somewhere Else"
+            "movies", "Animation", "A", "A", library="Somewhere Else", legacy_destination=True
         )
         # A different classification.library cannot re-route the plan to a
         # different MediaLibrary: the configured ID remains the authority.
@@ -241,7 +243,7 @@ class OrganizePlannerTest(unittest.TestCase):
                 media_library=MediaLibrary("movies", "Movies", "local", "Media"),
                 naming=NamingResult("Movie (2001)", "Movie (2001).mkv", "A", "A"),
                 classification=ClassificationResult(
-                    "movies", "其他电影", "A", "A", library="Movies"
+                    "movies", "其他电影", "A", "A", library="Movies", legacy_destination=True
                 ),
             )
             execution = OrganizerExecutor().execute(plan, {"local": LocalStorage("local", root)})

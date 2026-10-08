@@ -57,6 +57,8 @@ export interface MediaLibraryReference {
   readonly name: string;
   readonly enabled: boolean;
   readonly storageId: string | null;
+  /** The configured destination root; the first term of the revised target. */
+  readonly rootPath?: string | null;
 }
 
 export interface ProviderReference {
@@ -325,6 +327,13 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
         entry.storageId,
         "mediaLibrary.storageId",
         64,
+      ),
+      // The configured root is the first term of the revised destination
+      // formula; it is displayed, never used to calculate an authoritative path.
+      rootPath: normalizeOptionalText(
+        entry.rootPath,
+        "mediaLibrary.rootPath",
+        512,
       ),
     } satisfies MediaLibraryReference;
   });
@@ -729,12 +738,9 @@ export function validateRuleCandidate(
             message: "规则需要一条安全的相对路径。",
           });
         }
-        // The backend requires a non-empty library label alongside the ID.
-        if (typeof result.library !== "string" || result.library.trim() === "")
-          issues.push({
-            field: `rules[${index}].library`,
-            message: "每条规则需要填写媒体库标签。",
-          });
+        // The revised destination contract is the selected MediaLibrary plus one
+        // safe relative path.  A legacy `library` prefix is accepted and preserved
+        // when it is already stored, but it is never required for new authoring.
         const conditions = (rule.conditions ?? {}) as Record<string, unknown>;
         for (const key of Object.keys(conditions)) {
           if (!authority.enums.classificationConditions.includes(key))

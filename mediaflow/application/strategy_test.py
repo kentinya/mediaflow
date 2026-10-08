@@ -670,9 +670,10 @@ class StrategyTestRunner:
             try:
                 # The CLI has no configured MediaLibrary root: the temporary
                 # library pins an empty root so plan.target is exactly the
-                # root-relative destination `library/path/naming...`, matching
-                # the formal Organizer composition for the same resolved
-                # strategy input.
+                # root-relative destination, matching the formal Organizer
+                # composition for the same resolved strategy input.  A revised
+                # rule yields `path/naming...`; a legacy rule keeps its original
+                # `library/path/naming...` prefix.
                 organize_plan = OrganizePlanner().plan(
                     source_storage_id=storage_id,
                     source=path,
@@ -684,7 +685,7 @@ class StrategyTestRunner:
                     ),
                     media_library=MediaLibrary(
                         classification.media_library_id,
-                        classification.library or classification.media_library_id,
+                        classification.media_library_id,
                         "strategy-plan-target",
                         ".",
                     ),
