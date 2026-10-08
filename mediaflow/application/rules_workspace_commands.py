@@ -385,27 +385,90 @@ class RulesWorkspaceCommandService:
         the immutable authority consumed by the requested analysis command.
         """
 
-        spec = self._spec(family, "preview")
+        spec, draft, composed = self._compose_candidate_draft(
+            family,
+            candidate,
+            actor=actor,
+            expected_revision_id=expected_revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            object_id=object_id,
+            action="preview",
+            for_publication=False,
+        )
+        del spec, composed
+        return self._managed.validate(draft.revision_id, actor=actor)
+
+    def stage_analysis_candidate(
+        self,
+        family: str,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        object_id: str | None,
+    ) -> ManagedConfigurationRevision:
+        """Persist one exact non-Active candidate for object-scoped analysis.
+
+        It shares the preview composition (allowlists, normalization, reference
+        validation, Active fence) and deliberately stops before whole-document
+        validation.  An independent object analysis must not require a complete
+        managed-runtime load or a downstream resolver merely to explain one
+        submitted object, so this returns the still-DRAFT revision whose document
+        is exactly "current Active + this one normalized object".
+        """
+
+        _spec, draft, _composed = self._compose_candidate_draft(
+            family,
+            candidate,
+            actor=actor,
+            expected_revision_id=expected_revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            object_id=object_id,
+            action="analysis",
+            for_publication=False,
+        )
+        return draft
+
+    def _compose_candidate_draft(
+        self,
+        family: str,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        object_id: str | None,
+        action: str,
+        for_publication: bool,
+    ) -> tuple[_FamilySpec, ManagedConfigurationRevision, dict[str, object]]:
+        """Compose and persist one non-Active candidate Draft; never validates the graph."""
+
+        spec = self._spec(family, action)
         if not isinstance(candidate, Mapping):
             raise self._invalid(
-                spec, "preview", f"The {spec.label} preview candidate must be an object"
+                spec, action, f"The {spec.label} {action} candidate must be an object"
             )
         if object_id is not None:
-            self._identifier(spec, object_id, "preview")
+            self._identifier(spec, object_id, action)
             if candidate.get("id") != object_id:
                 raise RulesWorkspaceSaveError(
                     "rules_id_immutable",
-                    f"{spec.label} ID cannot change during preview",
+                    f"{spec.label} ID cannot change during {action}",
                     status=400,
                     object_kind=spec.family,
                     object_id=object_id,
                     stage="compose",
                     durable_state="active_unchanged",
                     side_effects="candidate_draft_only",
-                    next_action="keep the object ID and correct the preview candidate",
+                    next_action=f"keep the object ID and correct the {action} candidate",
                 )
 
-        active = self._capture_active(spec, "preview")
+        active = self._capture_active(spec, action)
         self._assert_current_authority(
             spec, active, expected_revision_id, expected_version, expected_digest
         )
@@ -415,7 +478,7 @@ class RulesWorkspaceCommandService:
         }
         stored = current.get(object_id) if object_id is not None else None
         if object_id is not None and stored is None:
-            raise self._not_found(spec, object_id, "preview")
+            raise self._not_found(spec, object_id, action)
         submitted_id = candidate.get("id")
         if object_id is None and isinstance(submitted_id, str) and submitted_id in current:
             raise RulesWorkspaceSaveError(
@@ -437,16 +500,19 @@ class RulesWorkspaceCommandService:
         if unknown:
             raise self._invalid(
                 spec,
-                "preview",
-                f"{spec.label} preview candidate contains unsupported field {sorted(unknown)[0]!r}",
+                action,
+                f"{spec.label} {action} candidate contains unsupported field "
+                f"{sorted(unknown)[0]!r}",
             )
         self._validate_form_fields(spec, merged)
-        # Preview stages the same candidate shape Save accepts, so it applies the
+        # Both paths stage the same candidate shape Save accepts, so they apply the
         # same read-only-key cleanup and legacy-prefix intent semantics.  Without
-        # this the form's own projection could not be previewed at all.
+        # this the form's own projection could not be analysed at all.
         self._prepare_candidate(spec, merged, stored)
         composed = self._normalize_or_reject(spec, merged)
-        self._validate_references(spec, composed, active.document, object_id)
+        self._validate_references(
+            spec, composed, active.document, object_id, for_publication=for_publication
+        )
 
         draft = self._managed.create_successor_draft(
             actor=actor,
@@ -462,14 +528,14 @@ class RulesWorkspaceCommandService:
             value=composed,
             expected_version=draft.version,
             actor=actor,
-            audit_action="rules_preview_candidate",
+            audit_action=f"rules_{action}_candidate",
             audit_metadata={
                 "surface": "rules",
                 "family": spec.family,
                 "candidate": copy.deepcopy(dict(composed)),
             },
         )
-        return self._managed.validate(edited.revision_id, actor=actor)
+        return spec, edited, composed
 
     def preview_classification(
         self,
@@ -1135,7 +1201,9 @@ class RulesWorkspaceCommandService:
             self._validate_form_fields(spec, merged)
             self._prepare_candidate(spec, merged, stored)
             composed = self._normalize_or_reject(spec, merged)
-            self._validate_references(spec, composed, active.document, object_id)
+            self._validate_references(
+                spec, composed, active.document, object_id, for_publication=True
+            )
 
         try:
             draft = self._managed.create_successor_draft(
@@ -1625,6 +1693,8 @@ class RulesWorkspaceCommandService:
         value: Mapping[str, object],
         document: Mapping[str, object],
         object_id: str | None,
+        *,
+        for_publication: bool,
     ) -> None:
         """Reject declared references this deployment cannot honor.
 
@@ -1632,6 +1702,13 @@ class RulesWorkspaceCommandService:
         every ClassificationPolicy rule must name an enabled configured MediaLibrary:
         both are real runtime authorities, so accepting a dangling reference would let a
         published Active configuration silently under-deliver downstream.
+
+        ``for_publication`` distinguishes the two authorities. Save publishes, so it
+        additionally requires that the referenced Provider actually has a deployment
+        credential. An explicit offline object test must not: RO-4 requires offline
+        Metadata validation to work without a live credential or Provider construction,
+        and the credential's availability is reported to the operator as an independent
+        readiness fact instead of being turned into a local-test failure.
         """
 
         if spec.family == "recognitionRules":
@@ -1722,7 +1799,11 @@ class RulesWorkspaceCommandService:
                     ),
                 )
             secret_fields = metadata_provider_secret_env_fields(provider_id)
-            if secret_fields and not any(os.environ.get(field) for field in secret_fields):
+            if (
+                for_publication
+                and secret_fields
+                and not any(os.environ.get(field) for field in secret_fields)
+            ):
                 raise RulesWorkspaceSaveError(
                     "rules_provider_secret_unavailable",
                     (f"Metadata Provider {provider_id!r} has no configured deployment credential"),

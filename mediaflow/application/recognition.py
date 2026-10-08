@@ -25,9 +25,71 @@ from mediaflow.domain.recognition import (
 
 
 @dataclass(frozen=True)
+class ConditionTrace:
+    """One bounded, secret-free node of an evaluated recognition condition tree.
+
+    The trace exists so an operator can see the *expected* value, the *actual*
+    parsed value and the resulting truth for every atomic condition and nested
+    ``AND``/``OR``/``NOT`` group of exactly one submitted rule. It is produced by
+    the same comparison the recognition pipeline uses, never by a browser
+    re-implementation, and it carries no Storage, Provider or media content.
+    """
+
+    path: str
+    kind: str
+    operator: str
+    field: str | None
+    expected: str | None
+    actual: str | None
+    truth: bool
+    children: tuple[ConditionTrace, ...] = ()
+    truncated: bool = False
+
+    def document(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "kind": self.kind,
+            "operator": self.operator,
+            "field": self.field,
+            "expected": self.expected,
+            "actual": self.actual,
+            "truth": self.truth,
+            "truncated": self.truncated,
+            "children": [child.document() for child in self.children],
+        }
+
+
+@dataclass(frozen=True)
+class RuleEvaluation:
+    """The exact production evaluation of one submitted RecognitionRule."""
+
+    rule_id: str
+    matched: bool
+    condition: ConditionTrace
+    evidence: tuple[RecognitionEvidence, ...] = ()
+
+
+@dataclass(frozen=True)
 class _ConditionMatch:
     matched: bool
     evidence: tuple[RecognitionEvidence, ...] = ()
+    trace: ConditionTrace | None = None
+
+
+# Bounded evidence limits: a submitted condition tree is already bounded by the
+# managed document size, but the projected trace stays small and deterministic.
+CONDITION_TRACE_DEPTH_LIMIT = 24
+CONDITION_TRACE_TEXT_LIMIT = 240
+
+
+def _bounded_condition_text(value: Any) -> str:
+    """Render one condition value deterministically within the evidence budget."""
+
+    if isinstance(value, (tuple, list, set, frozenset)):
+        text = "[" + ", ".join(sorted(str(item) for item in value)) + "]"
+    else:
+        text = str(value)
+    return text[:CONDITION_TRACE_TEXT_LIMIT]
 
 
 class RecognitionRuleEngine:
@@ -138,18 +200,50 @@ class RecognitionRuleEngine:
                         repr(actual),
                     ),
                 )
-            return _ConditionMatch(matched, evidence)
+            return _ConditionMatch(
+                matched,
+                evidence,
+                ConditionTrace(
+                    path="",
+                    kind="atomic",
+                    operator=condition.operator.value,
+                    field=condition.field.value,
+                    expected=_bounded_condition_text(condition.value),
+                    actual=_bounded_condition_text(actual),
+                    truth=matched,
+                ),
+            )
         if not isinstance(condition, LogicalCondition):
             raise TypeError("unsupported recognition condition")
         if condition.operator is LogicalOperator.ALWAYS:
-            return _ConditionMatch(True)
+            return _ConditionMatch(
+                True,
+                (),
+                ConditionTrace(
+                    path="",
+                    kind="logical",
+                    operator=condition.operator.value,
+                    field=None,
+                    expected=None,
+                    actual=None,
+                    truth=True,
+                ),
+            )
         children = tuple(self._evaluate(child, context, rule_id) for child in condition.children)
         if condition.operator is LogicalOperator.AND:
             matched = all(child.matched for child in children)
-            return _ConditionMatch(matched, _evidence(children) if matched else ())
+            return _ConditionMatch(
+                matched,
+                _evidence(children) if matched else (),
+                _group_trace(condition.operator.value, children, matched),
+            )
         if condition.operator is LogicalOperator.OR:
             matched = any(child.matched for child in children)
-            return _ConditionMatch(matched, _evidence(child for child in children if child.matched))
+            return _ConditionMatch(
+                matched,
+                _evidence(child for child in children if child.matched),
+                _group_trace(condition.operator.value, children, matched),
+            )
         matched = not children[0].matched
         evidence = (
             (
@@ -164,7 +258,74 @@ class RecognitionRuleEngine:
             if matched
             else ()
         )
-        return _ConditionMatch(matched, evidence)
+        return _ConditionMatch(
+            matched,
+            evidence,
+            _group_trace(condition.operator.value, children, matched),
+        )
+
+    def evaluate_rule(self, rule: RecognitionRule, context: RecognitionContext) -> RuleEvaluation:
+        """Evaluate exactly one submitted rule and return its bounded condition trace.
+
+        This is the production comparison used by :meth:`recognize`, exposed for
+        the object-scoped RecognitionRule test. It never competes the rule against
+        the configured rule set, never resolves downstream policies and never
+        touches Storage or a Provider: the caller supplies a synthetic context.
+        """
+
+        result = self._evaluate(rule.condition, context, rule.rule_id)
+        return RuleEvaluation(
+            rule.rule_id,
+            result.matched,
+            result.trace
+            if result.trace is not None
+            else ConditionTrace("", "logical", "always", None, None, None, result.matched),
+            result.evidence,
+        )
+
+
+def _group_trace(
+    operator: str, children: tuple[_ConditionMatch, ...], matched: bool
+) -> ConditionTrace:
+    projected: list[ConditionTrace] = []
+    truncated = False
+    for index, child in enumerate(children):
+        trace = child.trace
+        if trace is None:
+            continue
+        if index >= CONDITION_TRACE_DEPTH_LIMIT:
+            truncated = True
+            break
+        projected.append(_repath(trace, str(index)))
+    return ConditionTrace(
+        path="",
+        kind="logical",
+        operator=operator,
+        field=None,
+        expected=None,
+        actual=None,
+        truth=matched,
+        children=tuple(projected),
+        truncated=truncated or len(children) > CONDITION_TRACE_DEPTH_LIMIT,
+    )
+
+
+def _repath(trace: ConditionTrace, prefix: str) -> ConditionTrace:
+    """Give each trace node a stable, bounded position for operator display."""
+
+    return ConditionTrace(
+        path=prefix,
+        kind=trace.kind,
+        operator=trace.operator,
+        field=trace.field,
+        expected=trace.expected,
+        actual=trace.actual,
+        truth=trace.truth,
+        children=tuple(
+            _repath(child, f"{prefix}.{index}") for index, child in enumerate(trace.children)
+        ),
+        truncated=trace.truncated,
+    )
 
 
 def _evidence(matches) -> tuple[RecognitionEvidence, ...]:

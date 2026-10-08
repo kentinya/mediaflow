@@ -393,6 +393,7 @@ class StrategyTestRunner:
         metadata_selection: MetadataSelection | None = None,
         metadata_correction: MetadataCorrectionSelection | None = None,
         metadata_identity: MediaIdentity | None = None,
+        synthetic_identity: MediaIdentity | None = None,
         classification_selection: ClassificationSelection | None = None,
         recognition_selection: RecognitionSelection | None = None,
         forced_recognition_type_id: str | None = None,
@@ -483,6 +484,47 @@ class StrategyTestRunner:
             raise StrategyConfigurationError("metadata selection requires live metadata mode")
         if metadata_selection is not None and metadata_correction is not None:
             raise StrategyConfigurationError("metadata selection and correction cannot be combined")
+        if metadata_identity is not None and synthetic_identity is not None:
+            raise StrategyConfigurationError(
+                "pinned and synthetic metadata identities cannot be combined"
+            )
+        if synthetic_identity is not None:
+            # Explicit offline synthetic identity for the complete-flow check.  It
+            # performs no Provider call and is never reported as a verified match,
+            # so it stays usable even when the resolved MetadataPolicy would
+            # otherwise query a live Provider.  The provider/media-type consistency
+            # checks are deliberately not applied here: a synthetic identity is
+            # labelled as synthetic and must not claim Provider verification.
+            if live_metadata:
+                raise StrategyConfigurationError(
+                    "synthetic metadata identity cannot be combined with live metadata mode"
+                )
+            if resolved is None or metadata_policy is None:
+                # No policy resolved (for example an unrecognized path or a missing
+                # binding).  The synthetic identity is simply not applied, so the
+                # complete-flow caller can report the real earlier-stage blocker
+                # instead of a misleading metadata failure.
+                synthetic_identity = None
+            elif (
+                synthetic_identity.recognition_type_id is not None
+                and synthetic_identity.recognition_type_id != recognition.recognition_type_id
+            ):
+                # A caller that explicitly pinned a RecognitionType must not have it
+                # silently rebound; an unpinned synthetic identity is bound to the
+                # type the submitted path actually resolved to.
+                raise StrategyConfigurationError(
+                    "synthetic metadata identity RecognitionType no longer matches"
+                )
+            else:
+                synthetic_identity = replace(
+                    synthetic_identity,
+                    recognition_type_id=recognition.recognition_type_id,
+                )
+                metadata = MetadataIdentificationResult(
+                    MetadataIdentificationStatus.MATCHED,
+                    recognition.recognition_type,
+                    identity=synthetic_identity,
+                )
         if metadata_identity is not None:
             if live_metadata:
                 raise StrategyConfigurationError(

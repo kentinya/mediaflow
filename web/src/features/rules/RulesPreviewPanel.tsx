@@ -19,6 +19,8 @@ interface Props {
   readonly authority: RuleFormAuthority;
   readonly values: FormValues;
   readonly publicationEpoch?: number;
+  /** Distinguishes this complete-chain preview surface from RO-4's local test. */
+  readonly heading?: string;
 }
 
 interface SampleFields {
@@ -527,6 +529,7 @@ export function RulesPreviewPanel({
   authority,
   values,
   publicationEpoch = 0,
+  heading = "测试与预览",
 }: Props) {
   const [sample, setSample] = useState<SampleFields>(INITIAL_SAMPLE);
   const [pathMode, setPathMode] = useState(false);
@@ -730,7 +733,7 @@ export function RulesPreviewPanel({
 
   return (
     <section className="mf-rules-preview" aria-labelledby="rules-preview-title">
-      <h2 id="rules-preview-title">测试与预览</h2>
+      <h2 id="rules-preview-title">{heading}</h2>
       <p>
         显式暂存当前表单为非 Active
         候选并运行零突变分析。结果只对应提交时的候选和样本。

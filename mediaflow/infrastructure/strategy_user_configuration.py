@@ -479,7 +479,7 @@ def _rule(value: Mapping[str, Any]) -> RecognitionRule:
     return RecognitionRule(
         _string(value, "id"),
         _string(value, "name"),
-        _condition(_object(value, "condition")),
+        parse_recognition_condition(_object(value, "condition")),
         _string(value, "outputRecognitionType"),
         _boolean(value, "enabled", True),
         _integer(value, "priority", 0),
@@ -489,7 +489,16 @@ def _rule(value: Mapping[str, Any]) -> RecognitionRule:
     )
 
 
-def _condition(value: Mapping[str, Any]) -> RecognitionCondition:
+def parse_recognition_condition(value: Mapping[str, Any]) -> RecognitionCondition:
+    """Parse one submitted recognition condition into the production domain tree.
+
+    This is the single condition parser shared by the runtime loader and the
+    object-scoped RecognitionRule test, so a submitted rule can never be
+    evaluated by a second, divergent interpretation. It performs no I/O.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ValueError("recognition condition must be an object")
     if "field" in value:
         return AtomicCondition(
             ConditionField(_string(value, "field")),
@@ -498,7 +507,9 @@ def _condition(value: Mapping[str, Any]) -> RecognitionCondition:
             _boolean(value, "caseSensitive", False),
         )
     operator = LogicalOperator(_string(value, "operator"))
-    children = tuple(_condition(item) for item in _objects(value, "children", required=False))
+    children = tuple(
+        parse_recognition_condition(item) for item in _objects(value, "children", required=False)
+    )
     return LogicalCondition(operator, children)
 
 

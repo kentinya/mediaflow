@@ -36,6 +36,7 @@ import {
 import { useAuthToken } from "../../shared/api/auth-context";
 import { classifySaveFailure } from "./RulesObjectDrawer";
 import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import { RulesObjectTestPanel } from "./RulesObjectTestPanel";
 import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
   readRuleDraft,
@@ -363,7 +364,7 @@ export function RulesEditPage() {
         disabled={state.kind === "saving"}
         onChange={change}
       />
-      <RulesPreviewPanel
+      <RulesObjectTestPanel
         token={token}
         family={typedFamily}
         objectId={objectId}
@@ -371,6 +372,18 @@ export function RulesEditPage() {
         values={values}
         publicationEpoch={publicationEpoch}
       />
+      <details className="mf-rules-full-chain" open>
+        <summary>完整链路预览(既有能力)</summary>
+        <RulesPreviewPanel
+          token={token}
+          family={typedFamily}
+          objectId={objectId}
+          authority={authority}
+          values={values}
+          publicationEpoch={publicationEpoch}
+          heading="完整链路预览"
+        />
+      </details>
       <div className="mf-rules-drawer-actions">
         <button
           type="button"

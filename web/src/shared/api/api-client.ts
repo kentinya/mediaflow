@@ -6684,6 +6684,189 @@ export async function runRulesPreview(
   }
 }
 
+export type RulesAnalysisOutcome =
+  | "valid"
+  | "matched"
+  | "not_matched"
+  | "not_applicable"
+  | "invalid_input"
+  | "failed";
+
+export interface RulesAnalysisBlocker {
+  readonly stage: string;
+  readonly message: string;
+}
+
+/**
+ * One object-scoped local test result, or the separately labelled complete-flow
+ * analysis. `localOnly` distinguishes a single-object local test from the
+ * combined complete-flow check so the UI never presents local success as
+ * publication, runtime eligibility or execution authority.
+ */
+export interface RulesAnalysisModel {
+  readonly family: string;
+  readonly objectId: string | null;
+  readonly outcome: RulesAnalysisOutcome;
+  readonly conclusion: string;
+  readonly applicability: string;
+  readonly runtimeEligibility: string;
+  readonly readiness: string | null;
+  readonly result: Readonly<Record<string, unknown>>;
+  readonly message: string | null;
+  readonly nextAction: string | null;
+  readonly failureCategory: string | null;
+  readonly revisionId: string;
+  readonly revisionVersion: number;
+  readonly revisionDigest: string;
+  readonly testedAt: string;
+  readonly stale: boolean;
+  readonly localOnly: boolean;
+  readonly candidateState: string;
+  readonly providerCalls: number;
+  readonly storageReads: number;
+  readonly identityStatus: string | null;
+  readonly syntheticIdentity: boolean;
+  readonly blockers: readonly RulesAnalysisBlocker[];
+  readonly executionAuthorityGranted: string | null;
+}
+
+const RULES_ANALYSIS_OUTCOMES: readonly RulesAnalysisOutcome[] = [
+  "valid",
+  "matched",
+  "not_matched",
+  "not_applicable",
+  "invalid_input",
+  "failed",
+];
+
+function normalizeRulesAnalysis(value: unknown): RulesAnalysisModel {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid rules analysis");
+  const source = value as Record<string, unknown>;
+  const family = bounded(source.family, 64);
+  const conclusion = bounded(source.conclusion, 512);
+  const outcome = bounded(source.outcome, 32);
+  const revisionId = bounded(source.revisionId, 128);
+  const revisionDigest = bounded(source.revisionDigest, 128);
+  if (
+    !family ||
+    !conclusion ||
+    !outcome ||
+    !RULES_ANALYSIS_OUTCOMES.includes(outcome as RulesAnalysisOutcome) ||
+    !revisionId ||
+    !revisionDigest ||
+    typeof source.revisionVersion !== "number" ||
+    !Number.isInteger(source.revisionVersion) ||
+    source.revisionVersion < 1
+  )
+    throw new Error("invalid rules analysis identity");
+  const result = source.result;
+  if (result === null || typeof result !== "object" || Array.isArray(result))
+    throw new Error("invalid rules analysis result");
+  const blockers = Array.isArray(source.blockers)
+    ? source.blockers.flatMap((item) => {
+        if (item === null || typeof item !== "object" || Array.isArray(item))
+          return [];
+        const entry = item as Record<string, unknown>;
+        const stage = bounded(entry.stage, 64);
+        const message = bounded(entry.message, 512);
+        return stage && message ? [{ stage, message }] : [];
+      })
+    : [];
+  return {
+    family,
+    objectId: bounded(source.objectId, 128) ?? null,
+    outcome: outcome as RulesAnalysisOutcome,
+    conclusion,
+    applicability: bounded(source.applicability, 64) ?? "applicable",
+    runtimeEligibility: bounded(source.runtimeEligibility, 64) ?? "separate",
+    readiness: bounded(source.readiness, 64) ?? null,
+    result: result as Readonly<Record<string, unknown>>,
+    message: bounded(source.message, 512) ?? null,
+    nextAction: bounded(source.nextAction, 512) ?? null,
+    failureCategory: bounded(source.failureCategory, 128) ?? null,
+    revisionId,
+    revisionVersion: source.revisionVersion,
+    revisionDigest,
+    testedAt: bounded(source.testedAt, 64) ?? "",
+    stale: source.stale === true,
+    localOnly: source.localOnly === true,
+    candidateState:
+      bounded(source.candidateState, 64) ?? "validated_non_active",
+    providerCalls:
+      typeof source.providerCalls === "number" ? source.providerCalls : 0,
+    storageReads:
+      typeof source.storageReads === "number" ? source.storageReads : 0,
+    identityStatus: bounded(source.identityStatus, 64) ?? null,
+    syntheticIdentity: source.syntheticIdentity === true,
+    blockers,
+    executionAuthorityGranted:
+      bounded(source.executionAuthorityGranted, 64) ?? null,
+  };
+}
+
+/**
+ * Run one explicit object-scoped local test for the exact submitted candidate.
+ *
+ * The caller owns the sample, the requested live-Metadata flag and the exact
+ * observed Active identity; nothing is remembered or replayed automatically.
+ */
+export async function runRulesObjectAnalysis(
+  token: string | null,
+  family: string,
+  body: Readonly<Record<string, unknown>>,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RulesAnalysisModel>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${RULES_BASE}/analysis/${family}`, {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) return rulesReadFailure(response);
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeRulesAnalysis(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** Run the separately labelled complete-flow check against the exact Active. */
+export async function runRulesCompleteFlow(
+  token: string | null,
+  body: Readonly<Record<string, unknown>>,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RulesAnalysisModel>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${RULES_BASE}/complete-flow`, {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) return rulesReadFailure(response);
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeRulesAnalysis(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
 async function readRulesDocument<T>(
   url: string,
   token: string | null,

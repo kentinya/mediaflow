@@ -31,6 +31,7 @@ import {
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import { RulesObjectTestPanel } from "./RulesObjectTestPanel";
 import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
   clearRuleDraft,
@@ -341,13 +342,26 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
             />
           )}
           {authority !== null && token !== null ? (
-            <RulesPreviewPanel
-              token={token}
-              family={session.family}
-              objectId={null}
-              authority={authority}
-              values={values}
-            />
+            <>
+              <RulesObjectTestPanel
+                token={token}
+                family={session.family}
+                objectId={null}
+                authority={authority}
+                values={values}
+              />
+              <details className="mf-rules-full-chain" open>
+                <summary>完整链路预览(既有能力)</summary>
+                <RulesPreviewPanel
+                  token={token}
+                  family={session.family}
+                  objectId={null}
+                  authority={authority}
+                  values={values}
+                  heading="完整链路预览"
+                />
+              </details>
+            </>
           ) : null}
         </div>
         <div className="mf-rules-drawer-actions">

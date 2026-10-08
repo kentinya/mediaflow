@@ -86,6 +86,7 @@ from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.application.resident_services import ResidentServiceService
+from mediaflow.application.rules_object_analysis import RulesObjectAnalysisService
 from mediaflow.application.rules_workspace_commands import (
     RULE_FAMILIES as RULE_WORKSPACE_FAMILIES,
 )
@@ -439,6 +440,14 @@ class MediaFlowApi:
         self._rules_workspace = (
             RulesWorkspaceCommandService(self._configuration_objects)
             if self._configuration_objects is not None
+            else None
+        )
+        # RO-4's object-scoped analysis reuses the exact candidate composition and
+        # the production engines through this one shared boundary, so a local test
+        # cannot diverge from Save/Preview semantics or become a second authority.
+        self._rules_analysis = (
+            RulesObjectAnalysisService(self._rules_workspace, self._configuration_objects)
+            if self._rules_workspace is not None and self._configuration_objects is not None
             else None
         )
         self._system_settings = (
@@ -14803,6 +14812,10 @@ class MediaFlowApi:
             )
         if len(parts) == 6 and parts[4] == "previews" and method == "POST":
             return self._rules_preview_command(parts, environ, start_response, principal)
+        if len(parts) == 6 and parts[4] == "analysis" and method == "POST":
+            return self._rules_analysis_command(parts, environ, start_response, principal)
+        if parts == ["api", "v1", "operations", "rules", "complete-flow"] and method == "POST":
+            return self._rules_complete_flow_command(environ, start_response, principal)
         if len(parts) >= 6 and parts[4] == "objects" and parts[5] in RULE_WORKSPACE_FAMILIES:
             return self._rules_object_command(parts, method, environ, start_response, principal)
         if len(parts) >= 5 and parts[4] == "objects":
@@ -15044,6 +15057,219 @@ class MediaFlowApi:
                 "resourceLibraryId": document["resourceLibraryId"],
                 "syntheticPath": document["syntheticPath"],
             }
+        return self._response(start_response, 200, response_document)
+
+    def _rules_analysis_command(
+        self,
+        parts: list[str],
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """One explicit object-scoped local test of the exact submitted candidate.
+
+        The submitted unsaved object is staged as one non-Active candidate from one
+        exact captured Active identity, then analysed by its own family boundary.
+        The route creates no executable work, changes no Active revision, mutates no
+        Storage and never calls a Provider unless the operator explicitly requested
+        the family's live Metadata test.
+        """
+
+        self._require_empty_query(environ, "rules object analysis")
+        self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+        if self._rules_analysis is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        family = parts[5]
+        if family not in RULE_WORKSPACE_FAMILIES:
+            return self._error(start_response, 404, "not_found", "preview route was not found")
+        allowed = {
+            "expectedRevisionId",
+            "expectedVersion",
+            "expectedDigest",
+            "candidate",
+            "sample",
+            "liveMetadata",
+        }
+        document = self._document(environ)
+        if set(document) != allowed:
+            raise ValueError("rules object analysis contains unsupported or missing fields")
+        revision_id = document["expectedRevisionId"]
+        version = document["expectedVersion"]
+        digest = document["expectedDigest"]
+        if not isinstance(revision_id, str) or not revision_id.strip():
+            raise ValueError("expectedRevisionId must be a non-empty string")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("expectedVersion must be a positive integer")
+        if not isinstance(digest, str) or not digest.strip():
+            raise ValueError("expectedDigest must be a non-empty string")
+        candidate = document["candidate"]
+        if not isinstance(candidate, dict) or set(candidate) != {"family", "objectId", "values"}:
+            raise ValueError("analysis candidate requires family, objectId, and values")
+        if candidate["family"] != family:
+            raise ValueError("analysis candidate family must match the requested family")
+        if not isinstance(candidate["values"], dict):
+            raise ValueError("analysis candidate values are required")
+        if candidate["objectId"] is not None and not isinstance(candidate["objectId"], str):
+            raise ValueError("analysis candidate objectId must be text or null")
+        sample = document["sample"]
+        if sample is not None and not isinstance(sample, dict):
+            raise ValueError("analysis sample must be an object or null")
+        live_metadata = document["liveMetadata"]
+        if not isinstance(live_metadata, bool):
+            raise ValueError("liveMetadata must be a boolean")
+        # A live Provider test is the only analysis that may construct a Provider,
+        # and only for the MetadataPolicy family.
+        if live_metadata and family != "metadataPolicies":
+            raise ValueError("liveMetadata is only available for the MetadataPolicy test")
+        staged = self._rules_workspace.stage_analysis_candidate(
+            family,
+            candidate["values"],
+            actor=principal.principal_id,
+            expected_revision_id=revision_id,
+            expected_version=version,
+            expected_digest=digest,
+            object_id=candidate["objectId"],
+        )
+        result = self._rules_analysis.analyze(
+            family,
+            revision_id=staged.revision_id,
+            object_id=candidate["objectId"],
+            sample=sample,
+            live_metadata=live_metadata,
+        )
+        response_document = result.document()
+        response_document["revisionId"] = staged.revision_id
+        response_document["revisionVersion"] = staged.version
+        response_document["revisionDigest"] = staged.digest
+        response_document["testedAt"] = datetime.now(UTC).isoformat()
+        response_document["testedObject"] = {
+            "family": family,
+            "objectId": candidate["objectId"],
+        }
+        return self._response(start_response, 200, response_document)
+
+    def _rules_complete_flow_command(
+        self,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """The separately labelled complete-flow check from Rules Overview.
+
+        It reuses the complete Python chain and reports truthful missing-stage
+        blockers. It never grants execution authority, starts work or mutates
+        media; a live Metadata identity stays separately explicit.
+        """
+
+        self._require_empty_query(environ, "rules complete flow")
+        self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+        if self._rules_analysis is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        allowed = {
+            "expectedRevisionId",
+            "expectedVersion",
+            "expectedDigest",
+            "resourceLibraryId",
+            "syntheticPath",
+            "liveMetadata",
+            "syntheticIdentity",
+        }
+        document = self._document(environ)
+        if set(document) != allowed:
+            raise ValueError("rules complete flow contains unsupported or missing fields")
+        revision_id = document["expectedRevisionId"]
+        version = document["expectedVersion"]
+        digest = document["expectedDigest"]
+        if not isinstance(revision_id, str) or not revision_id.strip():
+            raise ValueError("expectedRevisionId must be a non-empty string")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("expectedVersion must be a positive integer")
+        if not isinstance(digest, str) or not digest.strip():
+            raise ValueError("expectedDigest must be a non-empty string")
+        library_id = document["resourceLibraryId"]
+        synthetic_path = document["syntheticPath"]
+        if not isinstance(library_id, str) or not library_id.strip() or len(library_id) > 128:
+            raise ValueError("resourceLibraryId must be a bounded non-empty string")
+        if (
+            not isinstance(synthetic_path, str)
+            or not synthetic_path.strip()
+            or len(synthetic_path) > 4096
+            or "\x00" in synthetic_path
+        ):
+            raise ValueError("syntheticPath must be bounded, non-empty, and NUL-free")
+        live_metadata = document["liveMetadata"]
+        if not isinstance(live_metadata, bool):
+            raise ValueError("liveMetadata must be a boolean")
+        identity = document["syntheticIdentity"]
+        if identity is not None and not isinstance(identity, dict):
+            raise ValueError("syntheticIdentity must be an object or null")
+        if identity is not None and live_metadata:
+            raise ValueError("syntheticIdentity cannot be combined with liveMetadata")
+        # The complete-flow entry deliberately analyses the *current Active*
+        # configuration graph rather than a staged object candidate: it is the
+        # combined processing check, not one object's local test.  It therefore
+        # only verifies the observed Active identity and performs no publication.
+        active = self._configuration_objects._managed.active()
+        if active is None:
+            return self._error(
+                start_response,
+                409,
+                "no_active_configuration",
+                "no Active configuration exists; complete-flow analysis is unavailable",
+                details={
+                    "durableState": "active_unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "publish an Active configuration, then run the complete-flow check"
+                    ),
+                },
+            )
+        observed_version = active.revision_sequence or active.version
+        if (
+            revision_id != active.revision_id
+            or version != observed_version
+            or digest != active.digest
+        ):
+            return self._error(
+                start_response,
+                409,
+                "configuration_version_conflict",
+                "complete-flow analysis requires the exact current Active; reload before checking",
+                details={
+                    "currentRevisionId": active.revision_id,
+                    "currentVersion": observed_version,
+                    "currentDigest": active.digest,
+                    "durableState": "active_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "reload the Active configuration, then explicitly rerun",
+                },
+            )
+        result = self._rules_analysis.complete_flow(
+            revision_id=active.revision_id,
+            resource_library_id=library_id,
+            synthetic_path=synthetic_path,
+            live_metadata=live_metadata,
+            synthetic_identity=identity,
+        )
+        response_document = result.document()
+        response_document["revisionId"] = active.revision_id
+        response_document["revisionVersion"] = observed_version
+        response_document["revisionDigest"] = active.digest
+        response_document["testedAt"] = datetime.now(UTC).isoformat()
+        response_document["entry"] = "complete_flow_check"
+        response_document["executionAuthorityGranted"] = "none"
         return self._response(start_response, 200, response_document)
 
     def _rules_object_command(

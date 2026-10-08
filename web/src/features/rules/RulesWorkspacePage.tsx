@@ -28,6 +28,7 @@ import {
   ruleImpactFailureCopy,
   type RuleFormFamily,
 } from "../../entities/rules/rules-form";
+import { RulesCompleteFlowCheck } from "./RulesCompleteFlowCheck";
 import {
   RulesObjectDrawer,
   type RulesDrawerSession,
@@ -172,7 +173,13 @@ function OnboardingPath({ model }: { readonly model: RulesWorkspaceModel }) {
   );
 }
 
-function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
+function Overview({
+  model,
+  token,
+}: {
+  readonly model: RulesWorkspaceModel;
+  readonly token: string;
+}) {
   return (
     <section
       className="mf-rules-overview"
@@ -209,6 +216,7 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
       </div>
       <ReadinessGaps model={model} />
       <OnboardingPath model={model} />
+      <RulesCompleteFlowCheck token={token} />
     </section>
   );
 }
@@ -738,7 +746,7 @@ export function RulesWorkspacePage() {
               ))}
             </nav>
             {section === "overview" ? (
-              <Overview model={data} />
+              <Overview model={data} token={token ?? ""} />
             ) : (
               <section aria-labelledby="rules-family-title">
                 <div className="mf-rules-toolbar">

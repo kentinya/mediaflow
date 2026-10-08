@@ -88,6 +88,7 @@ from mediaflow.domain.configuration_management import (
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.metadata import (
     METADATA_POLICY_CONFIGURATION_FIELDS,
+    CachePolicy,
     MediaIdentity,
     MediaQueryType,
     MediaType,
@@ -3139,6 +3140,87 @@ class ConfigurationObjectService:
                 ),
             )
         return self._repository.save_naming_preview(evidence)
+
+    @classmethod
+    def _section_kind(cls, section: str) -> ConfigurationObjectKind:
+        """The managed object kind that owns one document section.
+
+        Object-scoped analysis resolves a submitted family back to the exact
+        authority its normalization uses, so it can never apply a different
+        field allowlist or bound than Save.
+        """
+
+        for kind, owned in cls._SECTIONS.items():
+            if owned == section:
+                return kind
+        raise ValueError(f"{section!r} is not an editable configuration section")
+
+    @classmethod
+    def _metadata_policy_from_value(cls, value: Mapping[str, object]) -> MetadataPolicy:
+        """Build one runtime MetadataPolicy from the exact normalized document value."""
+
+        normalized = cls._normalize(ConfigurationObjectKind.METADATA_POLICY, value)
+        return MetadataPolicy(
+            str(normalized["id"]),
+            str(normalized["providerId"]),
+            MediaType(normalized["mediaType"]) if normalized.get("mediaType") else None,
+            normalized.get("language"),
+            normalized.get("region"),
+            str(normalized["name"]),
+            MediaQueryType(normalized["mediaQueryType"])
+            if normalized.get("mediaQueryType")
+            else None,
+            float(normalized["automaticThreshold"]),
+            float(normalized["confirmationThreshold"]),
+            float(normalized["minimumScoreGap"]),
+            float(normalized["timeout"]),
+            RetryPolicy(int(normalized["retryCount"])),
+            CachePolicy(),
+            int(normalized["maxCandidates"]),
+            int(normalized["maxSearchPages"]),
+            int(normalized["maxProviderRequests"]),
+            int(normalized["maxCandidateEnrichments"]),
+            bool(normalized["enabled"]),
+        )
+
+    @staticmethod
+    def _organize_policy_warnings(policy: OrganizePolicy) -> list[str]:
+        """The explicit high-risk/destructive warnings one OrganizePolicy declares."""
+
+        warnings: list[str] = []
+        if policy.conflict_strategy is ConflictStrategy.OVERWRITE:
+            warnings.append(
+                "conflictStrategy=overwrite grants explicit destination replacement authority"
+            )
+        if policy.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE:
+            warnings.append(
+                "sourceDirectoryCleanup grants explicit source-directory delete authority"
+            )
+        if policy.operation is OrganizeOperationType.MOVE and not policy.rollback.enabled:
+            warnings.append("rollback is disabled for Move; partial effects may remain")
+        if policy.operation in {
+            OrganizeOperationType.HARD_LINK,
+            OrganizeOperationType.SOFT_LINK,
+        }:
+            warnings.append(
+                f"{policy.operation.value} has no fallback to Copy or Move; unsupported "
+                "capability is a failure"
+            )
+        return warnings
+
+    def _load_runtime_for_analysis(self, revision: ManagedConfigurationRevision):
+        """Load the validated managed runtime for the complete-flow check only.
+
+        This is the *complete* graph, so a whole-runtime load is exactly what the
+        complete-flow entry must perform; the independent object analysis never
+        calls it.
+        """
+
+        return load_managed_runtime_configuration(
+            revision.document,
+            bootstrap_database_path=self._managed.bootstrap_database_path
+            or self._repository.database_path,
+        )
 
     @classmethod
     def _naming_policy(cls, value: Mapping[str, object]) -> NamingPolicy:
