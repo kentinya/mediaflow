@@ -471,8 +471,8 @@ This Task did not implement those outcomes and does not close the Slice.
 ### Checkpoint
 
 ```text
-Status: NOT SUBMITTED
-Head SHA: NOT SET
+Status: READY FOR B REVIEW
+Head SHA: 4c70dbe46acc81bbd1f5d20d21e94aa012a89ef3
 ```
 
 ## B Review Result
