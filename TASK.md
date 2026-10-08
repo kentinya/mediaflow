@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md). It implements RO-1 and Slice Acceptance Crit
 ```text
 Task ID: 44.1
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: f57715c042ffa22c07d92950cc3de222946ed9b2
 Difficulty: High
 Test Level: T4
@@ -274,14 +274,16 @@ replace the direct-work historical compatibility rehearsal.
 - `mediaflow/application/direct_file_commands.py`, `mediaflow/application/direct_file_transfers.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/application/organizer.py`, `mediaflow/domain/direct_files.py`, `mediaflow/final_cli.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`
 - `scripts/direct_files_browser_harness.py`, `scripts/direct_files_compatibility_rehearsal.py`, `scripts/operations_inventory_harness.py`
 - `tests/test_direct_file_operations.py`, `tests/test_direct_file_transfers.py`, `tests/test_media_library_direct_commands.py`, `tests/test_media_library_transfers.py`, `tests/test_release_security.py`
-- `web/playwright.config.ts`, `web/playwright.direct-files.python.config.ts`, `web/src/entities/library/direct-files.ts`, `web/src/features/library/delete-admission-session.ts`, `web/src/features/library/FileCommandDialogs.tsx`, `web/src/features/library/MediaLibraryCommands.test.tsx`, `web/src/features/library/MediaLibraryFilesPage.tsx`, `web/src/features/library/StorageFilesPage.test.tsx`, `web/src/features/library/StorageFilesPage.tsx`, `web/src/shared/api/api-client.ts`, `web/src/shared/api/media-library-commands-api.test.ts`, `web/tests/e2e/direct-files.python.spec.ts`, `web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/medialib-commands.spec.ts`
+- `web/playwright.config.ts`, `web/playwright.direct-files.python.config.ts`, `web/src/entities/library/direct-files.ts`, `web/src/features/library/delete-admission-session.ts`, `web/src/features/library/delete-admission-session.test.ts`, `web/src/features/library/FileCommandDialogs.tsx`, `web/src/features/library/MediaLibraryCommands.test.tsx`, `web/src/features/library/MediaLibraryFilesPage.tsx`, `web/src/features/library/StorageFilesPage.test.tsx`, `web/src/features/library/StorageFilesPage.tsx`, `web/src/shared/api/api-client.ts`, `web/src/shared/api/media-library-commands-api.test.ts`, `web/tests/e2e/direct-files.python.spec.ts`, `web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/medialib-commands.spec.ts`, `web/tests/fake-server.mjs`
 
 ### Implemented
 
 - Completed direct Rename, confirmed single/batch/recursive Delete and same/cross-Storage Copy/Move journeys through the shared application and OrganizerExecutor boundary. Metadata-only observations work when fingerprints are absent, while observed fingerprints remain binding. Cross-Storage Move removes its source only after verified destination copy and fresh source checks.
 - Bound observations and confirmations to library kind/ID, Storage/root, path and applicable immutable configuration context. Preserved operation limits, independent outcomes, Worker ownership/fencing, durable checkpoints and historical authority.
 - Added durable Delete admission and per-item Task/Worker results on both library kinds. Both native pages expose progress, outcomes and Operations recovery; unknown effects remain investigation-only and are not automatically replayed.
-- For the correction blockers, persisted a browser-generated Delete request ID and exact confirmed scope before POST; read back that same durable Task after an uncertain response; reject a conflicting request binding; and require an explicit same-scope repeat to reuse the same ID. Impact and admission collapse duplicate and descendant selections to one normalized top-level scope. Known source-change and unexpected-directory-content refusals remain bounded through TaskItem, Result and API and receive localized guidance.
+- For Delete admission, prefer `crypto.randomUUID()` and fall back to `crypto.getRandomValues()` when a supported non-secure HTTP origin does not expose `randomUUID`; the fallback creates a UUID v4. Fail closed when neither cryptographic source is available. Persist the request ID and exact confirmed scope before POST, read back that same durable Task after an uncertain response, reject conflicting request bindings, and require an explicit same-scope repeat to reuse the same ID.
+- Added real-browser coverage on non-localhost HTTP for ResourceLibrary and MediaLibrary, including normal Delete, a lost admission response, reconnect, same-ID durable readback, and no duplicate Delete POST. The localhost journeys assert their secure-context crypto behavior. Updated Delete API fixtures to use queued admission plus durable Task status readback, valid scope digests and independent per-item outcomes. Prevented terminal Delete results from triggering a stale impact read that presented a false missing-target error.
+- Impact and admission collapse duplicate and descendant selections to one normalized top-level scope. Known source-change and unexpected-directory-content refusals remain bounded through TaskItem, Result and API and receive localized guidance.
 - Added real-Python browser journeys and a Base-to-candidate persistence rehearsal. Documented the narrow direct-file behavior in `docs/architecture.md`.
 
 ### Tests and Results
@@ -289,23 +291,26 @@ replace the direct-work historical compatibility rehearsal.
 - PASS — `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_direct_file_transfers tests.test_media_library_transfers` — 215 tests.
 - PASS — `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_scope_continuation tests.test_processing_worker_readiness tests.test_runtime_files_browser` — 122 tests.
 - PASS — `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage tests.test_migration_rehearsal tests.test_release_security tests.test_release_validation tests.test_container_deployment` — 122 tests; OpenList production adapter exercised through local HTTP.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,195 passed, 7 skipped.
+- FAIL — `.venv/bin/python -m unittest discover -s tests` — 2,194 passed, 1 failed, 7 skipped. The unrelated Rules concurrency test `test_simultaneous_saves_never_publish_a_mixed_or_lost_successor` reported `rules_destination_check_failed`; its isolated rerun passed.
 - PASS — `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .` (341 files); `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required config validation commands; `git diff --check`.
-- PASS — forbidden dependency audit fallback: `grep -RniE --exclude='*.pyc' 'ffprobe|ffmpeg' mediaflow pyproject.toml` returned no matches (exit 1). `rg` is unavailable.
-- PASS — from `web/`, `npm run test -- --run` — 65 files / 1,008 tests before the final zero-selection wording adjustment; the two affected page unit tests passed when rerun afterward. Also PASS after that adjustment: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run build`. Build reports the existing >500 KB chunk advisory.
-- PASS — current focused Web checks: MediaLibrary enabled-library browse unit test, StorageFiles Delete selection/tree-pruning unit test, and `npm run test:e2e -- --grep='honest paging and selection summary'`.
+- PASS — `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` returned no matches (expected exit 1).
+- FAIL — from `web/`, `npm run test -- --run` — 999 passed, 12 failed across 4 files (1,011 total). Failures were in Storage Management, one ResourceLibrary drawer test, Configuration route and Automation route. The Task-focused rerun below passed.
+- PASS — from `web/`, `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm run build`. Build asset `web/dist/assets/index-DFzUlep2.js`, SHA-256 `726192940f5b6b6622ddede8255b4b128d4816ac7378cf929dd2c08624349fd7`; build retains the >500 KB chunk advisory.
+- PASS — from `web/`, `npm run test -- --run src/features/library/delete-admission-session.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryCommands.test.tsx` — 3 files / 66 tests.
+- PASS — from `web/`, `npm run test:e2e -- --grep='bounded delete shows|bounded multi-selection Delete|deleting requires one explicit confirmation|a partial delete keeps each item'` — 4 Delete acceptance cases, including multi-selection with an explicit fixture reset.
+- FAIL — from `web/`, full `npm run test:e2e` — 201 passed, 34 failed of 235. Thirty-one Dashboard/deep-link/Storage Management failures were recorded at Task Base. Three additional failures in this run were: the multi-selection Delete and Copy fake-server cases could not find the `Movies` fixture in the full parallel suite, and one narrow keyboard test encountered Playwright trace-artifact `ENOENT` while another Playwright config was running. The Delete-focused cases passed in the isolated run above; no full-suite PASS is claimed.
 - PASS — from `web/`, `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21 real-Python browser tests.
-- PASS — from `web/`, `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — 8 real-Python journeys across ResourceLibrary and MediaLibrary, including durable Delete and fingerprintless cross-Storage Move.
+- PASS — from `web/`, `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — 10 real-Python journeys across both library kinds. This includes localhost secure-context checks and non-localhost HTTP normal/lost-response Delete recovery; built asset SHA-256 is recorded above.
 - PASS — `.venv/bin/python /tmp/mediaflow-b44-review.py` — both library kinds normalize overlapping/repeated selections, retain changed files and new directory contents, and persist bounded `source_changed` / `directory_changed` through TaskItem, Result and API.
 - PASS — adapted browser repro `node /tmp/mediaflow-b44-unknown-delete-adapted.mjs`: both kinds issued one POST, read back the queued Task after the dropped response, exposed no second Delete action, and deleted only after one explicit Worker run. The supplied `/tmp/mediaflow-b44-unknown-delete.mjs` probe timed out on its old confirmation/alert selectors after the UI moved to durable progress.
 - PASS — Base-to-candidate compatibility rehearsal: `.venv/bin/python scripts/direct_files_compatibility_rehearsal.py seed-base --base-tree /tmp/mediaflow-task44-1-base --state-root /tmp/mediaflow-task44-1-correction-compat`; then `verify-candidate --state-root /tmp/mediaflow-task44-1-correction-compat` — schema 44 completed, partial, uncertain, pending and refused no-fingerprint work remained readable with original pins; refused source deletion did not gain authority.
-- PASS — wheel build/smoke: `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-1-wheel-correction`; `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-1-wheel-correction/mediaflow-2.0.0.dev0-py3-none-any.whl`. SHA-256: `0d8bf75da064932bb253da5382d073101a620d2ec7af433ae2a6406c7ccfb`.
-- PASS — `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-1-correction-lifecycle` — `sha256:b88b1b4a0832de78efdc76b2fc94a1386e0661852084490dad5122a18908cd79`.
-- PASS — `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-1-correction-security` — `sha256:52928b11e249413bcbeea794ed6f41f10425b0f1ac699c928f4c410cf1d79b44`.
-- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task44-1-correction-impact` — unchanged harness raises `KeyError: 'resourceLibraries'` before Compose; reproduced at Task Base.
+- PASS — wheel build/smoke: `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-1-wheel-correction-r2`; `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-1-wheel-correction-r2/mediaflow-2.0.0.dev0-py3-none-any.whl`. SHA-256: `08c983ac741a328897bddd077c8994e0c8448f8dca4a8f3cc89c7abe79dd16dc`.
+- PASS — `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-1-correction-r2-lifecycle` — image `sha256:7f1dfec1d5bc98505e7778c9d002c2c1ead55700c4aa42c1c862f4231918f9ae`.
+- FAIL — `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-1-correction-r2-security` — candidate image built and inspected; isolated Compose stack did not become healthy within 150 seconds. Image `sha256:2d120d91247593911ea639b2a1c198c461a8c2bffab4a1a3d1c4e02ff193cfe2`.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task44-1-correction-r2-impact` — unchanged harness raises `KeyError: 'resourceLibraries'` before Compose; reproduced at Task Base. Image `sha256:990810d9e6ee251af3b1e4fbf10ed3e04cc37e4c7f6fadd26ced395d14dc54be`.
 - FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — migration/recovery runs, then unchanged harness expects schema 39 while runtime reports 44; reproduced at Task Base.
 - FAIL — full default Web E2E was 199/235 passed, 36 failed. Thirty-one dashboard/deep-link placeholder and Storage Management failures were reproduced at Task Base. Four candidate-only direct Delete fake-server cases still expect an immediate terminal “删除结果”; the durable admission flow reads Task status instead. The exact four-case rerun failed on those expectations. The remaining failure was a paging-summary assertion caused by an intermediate zero-selection wording; the wording was corrected and its focused current E2E passed, but the full default suite was not rerun afterward. Base passed the five-case slice (the four Delete cases plus paging summary). No pass is claimed for the four candidate-only Delete failures.
-- PASS — candidate real-Python browser/API/SQLite/Worker journeys above cover both library kinds.
+- PASS — candidate real-Python browser/API/SQLite/Worker journeys above cover both library kinds. Real production SMB/S3 services were not used; no production credentials or user media were required.
 
 | Journey evidence | ResourceLibrary | MediaLibrary |
 | --- | --- | --- |
@@ -317,10 +322,10 @@ replace the direct-work historical compatibility rehearsal.
 ### Decisions
 
 - Optional fingerprints strengthen observation evidence but are not fabricated or replaced with content hashes. When absent, the shared policy uses existence/type/size/time and available stable directory identity.
-- Direct Delete reuses Task/Worker persistence, locks, leases and mutation fences. A browser UUID identifies one durable admission; recovery checks the existing Task binding and immutable pin.
+- Direct Delete reuses Task/Worker persistence, locks, leases and mutation fences. A cryptographic browser UUID identifies one durable admission across secure and supported non-secure HTTP origins; recovery checks the existing Task binding and immutable pin.
 - Duplicate and descendant paths normalize consistently for impact and admission. Known pre-mutation refusals preserve bounded categories; uncertain effects remain investigation-only and are never retried automatically.
 - Historical no-fingerprint partial/refused Move retains its original source-removal authority; the compatibility rehearsal seeded that state from actual Task Base.
-- Docker impact and generic upgrade failures are unchanged and Base-reproduced. Candidate-only fake-server E2E failures are recorded; the real-Python browser journeys verify durable behavior against the actual API and Worker.
+- Docker impact and generic upgrade failures are unchanged and Base-reproduced. The candidate release-security health timeout and full-suite Web failures remain visible above; direct Delete's native real-Python journeys pass for both library kinds.
 
 ### Remaining In-Slice Work
 
@@ -328,73 +333,53 @@ RO-2 through RO-6 remain outstanding; Developer does not plan their Tasks.
 
 ### Risks / Deviations
 
-- The full default Web E2E suite has four candidate-only direct Delete fake-server failures in addition to 31 Base-reproduced failures. They are not represented as passing.
+- The full Web unit and default E2E commands have the failures and totals listed above; isolated Task-focused suites pass.
 - The supplied unknown-response browser script uses selectors for the former confirmation/error view; the adapted script verified one POST per library kind using the durable progress view.
-- Seven full-suite unittest skips are reported above. Production SMB/S3/TMDB endpoints were not exercised; OpenList adapter coverage used local HTTP. No production credentials or user media were used.
+- Seven full-suite unittest skips are reported above. The full Python run had one unrelated concurrency failure whose isolated rerun passed. Production SMB/S3/TMDB endpoints were not exercised; OpenList adapter coverage used local HTTP. No production credentials or user media were used.
 - Build output retains the >500 KB chunk advisory. No Slice contract change or scope expansion was made.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 8c03b9ff7aadb64b39603ecf568b8e4d99767192
+Head SHA: a3a0eaebf99874f5f91d5bc96547b6c0d8486c62
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: f57715c042ffa22c07d92950cc3de222946ed9b2..91ac7c16b5e8492c62e2c5c01edad2122e492e20
+Reviewed: f57715c042ffa22c07d92950cc3de222946ed9b2..8c03b9ff7aadb64b39603ecf568b8e4d99767192
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Unknown Delete admission is presented as non-execution and has no admission readback
-  before repeat (AC-6/9; RO-1 durable admission/recovery).** Origin: the ResourceLibrary fallback
-  message already exists at Task Base; this Task moves Delete to asynchronous durable admission
-  without completing the required unknown-admission recovery. This is an unmet integration criterion,
-  not a newly introduced message. On the native ResourceLibrary page,
-  drop the response only after the actual POST has returned 202 and persisted its Task. The page
-  reports `命令未执行，当前数据未被修改；请根据原因修正后重试或刷新目录。` and leaves Delete enabled;
-  running the actual Worker then deletes the file. MediaLibrary reports an unknown outcome, but
-  also leaves Delete enabled without reconciling the admitted Task. A live directory refresh
-  cannot establish that queued work was not admitted. Evidence: after `npm --prefix web run build`,
-  start `.venv/bin/python -c 'import scripts.direct_files_browser_harness as harness; from mediaflow.infrastructure.local_storage import LocalStorage; harness.FingerprintlessStorage = LocalStorage; raise SystemExit(harness.main(["--port", "4186"]))'`,
-  then `node /tmp/mediaflow-b44-unknown-delete.mjs`; both kinds returned actual backend 202,
-  retained the source before Worker execution and removed it after Worker completion. The
-  Playwright probe uses `route.fetch()` followed by response abort, actual built pages/API/SQLite/
-  Worker, and the complete production Local adapter with fingerprints; no Storage capability was
-  removed. Results: `/tmp/mediaflow-b44-unknown-delete.log`. Preserve an unknown-admission state
-  on both pages, reconcile its durable admission/outcomes through the native recovery path before
-  enabling an explicit repeat, and never claim that a lost response proves no Task or effect.
-- **P1 — Overlapping Delete selections are rejected instead of normalized/deduplicated
-  (AC-3; RO-1 bounded selection Delete).** Origin: this rejection already exists at Task Base and
-  `_delete_targets` is unchanged. It remains an unmet, preassigned AC-3 requirement, not a regression
-  introduced by this checkpoint. `DirectFileCommandService._delete_targets` returns
-  `files_direct_invalid_request` for a parent plus its child and for a repeated path. This blocks
-  the required scoped API batch journey before the impact summary/confirmation rather than
-  producing the single bounded effect required by the Contract. Evidence:
-  `.venv/bin/python /tmp/mediaflow-b44-review.py` uses checked Active configuration, temporary
-  roots and the production Local adapter. Both
-  `/api/v1/resource-libraries/source/files/delete-impact` and
-  `/api/v1/media-libraries/movies/files/delete-impact` return HTTP 400 for
-  `path=Review-Overlap&path=Review-Overlap/child.txt` and for repeated
-  `path=Review-Overlap/child.txt`; results are in `/tmp/mediaflow-b44-review.log`. Normalize exact
-  confined paths and collapse duplicate/descendant selections consistently in impact and admission;
-  retain the existing limits, complete enumeration, one confirmation and once-only per-entry effects.
-- **P1 — Durable Delete discards known refusal reasons needed for recovery
-  (AC-9; RO-1 independent failure/recovery; AGENTS.md product rules 2/9).** Origin: a regression in
-  the new Worker path. Base's `_record_item` preserves Executor errors and its outcome mapping
-  distinguishes `source_changed`; the candidate replaces known refusal reasons with `delete_failed`.
-  The new
-  `_execute_claimed_delete` replaces every known Executor refusal with `delete_failed` in both
-  TaskItem and Result. A file changed after confirmed admission and an empty directory that gains
-  unconfirmed content therefore have indistinguishable durable errors; the status API and native
-  outcome list cannot explain why the item was retained or which observation/confirmation must be
-  renewed. Evidence: `.venv/bin/python /tmp/mediaflow-b44-review.py` reproduces both cases on each
-  library kind with the production Local adapter and real Worker. Changed files/unconfirmed
-  children survive, but TaskItem, Result and status outcomes all contain only `delete_failed`;
-  results are in `/tmp/mediaflow-b44-review.log`. Preserve bounded, secret-free refusal categories
-  and corresponding recovery actions through persistence, API and both native pages, including
-  source change and unexpected directory contents. Keep independent item outcomes and the
-  investigation-only treatment of uncertain effects; do not expose raw adapter exceptions.
+- **P1 — Native Delete is unavailable on the supported trusted-LAN HTTP surface
+  (AC-1/9; RO-1 mandatory native Delete on both library kinds).** This is introduced by the
+  correction checkpoint: `delete-admission-session.ts:newDeleteRequestId` calls
+  `crypto.randomUUID()` and returns null if unavailable; both Files pages require this ID before
+  submitting any Delete. `docs/deployment.md:140` explicitly permits trusted-LAN exposure and
+  states that MediaFlow does not supply TLS. A normal non-localhost HTTP browser origin has no
+  `crypto.randomUUID`, so clicking Delete on either page reports
+  `无法生成删除请求核对记录；未发送删除。请刷新页面后重试。`; refresh cannot fix the origin, no
+  POST is sent, and ordinary confirmed deletion cannot proceed.
+  **Evidence:** `npm --prefix web run build`; start
+  `.venv/bin/python -c 'import scripts.direct_files_browser_harness as harness; from mediaflow.infrastructure.local_storage import LocalStorage; harness.FingerprintlessStorage = LocalStorage; raise SystemExit(harness.main(["--port", "4186"]))'`;
+  run `node /tmp/mediaflow-b44-r1-http-delete.mjs`. The actual Chromium browser opens
+  `http://mediaflow.review.test:4186` mapped to the isolated loopback server, using the current
+  built pages, checked configuration, real API and complete production Local adapter. Browser
+  APIs/capabilities are unmodified. Both kinds report `isSecureContext=false`,
+  `typeof crypto.randomUUID=undefined`, `typeof crypto.getRandomValues=function`, available
+  sessionStorage, the error above, zero Delete POSTs and retained source files. Results:
+  `/tmp/mediaflow-b44-r1-http-delete.log`. Served JS is
+  `web/dist/assets/index-J5IMwk5e.js`, SHA-256
+  `8de7f0e526211466c7652299a7ef8e683c72ad05a697b8039ae530fd576673d9`.
+  **Correction:** generate a reliable request identity in supported HTTP browser environments
+  while retaining persistence-before-POST, exact scope/kind binding, same-request readback and
+  once-only admission. Keep identity handling automatic for the user. Preserve the current
+  deployment contract and uncertain-effect non-replay; do not bypass the recovery fence or
+  silently generate a new request on retry. Verify normal Delete and unknown-response recovery
+  on both kinds through a genuine non-localhost HTTP origin, alongside the existing supported
+  localhost/HTTPS behavior. Finish the Task's existing Required Tests truthfully, reconciling
+  affected Delete test fixtures with the actual durable API/evidence format without removing
+  cases, weakening safety assertions or hiding skips.
