@@ -7,7 +7,7 @@ publication and historical-authority boundary.
 ```text
 Task ID: 44.2
 Parent Slice: 44
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 78cddf8b4090e8da86c6e69ffd237c67959b70c7
 Difficulty: High
 Test Level: T4
@@ -290,77 +290,95 @@ credentials. Preserve the live deployment. Record unavailable Docker/services ho
 
 ### Changed Files
 
-Domain / application:
-- `mediaflow/domain/classification.py` — `ClassificationRule` is now `media_library_id` + `path`
-  with an optional legacy `library` prefix; `category`/`subcategory`/`relative_category_path` become
-  derived read-only views; new `normalize_classification_path` is the single string/segment-list
-  normalization; `ClassificationResult.destination_prefix` returns the prefix only for an explicitly
-  legacy result.
-- `mediaflow/domain/organizer.py` — `compose_destination` documents the revised contract and reports
-  `classification_contribution` for old/new routing display.
-- `mediaflow/application/classification.py` — one `_result_for_rule` builder marks legacy results.
-- `mediaflow/application/configuration_objects.py` — legacy `library` is optional and preserved,
-  never inferred from a display name; `path` may be recovered from a legacy `category`/`subcategory`
-  document; classification/destination preview documents report `destinationContract`.
-- `mediaflow/application/rules_workspace_commands.py` — rule projection exposes the contract and
-  hides legacy editable outputs; `_preserve_unsubmitted_legacy_destinations` keeps an unsubmitted
-  legacy prefix and honors an explicit `null` as deliberate conversion; form authority exposes the
-  MediaLibrary `rootPath`.
-- `mediaflow/application/evidence_capture.py`, `mediaflow/application/organizer.py`,
-  `mediaflow/application/strategy_test.py`, `mediaflow/cli.py` — consumers report and compose the
-  contract explicitly.
-- `mediaflow/infrastructure/strategy_user_configuration.py`,
-  `mediaflow/infrastructure/strategy_configuration.py` — legacy parser stops requiring `library`
-  and stops deriving `mediaLibraryId` from the library name via `_slug`.
+Correction round (this checkpoint) — the original implementation checkpoint `4c70dbe` is unchanged
+and is not amended:
 
-Web:
-- `web/src/features/rules/RulesObjectForm.tsx` — revised destination selector + one path; removes the
-  library/category/subcategory inputs; adds `DestinationContractNotice` for explicit conversion.
-- `web/src/entities/rules/rules-form.ts` — drops the legacy `library` validation requirement, carries
-  `MediaLibraryReference.rootPath`.
-- `web/src/features/rules/rules-form-fixtures.ts`, `web/src/shared/ui/styles.css`.
+- `mediaflow/application/rules_workspace_commands.py` — one shared `_prepare_candidate` preparation
+  now runs before the strict normalizer on **both** Save (`_publish`) and `stage_preview_candidate`
+  (preview). It drops the read-only `destinationContract` projection key for every rule, including
+  new/copied rules with no stored predecessor, and applies the unchanged legacy-prefix intent
+  semantics (absent key = carry the historical prefix forward; explicit `null` = deliberate
+  conversion). `_classification_rule_projection` now always carries the explicit `path` a rule
+  really means, recovering it from a legacy `category`/`subcategory`-only document. The previous
+  helper `_preserve_unsubmitted_legacy_destinations` is renamed to `_prepare_candidate`; it was
+  never referenced by tests or scripts.
+- `tests/test_classification_destination_contract.py` — new `ProjectionRoundTripTests` (3 tests)
+  covering B's required regressions.
+- `scripts/classification_destination_browser_proof.py` — the committed real-Python harness now
+  drives the native reopened Edit journey and the native legacy conversion journey through real
+  Chromium, and re-authenticates after a deep link because the token is deliberately memory-only.
 
-Tests / evidence:
-- `tests/test_classification_destination_contract.py` (new, 24 tests),
-  `web/src/features/rules/ClassificationDestinationForm.test.tsx` (new, 3 tests),
-  `scripts/classification_destination_browser_proof.py` (new real-Python acceptance harness).
-- Updated to the revised contract: `tests/test_classification.py`, `tests/test_classification_review.py`,
-  `tests/test_configuration_destination.py`, `tests/test_configuration_destination_activation.py`,
-  `tests/test_file_media_detail.py`, `tests/test_manual_organize_preview.py`, `tests/test_organizer.py`.
-- `docs/architecture.md` — records the implemented compatibility fact.
+Original implementation checkpoint `4c70dbe` (reviewed range
+`78cddf8b4090e8da86c6e69ffd237c67959b70c7..4c70dbe46acc81bbd1f5d20d21e94aa012a89ef3`, unchanged):
+domain/classification, domain/organizer, application/{classification,configuration_objects,
+rules_workspace_commands,evidence_capture,organizer,strategy_test}, cli, infrastructure
+strategy configuration, the Rules Web form/entity/fixtures/styles, the focused test modules and
+`docs/architecture.md`.
 
 ### Implemented
 
-The revised classification destination contract is `MediaLibrary.RootPath + Classification.path +
-Naming.Directory + Naming.Filename`. `mediaLibraryId` selects the configured Storage/root and never
-contributes a path segment, so a display-name or ID change cannot add a directory. One backend
-normalization (`normalize_classification_path`) serves both the supported string and segment-list
-forms and rejects absolute/traversal/empty/separator-bearing components, and the domain, managed
-config, composer, Planner, previews, CLI and Web all consume that same result.
+**B P1 root cause and correction.** The backend's own edit/copy projection adds a read-only
+`rules[*].result.destinationContract` key so the form can display which contract a rule has, and the
+normal frontend candidate builder submits the projection it rendered. Only Save had a preparation
+step that removed that key, and only for rules with a stored legacy predecessor; preview had none,
+and the removal happened on a temporary dict that was discarded for revised/new rules. The result was
+HTTP 400 `rules_invalid_field` for a revised reopen→Save, for every exact-candidate preview, and for
+legacy previews — exactly B's reproduction.
 
-Legacy compatibility is preserved without a schema change. A rule authored under the earlier contract
-keeps its `library` prefix and still composes `root/library/path/naming`, so existing revisions,
-digests, previews, plans, admitted pins and results keep their original meaning; the presence of that
-prefix is exactly what distinguishes a legacy pinned contract from a revised publication. Legacy
-documents stay readable (including category/subcategory-only rules), and a rule with no explicit
-`mediaLibraryId` now fails closed instead of resolving a library from its display name. Conversion is
-deliberate: the Rules edit projection shows the old and proposed contribution, an unrelated cosmetic
-Save carries the existing prefix forward, and only an explicit submitted `null` publishes the revised
-successor while preserving the explicit path. Stale Save keeps the previous Active and recovers by
-readback.
+The correction makes candidate preparation identical on both publication paths. `_prepare_candidate`
+runs before `_normalize_or_reject` in `_publish` (Save) and in `stage_preview_candidate` (Preview),
+so:
+- the read-only `destinationContract` explanation is dropped for **every** rule, so a projection the
+  backend itself produced round-trips through Save and Preview for new, copied, legacy and revised
+  rules, and the key is never persisted and never added to the runtime allowlist;
+- absent-prefix intent versus explicit `null` conversion is unchanged: an unsubmitted legacy prefix
+  is carried forward (an unrelated cosmetic Save still cannot switch the contract), and an explicit
+  `null` publishes the revised successor with the explicit path preserved rather than prefixed.
 
-Classification, composition, Planner and previews remain pure; only OrganizerExecutor mutates
-Storage, and no fallback, overwrite, delete or replay behavior was added or weakened.
+While reproducing, I found and fixed one directly adjacent break of the same class introduced by the
+original checkpoint: a Base-era document that stored only `category`/`subcategory` was projected
+without any `path`, so reopening and saving it failed with
+`rules[0].result.path is required` and would have lost the destination. The projection now derives
+the explicit `path` the normalizer has always resolved from that form, so the historical destination
+is preserved. This is the same read-only-projection round-trip root cause B named, not a new scope.
+
+Classification/composition/Planner/preview purity is unchanged, no Storage mutation was added, no
+fallback/overwrite/delete/replay behavior was added or weakened, and no persistence or schema change
+was made (schema 44 / configuration schema 10 unchanged).
 
 ### Tests and Results
+
+B's reported reproduction, rerun against this checkpoint (production services, real SQLite, real
+Local adapters, real production engines):
+
+- `.venv/bin/python scripts/classification_destination_browser_proof.py` — **PASS**. The committed
+  real-Python harness now additionally drives: native reopen of a revised policy → `预览分类` →
+  description Save → readback (no legacy prefix, `destinationContract` is
+  `media_library_path`, explicit path preserved) with the real configuration export proving the
+  read-only key was **not** persisted; native legacy reopen → legacy notice showing the old prefix →
+  `预览分类` without conversion (stored prefix unchanged) → explicit
+  `移除规则 N 的旧版目标前缀` → Save → readback with the prefix removed and the explicit path
+  preserved → reopen → preview → Save again. Output:
+  `PASS: classification destination contract through the real Python boundary`.
+- Falsification: with only the reviewed candidate's `rules_workspace_commands.py` restored in a
+  separate worktree (same new tests and same new harness), the harness fails with
+  `ExpectError: ... getByRole('heading', { name: '分类结果' })` because the native preview returns
+  HTTP 400, and the three new focused tests error with
+  `ClassificationPolicy rules[0].result contains unsupported field 'destinationContract'`. The
+  correction is therefore causally responsible for the pass.
+- A separate scratch probe of the production command service drives B's exact five-step sequence
+  (legacy unchanged preview, conversion preview, explicit conversion Save, revised second Save,
+  revised preview). At the reviewed candidate it reproduces B's recorded outcome exactly — four
+  rejections with `contains unsupported field 'destinationContract'` and the intervening conversion
+  Save succeeding — and at this checkpoint all five succeed.
 
 Focused domain/configuration/publication integration (T4):
 - `.venv/bin/python -m unittest tests.test_classification tests.test_strategy_configuration tests.test_runtime_strategy_configuration tests.test_configuration_classification tests.test_configuration_destination tests.test_configuration_destination_activation tests.test_configuration_package_exchange tests.test_v2_rules_workspace_previews tests.test_v2_rules_workspace_commands` — **PASS** (157 tests, OK)
 - `.venv/bin/python -m unittest tests.test_organizer tests.test_classification_review tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_resource_library_pipeline tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_configuration_snapshot tests.test_migration_rehearsal tests.test_release_security` — **PASS** (174 tests, OK)
-- `.venv/bin/python -m unittest tests.test_classification_destination_contract` — **PASS** (24 tests, OK; new focused module)
+- `.venv/bin/python -m unittest tests.test_classification_destination_contract` — **PASS** (27 tests, OK; 24 previous + 3 new `ProjectionRoundTripTests`)
 
 Full regression and quality/safety:
-- `.venv/bin/python -m unittest discover -s tests` — **PASS** (2219 tests, OK, 7 skipped)
+- `.venv/bin/python -m unittest discover -s tests` — **PASS** (2222 tests, OK, 7 skipped)
 - `.venv/bin/python scripts/check_governance.py` — **PASS**
 - `.venv/bin/ruff format --check .` — **PASS** (343 files already formatted)
 - `.venv/bin/ruff check .` — **PASS** (All checks passed)
@@ -369,26 +387,17 @@ Full regression and quality/safety:
 - `.venv/bin/mediaflow --config config/strategy.example.json config validate` — **PASS**
 - `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — **PASS**
 - `git diff --check` — **PASS**
-- `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` — **PASS / no matches** (`rg` is not installed in this
-  environment; `grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` returned exit 1, no matches)
+- `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` — **PASS / no matches** (`rg` is not installed in
+  this environment; `grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` returned exit 1, no matches)
 
 Web:
 - `npm run test -- --run` — **PASS** (67 files / 1014 tests passed)
 - `npm run format:check` — **PASS**; `npm run lint` — **PASS**; `npm run typecheck` — **PASS**
 - `npm run build` — **PASS** (existing >500 KB chunk advisory unchanged)
-- `npm run test:e2e` — 203 passed / 32 failed; identical counts to the recorded Task 44.1 baseline
-  (see Risks)
+- `npm run test:e2e` — 203 passed / 32 failed; identical totals to the recorded Task 44.1 baseline
+  (see Risks). Two consecutive full runs both reported 203 passed / 32 failed.
 - `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS** (21 passed)
 - `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — **PASS** (10 passed)
-
-Real-Python classification destination acceptance (new):
-- `.venv/bin/python scripts/classification_destination_browser_proof.py` — **PASS**. Real
-  `mediaflow api serve` over temporary SQLite/Local roots and the built V2 artifact, real Chromium
-  plus real HTTP. Observed: legacy projection keeps prefix + explicit path; an unrelated cosmetic
-  Save preserves the legacy contract; the production destination preview composes
-  `Movies/电影/华语/...` under `legacy_library_prefix` and `电影/华语/...` under `media_library_path`
-  after explicit conversion (the explicit path is preserved); a stale Save is refused with durable
-  readback; the browser authors the revised contract with no library/category/subcategory inputs.
 
 Compatibility, packaging and Docker:
 - `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-2-wheel` — **PASS**
@@ -397,89 +406,130 @@ Compatibility, packaging and Docker:
 - `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-2-lifecycle` — **FAIL / UNAVAILABLE (environment)**
 - `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — **NOT RUN** (no persistence/format change)
 
-Both Docker gates fail while creating the isolated stack with `invalid mount config for type "bind":
-bind source path does not exist` for a path the script had just created. I verified this is an
-environment limitation independent of this Task: the Docker daemon resolves `/tmp` in a different
-mount namespace, so a host `/tmp` path is invisible to it. A minimal Compose file mounting a freshly
-created `/tmp` directory fails identically, `docker run -v <workspace path>` succeeds, and
-`docker run alpine ls /tmp` shows an unrelated empty `/tmp`. Neither Compose file, the Dockerfile nor
-either smoke script is modified by this Task (`git diff --name-only HEAD` over all of them is empty).
+This round the Docker daemon *was* reachable, so I re-verified the earlier environmental claim
+directly instead of repeating it. Both gates still fail while creating the isolated stack with
+`invalid mount config for type "bind": bind source path does not exist` for a host `/tmp` path the
+script had just created. The real cause is a mount-namespace mismatch, now proven:
+`docker run --rm -v /tmp:/hosttmp alpine ls /hosttmp/<fresh temp dir>` reports
+`No such file or directory`, `docker run --rm -v /tmp:/hosttmp alpine ls /hosttmp` shows an
+unrelated `/tmp`, and the same bind of a workspace path (`/root/mediaflow/...`) succeeds. Docker
+Compose short syntax silently auto-creates the missing path as a directory, which is why a naive
+probe appears to work. Neither Compose file, the Dockerfile nor either smoke script is modified by
+this Task. Both gates are recorded as FAIL/UNAVAILABLE, not PASS.
 
 ### Decisions
 
-1. **No persistence or schema change.** Legacy and revised destinations are distinguished by the
-   presence of the stored `library` key, which already exists in every Base-era document. This keeps
-   old revision bytes/digests, `CONFIGURATION_SCHEMA_VERSION` 10, `SCHEMA_VERSION` 44 and the managed
-   document schema at 1 unchanged, so no migration or upgrade gate is required and every historical
-   snapshot keeps its exact meaning. The alternative — a new explicit version field — would have
-   rewritten stored documents and their digests, which the Contract forbids.
-2. **One shared normalization, derived display.** `normalize_classification_path` is the only path
-   normalization, and `category`/`subcategory` became derived read-only properties instead of stored
-   fields, so a string and an equivalent segment list cannot disagree and no second path authority
-   exists.
-3. **Explicit `null` means deliberate conversion; an absent key means "no destination change".**
-   Treating an absent key as removal would let an unrelated cosmetic Save silently republish a legacy
-   destination, which AC-4 forbids; an explicit `null` is unambiguous operator intent and keeps the
-   two cases distinguishable.
-4. **The legacy prefix survives only through an explicit marker.** `ClassificationResult` carries
-   `legacy_destination`, and `destination_prefix` returns the stored prefix only when that marker is
-   set, so a stale `library` value can never re-route a revised result.
-5. **A missing `mediaLibraryId` fails closed.** The name→ID `_slug` inference was removed from the
-   legacy parser and the reference collector rather than kept as a compatibility fallback, because
-   AC-4 requires visible correction instead of a name guess.
-6. **Test-only gates are reused, not bypassed.** The new tests seed the same shared
-   `_checked_successor_evidence` gates and bind real Local adapters, so the read-only Storage and
-   destination checks genuinely run.
+1. **One shared preparation, applied by both commands.** Rather than duplicating the cleanup in
+   Preview, `_prepare_candidate` is called from both `_publish` and `stage_preview_candidate` before
+   `_normalize_or_reject`. This is the smallest change that makes the two paths agree by
+   construction, and it keeps the strict runtime allowlist authoritative.
+2. **Do not add `destinationContract` to the runtime allowlist.** The key is a projection
+   explanation, not stored state; accepting it at runtime would persist a derived display value and
+   make the form's read-only key a real field, which B explicitly forbade. The export-based check
+   proves it is not persisted.
+3. **Project the explicit `path` for category-only legacy documents.** The normalizer already
+   resolved that form to a relative path, so exposing it in the projection changes no runtime
+   meaning; omitting it made a legal historical document unsaveable. This is the same root cause,
+   not a new behavior.
+4. **No persistence or schema change.** Schema 44, configuration schema 10 and the managed document
+   schema remain unchanged, so historical revision bytes/digests, pins and effects keep their exact
+   meaning and no migration gate is required.
 
 ### Remaining In-Slice Work
 
 RO-2 (reference-aligned Rules workspace presentation and purpose-built forms), RO-4 (object-scoped
 Rules tests with a separate complete-flow check), RO-5 (long-name breadcrumbs/toolbars) and RO-6
-(ResourceLibrary folder/mixed-selection organization) remain outstanding. The Rules edit projection
-now exposes the destination contract, which RO-2/RO-4 presentation and object-test work can reuse.
-This Task did not implement those outcomes and does not close the Slice.
+(ResourceLibrary folder/mixed-selection organization) remain outstanding. This Task did not
+implement those outcomes and does not close the Slice.
 
 ### Risks / Deviations
 
-- **Pre-existing flaky test (not caused by this Task).** During the first full-regression run,
-  `tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
-  failed once with `AssertionError: False is not true : ['rules_destination_check_failed']`. I
-  reproduced the **identical** failure at Task Base `78cddf8` in a separate worktree (2 of 40
-  isolated runs) and at the candidate, and both full-suite runs afterwards passed. The test's allowed
-  loser-code set omits the bounded `rules_destination_check_failed` code that the pre-existing
-  `_checked_successor_evidence` gate can return under concurrent Save. I did not widen that set,
-  because doing so would relax an existing assertion that this Task does not own; B should judge
-  whether it is an in-Scope correction or a separate P2 test-isolation item. All other full-regression
-  runs were green (2219 tests, 7 skipped).
-- **Docker gates unavailable in this environment** (both required gates), with the concrete cause and
-  the Base-independent reproduction recorded above. Neither is labelled PASS. The security and
+- **Docker gates unavailable in this environment** (both required gates), with the mount-namespace
+  cause directly reproduced this round (see above). Neither is labelled PASS. The security and
   transfer-lifecycle guarantees they cover were not certified by this Task.
-- **Default E2E is not green and was not made green**: 203 passed / 32 failed, matching the recorded
-  Task 44.1 counts and failure contexts. I did not remove tests, hide skips or relax assertions.
-- Two Web unit files (`AutomationRouter.test.tsx`, `OrganizeRouter.test.tsx`) failed once when the
-  full Python regression ran concurrently, then passed in isolation and in the following full Web run
-  (1014 passed). Recorded as load-related flakiness, not a product defect.
-- `docs/architecture.md` was updated only with the implemented compatibility fact; authoritative
-  product/roadmap reconciliation remains A's closure responsibility. `SLICE.md`, `docs/roadmap.md`,
-  `docs/progress.md`, the canonical Chinese specification, reference images and frozen Slice 43
-  history were not modified.
+- **Default E2E is not green and was not made green**: 203 passed / 32 failed in two consecutive
+  full runs, matching the recorded Task 44.1 counts and failure contexts. I did not remove tests,
+  hide skips or relax assertions.
+- **Pre-existing failure, unrelated to this Task.** `set_enabled(..., enabled=False)` on a
+  classification policy fails with `the required read-only destination check did not pass`. I
+  reproduced the **identical** failure at Task Base `78cddf8` with the reviewed candidate's
+  `rules_workspace_commands.py` restored, so it is not introduced here; the same call with
+  `enabled=True` passes. Not fixed, because it is outside B's named blocker list and the evidence
+  attributes it to the Base-era destination check rather than to this correction. I do not claim it
+  is harmless; B should judge whether it belongs to this Task or a separate item.
+- **Pre-existing flaky test (not caused by this Task).** The Task 44.1 report records
+  `tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+  failing intermittently with an allowed-loser-code set that omits the bounded
+  `rules_destination_check_failed` code. All full-regression runs in this round were green
+  (2222 tests, 7 skipped); I did not widen that assertion.
+- Production SMB/S3/TMDB endpoints were not certified by local/fake tests; built JS retains its
+  existing >500 KB advisory.
+- `docs/architecture.md` is unchanged this round. `SLICE.md`, `docs/roadmap.md`, `docs/progress.md`,
+  the canonical Chinese specification, reference images and frozen Slice 43 history were not
+  modified.
 - `config/alist.json` was never created, read, staged or committed; no real credentials, production
-  data or private paths are present in the checkpoint. The four pre-existing untracked `docs/pics/*.png`
-  files were preserved untouched and are not staged.
-- Production SMB/S3/TMDB endpoints were not certified by local/fake tests.
+  data or private paths are present in the checkpoint. The four pre-existing untracked
+  `docs/pics/*.png` files were preserved untouched and are not staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4c70dbe46acc81bbd1f5d20d21e94aa012a89ef3
+Head SHA: 79862d9ebba5f3547f2e9b4e709d0d09824cf357
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: NOT SET
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 78cddf8b4090e8da86c6e69ffd237c67959b70c7..4c70dbe46acc81bbd1f5d20d21e94aa012a89ef3
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — Classification form projections cannot round-trip through revised Save or existing
+  exact-candidate Preview.**
+
+  1. **Current production reachability:** the real Python API, temporary SQLite, real Local
+     adapters and newly built V2 assets reproduce this with the normal authenticated Rules
+     Add/Edit journey. No unsupported configuration, future adapter, mixed software version or
+     weakened Storage/activation substitute is involved. The backend adds
+     `rules[*].result.destinationContract` to both legacy and revised edit/copy projections
+     (`rules_workspace_commands.py:1454–1491`); the normal frontend candidate builder preserves
+     the nested `rules` data (`rules-form.ts:1046–1055`).
+  2. **Current user impact:** create a revised classification policy, reopen its native Edit page,
+     change its description and click Save: HTTP 400 `rules_invalid_field`, with the visible
+     `保存未生效` state. Clicking `预览分类` also returns HTTP 400. A legacy policy's unchanged
+     projection and the same projection after explicitly removing its prefix cannot be staged for
+     preview either. Reloading and correcting valid business fields cannot remove this
+     backend-generated read-only key, so normal maintenance and target verification are blocked.
+  3. **Current Contract violation:** Task AC-1 requires revised Add/copy/Edit authoring; AC-3
+     requires usable exact-candidate preview, checked Save and native correction; AC-4 requires
+     explained legacy conversion through that journey. Slice RO-3 and Acceptance Criteria 13–15
+     require these Web/API authoring and preview surfaces. This finding concerns the existing
+     Task-owned preview path, not the deferred RO-4 analysis split.
+  4. **Repeatable evidence:**
+     `PYTHONPATH=/root/mediaflow .venv/bin/python /tmp/mediaflow-b44-2-candidate-repro.py`
+     records rejection of legacy unchanged preview, conversion preview, revised second Save and
+     revised preview, all with `contains unsupported field 'destinationContract'`; the intervening
+     explicit conversion Save succeeds. Log: `/tmp/mediaflow-b44-2-candidate-repro.log`.
+     `.venv/bin/python /tmp/mediaflow-b44-2-browser-repro.py` extends the committed real-Python
+     harness with native create → reopen Edit → description change → Save and Preview actions;
+     both return HTTP 400 through the actual API, and Save displays `保存未生效`.
+     Log: `/tmp/mediaflow-b44-2-browser-repro.log`. The probe exits zero when it reproduces the
+     expected defect; its inherited harness PASS line does **not** certify this extended journey.
+     Actual Base..Head cause: `_preserve_unsubmitted_legacy_destinations` removes the projection
+     key only from a temporary dict, then `continue` skips writing it back for revised/new rules
+     (`rules_workspace_commands.py:1533–1553`); `stage_preview_candidate` never applies this
+     candidate preparation before normalization (`:443–444`).
+  5. **Severity:** P1. Legal current production assembly, a broken required operator journey,
+     explicit current Contract clauses and repeatable production evidence all hold.
+
+  **Required correction:** make read-only projection cleanup and the deliberate legacy-prefix
+  intent semantics consistent across Save and Preview for new, copied, legacy and revised rules.
+  Keep absent-prefix intent versus explicit `null` conversion, exact path preservation, strict
+  runtime field validation, checked publication and historical authority intact. Add regressions
+  for new policy → reopen → preview → Save and legacy → preview → explicit conversion → Save →
+  reopen → preview → Save, through real backend behavior and native Web/API. Do not persist the
+  display key or relax runtime allowlists to accept it. Complete the existing Task's required
+  evidence and submit a correction checkpoint in Task 44.2; ID, Base, Goal and Scope remain fixed.
