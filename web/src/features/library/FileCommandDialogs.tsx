@@ -391,8 +391,14 @@ export function DeleteImpactDialog({
   error,
   confirming,
   result,
+  admissionUnknown = false,
+  admissionReadbackMissing = false,
+  admissionChecking = false,
+  confirmDisabled = false,
   rootLabel = "资源库",
   onConfirm,
+  onCheckAdmission,
+  onRepeatAdmission,
   onClose,
   onRefreshImpact,
 }: {
@@ -401,6 +407,10 @@ export function DeleteImpactDialog({
   readonly error: string | null;
   readonly confirming: boolean;
   readonly result: DirectFileCommandResult | null;
+  readonly admissionUnknown?: boolean;
+  readonly admissionReadbackMissing?: boolean;
+  readonly admissionChecking?: boolean;
+  readonly confirmDisabled?: boolean;
   /**
    * Which kind of configured library the protected root belongs to.  The Files
    * journey keeps its existing wording; the MediaLibrary page names its own
@@ -409,19 +419,61 @@ export function DeleteImpactDialog({
    */
   readonly rootLabel?: string;
   readonly onConfirm: () => void;
+  readonly onCheckAdmission?: () => void;
+  readonly onRepeatAdmission?: () => void;
   readonly onClose: () => void;
   readonly onRefreshImpact: () => void;
 }) {
   const done = result !== null;
+  const unknown = admissionUnknown && result === null;
   const terminal = result !== null && result.terminal !== false;
-  const title = done ? (terminal ? "删除结果" : "删除进度") : "删除确认";
+  const title = unknown
+    ? "核对删除请求"
+    : done
+      ? terminal
+        ? "删除结果"
+        : "删除进度"
+      : "删除确认";
   return (
     <ModalDialog
       title={title}
       onClose={onClose}
-      busy={loading || confirming}
+      busy={confirming || (unknown ? admissionChecking : loading)}
       footer={
-        done ? (
+        unknown ? (
+          <>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={onClose}
+              disabled={confirming}
+            >
+              稍后处理
+            </button>
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={onCheckAdmission}
+              disabled={
+                confirming ||
+                admissionChecking ||
+                onCheckAdmission === undefined
+              }
+            >
+              再次核对任务
+            </button>
+            {admissionReadbackMissing && (
+              <button
+                type="button"
+                className="mf-button mf-button-danger"
+                onClick={onRepeatAdmission}
+                disabled={confirming || onRepeatAdmission === undefined}
+              >
+                按原范围安全续交
+              </button>
+            )}
+          </>
+        ) : done ? (
           <button
             type="button"
             className="mf-button mf-button-primary"
@@ -443,7 +495,9 @@ export function DeleteImpactDialog({
               type="button"
               className="mf-button mf-button-danger"
               onClick={onConfirm}
-              disabled={loading || confirming || impact === null}
+              disabled={
+                loading || confirming || impact === null || confirmDisabled
+              }
               aria-busy={confirming}
             >
               {confirming ? "删除中…" : "删除"}
@@ -452,7 +506,29 @@ export function DeleteImpactDialog({
         )
       }
     >
-      {done ? (
+      {unknown ? (
+        <>
+          <p className="mf-dialog-hint" role="status">
+            删除请求的响应未确认。当前无法判断请求是否已持久化，也不能把目录现状当作未执行证明；系统先按原请求读取
+            durable Task 状态。
+          </p>
+          {admissionReadbackMissing && (
+            <p className="mf-dialog-hint">
+              当前读取尚未找到该请求对应的
+              Task。这不证明原请求没有完成；可按完全相同的确认范围和请求标识安全续交，服务端会读取已存在的
+              Task 或只创建一次。
+            </p>
+          )}
+          {admissionChecking && (
+            <p className="mf-dialog-hint">正在读取删除请求的持久状态…</p>
+          )}
+          {error !== null && (
+            <p className="mf-dialog-error" role="alert">
+              {error}
+            </p>
+          )}
+        </>
+      ) : done ? (
         <>
           {terminal ? (
             <p className="mf-dialog-hint" role="status">
@@ -504,7 +580,7 @@ export function DeleteImpactDialog({
                   {outcome.status === "SUCCESS"
                     ? "已删除"
                     : outcome.status === "FAILED"
-                      ? "失败：" + (outcome.errorCategory ?? "未知原因")
+                      ? deleteOutcomeFailure(outcome.errorCategory)
                       : outcome.status === "UNCERTAIN"
                         ? "结果待核实，未自动重试"
                         : outcome.status === "RUNNING"
@@ -570,4 +646,27 @@ export function DeleteImpactDialog({
       )}
     </ModalDialog>
   );
+}
+
+function deleteOutcomeFailure(category: string | null): string {
+  switch (category) {
+    case "source_changed":
+      return "条目已变化，未删除；刷新目录并重新查看影响后，再确认仍需删除的项目。";
+    case "source_missing":
+      return "条目已不在原位置；刷新目录核对当前状态。";
+    case "directory_changed":
+      return "文件夹出现了未确认内容，因此保留；刷新目录并重新查看影响后再确认。";
+    case "source_type_changed":
+      return "条目类型已变化，因此保留；刷新目录并重新确认当前范围。";
+    case "capability_denied":
+      return "存储拒绝了删除；检查写入权限后再查看剩余范围。";
+    case "unsupported_capability":
+      return "此存储不支持删除该条目；选择支持删除的存储或保留该条目。";
+    case "storage_failure":
+      return "存储读取或删除失败；检查连接并刷新目录核对当前状态。";
+    case "mutation_outcome":
+      return "删除结果待核实；刷新目录和任务结果，确认实际状态后再采取后续操作。";
+    default:
+      return "删除未完成；刷新目录并检查该项目后，再明确确认剩余范围。";
+  }
 }

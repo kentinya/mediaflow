@@ -1986,9 +1986,20 @@ class DirectFileOperationsTests(unittest.TestCase):
             with self.assertRaises(DirectFileError) as root_protected:
                 service.delete_impact(library_id="source", paths=[""])
             self.assertEqual(root_protected.exception.category, "root_protected")
-            with self.assertRaises(DirectFileError) as nested:
-                service.delete_impact(library_id="source", paths=["season", "season/ep1"])
-            self.assertEqual(nested.exception.category, "invalid_request")
+            overlap = service.delete_impact(
+                library_id="source",
+                paths=["season", "season/ep1", "season/ep1", "season"],
+            )
+            self.assertEqual(overlap.top_level_paths, ("season",))
+            self.assertEqual(len(overlap.entries), 4)
+            api_overlap = request(
+                api,
+                "/api/v1/resource-libraries/source/files/delete-impact?"
+                "path=season&path=season/ep1&path=season/ep1",
+            )
+            self.assertEqual(api_overlap[0], 200, api_overlap[1])
+            self.assertEqual(api_overlap[1]["topLevelPaths"], ["season"])
+            self.assertEqual(len(api_overlap[1]["entries"]), 4)
             outside = root / "outside.txt"
             outside.write_text("keep", encoding="utf-8")
             os.symlink(outside, root / "source" / "season" / "link.mkv")
@@ -2121,6 +2132,113 @@ class DirectFileOperationsTests(unittest.TestCase):
             completed = self._run_admitted_delete(service, admitted)
             self.assertEqual(completed["status"], "SUCCESS")
             self.assertFalse(target.exists())
+
+    def test_delete_request_id_readback_is_durable_and_never_replays(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            service = self._service(api, active)
+            target = root / "source" / "request-id.txt"
+            target.write_text("remove once", encoding="utf-8")
+            impact = service.delete_impact(library_id="source", paths=["request-id.txt"])
+            request_id = "a386b95d-25c5-4e59-a43e-33a7f7dced12"
+
+            admitted = service.execute_delete(
+                library_id="source",
+                paths=["request-id.txt"],
+                confirmation_digest=impact.scope_digest,
+                request_id=request_id,
+            )
+            self.assertEqual(admitted["taskId"], request_id)
+            self.assertTrue(target.exists())
+            duplicate = service.execute_delete(
+                library_id="source",
+                paths=["request-id.txt"],
+                confirmation_digest=impact.scope_digest,
+                request_id=request_id,
+            )
+            self.assertEqual(duplicate["taskId"], request_id)
+            self.assertEqual(len(runtime.list_tasks(command="files_delete")), 1)
+
+            readback = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/deletes/{request_id}",
+            )
+            self.assertEqual(readback[0], 200, readback[1])
+            self.assertEqual(readback[1]["taskId"], request_id)
+            completed = self._run_admitted_delete(service, admitted)
+            self.assertEqual(completed["status"], "SUCCESS")
+            self.assertFalse(target.exists())
+
+            terminal_readback = service.execute_delete(
+                library_id="source",
+                paths=["request-id.txt"],
+                confirmation_digest=impact.scope_digest,
+                request_id=request_id,
+            )
+            self.assertEqual(terminal_readback["taskId"], request_id)
+            self.assertEqual(terminal_readback["status"], "SUCCESS")
+            self.assertEqual(len(runtime.list_tasks(command="files_delete")), 1)
+
+            other = root / "source" / "other.txt"
+            other.write_text("keep", encoding="utf-8")
+            other_impact = service.delete_impact(library_id="source", paths=["other.txt"])
+            with self.assertRaises(DirectFileError) as conflict:
+                service.execute_delete(
+                    library_id="source",
+                    paths=["other.txt"],
+                    confirmation_digest=other_impact.scope_digest,
+                    request_id=request_id,
+                )
+            self.assertEqual(conflict.exception.code, "files_direct_request_id_conflict")
+            self.assertTrue(other.exists())
+
+    def test_delete_persists_source_change_and_unconfirmed_directory_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            service = self._service(api, active)
+            changed_file = root / "source" / "changed.txt"
+            changed_file.write_text("old", encoding="utf-8")
+            file_impact = service.delete_impact(library_id="source", paths=["changed.txt"])
+            file_admission = service.submit_delete(
+                library_id="source",
+                paths=["changed.txt"],
+                confirmation_digest=file_impact.scope_digest,
+            )
+            changed_file.write_text("replacement with a different size", encoding="utf-8")
+            file_result = self._run_admitted_delete(service, file_admission)
+            self.assertEqual(file_result["outcomes"][0]["errorCategory"], "source_changed")
+            file_item = runtime.list_items(file_admission["taskId"])[0]
+            file_record = runtime.list_results(file_admission["taskId"])[0]
+            self.assertEqual(file_item.error, "source_changed")
+            self.assertEqual(file_record.error, "source_changed")
+            self.assertTrue(changed_file.exists())
+
+            empty_directory = root / "source" / "empty-at-confirmation"
+            empty_directory.mkdir()
+            directory_impact = service.delete_impact(
+                library_id="source", paths=["empty-at-confirmation"]
+            )
+            directory_admission = service.submit_delete(
+                library_id="source",
+                paths=["empty-at-confirmation"],
+                confirmation_digest=directory_impact.scope_digest,
+            )
+            (empty_directory / "new-child.txt").write_text("keep", encoding="utf-8")
+            directory_result = self._run_admitted_delete(service, directory_admission)
+            self.assertEqual(directory_result["outcomes"][0]["errorCategory"], "directory_changed")
+            directory_item = runtime.list_items(directory_admission["taskId"])[0]
+            directory_record = runtime.list_results(directory_admission["taskId"])[0]
+            self.assertEqual(directory_item.error, "directory_changed")
+            self.assertEqual(directory_record.error, "directory_changed")
+            status = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/deletes/{directory_admission['taskId']}",
+            )
+            self.assertEqual(status[0], 200, status[1])
+            self.assertEqual(status[1]["outcomes"][0]["errorCategory"], "directory_changed")
+            self.assertTrue((empty_directory / "new-child.txt").exists())
 
     def test_durable_delete_pause_and_resume_keeps_completed_items_terminal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

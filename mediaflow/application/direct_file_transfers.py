@@ -1224,6 +1224,13 @@ class DirectFileTransferService:
 
                 success = result.status.value == "SUCCESS"
                 uncertain = result.effect_certainty is ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+                failure_category = (
+                    None
+                    if success
+                    else "mutation_outcome"
+                    if uncertain
+                    else _delete_failure_category(result)
+                )
                 published = self._direct.tasks.complete_direct_item(
                     item,
                     status=(
@@ -1235,7 +1242,7 @@ class DirectFileTransferService:
                     ),
                     operation=DirectFileOperation.DELETE.value,
                     target_path=original.source_display,
-                    error=None if success else "mutation_outcome" if uncertain else "delete_failed",
+                    error=failure_category,
                     effect_certainty=(
                         ExecutionEffectCertainty.VERIFIED_COMPLETE.value
                         if success
@@ -4549,6 +4556,30 @@ def _result_error_category(result) -> str | None:
     if "directory is not empty" in text:
         return "source_directory_not_empty"
     return "storage_failure"
+
+
+def _delete_failure_category(result) -> str:
+    """Persist a bounded, actionable category for a known Delete refusal."""
+
+    text = "; ".join(result.errors).casefold()
+    if "changed since it was confirmed" in text or "changed since it was observed" in text:
+        return "source_changed"
+    if "source does not exist" in text:
+        return "source_missing"
+    if (
+        "directory contains entries outside the confirmed delete effect" in text
+        or "directory is not empty" in text
+    ):
+        return "directory_changed"
+    if "source is not a directory" in text:
+        return "source_type_changed"
+    if "capability denied" in text or "read only" in text or "permission_denied" in text:
+        return "capability_denied"
+    if "unsupported capability" in text:
+        return "unsupported_capability"
+    if "source version" in text or "version evidence is required" in text:
+        return "source_changed"
+    return "delete_failed"
 
 
 def _storage_category(error: StorageError) -> tuple[str, int]:

@@ -3375,6 +3375,7 @@ export type DirectFileCommandOptions =
       readonly operation: "delete";
       readonly paths: readonly string[];
       readonly confirmationDigest: string;
+      readonly requestId?: string;
     };
 
 /**
@@ -3434,6 +3435,7 @@ async function submitDirectCommandThrough(
   } else {
     body.paths = [...options.paths];
     body.confirmationDigest = options.confirmationDigest;
+    if (options.requestId !== undefined) body.requestId = options.requestId;
   }
   return submitAutomationMutation(
     token,

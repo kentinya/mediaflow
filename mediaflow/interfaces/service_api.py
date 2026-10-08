@@ -11081,12 +11081,18 @@ class MediaFlowApi:
             )
         elif operation == DirectFileOperation.DELETE.value:
             required = {"operation", "paths", "confirmationDigest"}
-            if set(document) != required:
-                raise ValueError("Delete requires only operation, paths, and confirmationDigest")
+            if frozenset(document) not in {
+                frozenset(required),
+                frozenset(required | {"requestId"}),
+            }:
+                raise ValueError(
+                    "Delete requires operation, paths, confirmationDigest, and optional requestId"
+                )
             result = service.submit_delete(
                 library_id=library_id,
                 paths=document["paths"],
                 confirmation_digest=document["confirmationDigest"],
+                request_id=document.get("requestId"),
             )
             result = self._with_transfer_worker_readiness(result, media_library=media_library)
             return self._response(start_response, 202, result)

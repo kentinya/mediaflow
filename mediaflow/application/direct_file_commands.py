@@ -25,7 +25,7 @@ import posixpath
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
@@ -552,16 +552,29 @@ class DirectFileCommandService:
         )
 
     def execute_delete(
-        self, *, library_id: str, paths, confirmation_digest: str
+        self,
+        *,
+        library_id: str,
+        paths,
+        confirmation_digest: str,
+        request_id: str | None = None,
     ) -> dict[str, object]:
         """Admit a confirmed Delete for the resident Files Worker."""
 
         return self.submit_delete(
-            library_id=library_id, paths=paths, confirmation_digest=confirmation_digest
+            library_id=library_id,
+            paths=paths,
+            confirmation_digest=confirmation_digest,
+            request_id=request_id,
         )
 
     def submit_delete(
-        self, *, library_id: str, paths, confirmation_digest: str
+        self,
+        *,
+        library_id: str,
+        paths,
+        confirmation_digest: str,
+        request_id: str | None = None,
     ) -> dict[str, object]:
         """Persist the exact confirmed Delete scope before any Storage mutation.
 
@@ -572,7 +585,6 @@ class DirectFileCommandService:
         re-observes metadata and commits the bounded Task/authority atomically.
         """
 
-        library = self._library(library_id)
         targets = self._delete_targets(paths)
         if not isinstance(confirmation_digest, str) or not confirmation_digest:
             raise DirectFileError(
@@ -580,9 +592,20 @@ class DirectFileCommandService:
                 "invalid_confirmation",
                 "the Delete confirmation is missing the validated scope evidence",
                 status=400,
-                **self._identity(library),
                 next_action="request the Delete impact summary and confirm again",
             )
+        if request_id is not None:
+            request_id = self._validated_delete_request_id(request_id)
+            existing = self._existing_delete_request(
+                request_id,
+                library_id=library_id,
+                targets=targets,
+                confirmation_digest=confirmation_digest,
+            )
+            if existing is not None:
+                return existing
+
+        library = self._library(library_id)
         storage = self._open_storage(library)
         entries = self._impact_entries(library, storage, targets)
         if self._scope_digest(library, entries) != confirmation_digest:
@@ -600,7 +623,7 @@ class DirectFileCommandService:
         )
         repository = self._tasks.repository
         find_existing = getattr(repository, "find_files_delete_transfer", None)
-        if callable(find_existing):
+        if request_id is None and callable(find_existing):
             existing = find_existing(
                 command=command,
                 library_kind=self._kind.value,
@@ -617,7 +640,7 @@ class DirectFileCommandService:
 
         scope_parent = posixpath.commonpath(targets) if len(targets) > 1 else targets[0]
         now = datetime.now(UTC)
-        task_id = str(uuid4())
+        task_id = request_id or str(uuid4())
         task = PersistentTask(
             task_id,
             command,
@@ -688,6 +711,7 @@ class DirectFileCommandService:
                 "scopeDigest": confirmation_digest,
                 "topLevelPaths": list(targets),
                 "entries": authority_entries,
+                **({"requestId": request_id} if request_id is not None else {}),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -713,13 +737,103 @@ class DirectFileCommandService:
                 **self._identity(library),
                 next_action="restore the runtime Task repository and retry the confirmed Delete",
             )
-        admit(
-            task,
-            tuple(items),
-            transfer,
-            display=self._run_display_context(library, source_scope=scope_parent),
-        )
+        try:
+            admit(
+                task,
+                tuple(items),
+                transfer,
+                display=self._run_display_context(library, source_scope=scope_parent),
+            )
+        except ValueError:
+            # Concurrent retries of the same browser-persisted request can
+            # meet at the repository transaction. Reuse only the exact pinned
+            # authority; a collision with another command remains a refusal.
+            if request_id is None:
+                raise
+            existing = self._existing_delete_request(
+                request_id,
+                library_id=library.library_id,
+                targets=targets,
+                confirmation_digest=confirmation_digest,
+            )
+            if existing is None:
+                raise
+            return existing
         return self.delete_projection(task_id)
+
+    def _existing_delete_request(
+        self,
+        request_id: str,
+        *,
+        library_id: str,
+        targets: tuple[str, ...],
+        confirmation_digest: str,
+    ) -> dict[str, object] | None:
+        repository = self._tasks.repository
+        task = repository.get_task(request_id)
+        transfer = repository.get_files_transfer_for_task(request_id)
+        if task is None and transfer is None:
+            return None
+        try:
+            authority = json.loads(transfer.authority_json) if transfer is not None else {}
+        except (TypeError, ValueError):
+            authority = {}
+        expected_command = direct_command_task_command(
+            FILES_DELETE_TASK_COMMAND,
+            media_library=self._kind is LibraryKind.MEDIA,
+        )
+        matches = (
+            task is not None
+            and task.command == expected_command
+            and transfer is not None
+            and isinstance(authority, dict)
+            and authority.get("authorityType") == "direct_delete"
+            and authority.get("requestId") == request_id
+            and authority.get("libraryKind") == self._kind.value
+            and authority.get("libraryId") == library_id
+            and authority.get("scopeDigest") == confirmation_digest
+            and authority.get("topLevelPaths") == list(targets)
+        )
+        if not matches:
+            raise DirectFileError(
+                "files_direct_request_id_conflict",
+                "request_id_conflict",
+                "this Delete request is already bound to a different durable command",
+                status=409,
+                next_action=(
+                    "read the existing Delete result before creating a new confirmed request"
+                ),
+            )
+        return project_direct_delete(
+            repository,
+            request_id,
+            library_kind=self._kind,
+            library_id=library_id,
+        )
+
+    @staticmethod
+    def _validated_delete_request_id(value: str) -> str:
+        if not isinstance(value, str):
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete request identifier is invalid",
+                status=400,
+                next_action="refresh the impact summary and confirm the Delete again",
+            )
+        try:
+            parsed = UUID(value)
+        except (TypeError, ValueError, AttributeError):
+            parsed = None
+        if parsed is None or str(parsed) != value.lower():
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete request identifier is invalid",
+                status=400,
+                next_action="refresh the impact summary and confirm the Delete again",
+            )
+        return str(parsed)
 
     def delete_projection(self, task_id: str) -> dict[str, object]:
         """Rebuild a bounded Delete outcome from its durable Task state."""
@@ -1358,27 +1472,16 @@ class DirectFileCommandService:
                 status=400,
                 next_action=f"select entries inside the {_LIBRARY_KIND_LABEL[self._kind]} instead",
             )
-        unique = sorted(set(normalized))
-        if len(unique) != len(normalized):
-            raise DirectFileError(
-                "files_direct_invalid_request",
-                "invalid_request",
-                "the Delete selection contains duplicate paths",
-                status=400,
-                next_action="remove duplicate selections and retry",
-            )
-        for index, path in enumerate(unique):
-            for other in unique[index + 1 :]:
-                if other.startswith(f"{path}/"):
-                    raise DirectFileError(
-                        "files_direct_invalid_request",
-                        "invalid_request",
-                        "the Delete selection nests a path inside another selected path",
-                        status=400,
-                        path=path,
-                        next_action="select the outermost item only and retry",
-                    )
-        return tuple(unique)
+        ordered = sorted(set(normalized))
+        # A selected directory already covers its descendants. Keep only the
+        # outermost exact confined paths so impact and admission enumerate one
+        # effect and persist each affected entry once.
+        targets: list[str] = []
+        for path in ordered:
+            if any(path.startswith(f"{parent}/") for parent in targets):
+                continue
+            targets.append(path)
+        return tuple(targets)
 
     def _bounded_text_bytes(self, content: object) -> bytes:
         if not isinstance(content, str):

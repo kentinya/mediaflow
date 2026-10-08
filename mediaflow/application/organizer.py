@@ -1815,14 +1815,17 @@ class OrganizerExecutor:
             return "source does not exist"
         if entry_evidence is None:
             return "entry version evidence is required before this Storage mutation"
+        observed = storage.stat(path)
         mismatch = _direct_entry_version_mismatch(
-            storage.stat(path),
-            entry_evidence,
-            "entry changed since it was confirmed",
+            observed, entry_evidence, "entry changed since it was confirmed"
         )
         if mismatch is not None:
             return mismatch
-        if entry_evidence.is_directory and storage.list(path):
+        if (
+            entry_evidence.is_directory
+            and observed.entry_type is StorageEntryType.DIRECTORY
+            and storage.list(path)
+        ):
             return "directory contains entries outside the confirmed Delete effect"
         return None
 

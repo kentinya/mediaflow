@@ -63,6 +63,13 @@ import {
   type DirectFileCommandOptions,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
+import {
+  clearDeleteAdmission,
+  newDeleteRequestId,
+  readDeleteAdmission,
+  saveDeleteAdmission,
+  type SavedDeleteAdmission,
+} from "./delete-admission-session";
 import type {
   TransferConflictMode,
   TransferImpactModel,
@@ -70,6 +77,14 @@ import type {
 } from "../../entities/library/direct-files";
 
 type FilesView = "list" | "grid";
+
+type DeleteAdmissionPhase =
+  "submitting" | "checking" | "not_found" | "unavailable" | "admitted";
+
+interface PendingDeleteAdmission extends SavedDeleteAdmission {
+  readonly libraryId: string;
+  readonly phase: DeleteAdmissionPhase;
+}
 
 interface EntryMenuState {
   readonly path: string;
@@ -1897,6 +1912,10 @@ export function StorageFilesPage() {
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
+  const [pendingDelete, setPendingDelete] =
+    useState<PendingDeleteAdmission | null>(null);
+  const [deleteSessionAvailable, setDeleteSessionAvailable] = useState(true);
+  const restoredDeleteSessionRef = useRef("");
   const [transferError, setTransferError] = useState<string | null>(null);
   // The durable identity of the admitted transfer the dialog follows; the
   // projection polling and lifecycle actions live inside the dialog.
@@ -1926,6 +1945,27 @@ export function StorageFilesPage() {
   const activeLibrary =
     libraries.find((item) => item.id === effectiveLibraryId) ?? null;
   const activeLibraryId = activeLibrary?.id ?? "";
+  useEffect(() => {
+    if (token === null || activeLibraryId === "") return;
+    const restoreKey = `${token}:${activeLibraryId}`;
+    if (restoredDeleteSessionRef.current === restoreKey) return;
+    restoredDeleteSessionRef.current = restoreKey;
+    const saved = readDeleteAdmission("resource", activeLibraryId);
+    const restore = window.setTimeout(() => {
+      setPendingDelete(null);
+      setCommandResult(null);
+      setDeleteSessionAvailable(saved.available);
+      if (!saved.available || saved.value === null) return;
+      setPendingDelete({
+        ...saved.value,
+        libraryId: activeLibraryId,
+        phase: "checking",
+      });
+      setCommandError("正在读取上次删除请求的持久状态；不会重新提交删除。");
+      setDialog({ kind: "delete", paths: saved.value.paths });
+    }, 0);
+    return () => window.clearTimeout(restore);
+  }, [activeLibraryId, token]);
   const effectivePath = invalidPath ? "" : path;
   const filesQuery = useQuery(
     storageFilesQueryOptions(
@@ -2262,6 +2302,28 @@ export function StorageFilesPage() {
     retry: false,
     onSuccess: (result, variables) => {
       if (!result.ok) {
+        if (variables.options.operation === "delete") {
+          const requestId = variables.options.requestId;
+          const unknown =
+            result.status === 0 ||
+            result.status >= 500 ||
+            result.code === "malformed_response";
+          if (requestId !== undefined && unknown) {
+            setPendingDelete((current) =>
+              current !== null && current.requestId === requestId
+                ? { ...current, phase: "checking" }
+                : current,
+            );
+            setCommandError(
+              "删除请求响应未确认；正在读取同一请求的持久状态。不会新建另一个删除请求。",
+            );
+            return;
+          }
+          if (requestId !== undefined) {
+            clearDeleteAdmission("resource", activeLibraryId);
+            setPendingDelete(null);
+          }
+        }
         if (
           result.code === "files_direct_stale_content" &&
           dialog?.kind === "editor"
@@ -2282,9 +2344,27 @@ export function StorageFilesPage() {
         result.model.status === "FAILED" ||
         result.model.durableState === "mutation_effect_uncertain";
       if (variables.options.operation === "delete") {
+        const requestId = variables.options.requestId;
+        if (requestId !== undefined && result.model.taskId !== requestId) {
+          setCommandResult(null);
+          setPendingDelete((current) =>
+            current !== null && current.requestId === requestId
+              ? { ...current, phase: "checking" }
+              : current,
+          );
+          setCommandError(
+            "删除受理响应与原请求不匹配；正在读取原请求状态，没有重发删除。",
+          );
+          return;
+        }
         // Admission is durable but has no Storage effect yet. The status
         // query owns final refresh/pruning after the Worker records terminal
         // per-item outcomes.
+        setPendingDelete((current) =>
+          current !== null && current.requestId === requestId
+            ? { ...current, phase: "admitted" }
+            : current,
+        );
         setCommandError(null);
         return;
       }
@@ -2356,7 +2436,19 @@ export function StorageFilesPage() {
         setDialog({ kind: "editor", path: createdFile.path });
       }
     },
-    onError: () => {
+    onError: (_error, variables) => {
+      if (variables.options.operation === "delete") {
+        const requestId = variables.options.requestId;
+        setPendingDelete((current) =>
+          current !== null && current.requestId === requestId
+            ? { ...current, phase: "checking" }
+            : current,
+        );
+        setCommandError(
+          "删除请求响应未确认；正在读取同一请求的持久状态。不会新建另一个删除请求。",
+        );
+        return;
+      }
       setCommandError(
         "命令结果未知，未自动重试；请刷新目录核实当前状态后再决定下一步。",
       );
@@ -2398,7 +2490,8 @@ export function StorageFilesPage() {
     saved: editorSaved,
   };
 
-  const deletePaths = dialog?.kind === "delete" ? dialog.paths : null;
+  const deletePaths =
+    dialog?.kind === "delete" && pendingDelete === null ? dialog.paths : null;
   const deletePathsKey = deletePaths === null ? "" : deletePaths.join("\n");
   const impactQuery = useQuery({
     queryKey: ["files-delete-impact", activeLibraryId, deletePathsKey],
@@ -2410,8 +2503,8 @@ export function StorageFilesPage() {
     retry: false,
   });
   const deleteTaskId =
-    dialog?.kind === "delete" && commandResult?.operation === "delete"
-      ? (commandResult.taskId ?? null)
+    pendingDelete?.libraryId === activeLibraryId
+      ? pendingDelete.requestId
       : null;
   const deleteStatusQuery = useQuery({
     queryKey: ["files-delete-status", activeLibraryId, deleteTaskId],
@@ -2421,20 +2514,79 @@ export function StorageFilesPage() {
     },
     enabled:
       deleteTaskId !== null &&
-      commandResult?.terminal === false &&
+      pendingDelete?.phase !== "submitting" &&
       token !== null,
     refetchInterval: (query) =>
       query.state.data?.ok && query.state.data.model.terminal === true
         ? false
-        : 1_000,
+        : query.state.data?.ok
+          ? 1_000
+          : false,
     retry: false,
   });
   const deleteStatusModel =
     deleteStatusQuery.data?.ok === true ? deleteStatusQuery.data.model : null;
   const deleteStatusError =
-    deleteStatusQuery.data !== undefined && !deleteStatusQuery.data.ok
+    pendingDelete === null &&
+    deleteStatusQuery.data !== undefined &&
+    !deleteStatusQuery.data.ok
       ? directFileCommandFailure(deleteStatusQuery.data.code)
       : null;
+  useEffect(() => {
+    if (pendingDelete === null || pendingDelete.libraryId !== activeLibraryId)
+      return;
+    if (pendingDelete.phase === "submitting" || deleteStatusQuery.isFetching)
+      return;
+    const readback = deleteStatusQuery.data;
+    if (readback === undefined) return;
+    const update = window.setTimeout(() => {
+      if (readback.ok) {
+        setPendingDelete((current) =>
+          current !== null && current.requestId === pendingDelete.requestId
+            ? current.phase === "admitted"
+              ? current
+              : { ...current, phase: "admitted" }
+            : current,
+        );
+        setCommandResult(readback.model);
+        setCommandError(null);
+        return;
+      }
+      if (
+        readback.status === 404 ||
+        readback.code === "files_direct_delete_not_found"
+      ) {
+        setPendingDelete((current) =>
+          current !== null && current.requestId === pendingDelete.requestId
+            ? current.phase === "not_found"
+              ? current
+              : { ...current, phase: "not_found" }
+            : current,
+        );
+        setCommandError(
+          "按原请求尚未读到持久 Task。此读取不证明原请求没有完成；可再次核对，或使用原确认范围和同一请求安全续交。",
+        );
+        return;
+      }
+      setPendingDelete((current) =>
+        current !== null && current.requestId === pendingDelete.requestId
+          ? current.phase === "unavailable"
+            ? current
+            : { ...current, phase: "unavailable" }
+          : current,
+      );
+      setCommandError(
+        "暂时无法读取删除请求状态。保留原确认范围；恢复读取前不会允许新建删除请求。",
+      );
+    }, 0);
+    return () => window.clearTimeout(update);
+  }, [
+    activeLibraryId,
+    deleteStatusQuery.data,
+    deleteStatusQuery.isFetching,
+    pendingDelete,
+    queryClient,
+  ]);
   useEffect(() => {
     if (deleteStatusModel?.terminal !== true) return;
     const completion = window.setTimeout(() => {
@@ -2451,9 +2603,103 @@ export function StorageFilesPage() {
           ? "部分项目失败或结果待核实；未自动重试。刷新目录并检查逐项结果后，再明确选择剩余操作。"
           : null,
       );
+      clearDeleteAdmission("resource", activeLibraryId);
+      setPendingDelete(null);
     }, 0);
     return () => window.clearTimeout(completion);
-  }, [deleteStatusModel, pruneAffectedBrowseState, queryClient]);
+  }, [
+    activeLibraryId,
+    deleteStatusModel,
+    pruneAffectedBrowseState,
+    queryClient,
+  ]);
+
+  const checkPendingDelete = () => {
+    if (pendingDelete === null) return;
+    setPendingDelete({ ...pendingDelete, phase: "checking" });
+    setCommandError("正在读取原删除请求的持久状态；不会重新提交删除。");
+    void deleteStatusQuery.refetch();
+  };
+
+  const continuePendingDelete = () => {
+    if (
+      pendingDelete === null ||
+      pendingDelete.libraryId !== activeLibraryId ||
+      pendingDelete.phase !== "not_found"
+    ) {
+      return;
+    }
+    setPendingDelete({ ...pendingDelete, phase: "submitting" });
+    setCommandResult(null);
+    setCommandError(null);
+    commandMutation.mutate({
+      options: {
+        operation: "delete",
+        paths: pendingDelete.paths,
+        confirmationDigest: pendingDelete.confirmationDigest,
+        requestId: pendingDelete.requestId,
+      },
+    });
+  };
+
+  const confirmDelete = (
+    paths: readonly string[],
+    confirmationDigest: string,
+  ) => {
+    if (pendingDelete !== null) {
+      if (pendingDelete.libraryId === activeLibraryId) {
+        setDialog({ kind: "delete", paths: pendingDelete.paths });
+        void deleteStatusQuery.refetch();
+      }
+      return;
+    }
+    if (!deleteSessionAvailable) {
+      setCommandError(
+        "浏览器会话无法保存删除请求核对记录；未发送删除。请重新连接或使用可用的浏览器会话存储后再试。",
+      );
+      return;
+    }
+    const requestId = newDeleteRequestId();
+    if (requestId === null) {
+      setCommandError(
+        "无法生成删除请求核对记录；未发送删除。请刷新页面后重试。",
+      );
+      return;
+    }
+    const saved: SavedDeleteAdmission = {
+      requestId,
+      paths,
+      confirmationDigest,
+    };
+    if (!saveDeleteAdmission("resource", activeLibraryId, saved)) {
+      setDeleteSessionAvailable(false);
+      setCommandError(
+        "无法保存删除请求核对记录；未发送删除。请检查浏览器会话存储后重试。",
+      );
+      return;
+    }
+    setPendingDelete({
+      ...saved,
+      libraryId: activeLibraryId,
+      phase: "submitting",
+    });
+    setCommandResult(null);
+    setCommandError(null);
+    commandMutation.mutate({
+      options: { operation: "delete", paths, confirmationDigest, requestId },
+    });
+  };
+
+  const openDeleteDialog = (paths: readonly string[]) => {
+    setCommandError(null);
+    if (pendingDelete?.libraryId === activeLibraryId) {
+      setDialog({ kind: "delete", paths: pendingDelete.paths });
+      void deleteStatusQuery.refetch();
+      return;
+    }
+    setCommandResult(null);
+    setDialog({ kind: "delete", paths });
+  };
 
   // The Rename command must return the version evidence the backend issues for
   // this exact entry, so the dialog loads it before the operator can submit.
@@ -2798,6 +3044,26 @@ export function StorageFilesPage() {
           }
           return (
             <div className="mf-files-layout">
+              {pendingDelete?.libraryId === activeLibraryId &&
+                dialog?.kind !== "delete" && (
+                  <div className="mf-files-banner" role="status">
+                    <span className="mf-banner-icon" aria-hidden="true">
+                      <Icon name="info" />
+                    </span>
+                    <span className="mf-banner-text">
+                      上次删除请求仍需核对或正在处理；不会自动重新提交。
+                    </span>
+                    <span className="mf-banner-actions">
+                      <button
+                        type="button"
+                        className="mf-link-button"
+                        onClick={() => openDeleteDialog(pendingDelete.paths)}
+                      >
+                        查看删除状态
+                      </button>
+                    </span>
+                  </div>
+                )}
               {filesQuery.data === undefined && !filesQuery.isError ? (
                 <>
                   <div className="mf-files-banner" role="note">
@@ -2935,9 +3201,7 @@ export function StorageFilesPage() {
                           setDialog({ kind: "editor", path: entryPath });
                         }}
                         onDelete={(paths) => {
-                          setCommandError(null);
-                          setCommandResult(null);
-                          setDialog({ kind: "delete", paths });
+                          openDeleteDialog(paths);
                         }}
                         onTransfer={(operation, paths) => {
                           setTransferError(null);
@@ -3178,15 +3442,35 @@ export function StorageFilesPage() {
             deleteStatusError ??
             (impactQuery.data !== undefined && !impactQuery.data.ok
               ? directFileCommandFailure(impactQuery.data.code)
-              : commandError)
+              : (commandError ??
+                (!deleteSessionAvailable
+                  ? "浏览器会话无法保存删除请求核对记录；未发送删除。"
+                  : null)))
           }
           confirming={commandMutation.isPending}
+          confirmDisabled={!deleteSessionAvailable}
+          admissionUnknown={
+            pendingDelete?.libraryId === activeLibraryId &&
+            pendingDelete.phase !== "admitted"
+          }
+          admissionReadbackMissing={
+            pendingDelete?.libraryId === activeLibraryId &&
+            pendingDelete.phase === "not_found"
+          }
+          admissionChecking={
+            pendingDelete?.libraryId === activeLibraryId &&
+            (pendingDelete.phase === "submitting" ||
+              pendingDelete.phase === "checking" ||
+              deleteStatusQuery.isFetching)
+          }
           result={
             deleteStatusModel ??
             (commandResult !== null && commandResult.operation === "delete"
               ? commandResult
               : null)
           }
+          onCheckAdmission={checkPendingDelete}
+          onRepeatAdmission={continuePendingDelete}
           onRefreshImpact={() => void impactQuery.refetch()}
           onConfirm={() => {
             const impact =
@@ -3194,14 +3478,7 @@ export function StorageFilesPage() {
                 ? impactQuery.data.model
                 : null;
             if (impact === null) return;
-            setCommandError(null);
-            commandMutation.mutate({
-              options: {
-                operation: "delete",
-                paths: dialog.paths,
-                confirmationDigest: impact.scopeDigest,
-              },
-            });
+            confirmDelete(dialog.paths, impact.scopeDigest);
           }}
           onClose={() => {
             setCommandError(null);

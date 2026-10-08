@@ -329,6 +329,7 @@ function stubCommandSurface(
   options: {
     readonly commandResponses?: Array<() => Response>;
     readonly textStale?: boolean;
+    readonly dropDeleteResponse?: boolean;
     readonly extra?: (
       url: string,
       init: RequestInit | undefined,
@@ -339,6 +340,7 @@ function stubCommandSurface(
   let entries: Array<Record<string, unknown>> = ROOT_ENTRIES();
   const deleteProjections = new Map<string, Record<string, unknown>>();
   let generatedDeleteTask = 0;
+  let dropDeleteResponse = options.dropDeleteResponse === true;
   const textDocument = () =>
     jsonResponse({
       mediaLibraryId: "movies",
@@ -366,7 +368,7 @@ function stubCommandSurface(
       directoryCount: paths.filter((path) => path === "Season 1").length,
       totalBytes: 11,
       truncated: false,
-      scopeDigest: `media-digest-${paths.join(",")}`,
+      scopeDigest: "a".repeat(64),
       sideEffects: "none",
       retrySafe: true,
       nextAction: "confirm this exact impact to run the bounded Delete",
@@ -438,9 +440,11 @@ function stubCommandSurface(
       if (submitted.operation === "delete" && response.ok) {
         generatedDeleteTask += 1;
         const taskId =
-          typeof payload.taskId === "string"
-            ? payload.taskId
-            : `task-media-delete-${generatedDeleteTask}`;
+          typeof submitted.requestId === "string"
+            ? submitted.requestId
+            : typeof payload.taskId === "string"
+              ? payload.taskId
+              : `task-media-delete-${generatedDeleteTask}`;
         const projection = {
           ...payload,
           mediaLibraryId: "movies",
@@ -448,10 +452,7 @@ function stubCommandSurface(
           taskStatus: payload.taskStatus ?? "completed",
           terminal: true,
         };
-        deleteProjections.set(taskId, projection);
-        // A Delete POST only admits the durable Task. The live listing changes
-        // after the separate terminal Worker readback below.
-        return jsonResponse({
+        const queuedProjection = {
           ...projection,
           status: "QUEUED",
           taskStatus: "pending",
@@ -461,7 +462,18 @@ function stubCommandSurface(
           knownEffects: [],
           outcomes: [],
           sideEffects: "none",
-        });
+        };
+        deleteProjections.set(
+          taskId,
+          dropDeleteResponse ? queuedProjection : projection,
+        );
+        if (dropDeleteResponse) {
+          dropDeleteResponse = false;
+          throw new TypeError("simulated lost Delete admission response");
+        }
+        // A Delete POST only admits the durable Task. The live listing changes
+        // after the separate terminal Worker readback below.
+        return jsonResponse(queuedProjection);
       }
       // A known successful short command is applied to the simulated live
       // listing; an error envelope changes nothing.
@@ -798,10 +810,17 @@ describe("MediaLibrary Files command surface", () => {
     expect(commandPosts(fetchMock)).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
     await waitFor(() => expect(commandPosts(fetchMock)).toHaveLength(1));
-    expect(JSON.parse(commandPosts(fetchMock)[0].body)).toEqual({
+    const submitted = JSON.parse(commandPosts(fetchMock)[0].body) as Record<
+      string,
+      unknown
+    >;
+    expect(submitted).toEqual({
       operation: "delete",
       paths: ["Season 1"],
-      confirmationDigest: "media-digest-Season 1",
+      confirmationDigest: "a".repeat(64),
+      requestId: expect.stringMatching(
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,
+      ),
     });
     // The dialog now reports the durable outcome instead of disappearing.
     expect(
@@ -812,6 +831,51 @@ describe("MediaLibrary Files command surface", () => {
       within(dialog).getByRole("link", { name: /在操作与任务中查看和恢复/ }),
     ).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+  });
+
+  it("reads back a lost Delete admission and restores it after page reload", async () => {
+    const fetchMock = stubCommandSurface({ dropDeleteResponse: true });
+    const user = userEvent.setup();
+    await openPage();
+    await rowMenu(user, "Season 1");
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: "删除确认",
+    });
+    await user.click(
+      within(confirmation).getByRole("button", { name: "删除" }),
+    );
+
+    const progress = await screen.findByRole("dialog", { name: "删除进度" });
+    expect(await within(progress).findByText(/删除任务已持久化/)).toBeVisible();
+    const posted = commandPosts(fetchMock);
+    expect(posted).toHaveLength(1);
+    const body = JSON.parse(posted[0].body) as { readonly requestId: string };
+    expect(body.requestId).toMatch(
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,
+    );
+    expect(
+      requestsOf(fetchMock).some((request) =>
+        request.url.endsWith(`/files/deletes/${body.requestId}`),
+      ),
+    ).toBe(true);
+    expect(within(progress).queryByRole("button", { name: "删除" })).toBeNull();
+
+    await user.click(within(progress).getByRole("button", { name: "关闭" }));
+    await user.click(
+      await screen.findByRole("button", { name: "查看删除状态" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "删除进度" }),
+    ).toBeVisible();
+    expect(commandPosts(fetchMock)).toHaveLength(1);
+
+    cleanup();
+    await openPage();
+    expect(
+      await screen.findByRole("dialog", { name: "删除进度" }),
+    ).toBeVisible();
+    expect(commandPosts(fetchMock)).toHaveLength(1);
   });
 
   it("shows independent per-item outcomes for a partial Delete without replay", async () => {
@@ -840,7 +904,7 @@ describe("MediaLibrary Files command surface", () => {
                 {
                   path: "movie.mkv",
                   status: "FAILED",
-                  errorCategory: "storage_failure",
+                  errorCategory: "source_changed",
                 },
                 { path: "notes.txt", status: "SUCCESS", errorCategory: null },
               ],
@@ -868,13 +932,16 @@ describe("MediaLibrary Files command surface", () => {
     expect(collapse(status.textContent)).toContain("删除已完成2项");
     expect(collapse(status.textContent)).toContain("失败或待核实1项");
     expect(dialogText(dialog)).toContain("在操作与任务中查看和恢复");
-    expect(dialogText(dialog)).toContain(
-      "部分项目失败或结果待核实；未自动重试",
-    );
+    expect(
+      await within(dialog).findByText(/部分项目失败或结果待核实；未自动重试/),
+    ).toBeVisible();
     expect(dialogText(dialog)).toContain("明确确认剩余项目");
-    // The failed sibling keeps its own category; the shared dialog renders it
-    // with full-width punctuation, so the ASCII category is asserted alone.
-    expect(dialogText(dialog)).toContain("storage_failure");
+    // The failed sibling keeps its own bounded, localized recovery outcome;
+    // the internal category name is never exposed to the operator.
+    expect(dialogText(dialog)).toContain(
+      "条目已变化，未删除；刷新目录并重新查看影响后，再确认仍需删除的项目。",
+    );
+    expect(dialogText(dialog)).not.toContain("source_changed");
     expect(dialogText(dialog)).toContain("movie.mkv");
     expect(commandPosts(fetchMock)).toHaveLength(1);
   });

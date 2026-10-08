@@ -9959,6 +9959,27 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
+                existing = self._connection.execute(
+                    """SELECT tasks.command, files_transfers.*
+                    FROM tasks LEFT JOIN files_transfers
+                    ON files_transfers.task_id=tasks.task_id
+                    WHERE tasks.task_id=?""",
+                    (task.task_id,),
+                ).fetchone()
+                if existing is not None:
+                    same_admission = (
+                        existing["command"] == task.command
+                        and existing["transfer_id"] == transfer.transfer_id
+                        and existing["authority_json"] == transfer.authority_json
+                        and existing["configuration_snapshot_id"]
+                        == transfer.configuration_snapshot_id
+                        and existing["configuration_snapshot_digest"]
+                        == transfer.configuration_snapshot_digest
+                    )
+                    if not same_admission:
+                        raise ValueError("a durable Task identifier is already bound")
+                    self._connection.commit()
+                    return
                 self._connection.execute(
                     "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._task_values(task),

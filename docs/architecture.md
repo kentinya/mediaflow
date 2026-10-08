@@ -916,6 +916,16 @@ cancel, Operations readback and safe-continuation surfaces control this work; an
 is read back and recorded for investigation, never replayed. Existing transfer rows without a
 `direct_delete` authority discriminator remain Copy/Move work and keep their historical format.
 
+The native Delete pages create a request ID before submitting and retain only that ID, the exact
+confirmed paths and scope digest in principal-scoped session storage. The backend binds the ID to
+the exact library kind/ID, scope, and immutable configuration pin, and uses it as the durable Task
+identity. Reusing the same ID and binding reads back the existing Task; reusing it with a different
+binding is rejected. After an unknown HTTP response, each page reads that Task before offering an
+explicit repeat with the same ID and unchanged scope. Duplicate paths and selected descendants are
+collapsed to the same canonical top-level Delete scope for impact and admission. Known item-level
+refusals persist bounded categories through TaskItem, Result and status projections; the pages map
+those categories to recovery guidance without exposing adapter exception text.
+
 ## UI-V2 Files and shared-shell contract update — 2026-09-14
 
 Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference

@@ -527,6 +527,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onFiles?: () => Response;
     onRenameEvidence?: () => Response;
     onDeleteStatus?: (taskId: string) => Response | undefined;
+    dropDeleteResponse?: boolean;
     onTransferImpact?:
       | ((query: URLSearchParams) => Response)
       | ((query: URLSearchParams) => Promise<Response>);
@@ -538,6 +539,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
   }) {
     const deleteProjections = new Map<string, Record<string, unknown>>();
     let generatedDeleteTask = 0;
+    let dropDeleteResponse = options.dropDeleteResponse === true;
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(options.status);
@@ -577,9 +579,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
         if (payload.operation !== "delete") return response;
         generatedDeleteTask += 1;
         const taskId =
-          typeof payload.taskId === "string"
-            ? payload.taskId
-            : `task-delete-${generatedDeleteTask}`;
+          typeof body.requestId === "string"
+            ? body.requestId
+            : typeof payload.taskId === "string"
+              ? payload.taskId
+              : `task-delete-${generatedDeleteTask}`;
         const projection = {
           ...payload,
           resourceLibraryId: "lib-a",
@@ -587,8 +591,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
           taskStatus: payload.taskStatus ?? "completed",
           terminal: true,
         };
-        deleteProjections.set(taskId, projection);
-        return jsonResponse({
+        const queuedProjection = {
           ...projection,
           status: "QUEUED",
           taskStatus: "pending",
@@ -598,7 +601,16 @@ describe("Files entry state and ResourceLibrary strip", () => {
           knownEffects: [],
           outcomes: [],
           sideEffects: "none",
-        });
+        };
+        deleteProjections.set(
+          taskId,
+          dropDeleteResponse ? queuedProjection : projection,
+        );
+        if (dropDeleteResponse) {
+          dropDeleteResponse = false;
+          throw new TypeError("simulated lost Delete admission response");
+        }
+        return jsonResponse(queuedProjection);
       }
       if (url.includes("/removal-preview")) {
         return options.onRemovalPreview
@@ -791,7 +803,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
               directoryCount: 0,
               totalBytes: 32,
               truncated: false,
-              scopeDigest: "scope-digest-1",
+              scopeDigest: "1".repeat(64),
             });
       }
       throw new Error(`unexpected test request: ${url}`);
@@ -1201,7 +1213,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
             directoryCount: 0,
             totalBytes: 32,
             truncated: false,
-            scopeDigest: "scope-digest-1",
+            scopeDigest: "1".repeat(64),
           }),
         onCommand: (body) => {
           commandBody = body;
@@ -1235,7 +1247,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(commandBody).toMatchObject({
       operation: "delete",
       paths: ["notes.txt"],
-      confirmationDigest: "scope-digest-1",
+      confirmationDigest: "1".repeat(64),
     });
     expect(
       await screen.findByRole("dialog", { name: "删除结果" }),
@@ -1245,6 +1257,94 @@ describe("Files entry state and ResourceLibrary strip", () => {
     openEntryMenu("notes.txt");
     expect(await screen.findByRole("menuitem", { name: "删除" })).toBeVisible();
     await user.keyboard("{Escape}");
+  });
+
+  it("reads back a lost Delete admission and restores it after page reload", async () => {
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      dropDeleteResponse: true,
+      onImpact: () =>
+        jsonResponse({
+          resourceLibraryId: "lib-a",
+          topLevelPaths: ["notes.txt"],
+          entries: [{ path: "notes.txt", isDirectory: false, size: 32 }],
+          fileCount: 1,
+          directoryCount: 0,
+          totalBytes: 32,
+          truncated: false,
+          scopeDigest: "1".repeat(64),
+        }),
+      onCommand: (body) =>
+        jsonResponse({
+          operation: "delete",
+          status: "QUEUED",
+          taskId: body.requestId,
+          taskStatus: "pending",
+          topLevelPaths: ["notes.txt"],
+          totalItems: 1,
+          succeededItems: 0,
+          failedItems: 0,
+          outcomes: [],
+          sideEffects: "none",
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    openEntryMenu("notes.txt");
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const confirmation = await screen.findByRole("dialog", {
+      name: "删除确认",
+    });
+    await user.click(
+      within(confirmation).getByRole("button", { name: "删除" }),
+    );
+
+    const progress = await screen.findByRole("dialog", { name: "删除进度" });
+    expect(await within(progress).findByText(/删除任务已持久化/)).toBeVisible();
+    const posted = fetchMock.mock.calls
+      .map(([input, init]) => ({ url: String(input), init }))
+      .filter(({ url }) => url.includes("/files/commands"));
+    expect(posted).toHaveLength(1);
+    const body = JSON.parse(String(posted[0]?.init?.body ?? "{}")) as {
+      readonly requestId: string;
+    };
+    expect(body.requestId).toMatch(
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,
+    );
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith(`/files/deletes/${body.requestId}`),
+      ),
+    ).toBe(true);
+    expect(within(progress).queryByRole("button", { name: "删除" })).toBeNull();
+
+    await user.click(within(progress).getByRole("button", { name: "关闭" }));
+    await user.click(
+      await screen.findByRole("button", { name: "查看删除状态" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "删除进度" }),
+    ).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/files/commands"),
+      ),
+    ).toHaveLength(1);
+
+    cleanup();
+    renderWithProviders(<StorageFilesPage />);
+    expect(
+      await screen.findByRole("dialog", { name: "删除进度" }),
+    ).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes("/files/commands"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("explains a Delete the Storage provider cannot verify", async () => {
@@ -1318,7 +1418,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
             directoryCount: 1,
             totalBytes: 12,
             truncated: false,
-            scopeDigest: "scope-digest-2",
+            scopeDigest: "2".repeat(64),
           }),
         onCommand: (body) => {
           commandBody = body;
@@ -1339,7 +1439,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
               {
                 path: "Season",
                 status: "FAILED",
-                errorCategory: "target_not_empty",
+                errorCategory: "directory_changed",
               },
             ],
             sideEffects: "storage_mutations",
@@ -1368,7 +1468,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(commandBody).toMatchObject({
       operation: "delete",
       paths: ["Season"],
-      confirmationDigest: "scope-digest-2",
+      confirmationDigest: "2".repeat(64),
     });
     const resultDialog = await screen.findByRole("dialog", {
       name: "删除结果",
@@ -1377,7 +1477,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // The partial failure stays visible with its durable per-item outcome.
     expect(within(resultDialog).getByText(/失败或待核实 1 项/)).toBeVisible();
     expect(
-      within(resultDialog).getByText(/部分项目失败或结果待核实；未自动重试/),
+      await within(resultDialog).findByText(
+        /部分项目失败或结果待核实；未自动重试/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(resultDialog).getByText(/文件夹出现了未确认内容，因此保留/),
     ).toBeVisible();
     // A partial target is never pruned: the directory row survives and stays
     // selected so the operator can diagnose and recover it.
@@ -1413,7 +1518,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
             directoryCount: 1,
             totalBytes: 12,
             truncated: false,
-            scopeDigest: "scope-digest-3",
+            scopeDigest: "3".repeat(64),
           }),
         onFiles: () =>
           jsonResponse(filesPayload("lib-a", deleted ? null : "Season")),
@@ -1488,7 +1593,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
           directoryCount: 1,
           totalBytes: 0,
           truncated: false,
-          scopeDigest: "scope-digest-4",
+          scopeDigest: "4".repeat(64),
         }),
       onCommand: () => {
         deleted = true;
@@ -2461,7 +2566,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
             directoryCount: 0,
             totalBytes: 0,
             truncated: false,
-            scopeDigest: "scope-digest-multi",
+            scopeDigest: "5".repeat(64),
           });
         },
       }),

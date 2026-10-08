@@ -733,6 +733,35 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 media.delete_impact(library_id=SHARED_ID, paths=["../outside"])
             self.assertEqual(escaped.exception.status, 400)
             self.assertFalse((root / "outside").exists())
+            overlap_root = root / "target" / "media-vault" / "overlap"
+            (overlap_root / "sub").mkdir(parents=True)
+            (overlap_root / "sub" / "file.txt").write_text("keep", encoding="utf-8")
+            overlap = media.delete_impact(
+                library_id=SHARED_ID,
+                paths=["overlap", "overlap/sub", "overlap", "overlap/sub"],
+            )
+            self.assertEqual(overlap.top_level_paths, ("overlap",))
+            self.assertEqual(len(overlap.entries), 3)
+            api_overlap = request(
+                api,
+                f"/api/v1/media-libraries/{SHARED_ID}/files/delete-impact?"
+                "path=overlap&path=overlap/sub&path=overlap",
+            )
+            self.assertEqual(api_overlap[0], 200, api_overlap[1])
+            self.assertEqual(api_overlap[1]["topLevelPaths"], ["overlap"])
+            admitted_overlap = media.submit_delete(
+                library_id=SHARED_ID,
+                paths=["overlap", "overlap/sub", "overlap"],
+                confirmation_digest=overlap.scope_digest,
+            )
+            self.assertEqual(admitted_overlap["totalItems"], 3)
+            overlap_items = _runtime.list_items(admitted_overlap["taskId"])
+            self.assertEqual(len(overlap_items), 3)
+            self.assertEqual(
+                {item.source_display for item in overlap_items},
+                {"overlap", "overlap/sub", "overlap/sub/file.txt"},
+            )
+            self.assertTrue((overlap_root / "sub" / "file.txt").exists())
             # The library root itself is protected.
             for attempt in (
                 lambda: media.delete_impact(library_id=SHARED_ID, paths=[""]),
@@ -1013,6 +1042,54 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # A successful sibling is never replayed by a later retry attempt.
             self.assertEqual(outcome["retrySafe"], False)
 
+    def test_media_delete_persists_source_change_and_unconfirmed_directory_reasons(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            media = self._media_service(api, active)
+            changed_file = root / "target" / "media-vault" / "changed.txt"
+            changed_file.write_text("old", encoding="utf-8")
+            file_impact = media.delete_impact(library_id=SHARED_ID, paths=["changed.txt"])
+            file_admission = media.submit_delete(
+                library_id=SHARED_ID,
+                paths=["changed.txt"],
+                confirmation_digest=file_impact.scope_digest,
+            )
+            changed_file.write_text("replacement with a different size", encoding="utf-8")
+            file_result = self._run_admitted_delete(media, file_admission)
+            self.assertEqual(file_result["outcomes"][0]["errorCategory"], "source_changed")
+            file_item = runtime.list_items(file_admission["taskId"])[0]
+            file_record = runtime.list_results(file_admission["taskId"])[0]
+            self.assertEqual(file_item.error, "source_changed")
+            self.assertEqual(file_record.error, "source_changed")
+            self.assertTrue(changed_file.exists())
+
+            empty_directory = root / "target" / "media-vault" / "empty-at-confirmation"
+            empty_directory.mkdir()
+            directory_impact = media.delete_impact(
+                library_id=SHARED_ID, paths=["empty-at-confirmation"]
+            )
+            directory_admission = media.submit_delete(
+                library_id=SHARED_ID,
+                paths=["empty-at-confirmation"],
+                confirmation_digest=directory_impact.scope_digest,
+            )
+            (empty_directory / "new-child.txt").write_text("keep", encoding="utf-8")
+            directory_result = self._run_admitted_delete(media, directory_admission)
+            self.assertEqual(directory_result["outcomes"][0]["errorCategory"], "directory_changed")
+            directory_item = runtime.list_items(directory_admission["taskId"])[0]
+            directory_record = runtime.list_results(directory_admission["taskId"])[0]
+            self.assertEqual(directory_item.error, "directory_changed")
+            self.assertEqual(directory_record.error, "directory_changed")
+            status = request(
+                api,
+                f"/api/v1/media-libraries/{SHARED_ID}/files/deletes/"
+                f"{directory_admission['taskId']}",
+            )
+            self.assertEqual(status[0], 200, status[1])
+            self.assertEqual(status[1]["outcomes"][0]["errorCategory"], "directory_changed")
+            self.assertTrue((empty_directory / "new-child.txt").exists())
+
     def test_uncertain_media_effect_is_recorded_and_never_replayed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1136,9 +1213,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                     "operation": "delete",
                     "paths": ["Show"],
                     "confirmationDigest": impact[1]["scopeDigest"],
+                    "requestId": "26dbb770-c8d3-4d0a-9af9-483b12a4e58d",
                 },
             )
             self.assertEqual(deleted[0], 202, deleted[1])
+            self.assertEqual(deleted[1]["taskId"], "26dbb770-c8d3-4d0a-9af9-483b12a4e58d")
             self.assertEqual(deleted[1]["taskCommand"], "media_files_delete")
             self.assertTrue((vault / "Show").exists())
             media_service = self._media_service(api, active)
