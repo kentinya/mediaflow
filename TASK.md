@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 44.3
 Parent Slice: 44
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: b6a0f49b8337f61170aac1479e8aac3b63e4675e
 Difficulty: High
 Test Level: T4
@@ -514,14 +514,14 @@ Pre-existing non-blocking facts (recorded, not promoted, not labelled green):
 ### Checkpoint
 
 ```text
-Status: NOT SUBMITTED
-Head SHA: NOT SET
+Status: READY FOR B REVIEW
+Head SHA: e72da91375b59c73440f809d5f7bc1ff9b39cddc
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: NOT SET
+Reviewed: PENDING
 Decision: PENDING
 Slice Required Outcomes all satisfied: PENDING
 Next: PENDING
