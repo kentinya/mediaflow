@@ -862,6 +862,8 @@ function mediaLibraryState(session) {
       // --- Direct file command maintenance state (Task 38.3) ---
       // Every MediaLibrary command this session submitted, in order.
       commandLog: [],
+      // Durable Delete admission and readback, keyed by the request ID.
+      filesDeleteTasks: new Map(),
       // Names a Create must refuse as an existing target (no silent overwrite).
       conflictNames: [],
       // A loaded text version the following Save must refuse as stale.
@@ -1399,6 +1401,10 @@ function resourceLibraryState(session) {
       emptied: false,
       textStale: false,
       commandLog: [],
+      // Durable Delete admission and readback, keyed by the request ID.
+      filesDeleteTasks: new Map(),
+      // Direct Delete effects reflected in later live Storage listings.
+      deletedEntries: [],
       // The admitted Files transfers of this session, keyed by Task ID: the
       // fake Worker advances each one through queued -> running -> terminal.
       filesTransfers: new Map(),
@@ -1583,7 +1589,97 @@ function deleteImpactDocument(resourceLibraryId, paths) {
     directoryCount,
     totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
     truncated: false,
-    scopeDigest: "fake-scope-digest-" + paths.join(","),
+    scopeDigest: directDeleteScopeDigest("resource", resourceLibraryId, paths),
+  };
+}
+
+function directDeleteScopeDigest(kind, libraryId, paths) {
+  return createHash("sha256")
+    .update(JSON.stringify({ version: 1, kind, libraryId, paths }))
+    .digest("hex");
+}
+
+function directDeleteAdmissionDocument(
+  kind,
+  libraryId,
+  taskId,
+  paths,
+  entries,
+) {
+  const identity =
+    kind === "media"
+      ? { mediaLibraryId: libraryId }
+      : { resourceLibraryId: libraryId };
+  const taskCommand = kind === "media" ? "media_files_delete" : "files_delete";
+  return {
+    operation: "delete",
+    status: "QUEUED",
+    taskId,
+    taskCommand,
+    libraryKind: kind,
+    ...identity,
+    taskStatus: "pending",
+    terminal: false,
+    topLevelPaths: [...paths],
+    knownEffects: paths.map((path) => ({
+      path,
+      effect: "in_progress",
+      status: "RUNNING",
+    })),
+    totalItems: entries.length,
+    succeededItems: 0,
+    failedItems: 0,
+    outcomes: entries.map((entry) => ({ path: entry.path, status: "QUEUED" })),
+    outcomesTruncated: false,
+    sideEffects: "none",
+    retrySafe: false,
+    nextAction: "the confirmed Delete is persisted and waiting for its Worker",
+  };
+}
+
+function directDeleteTerminalDocument(admission, entries, failurePaths = []) {
+  const failedPaths = new Set(failurePaths);
+  const outcomes = entries.map((entry) => ({
+    path: entry.path,
+    status: failedPaths.has(entry.path) ? "FAILED" : "SUCCESS",
+    ...(failedPaths.has(entry.path)
+      ? { errorCategory: "storage_failure" }
+      : {}),
+  }));
+  const succeededItems = outcomes.filter(
+    (item) => item.status === "SUCCESS",
+  ).length;
+  const failedItems = outcomes.length - succeededItems;
+  const outcomeByPath = new Map(
+    outcomes.map((item) => [item.path, item.status]),
+  );
+  const knownEffects = admission.topLevelPaths.map((target) => {
+    const affected = entries.filter(
+      (entry) => entry.path === target || entry.path.startsWith(`${target}/`),
+    );
+    const states = new Set(
+      affected.map((entry) => outcomeByPath.get(entry.path)),
+    );
+    if (affected.length > 0 && states.size === 1 && states.has("SUCCESS")) {
+      return { path: target, effect: "deleted", status: "SUCCESS" };
+    }
+    if (states.has("SUCCESS")) {
+      return { path: target, effect: "partial", status: "PARTIAL" };
+    }
+    return { path: target, effect: "retained", status: "FAILED" };
+  });
+  return {
+    ...admission,
+    status: failedItems === 0 ? "SUCCESS" : "PARTIAL",
+    taskStatus: failedItems === 0 ? "completed" : "partial_success",
+    terminal: true,
+    knownEffects,
+    succeededItems,
+    failedItems,
+    outcomes,
+    sideEffects: succeededItems > 0 ? "storage_mutations" : "none",
+    nextAction:
+      "refresh the directory to see the current state and inspect item outcomes",
   };
 }
 
@@ -2092,6 +2188,7 @@ function filesDocument(
   extraLibrary = null,
   removedDirectories = [],
   whitespaceDirectory = false,
+  deletedEntries = [],
 ) {
   const isReferenceLibrary = resourceLibraryId === "source";
   const isSavedResourceLibrary = resourceLibraryId === "new-e2e-library";
@@ -2117,8 +2214,14 @@ function filesDocument(
   // `removedPaths` are directories deleted outside MediaFlow in this session:
   // the live read stops returning them, exactly like real Storage.
   const removedPaths = removedDirectories ?? [];
+  const deletedPaths = (deletedEntries ?? [])
+    .filter((item) => item.libraryId === resourceLibraryId)
+    .map((item) => item.path);
   const isRemoved = (entryPath) =>
     removedPaths.some(
+      (removed) => entryPath === removed || entryPath.startsWith(removed + "/"),
+    ) ||
+    deletedPaths.some(
       (removed) => entryPath === removed || entryPath.startsWith(removed + "/"),
     );
   const entries = (
@@ -8354,6 +8457,43 @@ const server = createServer(async (req, res) => {
     sendJson(res, 201, organizeIntentDocument(state));
     return;
   }
+  const resourceDeleteStatusMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
+  );
+  if (resourceDeleteStatusMatch && req.method === "GET") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const libraryId = decodeURIComponent(resourceDeleteStatusMatch[1]);
+    const taskId = decodeURIComponent(resourceDeleteStatusMatch[2]);
+    const state = resourceLibraryState(session);
+    const task = state.filesDeleteTasks.get(taskId);
+    if (!task || task.libraryId !== libraryId) {
+      sendJson(res, 404, {
+        error: { code: "files_direct_delete_not_found" },
+      });
+      return;
+    }
+    if (!task.effectsApplied) {
+      for (const outcome of task.terminal.outcomes) {
+        if (outcome.status === "SUCCESS") {
+          state.deletedEntries.push({ libraryId, path: outcome.path });
+        }
+      }
+      task.effectsApplied = true;
+    }
+    sendJson(res, 200, task.terminal);
+    return;
+  }
   const directCommandMatch = url.pathname.match(
     /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
   );
@@ -8438,7 +8578,11 @@ const server = createServer(async (req, res) => {
         }
       }
       if (fields.operation === "delete") {
-        const digest = `fake-scope-digest-${(fields.paths ?? []).join(",")}`;
+        const digest = directDeleteScopeDigest(
+          "resource",
+          resourceLibraryId,
+          fields.paths ?? [],
+        );
         if (fields.confirmationDigest !== digest) {
           sendJson(res, 409, {
             error: {
@@ -8455,28 +8599,43 @@ const server = createServer(async (req, res) => {
           });
           return;
         }
-        const outcomes = (fields.paths ?? []).map((path) => ({
-          path,
-          status: "SUCCESS",
-          errorCategory: null,
-        }));
-        sendJson(res, 200, {
-          operation: "delete",
-          status: "SUCCESS",
-          taskId: "task-e2e-delete",
-          taskStatus: "completed",
-          topLevelPaths: fields.paths ?? [],
-          knownEffects: (fields.paths ?? []).map((path) => ({
-            path,
-            effect: "deleted",
-            status: "SUCCESS",
-          })),
-          totalItems: outcomes.length,
-          succeededItems: outcomes.length,
-          failedItems: 0,
-          outcomes,
-          sideEffects: "storage_mutations",
+        const paths = fields.paths ?? [];
+        const taskId =
+          typeof fields.requestId === "string"
+            ? fields.requestId
+            : `task-e2e-delete-${state.filesDeleteTasks.size + 1}`;
+        const existing = state.filesDeleteTasks.get(taskId);
+        if (existing) {
+          if (
+            existing.libraryId !== resourceLibraryId ||
+            existing.digest !== fields.confirmationDigest ||
+            JSON.stringify(existing.paths) !== JSON.stringify(paths)
+          ) {
+            sendJson(res, 409, {
+              error: { code: "files_direct_request_id_conflict" },
+            });
+            return;
+          }
+          sendJson(res, 202, existing.admission);
+          return;
+        }
+        const entries = deleteImpactDocument(resourceLibraryId, paths).entries;
+        const admission = directDeleteAdmissionDocument(
+          "resource",
+          resourceLibraryId,
+          taskId,
+          paths,
+          entries,
+        );
+        state.filesDeleteTasks.set(taskId, {
+          libraryId: resourceLibraryId,
+          paths: [...paths],
+          digest: fields.confirmationDigest,
+          admission,
+          terminal: directDeleteTerminalDocument(admission, entries),
+          effectsApplied: false,
         });
+        sendJson(res, 202, admission);
         return;
       }
       if (fields.operation === "save_text" && state.textStale) {
@@ -9474,6 +9633,43 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, mediaLibrariesDocument(mediaLibraryState(session)));
     return;
   }
+  const mediaDeleteStatusMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/deletes\/([^/]+)$/,
+  );
+  if (mediaDeleteStatusMatch && req.method === "GET") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const libraryId = decodeURIComponent(mediaDeleteStatusMatch[1]);
+    const taskId = decodeURIComponent(mediaDeleteStatusMatch[2]);
+    const state = mediaLibraryState(session);
+    const task = state.filesDeleteTasks.get(taskId);
+    if (!task || task.libraryId !== libraryId) {
+      sendJson(res, 404, {
+        error: { code: "files_direct_delete_not_found" },
+      });
+      return;
+    }
+    if (!task.effectsApplied) {
+      for (const outcome of task.terminal.outcomes) {
+        if (outcome.status === "SUCCESS") {
+          state.deletedEntries.push({ libraryId, path: outcome.path });
+        }
+      }
+      task.effectsApplied = true;
+    }
+    sendJson(res, 200, task.terminal);
+    return;
+  }
   // --- MediaLibrary direct file commands (Task 38.3) ---
   //
   // The fake mirrors the real media command contract exactly: its own
@@ -9694,7 +9890,7 @@ const server = createServer(async (req, res) => {
         directoryCount: entries.filter((entry) => entry.isDirectory).length,
         totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
         truncated: false,
-        scopeDigest: `fake-media-scope-digest-${mediaLibraryId}-${paths.join(",")}`,
+        scopeDigest: directDeleteScopeDigest("media", mediaLibraryId, paths),
         sideEffects: "none",
         retrySafe: true,
         nextAction: "confirm this exact impact to run the bounded Delete",
@@ -9891,7 +10087,7 @@ const server = createServer(async (req, res) => {
       }
       if (fields.operation === "delete") {
         const paths = fields.paths ?? [];
-        const digest = `fake-media-scope-digest-${mediaLibraryId}-${paths.join(",")}`;
+        const digest = directDeleteScopeDigest("media", mediaLibraryId, paths);
         if (fields.confirmationDigest !== digest) {
           refuse(
             "files_direct_stale_confirmation",
@@ -9901,48 +10097,59 @@ const server = createServer(async (req, res) => {
           );
           return;
         }
-        const outcomes = paths.map((path) => ({
-          path,
-          status: state.deleteFailurePath === path ? "FAILED" : "SUCCESS",
-          errorCategory:
-            state.deleteFailurePath === path ? "storage_failure" : null,
-        }));
-        const failed = outcomes.filter(
-          (outcome) => outcome.status !== "SUCCESS",
-        );
-        // Only the items the fake really removed leave the live listing; a
-        // failed item stays exactly where it was, with its own outcome.
-        paths
-          .filter((path) => state.deleteFailurePath !== path)
-          .forEach((path) =>
-            state.deletedEntries.push({ libraryId: mediaLibraryId, path }),
-          );
-        sendJson(res, 200, {
-          operation: "delete",
-          mediaLibraryId,
-          libraryKind: "media",
-          status: failed.length === 0 ? "SUCCESS" : "PARTIAL",
-          taskId: "task-e2e-media-delete",
-          taskCommand:
-            paths.length === 1
-              ? "media_files_direct_command"
-              : "media_files_delete",
-          taskStatus: failed.length === 0 ? "completed" : "partial_success",
-          topLevelPaths: paths,
-          knownEffects: paths.map((path) => ({
+        const taskId =
+          typeof fields.requestId === "string"
+            ? fields.requestId
+            : `task-e2e-media-delete-${state.filesDeleteTasks.size + 1}`;
+        const existing = state.filesDeleteTasks.get(taskId);
+        if (existing) {
+          if (
+            existing.libraryId !== mediaLibraryId ||
+            existing.digest !== fields.confirmationDigest ||
+            JSON.stringify(existing.paths) !== JSON.stringify(paths)
+          ) {
+            refuse(
+              "files_direct_request_id_conflict",
+              "request_id_conflict",
+              409,
+              "refresh the Delete state and confirm the unchanged scope again",
+            );
+            return;
+          }
+          sendJson(res, 202, existing.admission);
+          return;
+        }
+        const entries = paths.map((path) => {
+          const entry = mediaLibraryCommandEntry(state, mediaLibraryId, path);
+          return {
             path,
-            effect: state.deleteFailurePath === path ? "partial" : "deleted",
-            status: state.deleteFailurePath === path ? "PARTIAL" : "SUCCESS",
-          })),
-          totalItems: outcomes.length,
-          succeededItems: outcomes.length - failed.length,
-          failedItems: failed.length,
-          outcomes,
-          outcomesTruncated: false,
-          sideEffects: "storage_mutations",
-          retrySafe: false,
-          nextAction: "refresh the directory to see the current state",
+            isDirectory: entry?.isDirectory ?? false,
+            size: entry?.size ?? 0,
+          };
         });
+        const admission = directDeleteAdmissionDocument(
+          "media",
+          mediaLibraryId,
+          taskId,
+          paths,
+          entries,
+        );
+        const failurePaths = paths.filter(
+          (path) => state.deleteFailurePath === path,
+        );
+        state.filesDeleteTasks.set(taskId, {
+          libraryId: mediaLibraryId,
+          paths: [...paths],
+          digest: fields.confirmationDigest,
+          admission,
+          terminal: directDeleteTerminalDocument(
+            admission,
+            entries,
+            failurePaths,
+          ),
+          effectsApplied: false,
+        });
+        sendJson(res, 202, admission);
         return;
       }
       refuse(
@@ -10696,6 +10903,7 @@ const server = createServer(async (req, res) => {
         extraLibrary ?? null,
         stateForFiles.externallyRemovedDirectories,
         stateForFiles.whitespaceDirectory === true,
+        stateForFiles.deletedEntries,
       ),
     );
     return;
@@ -15505,6 +15713,8 @@ const server = createServer(async (req, res) => {
       emptied: url.searchParams.get("empty") === "1",
       textStale: url.searchParams.get("textStale") === "1",
       commandLog: [],
+      filesDeleteTasks: new Map(),
+      deletedEntries: [],
       filesTransfers: new Map(),
       filesOrganizePaths: null,
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
@@ -15544,6 +15754,7 @@ const server = createServer(async (req, res) => {
       staleRemovalDone: false,
       mutationLog: [],
       commandLog: [],
+      filesDeleteTasks: new Map(),
       conflictNames: url.searchParams.getAll("conflict"),
       textStale: url.searchParams.get("textStale") === "1",
       staleRenamePaths: url.searchParams.getAll("staleRename"),

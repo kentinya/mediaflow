@@ -1069,15 +1069,23 @@ test("bounded delete shows the impact summary and requires one confirmation", as
   await openFiles(page);
 
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  const impactResponsePromise = page.waitForResponse((response) =>
+    response.url().includes("/files/delete-impact"),
+  );
   await page.getByRole("button", { name: "删除", exact: true }).click();
+  const impactDocument = (await (await impactResponsePromise).json()) as {
+    scopeDigest: string;
+  };
   const dialog = page.getByRole("dialog", { name: "删除确认" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
   await expect(dialog.getByText(/2 个文件夹/)).toBeVisible();
 
   await dialog.getByRole("button", { name: "删除", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "删除结果" })).toBeVisible();
-  await expect(page.getByText(/删除已完成 1 项/)).toBeVisible();
+  const result = page.getByRole("dialog", { name: "删除结果" });
+  await expect(result).toBeVisible();
+  await expect(result.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(/删除已完成 3 项/)).toBeVisible();
   await page
     .getByRole("dialog", { name: "删除结果" })
     .getByRole("button", { name: "关闭", exact: true })
@@ -1085,9 +1093,11 @@ test("bounded delete shows the impact summary and requires one confirmation", as
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
   expect(commandBodies).toHaveLength(1);
-  expect(commandBodies[0]).toContain(
-    '"confirmationDigest":"fake-scope-digest-Movies"',
-  );
+  expect(impactDocument.scopeDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(
+    (JSON.parse(commandBodies[0] ?? "{}") as { confirmationDigest: string })
+      .confirmationDigest,
+  ).toBe(impactDocument.scopeDigest);
 });
 
 test("unreferenced ResourceLibrary removal is confirmed and keeps Storage truth", async ({
@@ -1256,17 +1266,24 @@ test("the bounded multi-selection Delete encodes repeated path values end to end
       commandBodies.push(request.postData() ?? "");
     }
   });
+  await page.request.post("/__test__/reset-resource-library");
   await openFiles(page);
 
   // One directory plus one file: two confirmed top-level paths in one request.
   await page.getByRole("checkbox", { name: "选择 Movies" }).check();
   await page.getByRole("checkbox", { name: "选择 readme.txt" }).check();
+  const impactResponsePromise = page.waitForResponse((response) =>
+    response.url().includes("/files/delete-impact"),
+  );
   await page.getByRole("button", { name: "删除", exact: true }).click();
+  const impactDocument = (await (await impactResponsePromise).json()) as {
+    scopeDigest: string;
+  };
   const dialog = page.getByRole("dialog", { name: "删除确认" });
   await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
   await dialog.getByRole("button", { name: "删除", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "删除结果" })).toBeVisible();
-  await expect(page.getByText(/删除已完成 2 项/)).toBeVisible();
+  await expect(page.getByText(/删除已完成 4 项/)).toBeVisible();
   await page
     .getByRole("dialog", { name: "删除结果" })
     .getByRole("button", { name: "关闭", exact: true })
@@ -1278,9 +1295,11 @@ test("the bounded multi-selection Delete encodes repeated path values end to end
   expect(query).toContain("path=Movies");
   expect(query).toContain("path=readme.txt");
   expect(commandBodies).toHaveLength(1);
-  expect(commandBodies[0]).toContain(
-    '"confirmationDigest":"fake-scope-digest-Movies,readme.txt"',
-  );
+  expect(impactDocument.scopeDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(
+    (JSON.parse(commandBodies[0] ?? "{}") as { confirmationDigest: string })
+      .confirmationDigest,
+  ).toBe(impactDocument.scopeDigest);
 });
 
 test("a ten-row directory scrolls to the final row with an unclipped portal menu", async ({

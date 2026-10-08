@@ -234,7 +234,13 @@ test("deleting requires one explicit confirmation of the bounded impact", async 
   await openMediaLibrary(page);
   await enterDirectory(page, "Breaking Bad");
   await openRowMenu(page, /logo\.png/);
+  const impactResponsePromise = page.waitForResponse((response) =>
+    response.url().includes("/files/delete-impact"),
+  );
   await page.getByRole("menu").getByRole("menuitem", { name: "删除" }).click();
+  const impactDocument = (await (await impactResponsePromise).json()) as {
+    scopeDigest: string;
+  };
   const dialog = page.getByRole("dialog", { name: "删除确认" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
@@ -247,14 +253,16 @@ test("deleting requires one explicit confirmation of the bounded impact", async 
   const [deleted] = await commandPosts(page);
   expect(deleted.operation).toBe("delete");
   expect(deleted.paths).toEqual(["Breaking Bad/logo.png"]);
-  expect(deleted.confirmationDigest).toBe(
-    "fake-media-scope-digest-movies-Breaking Bad/logo.png",
-  );
+  expect(impactDocument.scopeDigest).toMatch(/^[a-f0-9]{64}$/);
+  expect(deleted.confirmationDigest).toBe(impactDocument.scopeDigest);
   // The dialog switches to the durable per-item outcome view.
   const result = page.getByRole("dialog", { name: "删除结果" });
   await expect(result).toBeVisible();
   await expect(result.getByText(/已删除/)).toBeVisible();
-  await expect(result.getByText(/操作与任务/)).toBeVisible();
+  await expect(
+    result.getByRole("link", { name: "在操作与任务中查看和恢复" }),
+  ).toBeVisible();
+  await expect(result.getByRole("alert")).toHaveCount(0);
   await result.getByRole("button", { name: "关闭", exact: true }).click();
   // The refreshed live listing no longer presents the deleted file.
   await expect(page.getByRole("row", { name: /logo\.png/ })).toHaveCount(0);
@@ -269,10 +277,16 @@ test("a partial delete keeps each item's own outcome visible and un-replayed", a
   // One directory and one file are selected independently.
   await page.getByRole("checkbox", { name: /选择 Season 1/ }).check();
   await page.getByRole("checkbox", { name: /选择 logo\.png/ }).check();
+  const impactResponsePromise = page.waitForResponse((response) =>
+    response.url().includes("/files/delete-impact"),
+  );
   await page
     .locator("footer.mf-files-footer")
     .getByRole("button", { name: "删除", exact: true })
     .click();
+  const impactDocument = (await (await impactResponsePromise).json()) as {
+    scopeDigest: string;
+  };
   const dialog = page.getByRole("dialog", { name: "删除确认" });
   await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
   await dialog.getByRole("button", { name: "删除", exact: true }).click();
@@ -280,15 +294,19 @@ test("a partial delete keeps each item's own outcome visible and un-replayed", a
   await expect(result).toBeVisible();
   await expect(result.getByText(/删除已完成 1 项/)).toBeVisible();
   await expect(result.getByText(/失败或待核实 1 项/)).toBeVisible();
-  await expect(result.getByText(/未自动重试/)).toBeVisible();
+  await expect(result.getByText(/未自动重试/).first()).toBeVisible();
   // The failed item keeps its own category next to its own path.
-  await expect(result.getByText("storage_failure")).toBeVisible();
-  expect((await commandPosts(page)).length).toBe(1);
+  await expect(result.getByText("存储读取或删除失败")).toBeVisible();
+  const partialCommands = await commandPosts(page);
+  expect(partialCommands).toHaveLength(1);
+  expect(partialCommands[0]?.confirmationDigest).toBe(
+    impactDocument.scopeDigest,
+  );
   await result.getByRole("button", { name: "关闭", exact: true }).click();
   // The successful sibling is gone from the live listing; the failed one stays.
   await expect(page.getByRole("row", { name: /Season 1/ })).toHaveCount(0);
   await expect(page.getByRole("row", { name: /logo\.png/ })).toBeVisible();
-  expect((await commandPosts(page)).length).toBe(1);
+  expect(await commandPosts(page)).toHaveLength(1);
 });
 
 test("a read-only principal is denied without any submission and can correct course", async ({

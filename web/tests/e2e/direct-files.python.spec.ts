@@ -5,13 +5,14 @@ const ADMIN_TOKEN = "harness-admin-token";
 async function openFiles(
   page: Page,
   kind: "resource" | "media",
+  origin?: string,
 ): Promise<void> {
   await page.setViewportSize({ width: 760, height: 900 });
   const url =
     kind === "resource"
       ? "/ui-v2/resourcelib/files?resourceLibraryId=source"
       : "/ui-v2/medialib/files?mediaLibraryId=movies";
-  await page.goto(url);
+  await page.goto(origin === undefined ? url : new URL(url, origin).toString());
   await page.getByLabel("API token").fill(ADMIN_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -23,6 +24,18 @@ async function openFiles(
   await expect(page.getByRole("button", { name: "网格视图" })).toBeVisible();
   await page.getByRole("button", { name: "网格视图" }).click();
   await expect(page.locator(".mf-files-grid")).toBeVisible();
+  if (origin === undefined) {
+    const localCrypto = await page.evaluate(() => ({
+      secureContext: window.isSecureContext,
+      randomUUID: typeof window.crypto.randomUUID,
+      getRandomValues: typeof window.crypto.getRandomValues,
+    }));
+    expect(localCrypto).toMatchObject({
+      secureContext: true,
+      randomUUID: "function",
+      getRandomValues: "function",
+    });
+  }
   const worker = await page.request.post("/__harness__/register-files-worker");
   expect(worker.ok()).toBe(true);
   expect(await worker.json()).toMatchObject({ registered: true });
@@ -33,6 +46,175 @@ async function openFiles(
       ),
     )
     .toBe(true);
+}
+
+async function deleteOverInsecureLanHttp(
+  page: Page,
+  kind: "resource" | "media",
+  filename: string,
+  loseResponse: boolean,
+): Promise<void> {
+  const libraryId = kind === "resource" ? "source" : "movies";
+  const requestBodies: Array<{ requestId: string; paths: string[] }> = [];
+  const statusReads: string[] = [];
+  const requestPattern = "**/files/commands";
+
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/commands")
+    ) {
+      const body = request.postDataJSON() as {
+        operation?: unknown;
+        requestId?: unknown;
+        paths?: unknown;
+      };
+      if (
+        body.operation === "delete" &&
+        typeof body.requestId === "string" &&
+        Array.isArray(body.paths) &&
+        body.paths.every((path): path is string => typeof path === "string")
+      ) {
+        requestBodies.push({ requestId: body.requestId, paths: body.paths });
+      }
+    }
+    if (
+      request.method() === "GET" &&
+      request.url().includes("/files/deletes/")
+    ) {
+      statusReads.push(request.url());
+    }
+  });
+
+  await page.route(requestPattern, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const body = route.request().postDataJSON() as {
+      operation?: unknown;
+      requestId?: unknown;
+      paths?: unknown;
+    };
+    if (body.operation === "delete") {
+      const saved = await page.evaluate(
+        ({ selectedKind, selectedLibraryId }) => {
+          const key = `mediaflow.files.delete-admission:v1:${selectedKind}:${encodeURIComponent(selectedLibraryId)}`;
+          const raw = window.sessionStorage.getItem(key);
+          return raw === null ? null : JSON.parse(raw);
+        },
+        { selectedKind: kind, selectedLibraryId: libraryId },
+      );
+      expect(saved).toMatchObject({
+        requestId: body.requestId,
+        paths: body.paths,
+      });
+      if (
+        loseResponse &&
+        Array.isArray(body.paths) &&
+        body.paths.includes(filename)
+      ) {
+        const admitted = await route.fetch({
+          url: route
+            .request()
+            .url()
+            .replace("mediaflow.review.test", "127.0.0.1"),
+        });
+        expect(admitted.status()).toBe(202);
+        await route.abort("failed");
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  const tile = page.getByLabel(`文件条目 ${filename}`, { exact: true });
+  await expect(tile).toBeVisible();
+  await tile.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menu").getByRole("menuitem", { name: "删除" }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除确认" });
+  await expect(confirmation.getByText(/即将永久删除/)).toBeVisible();
+  await confirmation.getByRole("button", { name: "删除", exact: true }).click();
+
+  const progress = page.getByRole("dialog", { name: "删除进度" });
+  await expect(progress).toBeVisible();
+  await expect.poll(() => requestBodies.length).toBe(1);
+  const requestId = requestBodies[0]?.requestId;
+  expect(requestId).toMatch(
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i,
+  );
+  await expect
+    .poll(() =>
+      statusReads.some((url) => url.endsWith(`/files/deletes/${requestId}`)),
+    )
+    .toBe(true);
+
+  if (loseResponse) {
+    await expect(progress.getByText(/删除任务已持久化/)).toBeVisible();
+    await expect(
+      progress.getByRole("button", { name: "删除", exact: true }),
+    ).toHaveCount(0);
+  }
+
+  const stateBefore = await page.request.get("/__harness__/files-state");
+  expect(stateBefore.ok()).toBe(true);
+  const before = (await stateBefore.json()) as Record<string, boolean>;
+  const fixturePrefix = kind === "resource" ? "resource" : "media";
+  const fixtureSuffix = loseResponse ? "HttpUnknownDelete" : "HttpDelete";
+  expect(before[`${fixturePrefix}${fixtureSuffix}Exists`]).toBe(true);
+
+  const worker = await page.request.post("/__harness__/run-files-worker");
+  expect(worker.ok()).toBe(true);
+  expect(await worker.json()).toMatchObject({ ran: true, status: "completed" });
+  const result = page.getByRole("dialog", { name: "删除结果" });
+  if (loseResponse) {
+    const readsBeforeRecovery = statusReads.length;
+    // Reconnect through the native page after the lost response. The saved
+    // session binding must read the original Task identity without replaying
+    // its Delete POST.
+    const recoveryPath =
+      kind === "resource"
+        ? "/ui-v2/resourcelib/files?resourceLibraryId=source"
+        : "/ui-v2/medialib/files?mediaLibraryId=movies";
+    await page.goto(
+      new URL(recoveryPath, "http://mediaflow.review.test:4185").toString(),
+    );
+    await page.getByLabel("API token").fill(ADMIN_TOKEN);
+    await page.getByRole("button", { name: "Connect" }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: kind === "resource" ? "文件" : "媒体库",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(() => statusReads.length)
+      .toBeGreaterThan(readsBeforeRecovery);
+  } else if (!(await result.isVisible().catch(() => false))) {
+    const pendingDialog = page.getByRole("dialog", { name: "删除进度" });
+    if (await pendingDialog.isVisible().catch(() => false)) {
+      await pendingDialog
+        .getByRole("button", { name: "关闭", exact: true })
+        .click();
+    }
+    const checkStatus = page.getByRole("button", {
+      name: "查看删除状态",
+      exact: true,
+    });
+    await expect(checkStatus).toBeVisible();
+    await checkStatus.click();
+  }
+  await expect(result).toBeVisible();
+  await expect(result.getByText(/删除已完成 1 项/)).toBeVisible();
+  await result.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(tile).toHaveCount(0);
+
+  const stateAfter = await page.request.get("/__harness__/files-state");
+  const after = (await stateAfter.json()) as Record<string, boolean>;
+  expect(after[`${fixturePrefix}${fixtureSuffix}Exists`]).toBe(false);
+  expect(requestBodies).toHaveLength(1);
+  await page.unroute(requestPattern);
 }
 
 async function deleteThroughNativePage(
@@ -386,3 +568,37 @@ test("MediaLibrary Files moves across Storage without fingerprints and resumes a
   await openFiles(page, "media");
   await crossStorageMoveThroughNativePage(page, testInfo, "media");
 });
+
+for (const kind of ["resource", "media"] as const) {
+  test(`${kind === "resource" ? "ResourceLibrary" : "MediaLibrary"} Delete works over non-localhost HTTP and reads back a lost admission`, async ({
+    page,
+  }) => {
+    await openFiles(page, kind, "http://mediaflow.review.test:4185");
+    const browserCrypto = await page.evaluate(() => ({
+      origin: window.location.origin,
+      secureContext: window.isSecureContext,
+      randomUUID: typeof window.crypto.randomUUID,
+      getRandomValues: typeof window.crypto.getRandomValues,
+    }));
+    expect(browserCrypto).toEqual({
+      origin: "http://mediaflow.review.test:4185",
+      secureContext: false,
+      randomUUID: "undefined",
+      getRandomValues: "function",
+    });
+
+    const prefix = kind === "resource" ? "Resource" : "Media";
+    await deleteOverInsecureLanHttp(
+      page,
+      kind,
+      `Browser-Delete-HTTP-${prefix}.txt`,
+      false,
+    );
+    await deleteOverInsecureLanHttp(
+      page,
+      kind,
+      `Browser-Delete-HTTP-Unknown-${prefix}.txt`,
+      true,
+    );
+  });
+}

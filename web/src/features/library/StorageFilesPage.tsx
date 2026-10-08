@@ -2491,7 +2491,11 @@ export function StorageFilesPage() {
   };
 
   const deletePaths =
-    dialog?.kind === "delete" && pendingDelete === null ? dialog.paths : null;
+    dialog?.kind === "delete" &&
+    pendingDelete === null &&
+    commandResult?.operation !== "delete"
+      ? dialog.paths
+      : null;
   const deletePathsKey = deletePaths === null ? "" : deletePaths.join("\n");
   const impactQuery = useQuery({
     queryKey: ["files-delete-impact", activeLibraryId, deletePathsKey],

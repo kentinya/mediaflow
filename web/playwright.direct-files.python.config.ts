@@ -11,6 +11,9 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:4185",
     trace: "retain-on-failure",
+    launchOptions: {
+      args: ["--host-resolver-rules=MAP mediaflow.review.test 127.0.0.1"],
+    },
   },
   webServer: {
     command:

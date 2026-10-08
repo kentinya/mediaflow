@@ -219,6 +219,12 @@ def application(environ, start_response):
         root = state.managed.root
         source = root / "source" / "Browser-Delete-Resource.txt"
         media = root / "destination" / "Movies" / "Browser-Delete-Media.txt"
+        resource_http_delete = root / "source" / "Browser-Delete-HTTP-Resource.txt"
+        resource_http_unknown_delete = root / "source" / "Browser-Delete-HTTP-Unknown-Resource.txt"
+        media_http_delete = root / "destination" / "Movies" / "Browser-Delete-HTTP-Media.txt"
+        media_http_unknown_delete = (
+            root / "destination" / "Movies" / "Browser-Delete-HTTP-Unknown-Media.txt"
+        )
         resource_move = root / "source" / "Browser-Move-Resource.txt"
         resource_move_second = root / "source" / "Browser-Move-Resource-Second.txt"
         media_move = root / "destination" / "Movies" / "Browser-Move-Media.txt"
@@ -253,6 +259,10 @@ def application(environ, start_response):
                 "ready": True,
                 "resourceExists": source.exists(),
                 "mediaExists": media.exists(),
+                "resourceHttpDeleteExists": resource_http_delete.exists(),
+                "resourceHttpUnknownDeleteExists": resource_http_unknown_delete.exists(),
+                "mediaHttpDeleteExists": media_http_delete.exists(),
+                "mediaHttpUnknownDeleteExists": media_http_unknown_delete.exists(),
                 "resourceMoveSource": (root / "source" / "Browser-Move-Resource.txt").exists(),
                 "resourceMoveTarget": (root / "destination" / "Browser-Move-Resource.txt").exists(),
                 "resourceMoveSecondSource": resource_move_second.exists(),
@@ -328,6 +338,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     (managed_root / "destination" / "Movies" / "Browser-Delete-Media.txt").write_text(
         "media browser fixture", encoding="utf-8"
+    )
+    (managed_root / "source" / "Browser-Delete-HTTP-Resource.txt").write_text(
+        "resource insecure HTTP delete fixture", encoding="utf-8"
+    )
+    (managed_root / "source" / "Browser-Delete-HTTP-Unknown-Resource.txt").write_text(
+        "resource uncertain HTTP delete fixture", encoding="utf-8"
+    )
+    (managed_root / "destination" / "Movies" / "Browser-Delete-HTTP-Media.txt").write_text(
+        "media insecure HTTP delete fixture", encoding="utf-8"
+    )
+    (managed_root / "destination" / "Movies" / "Browser-Delete-HTTP-Unknown-Media.txt").write_text(
+        "media uncertain HTTP delete fixture", encoding="utf-8"
     )
     for kind in ("Resource", "Media"):
         library_root = (
