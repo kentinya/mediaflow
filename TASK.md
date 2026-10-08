@@ -695,3 +695,133 @@ Next: SAME TASK FIX LOOP
   修正方向：绑定并展示提交时的样本/context；相关输入与已观察到的 Active 变化明确标记
   旧结果过期，保留输入并提供刷新 authority 后显式重跑的恢复；不自动重提/重放。覆盖
   样本、Active 和晚到响应的真实浏览器回归。
+
+## Developer Completion Report — same-task correction checkpoint
+
+### Changed Files
+
+- `mediaflow/application/rules_object_analysis.py`
+- `tests/test_v2_rules_object_analysis.py`
+- `web/src/features/rules/RulesObjectTestPanel.tsx`
+- `web/src/features/rules/RulesObjectTestPanel.test.tsx`
+- `web/src/features/rules/RulesCompleteFlowCheck.tsx`
+- `web/src/features/rules/RulesWorkspacePage.tsx`
+- `web/src/entities/rules/rules-workspace.test.ts`
+- `scripts/rules_object_analysis_browser_proof.py`
+- `scripts/storage_settings_browser_proof.py` (new)
+- `web/tests/fake-server.mjs`
+- `web/tests/e2e/storage-management.spec.ts`
+- `web/tests/e2e/dashboard.spec.ts`
+- `web/tests/e2e/deep-link.spec.ts`
+- `web/tests/e2e/library-files.spec.ts`
+- `TASK.md` (user-authorized Scope 7 / AC-10 / AC-11 and this report)
+
+Four pre-existing untracked `docs/pics/*.png` files remain untouched and excluded from both
+checkpoints. `config/alist.json` remains ignored and untracked.
+
+### Implemented
+
+- RecognitionType definition checks can run without an unrelated file sample. The optional
+  associated-rule test asks for a path only when selected. Offline Metadata analysis sends no
+  identity sample; live Metadata tests remain explicit. Naming samples expose the bounded
+  identity, TV episode, episode title and filename-tag fields consumed by the selected policy.
+- Object analysis uses production `file_context_from_path` semantics, so a bare filename has no
+  fabricated parent directory. Complete-flow results now include bounded naming and
+  classification evidence projected from the actual strategy result.
+- Complete-flow evidence is bound to its submitted input, authority identity and observed Active
+  version/sequence. Relevant edits, changed Active authority and late responses mark old evidence
+  stale. Refreshing authority preserves the operator's selected ResourceLibrary and inputs; a new
+  complete-flow request remains an explicit action.
+- The default E2E fake now follows the native Storage setup route and Rules setup lifecycle. An
+  empty Active stays empty and does not fabricate Storage rows or readiness. Storage setup tests
+  cover native Settings, explicit first-Draft creation/resume, allowlisted return and fresh
+  authority without navigation-triggered work.
+- Stateful ResourceLibrary journeys get independent fake sessions. A deterministic two-context
+  test proves Delete in context A leaves context B's Movies source and confirmed Copy journey
+  intact; the original Delete effects and Copy impact, confirmation, submission and result checks
+  remain active.
+- The three retired navigation expectations now exercise the native Configuration route, a
+  supported Organizing Rules route intent, and the supported Review compatibility handoff. The
+  handoff check covers rendered content, URL, local/session storage, cookies and IndexedDB.
+
+### Tests and Results
+
+- **PASS** `.venv/bin/python -m unittest tests.test_v2_rules_object_analysis` — 90 tests.
+- **PASS** `.venv/bin/python -m unittest tests.test_v2_rules_workspace tests.test_v2_rules_workspace_commands tests.test_v2_rules_workspace_previews tests.test_configuration_objects` — 171 tests.
+- **PASS** `.venv/bin/python -m unittest tests.test_media_parser tests.test_recognition tests.test_policy_mapping tests.test_metadata tests.test_naming tests.test_classification tests.test_classification_destination_contract tests.test_strategy_cli` — 130 tests.
+- **PASS** `.venv/bin/python -m unittest tests.test_configuration_naming tests.test_configuration_classification tests.test_configuration_organize tests.test_configuration_destination tests.test_configuration_destination_activation tests.test_configuration_destination_precheck tests.test_configuration_snapshot tests.test_configuration_successor_draft tests.test_runtime_strategy_configuration` — 134 tests.
+- **PASS** `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_migration_rehearsal tests.test_release_security` — 119 tests.
+- **PASS** `.venv/bin/python -m unittest tests.test_v2_storage_operations tests.test_management_setup tests.test_v2_settings_rule_readiness` — 49 tests.
+- **PASS** `.venv/bin/python -m unittest discover -s tests` — 2312 tests run, 7 skipped, no failures; 419.440 seconds.
+- **PASS** `.venv/bin/python scripts/rules_object_analysis_browser_proof.py` — all seven object families, optional RecognitionType sample, RecognitionType C identity, actual complete-flow stages, and zero Active/work mutation through real Python HTTP, SQLite and built Web assets.
+- **PASS** `.venv/bin/python scripts/classification_destination_browser_proof.py` — Task 44.2 conversion, reopen, Preview, Save and stale recovery through the real boundary.
+- **PASS** `.venv/bin/python scripts/storage_settings_browser_proof.py` — no-Active to explicit Draft/resume/checked activation and empty Active, then healthy Active with two temporary Local roots; no token in URL or browser storage/cookies.
+- **PASS** `npm run test -- --run src/features/rules/RulesObjectTestPanel.test.tsx` — 19 tests.
+- **PASS** Task-required focused Storage/auth/configuration Web command — 7 files, 116 tests:
+  `npm run test -- --run src/entities/storage/storage-management.test.ts src/shared/api/storage-management-api.test.ts src/shared/navigation/destination-model.test.ts src/shared/navigation/settings-return.test.ts src/shared/auth/AuthBoundary.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx src/features/configuration/ConfigurationPage.test.tsx`.
+- **PASS** `npm run test -- --run` — 68 files, 1033 tests.
+- **PASS** `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm run build`. Build reports the existing advisory that the main JavaScript chunk exceeds 500 kB after minification. Vitest emitted jsdom `scrollTo()` “Not implemented” notices; all test commands exited 0.
+- **PASS** Scope 7 repeated E2E command, 176 tests with 2 workers and `--repeat-each=2`:
+  `npm run test:e2e -- tests/e2e/storage-management.spec.ts tests/e2e/dashboard.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/library-files.spec.ts --workers=2 --repeat-each=2`.
+  The first run after repair was 172 passed / 4 failed because two unique stale route/menu expectations each failed twice. Assertions were aligned to native Settings and the narrow-menu's close/reopen behavior; the exact repeated command then passed 176/176. No timeout, retry, skip, ignore, worker reduction or matching filter was used.
+- **PASS** unfiltered default `npm run test:e2e` — 236 passed, 0 failed, 0 skipped, 0 flaky; 2 workers, 5.1 minutes. This retains the original 235 selected cases and adds the deterministic context-isolation case.
+- **PASS** `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21 tests, 1 worker.
+- **PASS** `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — 10 tests, 1 worker.
+- **PASS** `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .` (347 files); `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required example configuration validation commands; `git diff --check`.
+- **PASS** `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` — no matches (exit 1 as expected).
+- **PASS** wheel build and `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-3-wheel/mediaflow-*.whl` — configuration, schema-44 backup/restore, and upgrade preflight smoke.
+- **PASS** `TMPDIR=/root/mediaflow/.git/task44-3-docker-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-3-security`.
+- **PASS** `TMPDIR=/root/mediaflow/.git/task44-3-docker-tmp .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-3-lifecycle`.
+
+Default E2E baseline-to-current mapping for all 32 original failures:
+
+- The 28 Storage cases now reach their original inventory/action assertions through the corrected
+  fake setup route. They cover inventory, over-limit inventory, search, provider cards, detail
+  references, explicit read check and read failure, Copy failure/review, setup with no Active,
+  setup create/resume/return, navigation with no work, bounded-page Copy source ID, read-only
+  inspection, narrow keyboard layout, Add drawer/publication/provider variation, immutable-ID
+  Edit, failed/stale/unknown Save, read-only mutation denial, no false Add, administrator guidance,
+  empty provider root readability/Edit reload, controlled visual evidence and keyboard focus
+  round-trip. The setup handoff cases now assert `/ui-v2/configuration?returnTo=storage`, explicit
+  Draft intent and refreshed authority.
+- `dashboard.spec.ts` “review and configuration destinations remain migration placeholders” now
+  tests the narrow-menu keyboard journey to native Configuration and its active route.
+  `deep-link.spec.ts` “an explicit route choice…” now chooses supported Organizing Rules and checks
+  continuation to `/ui-v2/rules`. Its old V1 handoff case now exercises `/ui-v2/review` and retains
+  the token privacy assertions across content, URL and browser stores.
+- `library-files.spec.ts` Copy retains the live destination picker and one confirmed submission.
+  Per-test sessions isolate its server state from Delete; the new Delete-A/Copy-B case proves
+  independent source, impact, transfer and result state.
+
+### Decisions
+
+- Shared Python path-context construction is the source of truth for local RecognitionRule tests.
+- Local object tests model only fields consumed by that object's family; live provider calls remain
+  explicit and offline checks preserve zero Provider/Storage I/O.
+- Complete-flow staleness tracks the exact submitted candidate and observed authority. Authority
+  refresh does not silently rerun analysis or discard the selected source.
+- E2E setup fake state follows the real Draft lifecycle, and mutable ResourceLibrary fake state is
+  scoped by explicit test sessions.
+
+### Remaining In-Slice Work
+
+RO-2, RO-5 and RO-6 remain incomplete in Slice 44 and are outside this Task. No next Task is planned
+here.
+
+### Risks / Deviations
+
+- The Web build retains its existing large-chunk advisory; it does not fail the build. jsdom emits
+  its existing `scrollTo()` notices during tests.
+- No schema or persisted evidence format changed. The Task's generic schema-39 Docker upgrade
+  harness limitation against Base schema 44 remains documented and was not claimed as a pass; the
+  applicable wheel backup/restore and current-schema preflight smoke passed.
+- External SMB/OpenList/S3/TMDB services and production credentials were not used; local fakes,
+  temporary Local roots and synthetic identities covered the required offline and real-boundary
+  journeys.
+- The four unrelated pre-existing untracked documentation images and ignored `config/alist.json`
+  were excluded from the implementation checkpoint.
+
+### Checkpoint
+
+Status: READY FOR B REVIEW
+Head SHA: bc820ce95cec3a62a48ac8859bd9175502014d71
