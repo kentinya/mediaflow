@@ -50,6 +50,15 @@ async function connect(page) {
   await page.getByRole('button', { name: 'Connect' }).click();
 }
 
+// The token is kept in browser memory only, so a full page navigation returns
+// to the Connect gate; every deep link reconnects before asserting the route.
+async function open(page, path) {
+  await page.goto(BASE + path);
+  if (await page.getByLabel('API token').count()) {
+    await connect(page);
+  }
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
@@ -106,6 +115,135 @@ try {
   }
 
   console.log(JSON.stringify({ ok: true, rule: rule.result }));
+
+  // -- native reopen → preview → Save round-trip ----------------------------
+  // The backend projection carries a read-only `destinationContract` key, so
+  // the normal Edit page must be able to preview and Save exactly what it
+  // rendered.  A 400 here is the reported defect, not a tolerated outcome.
+  await open(page, '/ui-v2/rules/edit/classificationPolicies/proof-destination');
+  await expect(
+    page.getByRole('heading', { name: 'proof-destination', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId('destination-contract').first()).toBeVisible();
+
+  // Exact-candidate preview through the existing journey.
+  await page.getByRole('button', { name: '预览分类' }).first().click();
+  await expect(page.getByRole('heading', { name: '分类结果' }).first()).toBeVisible();
+  const previewFailure = page.getByText(/保存未生效|预览未生效|unsupported field/);
+  if (await previewFailure.count()) {
+    throw new Error('native preview rejected the projection: '
+      + (await previewFailure.first().innerText()));
+  }
+
+  // Ordinary maintenance Save of the reopened page.
+  await page.locator('#mf-rules-form-classificationPolicies-description').fill('reopened edit');
+  await page.getByRole('button', { name: '保存' }).first().click();
+  await expect(page.getByText(/已发布为新的 Active|已发布/).first()).toBeVisible();
+
+  const savedProjection = await page.request.get(
+    BASE + '/api/v1/operations/rules/objects/classificationPolicies/proof-destination',
+    { headers: { Authorization: 'Bearer ' + TOKEN } },
+  );
+  if (!savedProjection.ok()) {
+    throw new Error('reopened projection read failed: ' + savedProjection.status());
+  }
+  const saved = (await savedProjection.json()).object;
+  if (saved.description !== 'reopened edit') {
+    throw new Error('native reopened Save did not persist the description');
+  }
+  const savedRule = saved.rules[0];
+  if (savedRule.result.library !== undefined) {
+    throw new Error('native reopened Save introduced a legacy prefix');
+  }
+  if (savedRule.result.destinationContract !== 'media_library_path') {
+    throw new Error('the reopened projection lost its revised contract identity');
+  }
+  if (JSON.stringify(savedRule.result.path) !== JSON.stringify(['电影', '华语'])) {
+    throw new Error('native reopened Save changed the explicit path');
+  }
+
+  // The read-only key is a projection explanation, never a stored field: the
+  // real export of the durable document must not contain it.
+  const exported = await page.request.get(
+    BASE + '/api/v1/configuration/packages/export/configuration',
+    { headers: { Authorization: 'Bearer ' + TOKEN } },
+  );
+  if (!exported.ok()) throw new Error('configuration export failed: ' + exported.status());
+  const exportedText = JSON.stringify(await exported.json());
+  if (exportedText.includes('destinationContract')) {
+    throw new Error('the read-only destination contract was persisted');
+  }
+  console.log(JSON.stringify({ ok: true, reopened: savedRule.result }));
+
+  // -- native legacy preview → explicit conversion → Save → reopen ----------
+  const legacyPolicyId = process.env.MF_PROOF_LEGACY_POLICY;
+  if (!legacyPolicyId) throw new Error('MF_PROOF_LEGACY_POLICY is required');
+  await open(page, '/ui-v2/rules/edit/classificationPolicies/' + legacyPolicyId);
+  await expect(
+    page.getByRole('heading', { name: legacyPolicyId, exact: true }),
+  ).toBeVisible();
+  const notice = page.getByRole('status').filter({ hasText: '旧版目标契约' }).first();
+  await expect(notice).toBeVisible();
+  if (!(await notice.innerText()).includes('Movies')) {
+    throw new Error('the legacy notice did not explain the old prefix contribution');
+  }
+
+  // A legacy projection must also be previewable without converting it.
+  await page.getByRole('button', { name: '预览分类' }).first().click();
+  await expect(page.getByRole('heading', { name: '分类结果' }).first()).toBeVisible();
+  const legacyFailure = page.getByText(/unsupported field|预览未生效/);
+  if (await legacyFailure.count()) {
+    throw new Error('native legacy preview rejected the projection: '
+      + (await legacyFailure.first().innerText()));
+  }
+  const stillLegacy = await page.request.get(
+    BASE + '/api/v1/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
+    { headers: { Authorization: 'Bearer ' + TOKEN } },
+  );
+  const stillLegacyRule = (await stillLegacy.json()).object.rules.find(
+    (item) => item.id === 'proof-legacy-browser-rule',
+  );
+  if (stillLegacyRule.result.library !== 'Movies') {
+    throw new Error('a preview silently converted the legacy destination');
+  }
+
+  // The deliberate conversion is the only thing that removes the prefix.
+  // The production control carries an explicit aria-label, which is its
+  // accessible name, so address it by that real label.
+  await page.getByRole('button', { name: /移除规则 \\d+ 的旧版目标前缀/ }).first().click();
+  await page.getByRole('button', { name: '保存' }).first().click();
+  await expect(page.getByText(/已发布为新的 Active|已发布/).first()).toBeVisible();
+
+  const convertedProjection = await page.request.get(
+    BASE + '/api/v1/operations/rules/objects/classificationPolicies/' + legacyPolicyId,
+    { headers: { Authorization: 'Bearer ' + TOKEN } },
+  );
+  const convertedRule = (await convertedProjection.json()).object.rules.find(
+    (item) => item.id === 'proof-legacy-browser-rule',
+  );
+  if (convertedRule.result.library !== undefined) {
+    throw new Error('native conversion did not remove the legacy prefix');
+  }
+  if (JSON.stringify(convertedRule.result.path) !== JSON.stringify(['电影', '华语'])) {
+    throw new Error('native conversion did not preserve the explicit path');
+  }
+
+  // Reopen the converted successor and round-trip preview plus Save again.
+  await open(page, '/ui-v2/rules/edit/classificationPolicies/' + legacyPolicyId);
+  await expect(
+    page.getByRole('heading', { name: legacyPolicyId, exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '预览分类' }).first().click();
+  await expect(page.getByRole('heading', { name: '分类结果' }).first()).toBeVisible();
+  const convertedFailure = page.getByText(/unsupported field|预览未生效/);
+  if (await convertedFailure.count()) {
+    throw new Error('reopened converted preview was rejected: '
+      + (await convertedFailure.first().innerText()));
+  }
+  await page.locator('#mf-rules-form-classificationPolicies-description').fill('converted reopen');
+  await page.getByRole('button', { name: '保存' }).first().click();
+  await expect(page.getByText(/已发布为新的 Active|已发布/).first()).toBeVisible();
+  console.log(JSON.stringify({ ok: true, converted: convertedRule.result }));
 } finally {
   await browser.close();
 }
@@ -131,6 +269,35 @@ LEGACY_RULE = {
 }
 LEGACY_POLICY_ID = "A"
 
+# A second real Base-era legacy policy that the Python assertions never convert.
+# The native browser journey below needs a still-legacy object to preview and
+# then deliberately convert through the form, so it must not share the policy
+# whose conversion the earlier API assertions already consumed.
+BROWSER_LEGACY_POLICY_ID = "proof-legacy-browser"
+BROWSER_LEGACY_POLICY = {
+    "id": BROWSER_LEGACY_POLICY_ID,
+    "name": "旧版目标策略",
+    "description": "Base-era legacy destination policy",
+    "enabled": True,
+    "priority": 0,
+    "rules": [
+        {
+            "id": "proof-legacy-browser-rule",
+            "name": "旧版规则",
+            "priority": 100,
+            "enabled": True,
+            "confidence": 100,
+            "description": "",
+            "conditions": {"mediaType": ["movie"]},
+            "result": {
+                "mediaLibraryId": "movies",
+                "library": "Movies",
+                "path": ["电影", "华语"],
+            },
+        }
+    ],
+}
+
 
 def render_configuration(root: Path) -> dict:
     document = json.loads((ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8"))
@@ -145,6 +312,7 @@ def render_configuration(root: Path) -> dict:
     for policy in document["classificationPolicies"]:
         if policy["id"] == LEGACY_POLICY_ID:
             policy["rules"].insert(0, json.loads(json.dumps(LEGACY_RULE)))
+    document["classificationPolicies"].append(json.loads(json.dumps(BROWSER_LEGACY_POLICY)))
     return document
 
 
@@ -409,7 +577,12 @@ def main() -> int:
         result = subprocess.run(
             ["node", "--input-type=module", "-e", BROWSER_PROOF],
             cwd=ROOT / "web",
-            env={**os.environ, "MF_PROOF_BASE": BASE, "MF_PROOF_TOKEN": TOKEN},
+            env={
+                **os.environ,
+                "MF_PROOF_BASE": BASE,
+                "MF_PROOF_TOKEN": TOKEN,
+                "MF_PROOF_LEGACY_POLICY": BROWSER_LEGACY_POLICY_ID,
+            },
             capture_output=True,
             text=True,
         )

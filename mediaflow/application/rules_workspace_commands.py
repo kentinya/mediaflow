@@ -441,6 +441,10 @@ class RulesWorkspaceCommandService:
                 f"{spec.label} preview candidate contains unsupported field {sorted(unknown)[0]!r}",
             )
         self._validate_form_fields(spec, merged)
+        # Preview stages the same candidate shape Save accepts, so it applies the
+        # same read-only-key cleanup and legacy-prefix intent semantics.  Without
+        # this the form's own projection could not be previewed at all.
+        self._prepare_candidate(spec, merged, stored)
         composed = self._normalize_or_reject(spec, merged)
         self._validate_references(spec, composed, active.document, object_id)
 
@@ -1129,7 +1133,7 @@ class RulesWorkspaceCommandService:
                     f"{spec.label} candidate contains unsupported field {sorted(unknown)[0]!r}",
                 )
             self._validate_form_fields(spec, merged)
-            self._preserve_unsubmitted_legacy_destinations(spec, merged, stored)
+            self._prepare_candidate(spec, merged, stored)
             composed = self._normalize_or_reject(spec, merged)
             self._validate_references(spec, composed, active.document, object_id)
 
@@ -1464,6 +1468,12 @@ class RulesWorkspaceCommandService:
         proposed contribution side by side and the operator can deliberately remove
         it; the raw stored value is never rewritten here, so opening or cosmetically
         saving an unrelated object cannot convert a legacy destination.
+
+        The projection always carries the explicit ``path`` the rule really means,
+        including for a historical document that only stored ``category``/
+        ``subcategory``: the normalizer has always resolved that form to the same
+        relative path, so omitting it here would let the form submit a candidate
+        that silently lost the rule's destination.
         """
 
         if not isinstance(rules, list):
@@ -1483,6 +1493,17 @@ class RulesWorkspaceCommandService:
                     if isinstance(legacy, str) and legacy.strip()
                     else "media_library_path"
                 )
+                # A historical document may carry only category/subcategory; the
+                # revised authoring surface shows the one explicit path they meant.
+                if not isinstance(normalized.get("path"), (list, str)):
+                    category = normalized.get("category")
+                    subcategory = normalized.get("subcategory")
+                    if isinstance(category, str) and category.strip():
+                        normalized["path"] = (
+                            [category, subcategory]
+                            if isinstance(subcategory, str) and subcategory.strip()
+                            else [category]
+                        )
                 # The revised authoring surface never shows the legacy editable
                 # category/subcategory outputs; display is derived from path.
                 normalized.pop("category", None)
@@ -1492,22 +1513,27 @@ class RulesWorkspaceCommandService:
         return projected
 
     @staticmethod
-    def _preserve_unsubmitted_legacy_destinations(
+    def _prepare_candidate(
         spec: _FamilySpec,
         merged: dict[str, object],
         stored: Mapping[str, object] | None,
     ) -> None:
-        """Keep a legacy destination contract unless the operator explicitly changed it.
+        """Make one submitted candidate ready for the strict backend normalizer.
 
-        A rule that already carries the legacy ``library`` prefix keeps that exact
-        prefix when the submitted candidate does not mention the rule at all, or
-        mentions it without a destination change.  Otherwise an unrelated cosmetic
-        Save of the enclosing policy would silently republish a legacy destination
-        as a revised one.  Removing the prefix is therefore always a deliberate
-        submitted change, never a side effect.
+        Save and Preview both accept the candidate a projection just produced, so
+        both must apply exactly the same preparation.  Two things the form only
+        displays can never become fields the backend demands back:
 
-        Read-only projection keys are also dropped here so a value the form only
-        displays can never become a field the backend demands back.
+        * the read-only ``destinationContract`` explanation, which is dropped here
+          rather than added to the persisted runtime allowlist; and
+        * the legacy prefix intent, which is preserved unless the operator
+          deliberately changed it.  A rule that already carries the legacy
+          ``library`` prefix keeps that exact prefix when the submitted candidate
+          does not express an intent about it, so an unrelated cosmetic Save of the
+          enclosing policy cannot silently republish a legacy destination as a
+          revised one.  An explicit ``null`` is the operator's deliberate
+          conversion: the prefix is removed and the existing explicit path is
+          preserved rather than prefixed.
         """
 
         if spec.family != "classificationPolicies":
@@ -1528,25 +1554,22 @@ class RulesWorkspaceCommandService:
             if not isinstance(result, Mapping):
                 continue
             result_dict = dict(result)
-            # ``destinationContract`` is a read-only explanation of which contract
-            # the stored rule already has; it is never part of the persisted form.
+            # A read-only explanation of which contract the stored rule already
+            # has; it is never part of the persisted form for any rule, including
+            # a newly created or copied one that has no stored predecessor.
             result_dict.pop("destinationContract", None)
             previous = stored_by_id.get(str(rule.get("id")))
             previous_result = previous.get("result") if isinstance(previous, Mapping) else None
             legacy = (
                 previous_result.get("library") if isinstance(previous_result, Mapping) else None
             )
-            if not (isinstance(legacy, str) and legacy.strip()):
-                continue
-            if "library" not in result_dict:
-                # The candidate never expressed an intent about the prefix, so the
-                # historical contract is carried forward unchanged.
-                result_dict["library"] = legacy
-            elif result_dict["library"] is None:
-                # An explicit null is the operator's deliberate conversion: the
-                # legacy prefix is removed and the revised contract is published
-                # with the existing explicit path preserved.
-                result_dict.pop("library")
+            if isinstance(legacy, str) and legacy.strip():
+                if "library" not in result_dict:
+                    # The candidate never expressed an intent about the prefix, so
+                    # the historical contract is carried forward unchanged.
+                    result_dict["library"] = legacy
+                elif result_dict["library"] is None:
+                    result_dict.pop("library")
             if result_dict != result:
                 rule_dict = dict(rule)
                 rule_dict["result"] = result_dict

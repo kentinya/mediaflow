@@ -582,6 +582,234 @@ class RulesWorkspaceConversionTests(unittest.TestCase):
                 self.assertNotEqual(stored.get("description"), "stale attempt")
 
 
+class ProjectionRoundTripTests(unittest.TestCase):
+    """A projection the backend itself produced must round-trip Save and Preview.
+
+    The edit/copy projection carries the read-only ``destinationContract``
+    explanation so the form can show the current contract.  Both publication
+    commands must therefore accept exactly that projection: a value the operator
+    can only read must never become a field the backend demands back.
+    """
+
+    @staticmethod
+    def _document(root: Path) -> dict:
+        document = example_document()
+        document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")
+        document["storages"][0]["rootPath"] = str(root / "source")
+        document["storages"][1]["rootPath"] = str(root / "target")
+        document["mediaLibraries"][0]["rootPath"] = "Media"
+        return document
+
+    def _commands(self, managed, root: Path):
+        from mediaflow.application.rules_workspace_commands import RulesWorkspaceCommandService
+
+        (root / "source").mkdir(parents=True, exist_ok=True)
+        (root / "target" / "Media").mkdir(parents=True, exist_ok=True)
+        objects = ConfigurationObjectService(managed)
+        objects._storage_adapters.update(
+            {
+                "source": LocalStorage("source", root / "source"),
+                "target": LocalStorage("target", root / "target"),
+            }
+        )
+        document = self._document(root)
+        draft = managed.import_draft(document, actor="operator")
+        validated = managed.validate(draft.revision_id, actor="operator")
+        if validated.status.value != "validated":
+            raise AssertionError(validated.validation_errors)
+        objects._checked_successor_evidence(validated, actor="operator")
+        objects.activate_checked(
+            validated.revision_id, expected_version=validated.version, actor="operator"
+        )
+        return RulesWorkspaceCommandService(objects)
+
+    @staticmethod
+    def _authority(managed):
+        active = managed.active()
+        return active, active.revision_sequence or active.version
+
+    def _save(self, commands, managed, policy_id: str | None, candidate: dict) -> None:
+        active, version = self._authority(managed)
+        commands.save_object(
+            "classificationPolicies",
+            candidate,
+            actor="operator",
+            expected_revision_id=active.revision_id,
+            expected_version=version,
+            expected_digest=active.digest,
+            object_id=policy_id,
+        )
+
+    def _preview(self, commands, managed, policy_id: str, candidate: dict) -> None:
+        active, version = self._authority(managed)
+        commands.stage_preview_candidate(
+            "classificationPolicies",
+            candidate,
+            actor="operator",
+            expected_revision_id=active.revision_id,
+            expected_version=version,
+            expected_digest=active.digest,
+            object_id=policy_id,
+        )
+
+    def test_new_policy_reopen_preview_and_save(self) -> None:
+        """Create a revised policy, reopen Edit, preview and Save it unchanged."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                commands = self._commands(managed, root)
+                new_policy = {
+                    "id": "round-trip",
+                    "name": "Round trip",
+                    "description": "",
+                    "enabled": True,
+                    "priority": 0,
+                    "rules": [
+                        {
+                            "id": "round-trip-rule",
+                            "name": "Round trip rule",
+                            "priority": 100,
+                            "enabled": True,
+                            "confidence": 100,
+                            "description": "",
+                            "conditions": {"mediaType": ["movie"]},
+                            "result": {
+                                "mediaLibraryId": "movies",
+                                "path": ["电影", "华语"],
+                            },
+                        }
+                    ],
+                }
+                self._save(commands, managed, None, new_policy)
+
+                # Reopen the native Edit projection exactly as the form does.
+                projection = commands.edit_projection("classificationPolicies", "round-trip")
+                candidate = copy.deepcopy(projection["object"])
+                self.assertEqual(
+                    candidate["rules"][0]["result"]["destinationContract"],
+                    "media_library_path",
+                )
+                # Preview and an ordinary description Save both round-trip.
+                self._preview(commands, managed, "round-trip", copy.deepcopy(candidate))
+                candidate["description"] = "reopened edit"
+                self._save(commands, managed, "round-trip", candidate)
+
+                stored = next(
+                    item
+                    for item in managed.active().document["classificationPolicies"]
+                    if item["id"] == "round-trip"
+                )
+                self.assertEqual(stored["description"], "reopened edit")
+                self.assertNotIn("library", stored["rules"][0]["result"])
+                self.assertNotIn("destinationContract", stored["rules"][0]["result"])
+                self.assertEqual(stored["rules"][0]["result"]["path"], ["电影", "华语"])
+
+    def test_legacy_preview_conversion_reopen_preview_and_save(self) -> None:
+        """Legacy → preview → explicit conversion → Save → reopen → preview → Save."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                commands = self._commands(managed, root)
+                policy_id = str(managed.active().document["classificationPolicies"][0]["id"])
+
+                # A legacy projection previews without converting anything.
+                projection = commands.edit_projection("classificationPolicies", policy_id)
+                legacy_candidate = copy.deepcopy(projection["object"])
+                self.assertEqual(
+                    legacy_candidate["rules"][0]["result"]["destinationContract"],
+                    "legacy_library_prefix",
+                )
+                self._preview(commands, managed, policy_id, copy.deepcopy(legacy_candidate))
+                self.assertEqual(
+                    managed.active().document["classificationPolicies"][0]["rules"][0]["result"][
+                        "library"
+                    ],
+                    "Movies",
+                )
+
+                # The deliberate conversion publishes the revised successor.
+                for rule in legacy_candidate["rules"]:
+                    rule["result"]["library"] = None
+                self._save(commands, managed, policy_id, legacy_candidate)
+                converted = managed.active().document["classificationPolicies"][0]
+                self.assertNotIn("library", converted["rules"][0]["result"])
+                self.assertEqual(converted["rules"][0]["result"]["path"], ["Anime"])
+
+                # Reopen the revised successor and round-trip preview plus Save.
+                projection = commands.edit_projection("classificationPolicies", policy_id)
+                revised_candidate = copy.deepcopy(projection["object"])
+                self.assertEqual(
+                    revised_candidate["rules"][0]["result"]["destinationContract"],
+                    "media_library_path",
+                )
+                self._preview(commands, managed, policy_id, copy.deepcopy(revised_candidate))
+                revised_candidate["description"] = "after conversion"
+                self._save(commands, managed, policy_id, revised_candidate)
+                final = managed.active().document["classificationPolicies"][0]
+                self.assertEqual(final["description"], "after conversion")
+                self.assertNotIn("library", final["rules"][0]["result"])
+                self.assertEqual(final["rules"][0]["result"]["path"], ["Anime"])
+
+    def test_category_only_legacy_document_round_trips_its_explicit_path(self) -> None:
+        """A Base-era category-only destination keeps its path through a Save."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                document = self._document(root)
+                for policy in document["classificationPolicies"]:
+                    for rule in policy["rules"]:
+                        result = rule["result"]
+                        if "path" in result:
+                            parts = result.pop("path")
+                            result["category"] = parts[0]
+                            if len(parts) > 1:
+                                result["subcategory"] = parts[1]
+                (root / "source").mkdir(parents=True, exist_ok=True)
+                (root / "target" / "Media").mkdir(parents=True, exist_ok=True)
+                objects = ConfigurationObjectService(managed)
+                objects._storage_adapters.update(
+                    {
+                        "source": LocalStorage("source", root / "source"),
+                        "target": LocalStorage("target", root / "target"),
+                    }
+                )
+                draft = managed.import_draft(document, actor="operator")
+                validated = managed.validate(draft.revision_id, actor="operator")
+                if validated.status.value != "validated":
+                    raise AssertionError(validated.validation_errors)
+                objects._checked_successor_evidence(validated, actor="operator")
+                objects.activate_checked(
+                    validated.revision_id, expected_version=validated.version, actor="operator"
+                )
+                from mediaflow.application.rules_workspace_commands import (
+                    RulesWorkspaceCommandService,
+                )
+
+                commands = RulesWorkspaceCommandService(objects)
+                policy_id = str(managed.active().document["classificationPolicies"][0]["id"])
+
+                projection = commands.edit_projection("classificationPolicies", policy_id)
+                candidate = copy.deepcopy(projection["object"])
+                # The projection shows the one explicit path the document meant.
+                self.assertEqual(candidate["rules"][0]["result"]["path"], ["Anime"])
+                self.assertNotIn("category", candidate["rules"][0]["result"])
+                self.assertNotIn("subcategory", candidate["rules"][0]["result"])
+                self._preview(commands, managed, policy_id, copy.deepcopy(candidate))
+                candidate["description"] = "category-only round trip"
+                self._save(commands, managed, policy_id, candidate)
+
+                stored = managed.active().document["classificationPolicies"][0]
+                self.assertEqual(stored["description"], "category-only round trip")
+                self.assertEqual(stored["rules"][0]["result"]["path"], ["Anime"])
+                self.assertEqual(stored["rules"][0]["result"]["library"], "Movies")
+
+
 class RuntimeRevisionIdentityTests(unittest.TestCase):
     """A stored revision keeps its bytes and digest across a restart."""
 
