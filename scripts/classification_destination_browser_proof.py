@@ -65,17 +65,17 @@ try {
   await page.goto(BASE + '/ui-v2/rules?section=classificationPolicies');
   await connect(page);
   await expect(
-    page.getByRole('heading', { name: '分类策略', exact: true }),
+    page.getByRole('heading', { name: '分类规则', exact: true }),
   ).toBeVisible();
 
   // -- revised authoring: destination selector + one safe path --------------
-  await page.getByRole('button', { name: '添加分类策略' }).last().click();
-  const drawer = page.getByRole('dialog', { name: '添加分类策略' });
+  await page.getByRole('button', { name: '添加分类规则' }).last().click();
+  const drawer = page.getByRole('dialog', { name: '添加分类规则' });
   await drawer.getByLabel(/^ID/).fill('proof-destination');
   await drawer.getByLabel(/^名称/).fill('目标契约证明');
 
-  // A first rule carries the revised contract by default; the destination
-  // controls belong to the nested rule editor.
+  // The compact internal-rule list stays the default state; the destination
+  // controls belong to the explicit inner rule editor.
   await drawer.getByRole('button', { name: '添加规则' }).click();
   await expect(drawer.getByLabel('相对路径').first()).toBeVisible();
 
@@ -124,6 +124,9 @@ try {
   await expect(
     page.getByRole('heading', { name: 'proof-destination', exact: true }),
   ).toBeVisible();
+  // The compact internal-rule inventory is the default state; the destination
+  // explanation and controls belong to the explicit inner rule editor.
+  await page.getByRole('button', { name: '编辑规则 1' }).first().click();
   await expect(page.getByTestId('destination-contract').first()).toBeVisible();
 
   // Exact-candidate preview through the existing journey.
@@ -182,6 +185,8 @@ try {
   await expect(
     page.getByRole('heading', { name: legacyPolicyId, exact: true }),
   ).toBeVisible();
+  // The legacy explanation is stated inside the explicit inner rule editor.
+  await page.getByRole('button', { name: '编辑规则 1' }).first().click();
   const notice = page.getByRole('status').filter({ hasText: '旧版目标契约' }).first();
   await expect(notice).toBeVisible();
   if (!(await notice.innerText()).includes('Movies')) {

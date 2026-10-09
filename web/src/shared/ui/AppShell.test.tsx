@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../api/auth-store";
@@ -7,6 +7,7 @@ import { renderApp } from "../../../tests/utils";
 afterEach(() => {
   cleanup();
   authStore.clearToken();
+  vi.unstubAllGlobals();
 });
 
 describe("AppShell", () => {
@@ -67,5 +68,101 @@ describe("AppShell", () => {
     expect(screen.queryByText("系统存储")).toBeNull();
     expect(screen.queryByText("12.4 TB / 20 TB")).toBeNull();
     expect(screen.queryByText("62%")).toBeNull();
+  });
+
+  it("composes the Rules title, description and keyword search in the shared header", async () => {
+    authStore.setToken("shell-test-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              available: true,
+              reason: null,
+              canManage: false,
+              active: { status: "ACTIVE", version: 1, sequence: 1 },
+              actions: {},
+              readiness: { state: "READY", gaps: [] },
+              overview: {
+                relationship: [],
+                counts: {},
+                enabledCounts: {},
+              },
+              sections: {},
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+
+    // One shared shell, one Rules title/description row and the functional
+    // keyword search plus the existing account/notification controls.
+    expect(
+      await screen.findByRole("heading", { name: "整理规则" }),
+    ).toBeVisible();
+    expect(screen.getByText(/管理从识别到整理的完整规则体系/)).toBeVisible();
+    const search = screen.getByRole("searchbox", {
+      name: "搜索规则名称、描述",
+    });
+    expect(search).toHaveAttribute("placeholder", "搜索规则名称、描述...");
+    expect(search).toBeEnabled();
+    expect(screen.getByRole("button", { name: "通知" })).toBeVisible();
+    // Exactly one shell header: no duplicate top bar above the workspace.
+    expect(document.querySelectorAll(".mf-shell-topbar")).toHaveLength(1);
+    expect(document.querySelectorAll(".mf-shell-topbar h1")).toHaveLength(1);
+  });
+
+  it("marks the Rules Overview header search as inapplicable instead of fabricating a global search", async () => {
+    authStore.setToken("shell-test-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              available: true,
+              reason: null,
+              canManage: false,
+              active: { status: "ACTIVE", version: 1, sequence: 1 },
+              actions: {},
+              readiness: { state: "READY", gaps: [] },
+              overview: { relationship: [], counts: {}, enabledCounts: {} },
+              sections: {},
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    renderApp("/ui-v2/rules");
+
+    const search = await screen.findByRole("searchbox", {
+      name: "搜索规则名称、描述",
+    });
+    expect(search).toBeDisabled();
+    expect(search).toHaveAttribute("placeholder", "概览不支持关键字搜索");
+  });
+
+  it("does not put a second Rules header on the dedicated Edit route", async () => {
+    authStore.setToken("shell-test-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { code: "not_found" } }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    renderApp("/ui-v2/rules/edit/recognitionTypes/C");
+
+    // The Edit route keeps its own subject heading; the shared shell must not
+    // add a Rules title above it.
+    expect(
+      await screen.findByRole("heading", { name: "无法读取该对象" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "整理规则" })).toBeNull();
   });
 });

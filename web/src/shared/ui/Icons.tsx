@@ -22,7 +22,17 @@ export type IconName =
   | "image"
   | "video"
   | "trash"
-  | "more";
+  | "more"
+  // Rules family navigation glyphs (Slice 44, RO-2). They are presentation
+  // only: no family identity, route or authority is derived from an icon.
+  | "overview"
+  | "link"
+  | "search-type"
+  | "search-rule"
+  | "database"
+  | "cloud"
+  | "network"
+  | "action";
 
 export interface IconProps extends SVGProps<SVGSVGElement> {
   readonly name: IconName;
@@ -191,6 +201,67 @@ export function Icon({ name, ...props }: IconProps) {
         <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
           <path d="M4.5 6.5h15M9.5 6.5V4.8h5v1.7M6.5 6.5l.9 12.2a1.6 1.6 0 0 0 1.6 1.5h6a1.6 1.6 0 0 0 1.6-1.5l.9-12.2" />
           <path d="M10 10.5v6M14 10.5v6" />
+        </svg>
+      );
+    case "overview":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M12 3.6v17M3.6 12h17" />
+          <circle cx="12" cy="12" r="7.3" />
+          <path d="m8.4 8.4 7.2 7.2M15.6 8.4l-7.2 7.2" />
+        </svg>
+      );
+    case "link":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M9.6 14.4 14.4 9.6" />
+          <path d="M12.4 7.1 14 5.5a3.9 3.9 0 0 1 5.5 5.5l-1.6 1.6" />
+          <path d="M11.6 16.9 10 18.5a3.9 3.9 0 0 1-5.5-5.5l1.6-1.6" />
+        </svg>
+      );
+    case "search-type":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <circle cx="10.4" cy="10.4" r="5.6" />
+          <path d="m14.6 14.6 5 5" />
+          <path d="M8.4 9.2h4M8.4 12h2.6" />
+        </svg>
+      );
+    case "search-rule":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <circle cx="10.4" cy="10.4" r="5.6" />
+          <path d="m14.6 14.6 5 5" />
+          <path d="M8 10.6 9.6 12l2.8-3" />
+        </svg>
+      );
+    case "database":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <ellipse cx="12" cy="6.4" rx="7" ry="2.9" />
+          <path d="M5 6.4v11.2c0 1.6 3.1 2.9 7 2.9s7-1.3 7-2.9V6.4" />
+          <path d="M5 12c0 1.6 3.1 2.9 7 2.9s7-1.3 7-2.9" />
+        </svg>
+      );
+    case "cloud":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M7.4 18.4h9.6a4 4 0 0 0 .5-8 5.4 5.4 0 0 0-10.3-1.2 3.9 3.9 0 0 0 .2 9.2z" />
+        </svg>
+      );
+    case "network":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <circle cx="6.4" cy="6.6" r="2.4" />
+          <circle cx="17.6" cy="6.6" r="2.4" />
+          <circle cx="12" cy="17.4" r="2.4" />
+          <path d="M8.8 6.6h6.4M7.6 8.8l3.3 6.4M16.4 8.8l-3.3 6.4" />
+        </svg>
+      );
+    case "action":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M12.6 3.6 7.4 12.4h4l-1 8 5.2-8.8h-4z" />
         </svg>
       );
   }

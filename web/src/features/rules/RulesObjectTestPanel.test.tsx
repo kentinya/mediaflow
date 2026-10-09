@@ -327,7 +327,7 @@ describe("Rules object-scoped local test", () => {
     fireEvent.change(screen.getByLabelText("测试样本来源标签"), {
       target: { value: "WEB-DL" },
     });
-    await user.click(screen.getByRole("button", { name: "测试该命名策略" }));
+    await user.click(screen.getByRole("button", { name: "测试该命名规则" }));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]?.sample).toMatchObject({
       title: "The Matrix",
@@ -381,7 +381,7 @@ describe("Rules object-scoped local test", () => {
     expect(screen.queryByLabelText("测试合成路径")).toBeNull();
     expect(screen.queryByLabelText("测试样本标题")).toBeNull();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "检查该类型绑定" }));
+    await user.click(screen.getByRole("button", { name: "检查该类型策略" }));
     await screen.findByText(/绑定有效/);
     expect(bodies[0]?.sample).toBeNull();
     expect(screen.getByText(/身份保持:C/)).toBeVisible();

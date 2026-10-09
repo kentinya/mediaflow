@@ -385,6 +385,7 @@ export function RulesEditPage() {
         />
       </details>
       <div className="mf-rules-drawer-actions">
+        {returnTo}
         <button
           type="button"
           className="mf-button mf-button-primary"
@@ -393,7 +394,6 @@ export function RulesEditPage() {
         >
           {state.kind === "saving" ? "保存中..." : "保存"}
         </button>
-        {returnTo}
       </div>
     </section>
   );

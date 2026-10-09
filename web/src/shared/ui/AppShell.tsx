@@ -14,6 +14,15 @@ import {
   destinationForPath,
   shellDestinations,
 } from "../navigation/destination-model";
+import {
+  isRuleFamily,
+  RULES_HEADER_SEARCH_LABEL,
+  RULES_HEADER_SEARCH_PLACEHOLDER,
+  RULES_OVERVIEW_SEARCH_HINT,
+  RULES_OVERVIEW_SEARCH_PLACEHOLDER,
+  RULES_WORKSPACE_DESCRIPTION,
+  RULES_WORKSPACE_TITLE,
+} from "../../entities/rules/rules-workspace";
 import { Icon } from "./Icons";
 
 export interface AppShellProps {
@@ -50,15 +59,46 @@ export function useStorageSearch(): StorageSearchContextValue {
   return useContext(StorageSearchContext);
 }
 
+interface RulesSearchContextValue {
+  readonly query: string;
+  readonly setQuery: (query: string) => void;
+  /**
+   * True only while the Rules workspace is on its read-only Overview, where the
+   * family keyword scope does not exist. The header input is then visibly
+   * inapplicable instead of advertising a fabricated global search.
+   */
+  readonly inapplicable: boolean;
+}
+
+const RulesSearchContext = createContext<RulesSearchContextValue>({
+  query: "",
+  setQuery: () => undefined,
+  inapplicable: true,
+});
+
+export function useRulesSearch(): RulesSearchContextValue {
+  return useContext(RulesSearchContext);
+}
+
+/** The Rules workspace owns its own header composition inside the shared shell. */
+function rulesSectionOf(searchStr: string): string | null {
+  const section = new URLSearchParams(searchStr).get("section");
+  return isRuleFamily(section) ? section : null;
+}
+
 /** Shared feature-independent V2 shell and operator-goal navigation. */
 export function AppShell({ children }: AppShellProps) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
+  const searchStr = useRouterState({
+    select: (state) => state.location.searchStr ?? "",
+  });
   const destination = destinationForPath(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
   const [storageSearch, setStorageSearch] = useState("");
+  const [rulesSearch, setRulesSearch] = useState("");
   const filesSearchListeners = useRef(new Set<() => void>());
   const setFilesSearchValue = useCallback((value: string) => {
     setFilesSearch(value);
@@ -74,6 +114,12 @@ export function AppShell({ children }: AppShellProps) {
   const searchIsFiles =
     pathname === "/resourcelib/files" || pathname === "/medialib/files";
   const searchIsStorage = pathname === "/storage";
+  // Only the Rules workspace route gets the Rules header. The dedicated Edit
+  // route is a distinct full-page state with its own subject heading, so the
+  // shared shell must not add a second Rules title above it.
+  const searchIsRules = pathname === "/rules";
+  const rulesSection = searchIsRules ? rulesSectionOf(searchStr) : null;
+  const rulesSearchInapplicable = searchIsRules && rulesSection === null;
   const filesSearchContext = useMemo(
     () => ({
       query: filesSearch,
@@ -88,6 +134,14 @@ export function AppShell({ children }: AppShellProps) {
       setQuery: setStorageSearch,
     }),
     [storageSearch],
+  );
+  const rulesSearchContext = useMemo(
+    () => ({
+      query: rulesSearch,
+      setQuery: setRulesSearch,
+      inapplicable: rulesSearchInapplicable,
+    }),
+    [rulesSearch, rulesSearchInapplicable],
   );
 
   useEffect(() => {
@@ -144,31 +198,54 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
       </aside>
       <div className="mf-shell-content">
-        <header className="mf-shell-topbar">
+        <header
+          className={`mf-shell-topbar${searchIsRules ? " mf-shell-topbar-rules" : ""}`}
+        >
+          {searchIsRules ? (
+            <div className="mf-rules-topbar-title">
+              <h1>{RULES_WORKSPACE_TITLE}</h1>
+              <p>{RULES_WORKSPACE_DESCRIPTION}</p>
+            </div>
+          ) : null}
           <div className="mf-shell-search">
             <Icon name="search" />
             <input
               type="search"
               aria-label={
-                searchIsStorage ? "搜索存储、路径" : "搜索文件、文件夹或媒体库"
+                searchIsRules
+                  ? RULES_HEADER_SEARCH_LABEL
+                  : searchIsStorage
+                    ? "搜索存储、路径"
+                    : "搜索文件、文件夹或媒体库"
               }
               placeholder={
-                searchIsStorage
-                  ? "搜索存储、路径..."
-                  : "搜索文件、文件夹或媒体库..."
+                searchIsRules
+                  ? rulesSearchInapplicable
+                    ? RULES_OVERVIEW_SEARCH_PLACEHOLDER
+                    : RULES_HEADER_SEARCH_PLACEHOLDER
+                  : searchIsStorage
+                    ? "搜索存储、路径..."
+                    : "搜索文件、文件夹或媒体库..."
+              }
+              title={
+                rulesSearchInapplicable ? RULES_OVERVIEW_SEARCH_HINT : undefined
               }
               value={
                 searchIsFiles
                   ? filesSearch
                   : searchIsStorage
                     ? storageSearch
-                    : ""
+                    : searchIsRules
+                      ? rulesSearch
+                      : ""
               }
               onChange={(event) => {
                 if (searchIsStorage) setStorageSearch(event.target.value);
+                else if (searchIsRules) setRulesSearch(event.target.value);
                 else setFilesSearch(event.target.value);
               }}
-              readOnly={!searchIsFiles && !searchIsStorage}
+              readOnly={!searchIsFiles && !searchIsStorage && !searchIsRules}
+              disabled={rulesSearchInapplicable}
             />
           </div>
           <div className="mf-shell-actions">
@@ -189,7 +266,9 @@ export function AppShell({ children }: AppShellProps) {
           ) : null}
           <FilesSearchContext.Provider value={filesSearchContext}>
             <StorageSearchContext.Provider value={storageSearchContext}>
-              {children}
+              <RulesSearchContext.Provider value={rulesSearchContext}>
+                {children}
+              </RulesSearchContext.Provider>
             </StorageSearchContext.Provider>
           </FilesSearchContext.Provider>
         </main>

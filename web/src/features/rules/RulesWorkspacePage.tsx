@@ -1,4 +1,10 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -15,9 +21,15 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import {
   isRuleFamily,
   RULE_FAMILIES,
+  RULE_FAMILY_CARD_DESCRIPTIONS,
   RULE_FAMILY_DEPENDENCY_GUIDANCE,
+  RULE_FAMILY_INVENTORY_DESCRIPTIONS,
   RULE_FAMILY_LABELS as LABELS,
   RULE_FAMILY_ONBOARDING_ORDER,
+  RULE_FAMILY_SEARCH,
+  RULES_OVERVIEW_CARD_DESCRIPTION,
+  RULES_OVERVIEW_LABEL,
+  RULES_OVERVIEW_SEARCH_HINT,
   type RuleFamily,
   type RuleInventoryItem,
   type RulesWorkspaceModel,
@@ -35,6 +47,8 @@ import {
 } from "./RulesObjectDrawer";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { readRuleDraft } from "./rules-workspace-labels";
+import { Icon } from "../../shared/ui/Icons";
+import { useRulesSearch } from "../../shared/ui/AppShell";
 
 type Section = "overview" | RuleFamily;
 
@@ -66,6 +80,72 @@ export function rulesSectionSearch(
 ): Record<string, string> | undefined {
   return section === "overview" ? undefined : { section };
 }
+
+/**
+ * The eight reference navigation cards.
+ *
+ * Each card is a pure navigation control: an icon, the business name and the
+ * short description. The active card uses the light-blue/blue reference
+ * treatment. The accessible name stays exactly the business label (the
+ * description is associated separately), so a card can never be confused with
+ * an inventory action or an editor.
+ */
+function FamilyNavigation({
+  section,
+  onSelect,
+}: {
+  readonly section: Section;
+  readonly onSelect: (next: Section) => void;
+}) {
+  return (
+    <nav className="mf-rules-nav" aria-label="规则分类">
+      <button
+        type="button"
+        className={`mf-rules-card${section === "overview" ? " is-active" : ""}`}
+        aria-label={RULES_OVERVIEW_LABEL}
+        aria-describedby="mf-rules-card-overview-desc"
+        aria-current={section === "overview" ? "page" : undefined}
+        onClick={() => onSelect("overview")}
+      >
+        <Icon name="overview" />
+        <span className="mf-rules-card-name">{RULES_OVERVIEW_LABEL}</span>
+        <small id="mf-rules-card-overview-desc">
+          {RULES_OVERVIEW_CARD_DESCRIPTION}
+        </small>
+      </button>
+      {RULE_FAMILIES.map((family) => (
+        <button
+          key={family}
+          type="button"
+          className={`mf-rules-card${section === family ? " is-active" : ""}`}
+          aria-label={LABELS[family]}
+          aria-describedby={`mf-rules-card-${family}-desc`}
+          aria-current={section === family ? "page" : undefined}
+          onClick={() => onSelect(family)}
+        >
+          <Icon name={RULE_FAMILY_ICONS[family]} />
+          <span className="mf-rules-card-name">{LABELS[family]}</span>
+          <small id={`mf-rules-card-${family}-desc`}>
+            {RULE_FAMILY_CARD_DESCRIPTIONS[family]}
+          </small>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** Presentation-only glyph per family; no identity is derived from an icon. */
+const RULE_FAMILY_ICONS: Readonly<
+  Record<RuleFamily, Parameters<typeof Icon>[0]["name"]>
+> = {
+  typeBindings: "link",
+  recognitionTypes: "search-type",
+  recognitionRules: "search-rule",
+  metadataPolicies: "database",
+  namingPolicies: "cloud",
+  classificationPolicies: "network",
+  organizePolicies: "action",
+};
 
 function Availability({
   model,
@@ -176,9 +256,11 @@ function OnboardingPath({ model }: { readonly model: RulesWorkspaceModel }) {
 function Overview({
   model,
   token,
+  searchInapplicable,
 }: {
   readonly model: RulesWorkspaceModel;
   readonly token: string;
+  readonly searchInapplicable: boolean;
 }) {
   return (
     <section
@@ -191,6 +273,16 @@ function Overview({
           运行时从同一个不可变 Active
           快照读取以下关系;下游策略复用不会改变识别类型。
         </p>
+        {/* The header keyword input has no family scope on the Overview, so the
+            page states that plainly instead of advertising a global search. */}
+        {searchInapplicable ? (
+          <p
+            className="mf-rules-search-note"
+            data-testid="overview-search-note"
+          >
+            {RULES_OVERVIEW_SEARCH_HINT}
+          </p>
+        ) : null}
       </div>
       <ol className="mf-rules-flow" aria-label="规则处理关系">
         {model.overview.relationship.map((item) => (
@@ -605,17 +697,30 @@ export function RulesWorkspacePage() {
   // authentication continuation can never disagree about which inventory is
   // shown. Malformed input resolves to the read-only Overview.
   const section = readRulesSection(searchParams);
-  const [search, setSearch] = useState("");
+  // The keyword scope is shared with the shell header so typing or clearing
+  // either input keeps both truthful. Overview has no family scope, so its
+  // header input is disabled and this page explains why.
+  const { query: search, setQuery: setSearch } = useRulesSearch();
   const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">("all");
   const [drawer, setDrawer] = useState<RulesDrawerSession | null>(null);
   const [pending, setPending] = useState<PendingListCommand | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const previousSection = useRef<Section>(section);
   const query = useQuery({
     queryKey: ["rules-workspace", token],
     queryFn: () => fetchRulesInventory(token),
     enabled: token !== null,
     retry: false,
   });
+
+  // Leaving a family discards only the *keyword* scope: the correctable draft
+  // for that family stays in its own session store, so the next explicit
+  // Add/Edit restores it.
+  useEffect(() => {
+    if (previousSection.current === section) return;
+    previousSection.current = section;
+    setSearch("");
+  }, [section, setSearch]);
 
   // Leaving a family is a navigation, never a discard: an open create/copy
   // drawer closes, and whatever the operator typed stays in the correctable
@@ -648,7 +753,12 @@ export function RulesWorkspacePage() {
             </div>
           );
         if (!data.available)
-          return <Availability model={data} section={section} />;
+          return (
+            <>
+              <FamilyNavigation section={section} onSelect={goToSection} />
+              <Availability model={data} section={section} />
+            </>
+          );
         const family = section === "overview" ? null : section;
         const items =
           family === null
@@ -689,16 +799,13 @@ export function RulesWorkspacePage() {
         };
         return (
           <section className="mf-rules-page">
-            <header className="mf-rules-header">
-              <div>
-                <p className="mf-eyebrow">
-                  Active · 序号 {data.active?.sequence}
-                </p>
-                <h1>整理规则</h1>
-                <p>
-                  查看并编辑识别类型到元数据、命名、分类和整理策略的完整关系。
-                </p>
-              </div>
+            {/* Identity diagnostics stay reachable but no longer dominate the
+                page: the shared header already carries the Rules title and
+                business description. */}
+            <div className="mf-rules-diagnostics">
+              <p className="mf-eyebrow">
+                Active · 序号 {data.active?.sequence}
+              </p>
               <div className="mf-actions">
                 <Link
                   to="/configuration"
@@ -713,7 +820,7 @@ export function RulesWorkspacePage() {
                   {isFetching ? "刷新中..." : "刷新 Active"}
                 </button>
               </div>
-            </header>
+            </div>
             {notice !== null && (
               <p className="mf-rules-verified" role="status">
                 {notice}
@@ -726,62 +833,27 @@ export function RulesWorkspacePage() {
                 。再次打开对应的添加或编辑表单即可继续修正。
               </p>
             )}
-            <nav className="mf-rules-tabs" aria-label="规则分类">
-              <button
-                type="button"
-                aria-current={section === "overview" ? "page" : undefined}
-                onClick={() => goToSection("overview")}
-              >
-                概览
-              </button>
-              {RULE_FAMILIES.map((familyName) => (
-                <button
-                  type="button"
-                  key={familyName}
-                  aria-current={section === familyName ? "page" : undefined}
-                  onClick={() => goToSection(familyName)}
-                >
-                  {LABELS[familyName]}
-                </button>
-              ))}
-            </nav>
+            <FamilyNavigation section={section} onSelect={goToSection} />
             {section === "overview" ? (
-              <Overview model={data} token={token ?? ""} />
+              <Overview
+                model={data}
+                token={token ?? ""}
+                searchInapplicable={true}
+              />
             ) : (
-              <section aria-labelledby="rules-family-title">
-                <div className="mf-rules-toolbar">
-                  <div>
-                    <h2 id="rules-family-title">{LABELS[section]}</h2>
-                    <p>
-                      完整 Active
-                      清单;选择、搜索、筛选和刷新只读,不会打开编辑器或写入配置。
-                    </p>
-                  </div>
-                  <label>
-                    搜索
-                    <input
-                      type="search"
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    状态
-                    <select
-                      value={enabled}
-                      onChange={(event) =>
-                        setEnabled(event.target.value as typeof enabled)
-                      }
-                    >
-                      <option value="all">全部</option>
-                      <option value="enabled">已启用</option>
-                      <option value="disabled">已停用</option>
-                    </select>
-                  </label>
+              <section
+                className="mf-rules-family"
+                aria-labelledby="rules-family-title"
+              >
+                <div className="mf-rules-family-head">
+                  <h2 id="rules-family-title">{LABELS[section]}</h2>
+                  <p>{RULE_FAMILY_INVENTORY_DESCRIPTIONS[section]}</p>
+                </div>
+                <div className="mf-rules-family-actions">
                   {data.canManage && isFormFamily(section) ? (
                     <button
                       type="button"
-                      className="mf-button mf-button-primary"
+                      className="mf-button mf-button-primary mf-rules-add"
                       onClick={() =>
                         setDrawer({
                           family: section as RuleFormFamily,
@@ -789,9 +861,37 @@ export function RulesWorkspacePage() {
                         })
                       }
                     >
-                      添加{LABELS[section]}
+                      <span aria-hidden="true">+</span> 添加{LABELS[section]}
                     </button>
-                  ) : null}
+                  ) : (
+                    <span />
+                  )}
+                  <div className="mf-rules-family-filters">
+                    <span className="mf-rules-search">
+                      <Icon name="search" />
+                      <input
+                        type="search"
+                        aria-label={RULE_FAMILY_SEARCH[section].label}
+                        placeholder={RULE_FAMILY_SEARCH[section].placeholder}
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                      />
+                    </span>
+                    <span className="mf-rules-state-filter">
+                      <Icon name="list" />
+                      <select
+                        aria-label="状态"
+                        value={enabled}
+                        onChange={(event) =>
+                          setEnabled(event.target.value as typeof enabled)
+                        }
+                      >
+                        <option value="all">全部</option>
+                        <option value="enabled">已启用</option>
+                        <option value="disabled">已停用</option>
+                      </select>
+                    </span>
+                  </div>
                 </div>
                 <Inventory
                   family={section}

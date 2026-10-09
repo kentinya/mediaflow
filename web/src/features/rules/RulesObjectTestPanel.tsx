@@ -9,6 +9,7 @@ import {
   runRulesObjectAnalysis,
   type RulesAnalysisModel,
 } from "../../shared/api/api-client";
+import { RULE_FAMILY_LABELS } from "../../entities/rules/rules-workspace";
 import type { FormValues } from "./RulesObjectForm";
 
 /**
@@ -56,35 +57,35 @@ const FAMILY_ANALYSIS: Readonly<Record<RuleFormFamily, FamilyAnalysisSpec>> = {
   },
   typeBindings: {
     input: "none",
-    action: "检查该类型绑定",
+    action: `检查该${RULE_FAMILY_LABELS.typeBindings}`,
     summary:
       "只检查类型、启用唯一性与四项策略引用是否可解析,不执行任何策略引擎。",
     liveMetadata: false,
   },
   metadataPolicies: {
     input: "identity",
-    action: "测试该元数据策略",
+    action: `测试该${RULE_FAMILY_LABELS.metadataPolicies}`,
     summary:
       "离线校验本策略自身的 Provider/查询/语言/请求/匹配设置,不需要凭据;实时测试必须显式勾选。",
     liveMetadata: true,
   },
   namingPolicies: {
     input: "identity",
-    action: "测试该命名策略",
+    action: `测试该${RULE_FAMILY_LABELS.namingPolicies}`,
     summary:
       "用提交的 Movie/TV 样本渲染本策略的真实模板,显示变量与缺失/不安全取值证据。",
     liveMetadata: false,
   },
   classificationPolicies: {
     input: "identity",
-    action: "测试该分类策略",
+    action: `测试该${RULE_FAMILY_LABELS.classificationPolicies}`,
     summary:
       "只用本策略的规则与提交的类型化身份求值,并解析引用的 MediaLibrary 与安全相对路径。",
     liveMetadata: false,
   },
   organizePolicies: {
     input: "none",
-    action: "解释该整理策略",
+    action: `解释该${RULE_FAMILY_LABELS.organizePolicies}`,
     summary:
       "解释本策略的操作、冲突、附件、去重、回滚、清理与回退,并列出显式高风险权限。物理就绪保持未检查。",
     liveMetadata: false,

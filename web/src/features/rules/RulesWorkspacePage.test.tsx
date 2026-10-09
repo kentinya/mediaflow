@@ -78,8 +78,11 @@ describe("RulesWorkspacePage", () => {
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
     expect(
-      await screen.findByRole("heading", { name: "整理规则" }),
+      await screen.findByRole("navigation", { name: "规则分类" }),
     ).toBeVisible();
+    // The shared shell header carries the Rules title; the navigation appears
+    // once the Active inventory has actually resolved.
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     expect(
       screen.getByRole("link", { name: "Organizing rules" }),
     ).toHaveAttribute("aria-current", "page");
@@ -95,7 +98,8 @@ describe("RulesWorkspacePage", () => {
     const { mock, calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     expect(screen.getByText("Special")).toBeVisible();
@@ -103,11 +107,13 @@ describe("RulesWorkspacePage", () => {
     await user.click(screen.getByRole("row", { name: /Special/ }));
     expect(screen.queryByRole("dialog")).toBeNull();
     await user.type(
-      screen.getByRole("searchbox", { name: "搜索" }),
+      screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
       "no-match",
     );
     expect(screen.getByRole("heading", { name: "没有匹配结果" })).toBeVisible();
-    await user.clear(screen.getByRole("searchbox", { name: "搜索" }));
+    await user.clear(
+      screen.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    );
     await user.selectOptions(
       screen.getByRole("combobox", { name: "状态" }),
       "disabled",
@@ -128,7 +134,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -147,7 +154,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -189,7 +197,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -268,7 +277,8 @@ describe("RulesWorkspacePage", () => {
     vi.stubGlobal("fetch", failing);
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -315,7 +325,8 @@ describe("RulesWorkspacePage", () => {
     vi.stubGlobal("fetch", flaky);
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -347,7 +358,8 @@ describe("RulesWorkspacePage", () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
@@ -361,7 +373,7 @@ describe("RulesWorkspacePage", () => {
     expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
     // Changing the section is a navigation, not a discard: the form closes and
     // the workspace states that correctable input is still held for that family.
-    await user.click(screen.getByRole("button", { name: "命名策略" }));
+    await user.click(screen.getByRole("button", { name: "命名规则" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText(/仍有未保存的输入保存在本次会话中/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
@@ -389,7 +401,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     const row = await screen.findByRole("row", { name: /Special/ });
@@ -417,7 +430,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     const row = await screen.findByRole("row", { name: /Special/ });
@@ -453,7 +467,8 @@ describe("RulesWorkspacePage", () => {
     const { calls } = stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     const row = await screen.findByRole("row", { name: /Special/ });
@@ -535,7 +550,8 @@ describe("RulesWorkspacePage", () => {
       const { calls } = stubRules();
       authStore.setToken("rules-token");
       renderApp("/ui-v2/rules");
-      await screen.findByRole("heading", { name: "整理规则" });
+      await screen.findByRole("navigation", { name: "规则分类" });
+      expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: "识别类型" }));
       const row = await screen.findByRole("row", { name: /Special/ });
@@ -586,7 +602,8 @@ describe("RulesWorkspacePage", () => {
     });
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     expect(await screen.findByRole("row", { name: /Special/ })).toBeVisible();
@@ -619,14 +636,15 @@ describe("RulesWorkspacePage", () => {
     });
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     // The five authored families now offer the native typed create action.
     for (const tab of [
       "识别类型",
       "元数据策略",
-      "命名策略",
-      "分类策略",
+      "命名规则",
+      "分类规则",
       "整理策略",
     ]) {
       await user.click(screen.getByRole("button", { name: tab }));
@@ -645,10 +663,10 @@ describe("RulesWorkspacePage", () => {
     expect(
       screen.getAllByRole("button", { name: "添加识别规则" })[0],
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "类型绑定" }));
-    expect(screen.getByText(/类型绑定需要已有的识别类型/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "类型策略" }));
+    expect(screen.getByText(/类型策略需要已有的识别类型/)).toBeVisible();
     expect(
-      screen.getAllByRole("button", { name: "添加类型绑定" })[0],
+      screen.getAllByRole("button", { name: "添加类型策略" })[0],
     ).toBeVisible();
   });
 
@@ -656,7 +674,8 @@ describe("RulesWorkspacePage", () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
-    await screen.findByRole("heading", { name: "整理规则" });
+    await screen.findByRole("navigation", { name: "规则分类" });
+    expect(screen.getByRole("heading", { name: "整理规则" })).toBeVisible();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     const add = screen.getByRole("button", { name: "添加识别类型" });
@@ -889,8 +908,8 @@ describe("RulesWorkspacePage section state", () => {
     const { router } = renderApp("/ui-v2/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "命名策略" }));
-    await screen.findByRole("heading", { name: "命名策略" });
+    await user.click(screen.getByRole("button", { name: "命名规则" }));
+    await screen.findByRole("heading", { name: "命名规则" });
     // The open section is real route state, not component-local state.
     expect(router.state.location.pathname).toBe("/rules");
     expect(router.state.location.search).toEqual({ section: "namingPolicies" });
@@ -900,7 +919,7 @@ describe("RulesWorkspacePage section state", () => {
     await screen.findByRole("heading", { name: "规则关系概览" });
     await router.history.back();
     expect(
-      await screen.findByRole("heading", { name: "命名策略" }),
+      await screen.findByRole("heading", { name: "命名规则" }),
     ).toBeVisible();
     await router.history.forward();
     expect(
@@ -959,7 +978,7 @@ describe("RulesWorkspacePage section state", () => {
             {
               family: "typeBindings",
               message: "识别类型 C 没有被任何已启用绑定引用。",
-              nextAction: "启用或创建对应的类型绑定。",
+              nextAction: "启用或创建对应的类型策略。",
             },
           ],
         },
@@ -969,11 +988,11 @@ describe("RulesWorkspacePage section state", () => {
     const { router } = renderApp("/ui-v2/rules");
     await screen.findByRole("heading", { name: "规则关系概览" });
     const user = userEvent.setup();
-    const action = await screen.findByRole("link", { name: "查看类型绑定" });
+    const action = await screen.findByRole("link", { name: "查看类型策略" });
     expect(action).toHaveAttribute("href", "/ui-v2/rules?section=typeBindings");
     await user.click(action);
     expect(
-      await screen.findByRole("heading", { name: "类型绑定" }),
+      await screen.findByRole("heading", { name: "类型策略" }),
     ).toBeVisible();
     expect(router.state.location.search).toEqual({ section: "typeBindings" });
     // Reaching the affected inventory is navigation only.
@@ -1016,10 +1035,10 @@ describe("RulesWorkspacePage section state", () => {
       "识别类型",
       "识别规则",
       "元数据策略",
-      "命名策略",
-      "分类策略",
+      "命名规则",
+      "分类规则",
       "整理策略",
-      "类型绑定",
+      "类型策略",
     ]);
     // Guidance explains the prerequisite instead of inventing an example.
     expect(
@@ -1064,13 +1083,13 @@ describe("RulesWorkspacePage section state", () => {
     // way, with no pointer interaction required.
     await user.click(screen.getByRole("button", { name: "概览" }));
     const summary = await screen.findByRole("link", {
-      name: "查看命名策略清单",
+      name: "查看命名规则清单",
     });
     summary.focus();
     expect(summary).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(
-      await screen.findByRole("heading", { name: "命名策略" }),
+      await screen.findByRole("heading", { name: "命名规则" }),
     ).toBeVisible();
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
@@ -1079,7 +1098,7 @@ describe("RulesWorkspacePage section state", () => {
     stubRules();
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules?section=classificationPolicies");
-    await screen.findByRole("heading", { name: "分类策略" });
+    await screen.findByRole("heading", { name: "分类规则" });
     expect(screen.getByRole("link", { name: "前往系统设置" })).toHaveAttribute(
       "href",
       "/ui-v2/configuration?returnTo=rules&returnSection=classificationPolicies",
@@ -1113,5 +1132,323 @@ describe("RulesWorkspacePage section state", () => {
       name: "添加识别类型",
     });
     expect(within(reopened).getByLabelText(/^ID/)).toHaveValue("movie");
+  });
+});
+
+describe("RulesWorkspacePage reference-aligned workspace", () => {
+  it("renders the eight navigation cards in reference order with the active card marked", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=classificationPolicies");
+    await screen.findByRole("heading", { name: "分类规则" });
+
+    const nav = screen.getByRole("navigation", { name: "规则分类" });
+    const cards = within(nav)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    // Overview plus the seven families, in the reference card order.
+    expect(cards).toEqual([
+      "概览规则总体情况",
+      "类型策略策略绑定",
+      "识别类型定义媒体类型",
+      "识别规则匹配识别条件",
+      "元数据策略获取元数据",
+      "命名规则生成标准名称",
+      "分类规则确定目标目录",
+      "整理策略执行操作方式",
+    ]);
+    // Only the current family is marked current; the others are plain navigation.
+    expect(
+      within(nav).getByRole("button", { name: "分类规则" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      within(nav).getByRole("button", { name: "识别类型" }),
+    ).not.toHaveAttribute("aria-current");
+  });
+
+  it("shares the keyword scope between the header and the inventory input", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("heading", { name: "识别类型" });
+
+    const header = screen.getByRole("searchbox", {
+      name: "搜索规则名称、描述",
+    });
+    const local = screen.getByRole("searchbox", {
+      name: "搜索类型名称或描述",
+    });
+    const user = userEvent.setup();
+    // Typing in either input keeps both truthful and filters the one inventory.
+    await user.type(header, "Special");
+    expect(local).toHaveValue("Special");
+    expect(screen.getByRole("row", { name: /Special/ })).toBeVisible();
+    // A non-matching keyword is a truthful filtered-empty state, not a
+    // fabricated global result set.
+    await user.clear(local);
+    await user.type(local, "no-such-family-object");
+    expect(header).toHaveValue("no-such-family-object");
+    expect(screen.getByRole("heading", { name: "没有匹配结果" })).toBeVisible();
+    await user.clear(header);
+    expect(local).toHaveValue("");
+    // Clearing either input restores the complete Active inventory.
+    expect(screen.getByRole("row", { name: /Special/ })).toBeVisible();
+  });
+
+  it("keeps the inventory title/description and the left-Add/right-filter row distinct", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("heading", { name: "识别类型" });
+
+    // The title/description row is separate from the action row.
+    const title = screen.getByRole("heading", { name: "识别类型" });
+    expect(title.closest(".mf-rules-family-head")).not.toBeNull();
+    const actionRow = screen
+      .getByRole("button", { name: "添加识别类型" })
+      .closest(".mf-rules-family-actions");
+    expect(actionRow).not.toBeNull();
+    const filters = (actionRow as HTMLElement).querySelector(
+      ".mf-rules-family-filters",
+    );
+    expect(filters).not.toBeNull();
+    // Add sits at the left of its row and the search/filter controls at the right.
+    expect(
+      (actionRow as HTMLElement).firstElementChild?.classList.contains(
+        "mf-rules-add",
+      ),
+    ).toBe(true);
+    expect(filters?.contains(document.activeElement)).toBe(false);
+    // A full-width table follows, with the real per-family columns.
+    const table = screen.getByRole("table");
+    expect(table.className).toContain("mf-rules-table");
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["名称 / ID", "摘要", "状态", "引用影响", "操作"]);
+  });
+
+  it("gives every family a purpose-built form with a multiline description and an applicable enable switch", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("heading", { name: "识别类型" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加识别类型" });
+
+    // The simple family is a labelled ID/name/description/enable stack.
+    expect(within(dialog).getByLabelText(/^ID/).tagName).toBe("INPUT");
+    expect(within(dialog).getByLabelText(/^描述/).tagName).toBe("TEXTAREA");
+    const enable = within(dialog).getByRole("switch", { name: "启用" });
+    expect(enable).toBeChecked();
+    // The drawer exposes Rules-scoped geometry only; Files drawer classes stay out.
+    const drawer = dialog.closest(".mf-rules-drawer") as HTMLElement;
+    expect(drawer.className).not.toContain("mf-files-drawer");
+    expect(drawer.querySelector(".mf-rules-drawer-header")).not.toBeNull();
+    expect(drawer.querySelector(".mf-rules-drawer-body")).not.toBeNull();
+    expect(drawer.querySelector(".mf-rules-drawer-actions")).not.toBeNull();
+    // Cancel then Save, aligned at the right of the pinned footer.
+    const footerButtons = Array.from(
+      drawer.querySelectorAll(".mf-rules-drawer-actions button"),
+    ).map((button) => button.textContent);
+    expect(footerButtons).toEqual(["取消", "保存"]);
+  });
+
+  it("never invents an enable switch for the family whose domain has no enable state", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=organizePolicies");
+    await screen.findByRole("heading", { name: "整理策略" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加整理策略" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加整理策略" });
+
+    expect(within(dialog).queryByRole("switch")).toBeNull();
+    // The real high-risk permission stays explicit and unchecked by default.
+    expect(
+      within(dialog).getByRole("checkbox", { name: /允许覆盖目标文件/ }),
+    ).not.toBeChecked();
+    // Purpose-built sections remain available rather than dropped.
+    for (const section of ["附件处理", "重复检测", "回滚与源目录清理"]) {
+      expect(within(dialog).getByText(section)).toBeVisible();
+    }
+  });
+
+  it("keeps Classification's internal rules compact with an inner Add distinct from the outer Add", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=classificationPolicies");
+    await screen.findByRole("heading", { name: "分类规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加分类规则" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加分类规则" });
+
+    // The outer policy Add and the inner rule Add are two distinct controls.
+    const innerAdd = within(dialog).getByRole("button", { name: "添加规则" });
+    expect(innerAdd).toBeVisible();
+    // With no internal rule yet, the compact list is a truthful empty state and
+    // no expanded editor is present.
+    expect(within(dialog).queryByLabelText("目标媒体库")).toBeNull();
+    // Only the explicit inner create opens a rule editor with the full fields.
+    await user.click(innerAdd);
+    expect(await within(dialog).findByLabelText("目标媒体库")).toBeVisible();
+    expect(within(dialog).getByLabelText("相对路径")).toBeVisible();
+    // The compact list stays a compact inventory beside the editor.
+    expect(
+      within(dialog).getByRole("columnheader", { name: "优先级" }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("columnheader", { name: "匹配条件" }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("columnheader", { name: "目标位置" }),
+    ).toBeVisible();
+  });
+});
+
+describe("RulesWorkspacePage purpose-built family forms", () => {
+  const cases = [
+    { family: "recognitionRules", label: "识别规则", add: "添加识别规则" },
+    { family: "typeBindings", label: "类型策略", add: "添加类型策略" },
+    { family: "metadataPolicies", label: "元数据策略", add: "添加元数据策略" },
+    { family: "namingPolicies", label: "命名规则", add: "添加命名规则" },
+    { family: "organizePolicies", label: "整理策略", add: "添加整理策略" },
+  ] as const;
+
+  for (const item of cases) {
+    it(`${item.label} keeps its real fields available through purposeful sections`, async () => {
+      stubRules();
+      authStore.setToken("rules-token");
+      renderApp(`/ui-v2/rules?section=${item.family}`);
+      await screen.findByRole("heading", { name: item.label });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: item.add }));
+      const dialog = await screen.findByRole("dialog", { name: item.add });
+
+      // One consistent form language: at least one titled section, labels above
+      // controls and a description area where the family owns one.
+      const sections = dialog.querySelectorAll(".mf-rules-section");
+      expect(sections.length).toBeGreaterThan(0);
+      expect(dialog.querySelector(".mf-rules-form")).not.toBeNull();
+      // The backend-derived required marker is presented, not invented, and
+      // the requirement is also exposed to assistive technology.
+      expect(
+        dialog.querySelectorAll('label[data-required="true"]').length,
+      ).toBeGreaterThan(0);
+      expect(dialog.querySelectorAll("[aria-required]").length).toBeGreaterThan(
+        0,
+      );
+      // The drawer keeps its own scrolling body and pinned footer.
+      expect(dialog.querySelector(".mf-rules-drawer-body")).not.toBeNull();
+      expect(dialog.querySelector(".mf-rules-drawer-actions")).not.toBeNull();
+    });
+  }
+
+  it("Recognition Rules preserves AND/OR/NOT, paired priority/score and output type", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionRules");
+    await screen.findByRole("heading", { name: "识别规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加识别规则" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加识别规则" });
+
+    // The real condition engine controls stay available.
+    expect(within(dialog).getByLabelText("条件类型")).toBeVisible();
+    const logical = within(dialog).getByLabelText(
+      "组合方式",
+    ) as HTMLSelectElement;
+    expect(Array.from(logical.options).map((option) => option.value)).toEqual([
+      "and",
+      "or",
+      "not",
+      "always",
+    ]);
+    expect(within(dialog).getByLabelText("输出识别类型")).toBeVisible();
+    expect(within(dialog).getByLabelText("优先级")).toBeVisible();
+    expect(within(dialog).getByLabelText("匹配分数")).toBeVisible();
+    expect(
+      within(dialog).getByRole("checkbox", { name: /匹配后停止继续识别/ }),
+    ).toBeVisible();
+  });
+
+  it("Naming keeps the actual Movie/TV template families and variable hints", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=namingPolicies");
+    await screen.findByRole("heading", { name: "命名规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加命名规则" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加命名规则" });
+
+    // Real template families are not collapsed into reference examples.
+    for (const field of [
+      "电影目录模板",
+      "电影文件名模板",
+      "剧集目录模板",
+      "季目录模板",
+      "单集文件名模板",
+      "多集文件名模板",
+    ])
+      expect(within(dialog).getByLabelText(field)).toBeVisible();
+    expect(within(dialog).getByText("缺失变量处理策略")).toBeVisible();
+    expect(within(dialog).getByText(/可用变量/)).toBeVisible();
+  });
+
+  it("Metadata keeps Provider/media type, paired language/region and the bounded request controls", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=metadataPolicies");
+    await screen.findByRole("heading", { name: "元数据策略" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加元数据策略" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "添加元数据策略",
+    });
+
+    expect(within(dialog).getByLabelText("元数据服务")).toBeVisible();
+    // The policy's own media type is the first of the two "媒体类型" controls
+    // (the object test sample below has its own).
+    expect(within(dialog).getAllByLabelText("媒体类型")[0]).toBeVisible();
+    expect(within(dialog).getByLabelText("语言")).toBeVisible();
+    expect(within(dialog).getByLabelText("地区")).toBeVisible();
+    for (const field of [
+      "自动匹配阈值",
+      "需确认阈值",
+      "最小分差",
+      "最大候选数",
+      "超时 (秒)",
+      "重试次数",
+      "最大搜索页数",
+      "最大 Provider 请求数",
+      "最大候选补全数",
+    ])
+      expect(within(dialog).getByLabelText(field)).toBeVisible();
+  });
+
+  it("Type strategy keeps the four policy selectors, applicable enable state and required identity", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=typeBindings");
+    await screen.findByRole("heading", { name: "类型策略" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加类型策略" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加类型策略" });
+
+    for (const field of [
+      "识别类型",
+      "元数据策略",
+      "命名规则",
+      "分类规则",
+      "整理策略",
+    ])
+      expect(within(dialog).getByLabelText(field)).toBeVisible();
+    expect(within(dialog).getByRole("switch", { name: "启用" })).toBeVisible();
+    // C stays C: the hint states downstream policy reuse cannot change identity.
+    expect(
+      within(dialog).getByText(/复用下游策略不会改变类型身份/),
+    ).toBeVisible();
   });
 });

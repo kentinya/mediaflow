@@ -26,16 +26,101 @@ export function isRuleFamily(value: unknown): value is RuleFamily {
   return typeof value === "string" && RULE_FAMILY_SET.has(value);
 }
 
-/** The single operator-facing label set for the seven rule families. */
+/**
+ * The single operator-facing label set for the seven rule families.
+ *
+ * The names follow the product's canonical business vocabulary and the
+ * supplied Rules references (`类型策略`, `命名规则`, `分类规则`); the underlying
+ * families, routes, IDs and domain meanings are unchanged. Settings readiness
+ * and the workspace share this one set so the two surfaces can never disagree.
+ */
 export const RULE_FAMILY_LABELS: Readonly<Record<RuleFamily, string>> = {
-  typeBindings: "类型绑定",
+  typeBindings: "类型策略",
   recognitionTypes: "识别类型",
   recognitionRules: "识别规则",
   metadataPolicies: "元数据策略",
-  namingPolicies: "命名策略",
-  classificationPolicies: "分类策略",
+  namingPolicies: "命名规则",
+  classificationPolicies: "分类规则",
   organizePolicies: "整理策略",
 };
+
+/** The short business description shown on each family navigation card. */
+export const RULE_FAMILY_CARD_DESCRIPTIONS: Readonly<
+  Record<RuleFamily, string>
+> = {
+  typeBindings: "策略绑定",
+  recognitionTypes: "定义媒体类型",
+  recognitionRules: "匹配识别条件",
+  metadataPolicies: "获取元数据",
+  namingPolicies: "生成标准名称",
+  classificationPolicies: "确定目标目录",
+  organizePolicies: "执行操作方式",
+};
+
+/** The one-line business description above a family inventory. */
+export const RULE_FAMILY_INVENTORY_DESCRIPTIONS: Readonly<
+  Record<RuleFamily, string>
+> = {
+  typeBindings: "为每个识别类型绑定对应的元数据、命名、分类和整理策略",
+  recognitionTypes: "定义系统可识别的媒体类型，用于标识文件所属的内容类别",
+  recognitionRules: "根据文件的来源、路径、文件名等特征，识别其所属的媒体类型",
+  metadataPolicies: "配置从元数据服务获取和丰富信息的策略",
+  namingPolicies: "配置不同媒体类型的命名模板，用于生成标准的文件名和目录名",
+  classificationPolicies: "根据媒体元信息确定目标媒体库和目录的规则",
+  organizePolicies: "配置整理操作、冲突处理以及附件、去重与清理行为",
+};
+
+/**
+ * Contextual keyword search for one family inventory.
+ *
+ * The same descriptor drives the local inventory input and the shared header
+ * input, so both surfaces always advertise the exact same keyword scope. A
+ * family without a keyword scope is not given a fabricated global search.
+ */
+export const RULE_FAMILY_SEARCH: Readonly<
+  Record<RuleFamily, { readonly label: string; readonly placeholder: string }>
+> = {
+  typeBindings: {
+    label: "搜索识别类型名称",
+    placeholder: "搜索识别类型名称...",
+  },
+  recognitionTypes: {
+    label: "搜索类型名称或描述",
+    placeholder: "搜索类型名称或描述...",
+  },
+  recognitionRules: {
+    label: "搜索规则名称或描述",
+    placeholder: "搜索规则名称或描述...",
+  },
+  metadataPolicies: {
+    label: "搜索策略名称或描述",
+    placeholder: "搜索策略名称或描述...",
+  },
+  namingPolicies: {
+    label: "搜索规则名称或描述",
+    placeholder: "搜索规则名称或描述...",
+  },
+  classificationPolicies: {
+    label: "搜索分类规则名称",
+    placeholder: "搜索分类规则名称...",
+  },
+  organizePolicies: {
+    label: "搜索策略名称",
+    placeholder: "搜索策略名称...",
+  },
+};
+
+/** Shared Rules workspace title, description and header search contract. */
+export const RULES_WORKSPACE_TITLE = "整理规则";
+export const RULES_WORKSPACE_DESCRIPTION =
+  "管理从识别到整理的完整规则体系。系统根据识别结果，按照类型策略绑定的各项策略完成最终的文件整理。";
+export const RULES_OVERVIEW_LABEL = "概览";
+export const RULES_OVERVIEW_CARD_DESCRIPTION = "规则总体情况";
+export const RULES_HEADER_SEARCH_LABEL = "搜索规则名称、描述";
+export const RULES_HEADER_SEARCH_PLACEHOLDER = "搜索规则名称、描述...";
+export const RULES_OVERVIEW_SEARCH_PLACEHOLDER = "概览不支持关键字搜索";
+export const RULES_OVERVIEW_SEARCH_HINT =
+  "概览不提供关键字搜索；请先进入一个规则分类，再按该分类的关键字范围搜索。";
 
 /**
  * The legal dependency order for incrementally authoring an empty Active.
@@ -60,17 +145,17 @@ export const RULE_FAMILY_DEPENDENCY_GUIDANCE: Readonly<
   Record<RuleFamily, string>
 > = {
   typeBindings:
-    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。",
+    "类型策略需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。",
   recognitionTypes:
-    "识别类型是识别规则的输出目标,也是类型绑定的主体,建议先创建。",
+    "识别类型是识别规则的输出目标,也是类型策略的主体,建议先创建。",
   recognitionRules:
     "识别规则必须引用已存在的识别类型作为输出目标,可先创建识别类型。",
-  metadataPolicies: "元数据策略可独立创建,随后由类型绑定引用。",
-  namingPolicies: "命名策略可独立创建,随后由类型绑定引用。",
+  metadataPolicies: "元数据策略可独立创建,随后由类型策略引用。",
+  namingPolicies: "命名规则可独立创建,随后由类型策略引用。",
   classificationPolicies:
-    "分类策略的规则会引用已配置的媒体库,可独立创建并由类型绑定引用。",
+    "分类规则的规则会引用已配置的媒体库,可独立创建并由类型策略引用。",
   organizePolicies:
-    "整理策略可独立创建并由类型绑定引用;HardLink/SoftLink 不会静默降级为 Copy/Move。",
+    "整理策略可独立创建并由类型策略引用;HardLink/SoftLink 不会静默降级为 Copy/Move。",
 };
 
 export interface RuleInventoryItem {

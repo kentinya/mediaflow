@@ -49,6 +49,9 @@ async function openRules(
   await expect(
     page.getByRole("heading", { name: "整理规则", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "规则分类" }),
+  ).toBeVisible();
 }
 
 async function openSettings(page: Page, search = ""): Promise<void> {
@@ -129,13 +132,13 @@ test.describe("Rules readiness and Settings handoff", () => {
     // The backend-named gap is actionable: it opens that exact family.
     await expect(page.getByRole("heading", { name: "配置缺口" })).toBeVisible();
     const gapAction = page.getByRole("link", {
-      name: "查看类型绑定",
+      name: "查看类型策略",
       exact: true,
     });
     await expect(gapAction).toBeVisible();
     await gapAction.click();
     await expect(
-      page.getByRole("heading", { name: "类型绑定", exact: true }),
+      page.getByRole("heading", { name: "类型策略", exact: true }),
     ).toBeVisible();
     expect(page.url()).toContain("section=typeBindings");
     await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -251,9 +254,9 @@ test.describe("Rules readiness and Settings handoff", () => {
     expect(page.url()).not.toContain("digest");
 
     // The explicit return lands on the exact originating family inventory.
-    await page.getByRole("link", { name: "返回整理规则 · 分类策略" }).click();
+    await page.getByRole("link", { name: "返回整理规则 · 分类规则" }).click();
     await expect(
-      page.getByRole("heading", { name: "分类策略", exact: true }),
+      page.getByRole("heading", { name: "分类规则", exact: true }),
     ).toBeVisible();
     expect(page.url()).toContain("section=classificationPolicies");
   });
@@ -362,9 +365,9 @@ test.describe("Rules readiness and Settings handoff", () => {
     const traffic = recordApiTraffic(page);
     await openRules(page, "?section=recognitionTypes");
     await page.getByRole("button", { name: "概览" }).click();
-    await page.getByRole("link", { name: "查看类型绑定", exact: true }).click();
+    await page.getByRole("link", { name: "查看类型策略", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "类型绑定", exact: true }),
+      page.getByRole("heading", { name: "类型策略", exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "刷新 Active" }).click();
     await openSettings(page);
@@ -394,5 +397,173 @@ test.describe("Rules readiness and Settings handoff", () => {
       page.getByRole("button", { name: "编辑", exact: true }),
     ).toHaveCount(0);
     expect(traffic.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
+  });
+});
+
+test.describe("Rules reference-aligned workspace presentation", () => {
+  test("the shared header carries the Rules title, keyword search and the eight navigation cards", async ({
+    page,
+  }) => {
+    await resetRules(page);
+    const traffic = recordApiTraffic(page);
+    await openRules(page, "?section=recognitionTypes");
+
+    // One shell header composes the Rules title/description with the keyword
+    // search and the existing account/notification controls on the same row.
+    await expect(
+      page.getByRole("heading", { name: "整理规则", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/管理从识别到整理的完整规则体系/),
+    ).toBeVisible();
+    const headerSearch = page.getByRole("searchbox", {
+      name: "搜索规则名称、描述",
+    });
+    await expect(headerSearch).toBeEnabled();
+    await expect(headerSearch).toHaveAttribute(
+      "placeholder",
+      "搜索规则名称、描述...",
+    );
+    await expect(page.getByRole("button", { name: "通知" })).toBeVisible();
+
+    // The eight reference cards keep their order, business names and descriptions.
+    const nav = page.getByRole("navigation", { name: "规则分类" });
+    await expect(nav.getByRole("button")).toHaveCount(8);
+    await expect(nav.getByRole("button", { name: "识别类型" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await expect(nav.getByRole("button", { name: "类型策略" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "命名规则" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "分类规则" })).toBeVisible();
+    await expect(nav.getByText("策略绑定")).toBeVisible();
+
+    // The inventory title/description row is separate from the action row, with
+    // the blue Add at the left and the keyword/state controls at the right.
+    await expect(
+      page.getByRole("heading", { name: "识别类型", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "添加识别类型" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    ).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "状态" })).toBeVisible();
+    // A full-width table follows with the real columns.
+    await expect(page.getByRole("table")).toBeVisible();
+
+    // Header and local keyword inputs share the family's one keyword scope.
+    await headerSearch.fill("Normal");
+    await expect(
+      page.getByRole("searchbox", { name: "搜索类型名称或描述" }),
+    ).toHaveValue("Normal");
+    await expect(page.getByRole("row", { name: /Normal Movie/ })).toBeVisible();
+    await headerSearch.fill("");
+    await expect(page.getByRole("row", { name: /TV/ })).toBeVisible();
+
+    // The Overview states that its header search is inapplicable rather than
+    // advertising a fabricated global search.
+    await nav.getByRole("button", { name: "概览" }).click();
+    await expect(
+      page.getByRole("heading", { name: "规则关系概览" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("searchbox", { name: "搜索规则名称、描述" }),
+    ).toBeDisabled();
+
+    // The whole presentation journey issued reads only.
+    expect(traffic.filter((entry) => !entry.startsWith("GET "))).toEqual([]);
+  });
+
+  test("every family keeps its purpose-built Add form, applicable enable switch and pinned drawer actions", async ({
+    page,
+  }) => {
+    await resetRules(page);
+    await openRules(page);
+
+    const families = [
+      { label: "识别类型", switch: true, section: ["基本信息", "状态"] },
+      { label: "识别规则", switch: true, section: ["基本信息", "匹配条件"] },
+      { label: "类型策略", switch: true, section: ["识别类型与策略引用"] },
+      { label: "元数据策略", switch: true, section: ["元数据服务与媒体类型"] },
+      { label: "命名规则", switch: true, section: ["电影模板", "剧集模板"] },
+      { label: "分类规则", switch: true, section: ["分类规则列表"] },
+      // OrganizePolicy owns no enable state, so no switch may be invented.
+      { label: "整理策略", switch: false, section: ["附件处理", "重复检测"] },
+    ] as const;
+
+    for (const family of families) {
+      await page
+        .getByRole("navigation", { name: "规则分类" })
+        .getByRole("button", { name: family.label })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: family.label, exact: true }),
+      ).toBeVisible();
+      await page
+        .getByRole("button", { name: `添加${family.label}` })
+        .first()
+        .click();
+      const drawer = page.getByRole("dialog", { name: `添加${family.label}` });
+      await expect(drawer).toBeVisible();
+      // Section titles are real `legend` elements, so a same-named select
+      // option elsewhere in the form cannot satisfy (or hide) the check.
+      const sectionTitles = await drawer.locator("legend").allTextContents();
+      for (const section of family.section)
+        expect(sectionTitles).toContain(section);
+      if (family.switch)
+        await expect(
+          drawer.getByRole("switch", { name: "启用" }),
+        ).toBeVisible();
+      else await expect(drawer.getByRole("switch")).toHaveCount(0);
+      // The drawer title and footer stay usable while the body scrolls, and the
+      // footer offers Cancel then Save at the right.
+      await expect(
+        drawer.getByRole("button", { name: "关闭规则表单" }),
+      ).toBeVisible();
+      const footerButtons = drawer.locator(".mf-rules-drawer-actions button");
+      await expect(footerButtons).toHaveCount(2);
+      await expect(footerButtons.nth(0)).toHaveText("取消");
+      await expect(footerButtons.nth(1)).toHaveText("保存");
+      await drawer.getByRole("button", { name: "取消" }).click();
+      await expect(drawer).toHaveCount(0);
+      // Closing without input never armed a discard warning.
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+  });
+
+  test("Rules drawer geometry is scoped and Files drawers keep their own layout", async ({
+    page,
+  }) => {
+    await resetRules(page);
+    await openRules(page, "?section=classificationPolicies");
+    await page.getByRole("button", { name: "添加分类规则" }).first().click();
+    const drawer = page.getByRole("dialog", { name: "添加分类规则" });
+    await expect(drawer).toBeVisible();
+
+    // The Rules drawer carries Rules-scoped classes only, so Files drawer CSS
+    // cannot change its geometry.
+    await expect(drawer).toHaveClass(/mf-rules-drawer/);
+    await expect(drawer).not.toHaveClass(/mf-files-drawer/);
+    await expect(drawer.locator(".mf-files-drawer-header")).toHaveCount(0);
+    await expect(drawer.locator(".mf-rules-drawer-header")).toHaveCount(1);
+    await expect(drawer.locator(".mf-rules-drawer-body")).toHaveCount(1);
+    await expect(drawer.locator(".mf-rules-drawer-actions")).toHaveCount(1);
+
+    const box = await drawer.boundingBox();
+    expect(box).not.toBeNull();
+    // A complex conditions drawer uses more than the simple 500–560px width.
+    expect(box!.width).toBeGreaterThanOrEqual(500);
+
+    // Narrow viewports keep the drawer inside the available width with every
+    // action still reachable.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const narrow = await drawer.boundingBox();
+    expect(narrow).not.toBeNull();
+    expect(narrow!.x).toBeGreaterThanOrEqual(0);
+    expect(narrow!.x + narrow!.width).toBeLessThanOrEqual(390);
+    await expect(drawer.getByRole("button", { name: "保存" })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "取消" })).toBeVisible();
   });
 });

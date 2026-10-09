@@ -10,6 +10,7 @@ import {
   type RulesPreviewKind,
   type RulesPreviewModel,
 } from "../../shared/api/api-client";
+import { RULE_FAMILY_LABELS } from "../../entities/rules/rules-workspace";
 import type { FormValues } from "./RulesObjectForm";
 
 interface Props {
@@ -341,7 +342,7 @@ function StrategyExplanation({
       )}
       <h4>下游策略</h4>
       <dl>
-        <dt>类型绑定</dt>
+        <dt>{RULE_FAMILY_LABELS.typeBindings}</dt>
         <dd>{text(policy?.typePolicyId) ?? "未解析"}</dd>
         <dt>Metadata</dt>
         <dd>{text(policy?.metadataPolicy) ?? "未解析"}</dd>
@@ -1000,7 +1001,7 @@ export function RulesPreviewPanel({
             {kind === "strategy"
               ? "测试识别策略"
               : kind === "metadata"
-                ? "测试元数据策略"
+                ? `测试${RULE_FAMILY_LABELS.metadataPolicies}`
                 : kind === "naming"
                   ? "预览命名"
                   : kind === "classification"

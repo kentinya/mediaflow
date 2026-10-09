@@ -8,20 +8,34 @@
  * to the URL or any log, and it never holds a credential or authority.
  */
 
+import {
+  RULE_FAMILY_LABELS,
+  type RuleFamily,
+} from "../../entities/rules/rules-workspace";
 import type {
   RuleFormFamily,
   RuleFormValue,
 } from "../../entities/rules/rules-form";
 
-export const RULE_DRAWER_LABELS: Readonly<Record<RuleFormFamily, string>> = {
-  recognitionRules: "识别规则",
-  typeBindings: "类型绑定",
-  recognitionTypes: "识别类型",
-  metadataPolicies: "元数据策略",
-  namingPolicies: "命名策略",
-  classificationPolicies: "分类策略",
-  organizePolicies: "整理策略",
-};
+/**
+ * The drawer/editor family names are the same single operator-facing label set
+ * the workspace navigation and Settings readiness use, so a family can never
+ * be called two different things across the surface.
+ */
+export const RULE_DRAWER_LABELS: Readonly<Record<RuleFormFamily, string>> =
+  Object.fromEntries(
+    (
+      [
+        "recognitionRules",
+        "typeBindings",
+        "recognitionTypes",
+        "metadataPolicies",
+        "namingPolicies",
+        "classificationPolicies",
+        "organizePolicies",
+      ] as const satisfies readonly (RuleFormFamily & RuleFamily)[]
+    ).map((family) => [family, RULE_FAMILY_LABELS[family]]),
+  ) as Readonly<Record<RuleFormFamily, string>>;
 
 /**
  * The single operator-facing family label set lives in the entity module so

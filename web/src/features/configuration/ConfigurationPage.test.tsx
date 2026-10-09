@@ -1067,7 +1067,7 @@ describe("V2 configuration rule readiness", () => {
     expect(await screen.findByText("来自其他页面")).toBeVisible();
     // The explicit return carries the originating family section back.
     expect(
-      screen.getByRole("link", { name: "返回整理规则 · 分类策略" }),
+      screen.getByRole("link", { name: "返回整理规则 · 分类规则" }),
     ).toHaveAttribute("href", "/ui-v2/rules?section=classificationPolicies");
     // Settings stays on Settings: the return is offered, never automatic.
     expect(screen.getByRole("heading", { name: "配置生命周期" })).toBeVisible();

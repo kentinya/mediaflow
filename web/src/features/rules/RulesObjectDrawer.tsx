@@ -246,7 +246,16 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
         aria-hidden="true"
       />
       <section
-        className="mf-files-drawer mf-rules-drawer"
+        className="mf-rules-drawer"
+        // Complex nested conditions (Recognition Rules and Classification
+        // internal rules) need more width than a simple identity form; narrow
+        // viewports still use the available width through the CSS fallback.
+        data-complex={
+          session.family === "recognitionRules" ||
+          session.family === "classificationPolicies"
+            ? "true"
+            : undefined
+        }
         aria-label={
           session.mode === "copy"
             ? `复制${RULE_DRAWER_LABELS[session.family]}`
@@ -255,21 +264,21 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
         role="dialog"
         aria-modal="true"
       >
-        <div className="mf-files-drawer-header">
+        <div className="mf-rules-drawer-header">
           <div>
             <h2 ref={headingRef} tabIndex={-1}>
               {session.mode === "copy"
                 ? `复制${RULE_DRAWER_LABELS[session.family]}`
                 : `添加${RULE_DRAWER_LABELS[session.family]}`}
             </h2>
-            <p className="mf-files-drawer-helper">
+            <p className="mf-rules-drawer-helper">
               保存会用一次操作校验完整后继配置并原子激活;失败时旧 Active
               保持不变,表单输入可以修正后重试。
             </p>
           </div>
           <button
             type="button"
-            className="mf-files-drawer-close"
+            className="mf-rules-drawer-close"
             aria-label="关闭规则表单"
             onClick={attemptClose}
             disabled={state.kind === "saving"}
@@ -277,9 +286,9 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
             ×
           </button>
         </div>
-        <div className="mf-files-drawer-body">
+        <div className="mf-rules-drawer-body">
           {authorityError !== null && (
-            <p className="mf-storage-drawer-error" role="alert">
+            <p className="mf-rules-drawer-error" role="alert">
               表单权限读取失败:{authorityError}
             </p>
           )}
@@ -367,18 +376,18 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
         <div className="mf-rules-drawer-actions">
           <button
             type="button"
+            onClick={attemptClose}
+            disabled={state.kind === "saving"}
+          >
+            取消
+          </button>
+          <button
+            type="button"
             className="mf-button mf-button-primary"
             onClick={() => void save()}
             disabled={authority === null || state.kind === "saving"}
           >
             {state.kind === "saving" ? "保存中..." : "保存"}
-          </button>
-          <button
-            type="button"
-            onClick={attemptClose}
-            disabled={state.kind === "saving"}
-          >
-            取消
           </button>
         </div>
       </section>

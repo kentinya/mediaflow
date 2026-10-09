@@ -128,7 +128,18 @@ describe("classification destination authoring", () => {
     renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
     await screen.findByRole("heading", { name: "class-a" });
 
-    // The revised form exposes the destination selector and one safe path only.
+    // The default state is the compact internal-rule inventory: the rule's own
+    // priority, ID/name, condition summary and selected destination, with no
+    // editor open until the explicit inner action.
+    expect(screen.getAllByText("分类规则列表").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("columnheader", { name: "目标位置" }),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("目标媒体库")).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "编辑规则 1" }));
+
+    // The explicit inner edit exposes the destination selector and one safe path only.
     expect(screen.getByLabelText("目标媒体库")).toBeVisible();
     expect(screen.getByLabelText("相对路径")).toBeVisible();
     expect(screen.queryByLabelText("分类")).toBeNull();
@@ -142,7 +153,6 @@ describe("classification destination authoring", () => {
       "电影/华语",
     );
 
-    const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(saves.length).toBe(1));
     const submitted = saves[0]?.object as Record<string, unknown>;
@@ -161,14 +171,16 @@ describe("classification destination authoring", () => {
     renderApp("/ui-v2/rules/edit/classificationPolicies/class-a");
     await screen.findByRole("heading", { name: "class-a" });
 
-    // The old and the proposed routing are both visible before publication.
-    const notice = screen.getByRole("status");
+    // The legacy contract is stated inside the explicit rule editor, together
+    // with the proposed revised routing, before any deliberate conversion.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "编辑规则 1" }));
+    const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent("旧版前缀");
     expect(notice).toHaveTextContent("Movies");
     expect(notice).toHaveTextContent("/Media");
     expect(notice).toHaveTextContent("电影/华语");
 
-    const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", { name: "移除规则 1 的旧版目标前缀" }),
     );
@@ -191,6 +203,8 @@ describe("classification destination authoring", () => {
     await screen.findByRole("heading", { name: "class-a" });
 
     const user = userEvent.setup();
+    // A cosmetic edit to the policy itself must not require opening (or
+    // converting) any internal rule.
     const description = screen.getByLabelText("描述");
     await user.clear(description);
     await user.type(description, "cosmetic only");
