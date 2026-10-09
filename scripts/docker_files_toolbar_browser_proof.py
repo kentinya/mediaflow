@@ -546,6 +546,65 @@ def served_asset_identity(base: str, token: str) -> dict:
     return identity
 
 
+def local_asset_identity() -> dict:
+    """The hashes of the locally built candidate artifact."""
+
+    root = ROOT / "web" / "dist"
+    index = root / "index.html"
+    assets = sorted((root / "assets").glob("*")) if (root / "assets").is_dir() else []
+    return {
+        "index.html": hashlib.sha256(index.read_bytes()).hexdigest(),
+        "assets": {
+            f"/ui-v2/assets/{asset.name}": hashlib.sha256(asset.read_bytes()).hexdigest()
+            for asset in assets
+        },
+    }
+
+
+def assert_same_executable_candidate(served: dict, local: dict) -> None:
+    """A reused image must serve exactly the locally built candidate.
+
+    This is what makes an operator-supplied image legitimate under the
+    workflow's evidence-reuse rule: the executable artifact is identical even
+    when the image tag names an earlier commit with byte-identical source.
+    """
+
+    if served["index.html"] != local["index.html"]:
+        raise RuntimeError(
+            "the reused image serves a different index.html than the local candidate: "
+            f"{served['index.html']} != {local['index.html']}"
+        )
+    if served["assets"] != local["assets"]:
+        raise RuntimeError(
+            "the reused image serves different JS/CSS than the local candidate: "
+            f"{served['assets']} != {local['assets']}"
+        )
+
+
+def image_provenance(image: str, candidate_sha: str) -> dict:
+    """State honestly which commit the image was built from.
+
+    The harness builds from ``git archive HEAD``, so the default tag embeds the
+    committed SHA.  When an operator supplies ``--image`` for a candidate whose
+    product source is byte-identical, the matrix records that reuse explicitly
+    instead of implying the image was built from the current HEAD.
+    """
+
+    tagged = image.rsplit("-", 1)[-1]
+    matches = len(tagged) >= 7 and candidate_sha.startswith(tagged)
+    return {
+        "imageTagSha": tagged if len(tagged) >= 7 else None,
+        "candidateSha": candidate_sha,
+        "builtFromCurrentCandidate": matches,
+        "reuseNote": (
+            None
+            if matches
+            else "operator-supplied image; the served built-artifact hashes and the "
+            "product source diff must prove the same executable candidate"
+        ),
+    }
+
+
 def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> None:
     api_token = secrets.token_urlsafe(24)
     api_port = free_port()
@@ -587,8 +646,15 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             wait_for_api(base, api_token)
             active = activate_runtime(base, api_token, config)
             assets = served_asset_identity(base, api_token)
+            local = local_asset_identity()
+            assert_same_executable_candidate(assets, local)
             (ARTIFACT_ROOT / "served-assets.json").write_text(
-                json.dumps(assets, ensure_ascii=False, indent=2), encoding="utf-8"
+                json.dumps(
+                    {"served": assets, "localCandidate": local},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
             )
 
             result = subprocess.run(
@@ -630,12 +696,15 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 "project": project,
                 "image": image,
                 "candidateSha": candidateSha,
+                "imageProvenance": image_provenance(image, candidateSha),
                 "apiPort": api_port,
                 "activeRevision": active.get("revisionId"),
                 "activeDigest": active.get("digest"),
                 "viewports": [name for name, _, _ in VIEWPORTS],
                 "routes": [route["name"] for route in route_cases()],
                 "servedAssets": assets,
+                "localCandidateAssets": local,
+                "sameExecutableCandidate": True,
                 "measured": evidence,
                 "safety": {"mutatingRequests": []},
             }
