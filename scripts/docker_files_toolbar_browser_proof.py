@@ -514,7 +514,7 @@ def served_asset_identity(base: str, token: str) -> dict:
     return identity
 
 
-def acceptance(project: str, image: str, keep: bool) -> None:
+def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> None:
     api_token = secrets.token_urlsafe(24)
     api_port = free_port()
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
@@ -597,6 +597,7 @@ def acceptance(project: str, image: str, keep: bool) -> None:
                 "acceptance": "isolated-docker-production-assets",
                 "project": project,
                 "image": image,
+                "candidateSha": candidateSha,
                 "apiPort": api_port,
                 "activeRevision": active.get("revisionId"),
                 "activeDigest": active.get("digest"),
@@ -622,9 +623,23 @@ def acceptance(project: str, image: str, keep: bool) -> None:
                 )
 
 
+def candidate_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="mediaflow:task44-5-files-toolbar")
+    parser.add_argument(
+        "--image",
+        default=None,
+        help="override the candidate tag; by default it is derived from HEAD",
+    )
     parser.add_argument("--keep", action="store_true", help="keep containers for inspection")
     arguments = parser.parse_args()
     if shutil.which("docker") is None:
@@ -633,10 +648,14 @@ def main() -> int:
     if not (ROOT / "web" / "dist" / "index.html").is_file():
         print("UNAVAILABLE: the built V2 artifact is missing; run `npm --prefix web run build`")
         return 1
-    if not image_exists(arguments.image):
-        build_candidate_image(arguments.image)
+    sha = candidate_sha()
+    # The candidate tag carries the exact committed SHA, so an image built for
+    # a different candidate can never be silently reused as this one.
+    image = arguments.image or f"mediaflow:task44-5-files-toolbar-{sha[:12]}"
+    if not image_exists(image):
+        build_candidate_image(image)
     suffix = f"{os.getpid()}-{int(time.time())}"
-    acceptance(f"mediaflow-files-toolbar-{suffix}", arguments.image, arguments.keep)
+    acceptance(f"mediaflow-files-toolbar-{suffix}", image, arguments.keep, candidateSha=sha)
     return 0
 
 
