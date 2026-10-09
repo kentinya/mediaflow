@@ -644,6 +644,16 @@ def _asset_identity() -> dict:
     return identity
 
 
+def candidate_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def main() -> int:
     if shutil.which("node") is None:
         print("UNAVAILABLE: node is required for the browser proof")
@@ -760,6 +770,7 @@ def main() -> int:
             "task": "44.5",
             "slice": "44",
             "requiredOutcome": "RO-5",
+            "candidateSha": candidate_sha(),
             "viewports": [name for name, _, _ in VIEWPORTS],
             "routes": [route["name"] for route in route_cases()],
             "servedAssets": assets,
