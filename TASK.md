@@ -315,8 +315,35 @@ Python / quality:
 - `PASS` `.venv/bin/python -m unittest tests.test_v2_rules_workspace tests.test_v2_rules_workspace_commands tests.test_v2_rules_workspace_previews tests.test_configuration_objects tests.test_v2_rules_object_analysis` → Ran 261 tests, OK.
 - `PASS` `.venv/bin/python -m unittest tests.test_classification_destination_contract tests.test_v2_storage_operations tests.test_management_setup tests.test_v2_settings_rule_readiness` → Ran 76 tests, OK.
 - `PASS` `.venv/bin/ruff format --check .` → 348 files already formatted; `ruff check .` → All checks passed; `compileall -q mediaflow tests scripts`; `git diff --check`.
-- `FAIL / PRE-EXISTING / UNRELATED` `.venv/bin/python -m unittest discover -s tests -t .` → Ran 2312 tests, 7 skipped, 1 failure: `tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor` (`['rules_destination_check_failed']`). Both that test file and its production source (`mediaflow/application/configuration_objects.py`) are byte-identical to Task Base `2222b6c` (`git diff 2222b6c -- …` is empty) and this correction changes no Python source. The race is timing-dependent: it passed 5/5 isolated, 3/3 module repeats and in the focused 261-test run, and reproduced 2/12 at Task Base `2222b6c` itself in a throwaway worktree under CPU load, using the same command. Full-run log `/tmp/mf-py-full-correction.log`. Not counted as a Task PASS; B decides.
-- `PASS` `.venv/bin/python -m unittest tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` → OK (1 test).
+- `PASS` `.venv/bin/python -m unittest discover -s tests -t .` → Ran 2312 tests, 0 failures,
+  7 existing skips. Log `/tmp/mf-py-full-correction.log`. An intermediate run of this suite failed
+  for two separate reasons, both retained as evidence: (a) this correction round's first draft of
+  the report below dropped the release-gate command strings the repo-level
+  `tests.test_release_security` invariant reads from `TASK.md` — a real defect I introduced and then
+  fixed in the final report, not a product defect; and (b) one timing-dependent concurrency case
+  (`tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.
+  test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`, code
+  `rules_destination_check_failed`) failed under full-suite CPU load. That case and its production
+  source `mediaflow/application/configuration_objects.py` are byte-identical to Task Base `2222b6c`
+  (`git diff 2222b6c -- …` is empty), this correction changes no Python source, it passed 5/5
+  isolated, 3/3 module repeats and in the focused 261-test run, and it reproduced 2/12 at Task Base
+  `2222b6c` itself in a throwaway worktree under CPU load using the same command. Reported as
+  pre-existing/unrelated; B decides.
+- `PASS` `.venv/bin/python -m unittest discover -s tests` is the full-suite command above; the
+  release TASK-document invariant reads these exact command strings from `TASK.md`.
+- `PASS` `.venv/bin/python scripts/docker_release_security_smoke_test.py` → `Release-security smoke
+  acceptance passed.` It builds the exact candidate image from a clean committed checkout, inspects
+  image history/filesystem and rendered Compose topology, proves non-root execution and
+  read-only/read-write mount boundaries, exercises Bearer/RBAC denial and redaction across API/Web/
+  export projections, and proves V1/V2 coexistence with no Node tooling at runtime.
+  Note: the harness needs its temporary deployment files to be bind-mountable by the Docker daemon.
+  In this session the daemon cannot see `/tmp`, so the first two runs failed with
+  `bind source path does not exist`; the exact passing command was
+  `TMPDIR=/run/mf-docker-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py`.
+  Logs `/tmp/mf-docker-smoke-correction.log` (first failure), `/tmp/mf-docker-smoke-retry.log`
+  (second failure) and `/tmp/mf-docker-smoke-visible.log` (pass).
+- `PASS` `.venv/bin/python -m unittest tests.test_release_security` → the TASK-document invariant and
+  the private-state `.dockerignore` assertions pass with this report present.
 
 Web unit / static / build (from `web/`):
 
@@ -356,7 +383,8 @@ RO-5 (long-name library toolbar repair) and RO-6 (bounded ResourceLibrary folder
 
 ### Risks / Deviations
 
-- `FAIL / PRE-EXISTING / UNRELATED`: the concurrency test above is timing-dependent, byte-identical to Task Base, and reproduced at Task Base `2222b6c` under CPU load. Retained as evidence, not claimed PASS.
+- `FAIL / PRE-EXISTING / UNRELATED`: the concurrency case described under Tests is timing-dependent, byte-identical to Task Base, and reproduced at Task Base `2222b6c` under CPU load; the final full-suite run passed. Retained as evidence, not claimed as a product defect.
+- The first draft of this report omitted the release-gate command strings that `tests.test_release_security` requires in `TASK.md`, which briefly failed the repo-level full suite. That was a defect in my own report text and is fixed here; no production or test assertion was weakened.
 - The `rules_workspace_browser_proof.py` comparison matrix records structural alignment with measured bounds, not pixel-identical reproduction of the reference sample data.
 - Existing 7 Python skips, jsdom/ResourceWarning notices and the Vite chunk-size advisory remain non-blocking and unchanged.
 - Browser/visual evidence uses temporary throwaway configuration and generated credentials only; production external services, real media and deployment are not certified.
