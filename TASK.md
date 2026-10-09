@@ -325,6 +325,17 @@ Follow-up harness commits (no product source change): `35d0973`, `e9a25a9`, `c3e
 `TASK.md` is the report document itself. The four pre-existing untracked `docs/pics/*.png` user
 assets were preserved untouched and are not staged.
 
+Correction round 1 (`df0bf7b`, B P1; `234dbe2` records B's review result):
+
+- `web/src/shared/ui/files-path.tsx` — `placeDisclosure` is extracted and exported; the disclosure's
+  vertical placement now uses its real rendered height (measure + `ResizeObserver`) instead of a
+  fixed 48/34px reserve.
+- `web/src/shared/ui/files-path.test.tsx` — 6 new focused placement tests (20 total in the file).
+- `scripts/files_toolbar_browser_proof.py`,
+  `scripts/docker_files_toolbar_browser_proof.py` — both seed the legal 240-byte `-Tail007` basename
+  and assert the disclosure's vertical bounds and that it does not clip its own complete name on
+  both routes in list and grid at 390×844; a screenshot is now taken while the name is disclosed.
+
 ### Implemented
 
 RO-5 delivered as one shared presentation boundary used by both `/ui-v2/resourcelib/files` and
@@ -341,6 +352,10 @@ RO-5 delivered as one shared presentation boundary used by both `/ui-v2/resource
 3. Complete exact names are disclosed on hover **and** keyboard focus through one portalled element
    above every clipping ancestor, so the bounded region can never clip the name it discloses. Each
    link also keeps an explicit accessible name that preserves boundary-whitespace disambiguation.
+   The disclosure is placed against its anchor using its **real rendered height**: it prefers the
+   space below the anchor, flips above when the whole disclosure does not fit there, and is finally
+   clamped inside the viewport, so a legal long Storage name (up to 255 bytes) stays completely
+   readable instead of losing its distinguishing suffix below the viewport bottom.
 4. Every ancestor and the root remain reachable with pointer and keyboard. Navigation still hands
    back the exact raw relative Storage path — no trim, normalization or abbreviation — so
    same-visible-prefix siblings (`SSH` vs `SSH `) stay distinct and the API is asked for the exact
@@ -354,92 +369,101 @@ mutation rule are untouched. Viewing, focusing, resizing and view toggling start
 
 ### Tests and Results
 
-Evidence index: `.git/validation-evidence/6a6159d396021a68e58be0c0f5c45f0421540236/task44-5/run-1/`
-(`matrix.json`, `evidence.json`, 22 PNG screenshots per proof, `served-assets.json`, `tested-sha.txt`;
-Docker set under `docker/`). Tested/submitted candidate `6a6159d396021a68e58be0c0f5c45f0421540236`.
+Correction round 1 evidence index:
+`.git/validation-evidence/df0bf7b1a7920b1d70e180a5d7528298c8ceba14/task44-5-correction/run-1/`
+(`index.json`, `matrix.json`, `evidence.json`, 48 PNG screenshots per proof, `served-assets.json`,
+`tested-sha.txt`, `repro-p1-before.log`, `repro-p1-after.log`; Docker set under `docker/`).
+Tested/submitted candidate `df0bf7b1a7920b1d70e180a5d7528298c8ceba14`.
+
+B's P1 reproduction (the failing case is fixed, first run retained):
+
+- `.venv/bin/python
+  .git/validation-evidence/5def630f.../b44-5-review/full-name-tail-probe.py` at the Task Base
+  product source → exit 1, 8 failing viewport assertions, ResourceLibrary disclosure
+  y=755/h=130/bottom=885 and MediaLibrary y=732/h=130/bottom=862 against viewport bottom 844
+  (`repro-p1-before.log`).
+- The same unchanged probe on this candidate → exit 0, 8/8 `fullNameVisible` true,
+  ResourceLibrary bottom 721 and MediaLibrary bottom 698 (`repro-p1-after.log`).
 
 Development and focused gates (all PASS unless noted):
 
-- `web/`: `npm run test -- --run src/features/library/StorageFilesPage.test.tsx
-  src/features/library/MediaLibraryFilesPage.test.tsx src/entities/library/storage-files.test.ts
-  src/entities/library/media-library-files.test.ts src/entities/library/direct-files.test.ts
-  src/shared/ui/AppShell.test.tsx src/shared/ui/rules-form-styles.test.ts
-  src/shared/navigation/destination-model.test.ts` → 8 files / 133 PASS.
+- `web/`: `npm run test -- --run src/shared/ui/files-path.test.tsx
+  src/shared/ui/files-toolbar-styles.test.ts src/features/library/StorageFilesPage.test.tsx
+  src/features/library/MediaLibraryFilesPage.test.tsx` → 4 files / 75 PASS (includes the 6 new
+  placement tests; `files-path.test.tsx` is now 15 tests).
+- `web/`: the Task's full focused unit selection (`StorageFilesPage`, `MediaLibraryFilesPage`,
+  `storage-files`, `media-library-files`, `direct-files`, `AppShell`, `rules-form-styles`,
+  `destination-model`) → 8 files / 133 PASS.
 - `web/`: `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts
   tests/e2e/medialib-commands.spec.ts tests/e2e/medialib-transfers.spec.ts
   tests/e2e/library-file-detail.spec.ts tests/e2e/rules-readiness.spec.ts` → 93 PASS.
-- New committed coverage: `web/src/shared/ui/files-path.test.tsx` 9 PASS and
-  `web/src/shared/ui/files-toolbar-styles.test.ts` 5 PASS (both included in the full run below).
+- New committed coverage: `files-path.test.tsx` 15 PASS and `files-toolbar-styles.test.ts` 5 PASS
+  (both included in the full run below).
 
-Final checkpoint gates:
+Final checkpoint gates on this candidate:
 
 - `.venv/bin/python scripts/check_governance.py` → PASS.
 - `.venv/bin/python -m unittest tests.test_storage_browser tests.test_media_library_browser
   tests.test_release_security` → 23 PASS.
 - `.venv/bin/ruff format --check .` → 350 files already formatted; `.venv/bin/ruff check .` → PASS;
   `.venv/bin/python -m compileall -q mediaflow tests scripts` → PASS; `git diff --check` → clean.
-- `web/`: `npm run test -- --run` → 71 files / 1072 PASS.
-- `web/`: `npm run format:check` → PASS; `npm run lint` → PASS; `npm run typecheck` → PASS;
-  `npm run build` → PASS (one pre-existing chunk-size advisory, non-blocking).
+- `web/`: `npm run test -- --run` → 71 files / 1078 PASS (was 1072; the 6 new placement tests).
+- `web/`: `npm run format:check` → PASS; `npm run lint` → PASS (0 errors, 0 warnings);
+  `npm run typecheck` → PASS; `npm run build` → PASS (one pre-existing chunk-size advisory).
 - `web/`: `npm run test:e2e` → 239 PASS / 0 failed / 0 skipped (normal config).
 - `web/`: `npm run test:e2e -- --config=playwright.python.config.ts
   tests/e2e/operations-inventory.python.spec.ts` → 21 PASS.
 - `web/`: `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
   tests/e2e/direct-files.python.spec.ts` → 10 PASS.
-- `.venv/bin/python scripts/files_toolbar_browser_proof.py` → PASS, 18 measured passes / 22
-  screenshots, both routes × list/grid × 1536×1024, 1024×900, 760×900, 390×844 plus the short-name
-  and boundary-whitespace cases; `served index 02729b5021c6`; zero mutating requests; Active
-  revision/digest/activation count/executable work unchanged.
-- `TMPDIR=/run/mf-docker-tmp .venv/bin/python scripts/docker_files_toolbar_browser_proof.py
-  --image mediaflow:task44-5-files-toolbar-e9a25a9c5b30` → PASS, 18 measured passes / 22
-  screenshots against real production-served assets; `sameExecutableCandidate: true`.
+- `.venv/bin/python scripts/files_toolbar_browser_proof.py` → PASS, 22 measured passes / 48
+  screenshots (was 18/22), both routes × list/grid × 1536×1024, 1024×900, 760×900, 390×844 plus the
+  short-name, boundary-whitespace and new legal-240-byte cases; `served index 58425c415e95`; zero
+  mutating requests; Active revision/digest/activation count/executable work unchanged.
+- `TMPDIR=/run/mf-docker-tmp .venv/bin/python scripts/docker_files_toolbar_browser_proof.py` →
+  PASS, 22 measured passes / 48 screenshots against real production-served assets from a **fresh**
+  candidate image `mediaflow:task44-5-files-toolbar-df0bf7b1a792` built by `git archive HEAD`;
+  `builtFromCurrentCandidate: true`, `sameExecutableCandidate: true`, served `index.html`
+  `58425c415e95…` equal to the local candidate.
 
-Measured behavior from the saved matrices (identical on both proofs): desktop 1536 pane 1070 px,
-toolbar 52 px, path 611 px, controls 417 px, page width 1536; desktop 1024 pane 558, path 99,
-controls 417, page 1024; narrow 760 pane 732, path 273, controls 417, page 760; mobile 390 pane
-362, toolbar 119 (two deliberate rows), page 390. Page scroll width never exceeds the viewport.
+Correction-round measured behavior (identical on both proofs). For the legal 240-byte segment at
+390×844: ResourceLibrary disclosure y=591/h=130/bottom=721, MediaLibrary y=568/h=130/bottom=698,
+both inside the 844 viewport with `scrollHeight == clientHeight` (128), and the saved screenshots
+show the distinguishing `-Tail007` suffix. The previously recorded desktop/narrow geometry is
+unchanged: desktop 1536 pane 1070 px, toolbar 52 px, path 611 px, controls 417 px; desktop 1024 pane
+558, path 99, controls 417; narrow 760 pane 732, path 273, controls 417; mobile 390 pane 362,
+toolbar 119 (two deliberate rows). Page scroll width never exceeds the viewport.
 
 First failures and repeats (retained, not hidden):
 
-- The first `npm run test -- --run` run after the final CSS change failed
-  `files-toolbar-styles.test.ts` because that new guard still asserted the earlier
-  `max-width: 22ch` / `flex: 0 0 auto` values. The guard was corrected to assert the actually
-  delivered relationship (`min(22ch, 100%)` on the segment, `flex: 0 1 auto` on the controls) and
-  the full suite was rerun green. No assertion was weakened or removed.
-- Early proof-harness iterations failed for real reasons that were fixed in the harness or the
-  presentation, not by relaxing assertions: the seed tree did not create the deep path; the
-  current-segment reveal measured `offsetLeft` against the page instead of the scrollable track
-  (fixed with `position: relative` on the track); one segment could exceed a very narrow region
-  (fixed with `max-width: min(22ch, 100%)`); the controls could overflow at 390 px (fixed with
-  `flex: 0 1 auto`); the focus-disclosure assertion was a no-op because the reachability loop had
-  already focused that link; the boundary-whitespace navigation case addressed a leaf rather than an
-  ancestor; and the read-error assertion targeted `.mf-files-pane`, which the failure state does not
-  render.
-- `scripts/docker_files_toolbar_browser_proof.py` first failed with `bind source path does not
-  exist` because this Docker daemon cannot see `/tmp` (the same pre-existing environment fact
-  recorded for Task 44.4). The passing invocation uses `TMPDIR=/run/mf-docker-tmp`. It then failed
-  the container preflight because the temporary destination root was not writable by the container
-  UID/GID (fixed to `0o777`), and once because `served_asset_identity` parsed the static
-  `index.html` as JSON (fixed to read it as bytes).
-- An earlier Docker run silently reused an image built from pre-change HEAD. The harness now derives
-  its default tag from the committed SHA, so a stale image can never be mistaken for the current
-  candidate.
+- The first run of the new `placeDisclosure` test asserted the below-anchor placement for the
+  130px-tall disclosure at anchor y=727. The real behavior correctly flips it above (727−6−130=591)
+  so the complete name fits; the assertion was corrected to assert the actually delivered
+  relationship (complete disclosure inside the viewport, flipped above). No assertion was weakened
+  or removed.
+- `npx vitest run` on `files-toolbar-styles.test.ts` alone failed with `No such built-in module:
+  node:` because that file needs the project vitest configuration; the documented
+  `npm run test -- --run <files>` invocation runs it green. This is an invocation detail, not a
+  test defect.
+- The first `npm run format:check` after the fix reported `files-path.tsx` unformatted and
+  `npm run lint` reported one `react-hooks/exhaustive-deps` warning for the two-effect height
+  measurement. The measurement was folded into the single placement effect with a `ResizeObserver`
+  and reformatted; both gates now pass clean.
+- Round-0 history (retained): the first full unit run after the round-0 CSS change failed
+  `files-toolbar-styles.test.ts` on stale `max-width: 22ch` / `flex: 0 0 auto` expectations, and the
+  round-0 proof-harness iterations failed for the seed/reveal/overflow/focus/read-error reasons
+  recorded in the previous revision of this report. Those were fixed in the harness or the
+  presentation, never by relaxing an assertion.
 
-Reuse disclosure: product source, tests, `package.json`/lockfile and built assets are byte-identical
-between `8a0bb54` (the candidate the full unit/E2E gates ran on) and the submitted `6a6159d`; the
-only diffs are the two proof scripts. `git diff --name-only 8a0bb54 HEAD -- web/src web/package.json
-web/package-lock.json mediaflow tests config` is empty, and the rebuilt `web/dist` hashes equal the
-hashes the Docker image serves. The full Web unit suite and default E2E suite were therefore not
-mechanically rerun for the harness-only successor; the focused checkpoint commands, root gates and
-both real-Python/Docker proofs **were** rerun on the final candidate.
+Reuse disclosure: the round-0 evidence under
+`.git/validation-evidence/6a6159d396021a68e58be0c0f5c45f0421540236/task44-5/run-1/` remains the
+historical record for the first checkpoint. It is **not** reused for this correction: the product
+source changed, so every gate above was rerun on `df0bf7b`.
 
-Unavailable gate: a **fresh** candidate image build was impossible at the end of this session —
-`registry.npmjs.org` and Docker Hub became unreachable (DNS resolves to a blackhole address), so the
-Dockerfile's `npm ci` stage fails with an npm network error after 8 retries. The Docker proof was
-therefore run against the previously built candidate image whose tag names `e9a25a9c5b30`; the
-harness now verifies and records that this image serves byte-identical `index.html`/JS/CSS to the
-locally built candidate (`sameExecutableCandidate: true`) and states the reuse basis in
-`imageProvenance`. A fresh build remains the stronger proof if the registry becomes reachable.
+Unavailable gate: none. The earlier round-0 npm/Docker Hub network outage had cleared, so the
+Docker proof built a fresh candidate image from the exact committed checkout and no image reuse was
+needed (`builtFromCurrentCandidate: true`). The Slice-final T4 gates
+(`unittest discover -s tests`, `docker_release_security_smoke_test.py`) remain Slice-level
+requirements and were not run here, per the Task plan.
 
 ### Decisions
 
@@ -459,6 +483,11 @@ locally built candidate (`sameExecutableCandidate: true`) and states the reuse b
   visual layer never participates in route state, API paths or command intent.
 - The Docker candidate tag is derived from the committed SHA and the harness asserts served-vs-local
   artifact identity, so evidence reuse is provable rather than assumed.
+- Correction: placement is computed from the disclosure's **real rendered height** rather than a
+  fixed reserve. The pure `placeDisclosure` helper is exported and unit-tested, while the component
+  measures with `offsetHeight` plus a `ResizeObserver` (the viewport-aware max width can change the
+  wrapped line count) and reuses the existing `anchor`/`value`-scoped effect. This keeps the
+  behavior deterministic, avoids a render loop and needs no new dependency.
 
 ### Remaining In-Slice Work
 
@@ -466,10 +495,9 @@ RO-5 is this Task. RO-6 remains pending; B reevaluates every Required Outcome af
 
 ### Risks / Deviations
 
-- Docker image rebuild could not be performed freshly at the end of the session because the npm and
-  Docker Hub registries are unreachable from this environment. The Docker RO-5 proof instead ran
-  against a candidate image proven to serve the identical built artifact; this is disclosed above
-  and recorded in the evidence matrix rather than presented as a fresh build.
+- Correction round 1: no gate is unavailable. The earlier round-0 npm/Docker Hub outage had cleared,
+  so the Docker proof built a fresh candidate image from the exact committed checkout
+  (`builtFromCurrentCandidate: true`) and no image reuse was needed.
 - The Docker proof requires a daemon-visible temporary root in this environment
   (`TMPDIR=/run/mf-docker-tmp`); without it the harness fails loudly with
   `bind source path does not exist` and never silently mounts an empty directory.
@@ -477,6 +505,9 @@ RO-5 is this Task. RO-6 remains pending; B reevaluates every Required Outcome af
   rather than committed. The Docker proof requires `npm run build` first and fails fast otherwise.
 - The pre-existing build chunk-size advisory (large single JS chunk) is unrelated to this Task and
   was not changed.
+- The disclosure now clamps itself inside the viewport. For a pathologically tall disclosure (taller
+  than the viewport) the top is clamped and the name remains available by keyboard focus and its
+  accessible name; the legal 255-byte Local maximum is far below that and measured readable.
 - No pre-existing/unrelated test failure was observed; no test was removed, weakened, skipped,
   retried or given a longer timeout.
 
@@ -484,17 +515,20 @@ RO-5 is this Task. RO-6 remains pending; B reevaluates every Required Outcome af
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 6a6159d396021a68e58be0c0f5c45f0421540236
+Head SHA: df0bf7b1a7920b1d70e180a5d7528298c8ceba14
 ```
 
 Review range: Task Base `c04870ca33f81d393c8a1be3b2e3840ef892b4f8`..branch HEAD.
 
-Executable checkpoint (the SHA above, validated by every gate in this report):
+Correction checkpoint (the SHA above, validated by every gate in this report): `234dbe2` records
+B's round-0 `FIX REQUIRED` result verbatim, then `df0bf7b` is the correction implementation
+(product source, focused tests and both proof harnesses).
+
+Round-0 executable checkpoint (previously reviewed):
 `0184f63` (pre-existing user-authorized governance/template commit, already at Task Base + 1 and
 explicitly referenced by this Task plan) → `8a0bb54` Task 44.5 implementation → `35d0973`,
-`e9a25a9`, `c3e697a`, `6a6159d` proof-harness-only follow-ups. Every commit after `8a0bb54`
-changes only the two `scripts/*_browser_proof.py` harnesses; `web/src`, `web/package.json`,
-`web/package-lock.json`, `mediaflow`, `tests` and `config` are byte-identical to `8a0bb54`.
+`e9a25a9`, `c3e697a`, `6a6159d` proof-harness-only follow-ups, then the two docs-only successors
+`f406e8a`/`5def630`.
 
 The commit that carries this report is a docs-only successor of the SHA above.
 
