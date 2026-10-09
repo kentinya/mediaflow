@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 44.5
 Parent Slice: 44
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: c04870ca33f81d393c8a1be3b2e3840ef892b4f8
 Difficulty: Medium
 Test Level: T3
@@ -498,11 +498,63 @@ changes only the two `scripts/*_browser_proof.py` harnesses; `web/src`, `web/pac
 
 The commit that carries this report is a docs-only successor of the SHA above.
 
+## B Independent Review Evidence — 2026-10-09
+
+Reviewed actual Task Base `c04870ca33f81d393c8a1be3b2e3840ef892b4f8` through
+`5def630f7722fb6b3a68c8a481c8dfd484ed2728`. The reported executable checkpoint is
+`6a6159d396021a68e58be0c0f5c45f0421540236`; its two successors change only `TASK.md`.
+The preceding `0184f63` workflow/template change is the already-authorized governance update.
+Production changes are confined to the shared Files presentation and its two page integrations;
+no backend/configuration/schema or existing test was removed or weakened. The four untracked
+user images are preserved; `config/alist.json` remains ignored, untracked and unstaged.
+
+Independent evidence and reproducible probe:
+`.git/validation-evidence/5def630f7722fb6b3a68c8a481c8dfd484ed2728/b44-5-review/`.
+See `review-index.json` for commands, exits, candidate/assets and limitations. B rebuilt the
+current committed Web assets and ran the committed real-Python proof (18 matrix cases / 22
+screenshots, exit 0). B also inspected the supplied desktop/narrow Docker screenshots and
+served-asset hashes; those hashes match the fresh local build. This rejecting review does not
+certify all Docker provenance or checkpoint gates.
+
+The additional legal-Local-name probe uses the same production Python API, authenticated
+configuration, Storage capabilities and built assets; it only extends the temporary fixture to
+a 240-byte ASCII directory name ending in `-Tail007`. Both routes × list/grid × hover/focus
+produce eight clipped disclosures. `full-name-tail-probe.py` exits 1 on the viewport assertion;
+its `full-name-tail/evidence.json`, screenshots and raw log retain the actual geometry. The
+inherited harness phrase "8 measured passes" means eight collected measurements in this
+diagnostic; all eight `fullNameVisible` assertions are false, not eight accepted cases.
+
+Other independent results: governance PASS; Python browser/release modules 23 PASS; shared
+component/CSS tests 2 files / 14 PASS; build and range `git diff --check` PASS. The broader
+four-file focused Web run printed 69 PASS but its process returned 143, so it is not an accepted
+gate. Full Web units/default E2E, real-Python Operations/DirectFiles, remaining quality gates and
+a fresh isolated Docker proof were not rerun: review stopped after the evidenced P1. No
+pre-existing/unrelated failure exclusion is claimed. This is B correction round 1 for Task 44.5;
+retain the existing Task ID, Base, Goal, Scope, acceptance and test plan.
+
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
+Reviewed: c04870ca33f81d393c8a1be3b2e3840ef892b4f8..5def630f7722fb6b3a68c8a481c8dfd484ed2728
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — Full exact-name disclosure is clipped at narrow height (AC2; Scope 3/6;
+  Slice RO-5 / AC24).** In `web/src/shared/ui/files-path.tsx:137–153`, vertical placement
+  reserves fixed 48/34px rather than the disclosure's actual wrapped height. On both production
+  Files routes, at 390×844, navigate to the temporary Local path consisting of the existing long
+  Chinese segment, mixed English segment, and `"A" * 232 + "-Tail007"` (240 ASCII bytes,
+  valid Local basename). Hover or keyboard-focus the current crumb in list or grid. The
+  ResourceLibrary disclosure is y=755/h=130/bottom=885; MediaLibrary is
+  y=732/h=130/bottom=862. Both exceed viewport bottom 844 and hide the distinguishing suffix;
+  screenshots confirm the user cannot read the full name through the promised disclosure.
+  Reproduce with `.venv/bin/python
+  .git/validation-evidence/5def630f7722fb6b3a68c8a481c8dfd484ed2728/b44-5-review/full-name-tail-probe.py`
+  (exit 1, eight failing viewport assertions). Position/clamp the disclosure using its real
+  rendered dimensions so the complete name is available by hover and keyboard focus; preserve
+  exact path identity and existing toolbar behavior. Extend both browser proofs to inspect the
+  disclosure's vertical bounds and actual full-name visibility for this legal long-name case,
+  retaining existing assertions and matrix coverage, then satisfy the unchanged checkpoint plan
+  on the corrected candidate.
