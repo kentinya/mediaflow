@@ -51,9 +51,38 @@ Replace or extend these with concrete Task-specific criteria; do not retain inap
 
 ## Required Tests
 
-List exact focused/related/quality commands required by the assigned Test Level. Full regression is
-required only for T4 or when B gives a concrete risk-based reason. Real external services require an
-explicit isolated acceptance plan and never use production data.
+Follow the staged test/evidence rules in `docs/development-workflow.md`. List exact commands and
+the behavior/risk each covers. T0–T3 full suites need a concrete reason; T4 keeps complete assigned
+checkpoint gates. The parent Slice's explicit validation requirements take precedence.
+
+### Development and correction feedback
+
+List the changed/new tests, directly affected regressions and necessary integration/browser checks
+to run while coding or correcting a blocker. These runs do not replace final checkpoint gates.
+
+### Final checkpoint gates
+
+List the required focused/integration/regression/quality commands for the submitted candidate.
+State the risk-based reason for any T0–T3 full suite. If a final full suite covers the focused cases
+under the required configuration, identify that coverage instead of duplicating the run. Keep
+separate real-Python/Docker/visual/compatibility gates where required. Real external services need
+an explicit isolated acceptance plan and never use production data.
+
+### B independent verification
+
+Name the critical user journey or safety behavior B must independently reproduce and the actual
+artifacts B must inspect. Other checkpoint gates may use verified matching evidence under the
+workflow's reuse rules; missing or incompatible evidence requires a fresh run.
+
+### Evidence and rerun rules
+
+Specify a stable ignored artifact location or CI artifact reference; retain it through A's final
+decision. Record source/checkpoint identity, commands/environment/dependency/configuration/selection
+and built-artifact identity, results/counts/durations and readable raw logs/visuals. Keep first
+failures and repeats. Declare reuse and uncovered gates; `/tmp` alone or a completion report is
+insufficient. Source/input changes require fresh affected evidence; T4 final candidates retain
+complete gates. Report-only successors require verified unchanged runtime inputs and rerun any
+checks that consume the changed documents.
 
 ## Non-goals
 
@@ -69,6 +98,10 @@ explicit isolated acceptance plan and never use production data.
 ### Implemented
 
 ### Tests and Results
+
+Include the evidence index and actual commands/counts/durations. Identify the validated candidate,
+first failures/repeats, reused matching runs and any missing/failed/unavailable gate. Do not claim
+development-only feedback or an unverifiable prior run as final checkpoint acceptance.
 
 ### Decisions
 

@@ -289,6 +289,75 @@ invariants.
 Canonical requirement changes, architecture-contract changes, safety-rule changes and Slice-scope
 changes are not ordinary T0 work. B assigns the level from actual risk, not desired speed.
 
+### Test plans and execution stages
+
+Every Task's `Required Tests` separates development feedback, checkpoint gates and B's independent
+verification. Each command names the behavior or risk it covers. T0–T3 full-suite requirements need
+a concrete reason such as shared-shell reachability; copying every project gate into every Task is
+not a test plan. T4 checkpoint requirements remain focused/integration/full regression and complete
+applicable quality/safety gates. The current Slice's explicit validation requirements take precedence.
+
+| Stage | Required execution |
+|---|---|
+| Development and correction work | Run changed/new tests and directly affected regressions first; add a relevant integration/native journey when that boundary changes. Resolve known blockers before expensive gates. |
+| Final Task candidate | Run the assigned checkpoint gates on the candidate being submitted, with actual results and evidence. T4 requires complete assigned regression/safety gates; development-only runs do not satisfy them. |
+| B Review | Inspect the actual diff and verify checkpoint evidence; independently reproduce the critical behavior specified in the Task. Rerun gates with missing, incompatible or contradicted evidence. |
+| Slice Final | Run the current Contract's full regression and applicable safety/packaging/migration gates; record actual results in the Closure Packet. |
+
+Fast runs are feedback, not permission to submit an incomplete checkpoint. During a fix loop,
+Developer first runs the failing case and affected regressions, then satisfies the checkpoint plan
+on the corrected candidate. When a final full suite includes the focused cases under the required
+configuration, record that coverage instead of mechanically running the same cases a second time.
+Separate real-Python, Docker, migration or visual checks remain required when the Contract/Task
+specifies them; a mocked suite cannot replace them. Changes to executable source after validation
+invalidate final full-suite evidence for that candidate.
+
+B defines the independent critical reproduction and checks why additional gates are necessary.
+B does not default to repeating every Developer gate solely because the reviewer changed. An early
+proven blocker permits a rejecting review before remaining expensive gates; report what was not
+run, and satisfy the full checkpoint plan before PASS. A retains independent final-review authority.
+
+Existing Task plans remain binding until B explicitly updates `Required Tests`. Such an update
+records its reason and preserves Task ID/Base/Goal/Scope/acceptance and the Slice Contract. Developer
+cannot silently omit assigned commands. Added risk at auth/Active/mutation/persistence/concurrency
+boundaries returns to B for level reassessment, rather than receiving a faster but weaker plan.
+
+### Verifiable evidence and reuse
+
+Keep one evidence index per candidate/run, with:
+
+- tested full source SHA, working-tree changes if any, and reviewed checkpoint SHA;
+- exact commands, working directories, relevant runtime versions, dependency/lockfile identity,
+  safe fixture/configuration identity, worker/selection/retry settings and built-artifact digests;
+- exit codes, pass/fail/skip/flaky/unavailable counts, duration, raw logs and applicable browser
+  traces/screenshots/measurements, including first failures and exact repeats;
+- the required gate/criterion each run covers and any explicit evidence reuse or validation gap.
+
+Record only secret-free environment facts. A dirty-source run must identify its exact tested
+content and prove that content matches the submitted checkpoint; a completion narrative alone is
+not proof. B checks the actual code, command coverage and readable original artifacts before reuse.
+Evidence produced by Developer or CI is usable when all these facts match; neither the producer's
+role nor a PASS label establishes validity. Missing logs, incomplete runs and unverifiable claims
+require the relevant gate to run again. Visual acceptance includes inspecting actual images and
+measurements; a generated "aligned" label or script exit alone is insufficient.
+
+Reuse across roles is allowed for the same executable candidate, tests/harnesses, dependencies,
+configuration and built artifacts. A report/document-only successor commit may reuse runtime
+evidence only after an explicit diff proves those inputs unchanged. Rerun checks that consume the
+changed documents, including governance/release-policy checks when applicable. Changes to source,
+tests, harnesses, dependencies, runtime configuration or served artifacts require fresh affected
+evidence; a T4 corrected executable candidate still requires its complete assigned final gates.
+Uncertain impact requires rerunning the relevant gate, not assuming it is unaffected. Slice Final
+still performs the Contract's final run; this rule does not substitute an old Task run for it.
+
+Retain the index and raw artifacts through A's final decision in CI artifacts or a stable ignored
+workspace location, for example `.git/validation-evidence/<source-sha>/<run-id>/`. `/tmp` alone is
+not a durable handoff. Keep evidence out of product configuration, user reference images and
+ordinary source commits; a local path is not claimed remotely reachable. Reuse and missing evidence
+are disclosed in the review/Closure Packet. Known pre-existing failures still need actual Base
+proof. No deleted tests, weaker assertions, hidden skips, retries or timeout changes may manufacture
+a green gate.
+
 ### SLICE FINAL
 
 Before declaring `SLICE READY FOR A REVIEW`, B normally runs one Slice-level full regression plus
