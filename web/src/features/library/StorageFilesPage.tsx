@@ -15,6 +15,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
+import {
+  FilesBreadcrumbs,
+  IdentityLabel,
+  identityAccessibleName,
+} from "../../shared/ui/files-path";
 import { filesReturnSearch } from "../../shared/navigation/files-return";
 import {
   operationsLandingSearch,
@@ -535,101 +540,6 @@ function mediaTypeLabel(name: string): string {
   if (/\.(jpg|jpeg|png|gif|webp|bmp)$/.test(lower)) return "图片";
   if (/\.(srt|ass|ssa|vtt|sub|sup)$/.test(lower)) return "字幕";
   return "其他";
-}
-
-/**
- * Does this exact Storage-relative value carry whitespace that changes its
- * identity?  Leading/trailing space is the invisible case the operator cannot
- * see but the Storage provider resolves literally: `SSH ` and `SSH` are two
- * different directories.
- */
-function hasEdgeWhitespace(value: string): boolean {
-  return value !== value.trim();
-}
-
-/** The visible marker that makes one invisible boundary space unambiguous. */
-const EDGE_WHITESPACE_MARK = "␣";
-
-interface EdgeWhitespace {
-  readonly leading: boolean;
-  readonly trailing: boolean;
-  /** A boundary description the operator and assistive technology can read. */
-  readonly description: string;
-}
-
-/**
- * The boundary whitespace of one exact Storage identity, or `null` for an
- * ordinary value.  The accessible name computation collapses and trims raw
- * whitespace, so a trailing space inside a visible label or `aria-label`
- * cannot by itself tell an assistive-technology user which of two Storage
- * entries is meant; this description is what makes it unambiguous.
- */
-function readEdgeWhitespace(value: string): EdgeWhitespace | null {
-  if (!hasEdgeWhitespace(value)) return null;
-  const leading = value.length > value.trimStart().length;
-  const trailing = value.length > value.trimEnd().length;
-  const description =
-    leading && trailing
-      ? "开头和结尾包含空格"
-      : leading
-        ? "开头包含空格"
-        : "结尾包含空格";
-  return { leading, trailing, description };
-}
-
-/**
- * An accessible name for one exact Storage identity.  An ordinary value is
- * returned unchanged, so existing names and labels are unaffected; only a
- * value whose real characters carry boundary whitespace gains the explicit
- * description.
- */
-function identityAccessibleName(value: string): string {
-  const whitespace = readEdgeWhitespace(value);
-  return whitespace === null
-    ? value
-    : `${value}（名称${whitespace.description}）`;
-}
-
-/**
- * The exact Storage identity of one Files entry, presented unambiguously.
- *
- * The server value is rendered character for character, so the label still
- * corresponds to the path that will actually be requested.  Only when it
- * begins or ends with whitespace does the presentation add a visible boundary
- * marker and an explicit assistive description; an ordinary name renders
- * exactly as before.
- */
-function IdentityLabel({ value }: { readonly value: string }) {
-  const whitespace = readEdgeWhitespace(value);
-  if (whitespace === null) return <>{value}</>;
-  return (
-    <span
-      className="mf-identity-label"
-      data-edge-whitespace={
-        whitespace.leading && whitespace.trailing
-          ? "both"
-          : whitespace.leading
-            ? "leading"
-            : "trailing"
-      }
-      title={`名称${whitespace.description}`}
-    >
-      {whitespace.leading && (
-        <span className="mf-ws-marker" aria-hidden="true">
-          {EDGE_WHITESPACE_MARK}
-        </span>
-      )}
-      <span className="mf-ws-value">{value}</span>
-      {whitespace.trailing && (
-        <span className="mf-ws-marker" aria-hidden="true">
-          {EDGE_WHITESPACE_MARK}
-        </span>
-      )}
-      <span className="mf-visually-hidden">
-        {`（名称${whitespace.description}）`}
-      </span>
-    </span>
-  );
 }
 
 function entryTypeLabel(entry: StorageFilesEntry): string {
@@ -1238,30 +1148,14 @@ function FileBrowseView({
         />
         <div className="mf-files-pane">
           <div className="mf-files-toolbar">
-            <nav aria-label="资源库面包屑" className="mf-breadcrumbs">
-              <button
-                type="button"
-                className="mf-crumb-home"
-                aria-label="返回资源库根目录"
-                onClick={onReturnRoot}
-              >
-                <Icon name="home" />
-              </button>
-              {model.breadcrumbs.map((crumb) =>
-                crumb.isRoot ? null : (
-                  <span key={crumb.path} className="mf-crumb">
-                    <span aria-hidden="true">/</span>
-                    <button
-                      type="button"
-                      className="mf-link-button"
-                      onClick={() => onOpenPath(crumb.path)}
-                    >
-                      <IdentityLabel value={crumb.name} />
-                    </button>
-                  </span>
-                ),
-              )}
-            </nav>
+            <FilesBreadcrumbs
+              label="资源库面包屑"
+              homeLabel="返回资源库根目录"
+              crumbs={model.breadcrumbs}
+              currentPath={model.path}
+              onReturnRoot={onReturnRoot}
+              onOpenPath={onOpenPath}
+            />
             <div className="mf-toolbar-controls">
               <button
                 className="mf-button mf-button-secondary"

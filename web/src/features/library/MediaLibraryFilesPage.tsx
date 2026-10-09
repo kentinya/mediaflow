@@ -15,6 +15,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
+import {
+  FilesBreadcrumbs,
+  IdentityLabel,
+  identityAccessibleName,
+} from "../../shared/ui/files-path";
 import type {
   MediaLibraryFilesEntry,
   MediaLibraryFilesModel,
@@ -240,77 +245,6 @@ function mediaTypeLabel(name: string): string {
   if (/\.(srt|ass|ssa|vtt|sub|sup)$/.test(lower)) return "字幕";
   if (/\.(nfo|txt|md|json|xml)$/.test(lower)) return "文本";
   return "其他";
-}
-
-function hasEdgeWhitespace(value: string): boolean {
-  return value !== value.trim();
-}
-
-const EDGE_WHITESPACE_MARK = "␣";
-
-interface EdgeWhitespace {
-  readonly leading: boolean;
-  readonly trailing: boolean;
-  readonly description: string;
-}
-
-function readEdgeWhitespace(value: string): EdgeWhitespace | null {
-  if (!hasEdgeWhitespace(value)) return null;
-  const leading = value.length > value.trimStart().length;
-  const trailing = value.length > value.trimEnd().length;
-  const description =
-    leading && trailing
-      ? "开头和结尾包含空格"
-      : leading
-        ? "开头包含空格"
-        : "结尾包含空格";
-  return { leading, trailing, description };
-}
-
-function identityAccessibleName(value: string): string {
-  const whitespace = readEdgeWhitespace(value);
-  return whitespace === null
-    ? value
-    : `${value}（名称${whitespace.description}）`;
-}
-
-/**
- * The exact live Storage identity of one MediaLibrary entry, presented
- * unambiguously: the server value renders character for character, and only a
- * value whose real characters carry boundary whitespace gains the explicit
- * visible marker and assistive description.
- */
-function IdentityLabel({ value }: { readonly value: string }) {
-  const whitespace = readEdgeWhitespace(value);
-  if (whitespace === null) return <>{value}</>;
-  return (
-    <span
-      className="mf-identity-label"
-      data-edge-whitespace={
-        whitespace.leading && whitespace.trailing
-          ? "both"
-          : whitespace.leading
-            ? "leading"
-            : "trailing"
-      }
-      title={`名称${whitespace.description}`}
-    >
-      {whitespace.leading && (
-        <span className="mf-ws-marker" aria-hidden="true">
-          {EDGE_WHITESPACE_MARK}
-        </span>
-      )}
-      <span className="mf-ws-value">{value}</span>
-      {whitespace.trailing && (
-        <span className="mf-ws-marker" aria-hidden="true">
-          {EDGE_WHITESPACE_MARK}
-        </span>
-      )}
-      <span className="mf-visually-hidden">
-        {`（名称${whitespace.description}）`}
-      </span>
-    </span>
-  );
 }
 
 function entryTypeLabel(entry: MediaLibraryFilesEntry): string {
@@ -954,30 +888,14 @@ function MediaBrowseView({
         />
         <div className="mf-files-pane">
           <div className="mf-files-toolbar">
-            <nav aria-label="媒体库面包屑" className="mf-breadcrumbs">
-              <button
-                type="button"
-                className="mf-crumb-home"
-                aria-label="返回媒体库根目录"
-                onClick={onReturnRoot}
-              >
-                <Icon name="home" />
-              </button>
-              {model.breadcrumbs.map((crumb) =>
-                crumb.isRoot ? null : (
-                  <span key={crumb.path} className="mf-crumb">
-                    <span aria-hidden="true">/</span>
-                    <button
-                      type="button"
-                      className="mf-link-button"
-                      onClick={() => onOpenPath(crumb.path)}
-                    >
-                      <IdentityLabel value={crumb.name} />
-                    </button>
-                  </span>
-                ),
-              )}
-            </nav>
+            <FilesBreadcrumbs
+              label="媒体库面包屑"
+              homeLabel="返回媒体库根目录"
+              crumbs={model.breadcrumbs}
+              currentPath={model.path}
+              onReturnRoot={onReturnRoot}
+              onOpenPath={onOpenPath}
+            />
             <div className="mf-toolbar-controls">
               <button
                 className="mf-button mf-button-secondary"

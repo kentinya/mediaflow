@@ -1440,6 +1440,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  row-gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
@@ -2492,7 +2493,11 @@ button.mf-grid-button {
 }
 
 .mf-files-toolbar {
-  height: 52px;
+  /* Task 44.5 RO-5: the toolbar reserves the height of its real contents.
+     A fixed 52px wrapper previously hid a wrapped control row behind the
+     entry viewport; min-height keeps the normal desktop density while the
+     actual rows define the reserved space. */
+  min-height: 52px;
   margin: 0;
   border-bottom: 1px solid #eef2f7;
   flex: 0 0 auto;
@@ -2500,9 +2505,87 @@ button.mf-grid-button {
 
 .mf-files-page .mf-breadcrumbs {
   gap: 8px;
+  /* The bounded path region: it shrinks before the controls, keeps one line
+     and scrolls its own combined path horizontally.  It never wraps into the
+     control row and never widens the page.  The small floor is what makes the
+     row reflow deliberately once the pane genuinely cannot hold both the path
+     and the complete control labels. */
+  flex: 1 1 0;
+  min-width: 6rem;
+  flex-wrap: nowrap;
+  overflow: hidden;
   color: #13264b;
   font-size: 15px;
   line-height: 22px;
+}
+
+/* The breadcrumb track is the only horizontally scrollable part of the path
+   region: combined long paths stay reachable without moving the controls. */
+.mf-crumb-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0 2px 2px;
+  list-style: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  /* The track is the offset parent of its segments, so the "reveal the
+     current segment" scroll measures against this scrollable region and not
+     against the page. */
+  position: relative;
+}
+
+.mf-crumb-track .mf-crumb {
+  flex: 0 0 auto;
+  /* One overlong segment elides to at most 22ch, and never wider than the
+     bounded region itself: when the pane is genuinely narrow the current
+     segment still fits the visible track and stays reachable by scrolling. */
+  max-width: min(22ch, 100%);
+}
+
+.mf-crumb-separator {
+  color: #8ea2c0;
+}
+
+/* One overlong segment elides locally; its complete exact name stays
+   available through the label title and its explicit accessible name. */
+.mf-crumb-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mf-crumb-link.is-current {
+  color: #0e1728;
+  font-weight: 600;
+}
+
+/* The complete exact segment disclosed on hover and on keyboard focus.  It
+   renders above every clipping ancestor through a portal, so a bounded path
+   region can never clip the name it is disclosing. */
+.mf-crumb-disclosure {
+  position: fixed;
+  z-index: 60;
+  padding: 4px 8px;
+  border: 1px solid #d6e0ee;
+  border-radius: 5px;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(43, 65, 97, 0.16);
+  color: #13264b;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
 .mf-crumb-home {
@@ -2530,8 +2613,12 @@ button.mf-grid-button {
   align-items: center;
 }
 
-.mf-toolbar-controls {
+.mf-files-page .mf-toolbar-controls {
   gap: 6px;
+  /* The control group keeps its complete labels and usable targets: the path
+     region shrinks first, and once the pane genuinely cannot hold both the
+     group wraps inside its own row rather than overflowing the pane. */
+  flex: 0 1 auto;
 }
 
 .mf-files-pane .mf-button {
