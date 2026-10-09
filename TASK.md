@@ -487,6 +487,17 @@ Status: READY FOR B REVIEW
 Head SHA: 6a6159d396021a68e58be0c0f5c45f0421540236
 ```
 
+Review range: Task Base `c04870ca33f81d393c8a1be3b2e3840ef892b4f8`..branch HEAD.
+
+Executable checkpoint (the SHA above, validated by every gate in this report):
+`0184f63` (pre-existing user-authorized governance/template commit, already at Task Base + 1 and
+explicitly referenced by this Task plan) → `8a0bb54` Task 44.5 implementation → `35d0973`,
+`e9a25a9`, `c3e697a`, `6a6159d` proof-harness-only follow-ups. Every commit after `8a0bb54`
+changes only the two `scripts/*_browser_proof.py` harnesses; `web/src`, `web/package.json`,
+`web/package-lock.json`, `mediaflow`, `tests` and `config` are byte-identical to `8a0bb54`.
+
+The commit that carries this report is a docs-only successor of the SHA above.
+
 ## B Review Result
 
 ```text
