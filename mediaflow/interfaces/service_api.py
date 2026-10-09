@@ -44,6 +44,7 @@ from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
 from mediaflow.application.manual_scan import ManualScanError, ManualScanService
+from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
     MetadataCorrectionContinuationConflict,
@@ -156,6 +157,12 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewError,
 )
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
+from mediaflow.domain.media_discovery import (
+    TERMINAL_DISCOVERY_STATUSES,
+    DiscoveryError,
+    DiscoveryIncompleteReason,
+    DiscoveryStatus,
+)
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
     MetadataCorrectionContinuationStatus,
@@ -366,6 +373,7 @@ class MediaFlowApi:
         manual_execution_service: ManualOrganizeExecutionService | None = None,
         manual_recovery_service: ManualRecoveryContinuationService | None = None,
         manual_scan_service: ManualScanService | None = None,
+        media_discovery_service=None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
@@ -422,6 +430,20 @@ class MediaFlowApi:
                 file_index=self._file_index,
                 configuration_service=configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
+            )
+        # The RO-6 bounded selected-scope discovery stage shares this API's
+        # exact pinned Active revision and Storage adapters, and hands its frozen
+        # source list to the same manual intent authority.  It grants no
+        # execution permission and performs metadata-only Storage reads.
+        self._media_discovery = media_discovery_service
+        if self._media_discovery is None and self._manual_intents is not None:
+            self._media_discovery = MediaDiscoveryService(
+                repository,
+                self._manual_intents,
+                configuration_service=configuration_service,
+                storage_factory=lambda runtime, ids: runtime.create_storages(
+                    external=self._storage_adapters, storage_ids=ids
+                ),
             )
         self._configuration_objects = (
             ConfigurationObjectService(
@@ -2473,6 +2495,123 @@ class MediaFlowApi:
                 )
             except ManualExecutionError as error:
                 return self._manual_step_error(start_response, error)
+        if parts == ["api", "v1", "operations", "organize", "discoveries"] and method == "GET":
+            # The bounded operator list of this principal's own admitted
+            # discoveries.  It never publishes a claim token, a configuration
+            # digest or a raw Storage path.
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "operations organize discoveries")
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            values = service.list(actor=principal.principal_id, limit=50)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "journey": "discovery",
+                    "items": [
+                        self._discovery_document(value, principal, binding, include_sources=False)
+                        for value in values
+                    ],
+                    "total": len(values),
+                    "limit": 50,
+                    "sideEffects": "none",
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "operations organize discovery detail")
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            try:
+                value = service.get(parts[5])
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            return self._response(
+                start_response, 200, self._discovery_document(value, principal, binding)
+            )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            and parts[6] in {"pause", "cancel", "resume"}
+            and method == "POST"
+        ):
+            # Cooperative, versioned control.  Pause and cancel only record a
+            # request the resident Worker honours at its next safe boundary;
+            # they never grant execution authority and never interrupt an
+            # in-flight provider call.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "operations organize discovery control")
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError(
+                    "operations organize discovery control requires only expectedVersion"
+                )
+            action = parts[6]
+            try:
+                if action == "pause":
+                    value = service.request_pause(
+                        parts[5],
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                elif action == "cancel":
+                    value = service.request_cancel(
+                        parts[5],
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                else:
+                    value = service.resume(
+                        parts[5],
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            return self._response(
+                start_response, 200, self._discovery_document(value, principal, binding)
+            )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            and parts[6] == "finalize"
+            and method == "POST"
+        ):
+            # Freeze the durable discovered source list and hand it to the
+            # existing manual intent admission.  The resulting intent still
+            # requires a separate exact Preview and an explicitly confirmed
+            # execution; discovery itself never grants mutation authority.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "operations organize discovery finalize")
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError(
+                    "operations organize discovery finalize requires only expectedVersion"
+                )
+            try:
+                value = service.finalize(
+                    parts[5],
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            return self._response(
+                start_response, 201, self._discovery_document(value, principal, binding)
+            )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -5938,6 +6077,57 @@ class MediaFlowApi:
                 return self._manual_step_error(start_response, error)
             return self._response(
                 start_response, 201, self._organize_intent_document(intent, principal)
+            )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "discoveries"
+            and method == "POST"
+        ):
+            # RO-6 folder/mixed-selection discovery admission.  The browser
+            # submits only the enabled ResourceLibrary identity and exact
+            # ResourceLibrary-relative folder/file paths; the backend resolves
+            # real entry types, the pinned immutable Active revision, the
+            # Storage adapter and every concrete budget, then returns promptly
+            # with one durable discovery record.  This request enumerates no
+            # directory, calls no Provider and mutates nothing.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "Files discovery admission")
+            discovery_service = getattr(self, "_media_discovery", None)
+            if discovery_service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "bounded folder discovery is unavailable",
+                    details={
+                        "durableState": "no_discovery_created",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and discovery services, then "
+                            "resubmit the same bounded selection"
+                        ),
+                    },
+                )
+            document = self._document(environ)
+            if not isinstance(document, dict) or set(document) != {"paths"}:
+                raise ValueError("Files discovery admission accepts only bounded relative paths")
+            if not isinstance(document["paths"], list):
+                raise ValueError("Files discovery admission paths must be an array")
+            try:
+                discovery = discovery_service.admit(
+                    resource_library_id=parts[3],
+                    relative_paths=document["paths"],
+                    actor=principal.principal_id,
+                )
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            return self._response(
+                start_response,
+                202,
+                self._discovery_document(discovery, principal, binding),
             )
         if (
             len(parts) == 6
@@ -12082,6 +12272,225 @@ class MediaFlowApi:
             str(document.pop("message", "the exact manual Organize step was rejected")),
             details=document,
         )
+
+    def _discovery_unavailable(self, start_response: Callable) -> list[bytes]:
+        return self._error(
+            start_response,
+            503,
+            "service_unavailable",
+            "bounded folder discovery is unavailable",
+            details={
+                "durableState": "no_discovery_created",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "restore the discovery service and Processing Worker, then reload the "
+                    "Operations task center"
+                ),
+            },
+        )
+
+    def _discovery_step_error(self, start_response: Callable, error) -> list[bytes]:
+        """One bounded, secret-free failure for a discovery step."""
+
+        return self._error(
+            start_response,
+            int(getattr(error, "status", 409) or 409),
+            str(getattr(error, "code", "discovery_rejected") or "discovery_rejected"),
+            str(error),
+            details={
+                "nextAction": getattr(error, "next_action", None),
+                "durableState": (
+                    "rejected_without_mutation"
+                    if int(getattr(error, "status", 409) or 409) < 500
+                    else "rejection_unconfirmed"
+                ),
+                "sideEffects": "none",
+                "retrySafe": int(getattr(error, "status", 409) or 409) < 500,
+                **{
+                    key: value
+                    for key, value in dict(getattr(error, "details", {}) or {}).items()
+                    if key not in {"nextAction", "sideEffects", "retrySafe", "durableState"}
+                },
+            },
+        )
+
+    def _discovery_document(self, discovery, principal, binding, *, include_sources: bool = True):
+        """The bounded, secret-free operator projection of one discovery.
+
+        It publishes exact relative scopes, progress, counters, bounded findings
+        and a native next action.  It never publishes a claim token, a
+        configuration digest, a fingerprint, an occurrence ID or a physical
+        Storage path.
+        """
+
+        progress = discovery.progress
+        counters = progress.counters
+        incomplete = progress.incomplete_reason
+        terminal = discovery.status in TERMINAL_DISCOVERY_STATUSES
+        frozen = discovery.intent_id is not None
+        worker = self._discovery_worker_evidence(binding)
+        can_manage = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        next_action = self._discovery_next_action(
+            discovery, terminal=terminal, frozen=frozen, worker_ready=worker["ready"]
+        )
+        document: dict[str, object] = {
+            "journey": "discovery",
+            "discoveryId": discovery.discovery_id,
+            "resourceLibraryId": discovery.resource_library_id,
+            "status": discovery.status.value,
+            "version": discovery.version,
+            "createdAt": discovery.created_at.isoformat(),
+            "updatedAt": discovery.updated_at.isoformat(),
+            "selection": {
+                "scopeCount": len(progress.scope_entries),
+                "scopes": [
+                    {"path": item.path, "kind": item.kind.value}
+                    for item in progress.scope_entries
+                ],
+            },
+            "budgets": discovery.budgets.document(),
+            "progress": {
+                "phase": progress.phase,
+                "visitedEntries": counters.visited_entries,
+                "visitedDirectories": counters.visited_directories,
+                "pageFetches": counters.page_fetches,
+                "primarySources": len(discovery.sources),
+                "excludedEntries": counters.excluded_entries,
+                "unstableEntries": counters.unstable_entries,
+                "errorEntries": counters.error_entries,
+                "activeSeconds": round(counters.active_seconds, 3),
+                "incomplete": incomplete is not DiscoveryIncompleteReason.NONE,
+                "incompleteReason": (
+                    None if incomplete is DiscoveryIncompleteReason.NONE else incomplete.value
+                ),
+                "findings": [item.document() for item in progress.findings],
+                "reasons": [item.document() for item in progress.reasons],
+                "message": progress.message,
+            },
+            "primarySourceCount": len(discovery.sources),
+            "intentId": discovery.intent_id,
+            "frozen": frozen,
+            "frozenAt": (
+                discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None
+            ),
+            "pauseRequested": discovery.pause_requested,
+            "cancelRequested": discovery.cancel_requested,
+            "worker": worker,
+            "actions": {
+                "pause": {
+                    "available": can_manage and not terminal and not discovery.pause_requested,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/"
+                        f"{discovery.discovery_id}/pause"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                },
+                "cancel": {
+                    "available": can_manage and not terminal and not discovery.cancel_requested,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/"
+                        f"{discovery.discovery_id}/cancel"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                },
+                "resume": {
+                    "available": can_manage and discovery.pause_requested and not terminal,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/"
+                        f"{discovery.discovery_id}/resume"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                },
+                "finalize": {
+                    "available": can_manage
+                    and not frozen
+                    and bool(discovery.sources)
+                    and discovery.status
+                    in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS},
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/"
+                        f"{discovery.discovery_id}/finalize"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                    "durableOutcome": (
+                        "one immutable deduplicated source list is linked to a durable manual "
+                        "intent; a separate exact Preview and confirmed execution are still "
+                        "required"
+                    ),
+                },
+            },
+            "nextAction": next_action,
+            "failure": discovery.error,
+            "sideEffects": "none",
+            "zeroMutation": True,
+            "execution": "not_available_from_discovery",
+        }
+        if include_sources:
+            document["sources"] = [
+                {
+                    "path": str(value.get("path", "")),
+                    "filename": str(value.get("filename", "")),
+                    "extension": str(value.get("extension", "")),
+                    "size": int(value.get("size", 0)),
+                    "modifiedAt": value.get("modifiedAt"),
+                }
+                for value in discovery.sources
+            ]
+        return document
+
+    def _discovery_worker_evidence(self, binding) -> dict[str, object]:
+        service = self._worker_service
+        if service is None or not callable(
+            getattr(service, "evaluate_manual_organize_readiness", None)
+        ):
+            return {
+                "ready": False,
+                "condition": "no_worker",
+                "durableState": "processing worker service is unavailable",
+                "nextAction": "start the resident Processing Worker",
+            }
+        try:
+            readiness = service.evaluate_manual_organize_readiness()
+        except Exception:
+            return {
+                "ready": False,
+                "condition": "no_worker",
+                "durableState": "processing worker readiness could not be read",
+                "nextAction": "inspect the resident Processing Worker and retry",
+            }
+        return {
+            "ready": bool(readiness.get("ready")),
+            "condition": readiness.get("condition"),
+            "durableState": readiness.get("durableState"),
+            "nextAction": readiness.get("nextAction"),
+        }
+
+    @staticmethod
+    def _discovery_next_action(discovery, *, terminal: bool, frozen: bool, worker_ready: bool):
+        if frozen:
+            return "open the linked manual intent to review choices and create an exact Preview"
+        if discovery.status is DiscoveryStatus.CANCELLED:
+            return "start a new bounded discovery from Files if this scope is still wanted"
+        if discovery.status is DiscoveryStatus.FAILED:
+            return "inspect the recorded failure and start a new bounded discovery"
+        if discovery.pause_requested:
+            return "continue the paused discovery to finish the admitted scope"
+        if terminal and not discovery.sources:
+            return "narrow the selected scope or correct the configured filters, then retry"
+        if terminal:
+            return "finalize the frozen source list, then review choices and Preview"
+        if not worker_ready:
+            return "start or repair the resident Processing Worker so discovery can continue"
+        return "the resident Processing Worker continues this bounded discovery"
 
     def _require_organize_selection(self, item_ids: list, resource_library_id: str) -> None:
         """Resolve every selected FileIndex identity in its exact current scope.

@@ -57,10 +57,18 @@ export interface StorageFilesEntry {
   readonly traversable: boolean;
   readonly selectable: boolean;
   /**
-   * Backend-admitted Organize eligibility of one live Storage entry: regular
-   * non-symlink files only.  Directories remain navigation.
+   * Backend-admitted Organize eligibility of one live Storage entry.  A
+   * regular non-symlink file is a directly reviewable primary source; a
+   * traversable directory is a bounded discovery scope.  Symlinks and
+   * unsupported entries are never eligible.
    */
   readonly organizeEligible: boolean;
+  /**
+   * The backend-admitted Organize scope kind of this entry: `file` for a
+   * regular primary source, `directory` for a recursively discovered folder.
+   * Null when the entry is not an Organize candidate at all.
+   */
+  readonly organizeKind: "file" | "directory" | null;
   /** Optional display-only projection; never source or execution authority. */
   readonly recognitionResult: string | null;
   readonly businessStatus: string | null;
@@ -205,12 +213,28 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
     typeof record.organizeEligible !== "boolean"
   )
     fail(`entries[${index}].organizeEligible`);
+  if (
+    record.organizeKind !== undefined &&
+    record.organizeKind !== null &&
+    record.organizeKind !== "file" &&
+    record.organizeKind !== "directory"
+  )
+    fail(`entries[${index}].organizeKind`);
   const entryType = normalizeEntryType(record.entryType ?? record.type);
   const isSymlink = record.isSymlink;
   const organizeEligible =
     typeof record.organizeEligible === "boolean"
       ? record.organizeEligible
-      : entryType === "file" && isSymlink !== true;
+      : (entryType === "file" || entryType === "directory") &&
+        isSymlink !== true;
+  const organizeKind: "file" | "directory" | null =
+    organizeEligible !== true
+      ? null
+      : record.organizeKind === "file" || record.organizeKind === "directory"
+        ? record.organizeKind
+        : entryType === "directory"
+          ? "directory"
+          : "file";
   return {
     name: normalizeIdentityText(
       record.name,
@@ -234,6 +258,7 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
     traversable: record.traversable,
     selectable: record.selectable,
     organizeEligible,
+    organizeKind,
     recognitionResult: normalizeOptionalText(
       record.recognitionResult,
       `entries[${index}].recognitionResult`,

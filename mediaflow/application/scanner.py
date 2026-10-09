@@ -12,6 +12,21 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
+# The ResourceLibrary include/exclude/extension/depth and stability semantics
+# live in one shared pure module so the bounded Files discovery stage and this
+# Scanner cannot drift apart.  These names are re-exported for the existing
+# private helpers below and for any adapter that imports them.
+from mediaflow.application.scan_filters import (  # noqa: F401
+    ObservedSource,
+    StabilityVerdict,
+    classify_entry,
+    directory_may_match,
+    entry_extension,
+    excluded,
+    included,
+    stability_decision,
+    stability_verdict,
+)
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
 from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
@@ -525,20 +540,24 @@ class StorageScanner:
         if ignored:
             status = FileScanStatus.IGNORED
         else:
-            age = max(0.0, (now - entry.modified_at).total_seconds())
-            stable_duration = (
-                (now - stable_since).total_seconds() if stable_since is not None else 0.0
+            verdict = stability_decision(
+                library.stability_policy,
+                entry,
+                now=now,
+                unchanged_previous=bool(previous and change is FileChange.UNCHANGED),
+                observed_since=stable_since,
             )
-            required_age = max(
-                library.stability_policy.minimum_age_seconds,
-                library.stability_policy.modified_threshold_seconds,
-            )
-            stable = age >= required_age and (
-                library.stability_policy.stable_size_duration_seconds == 0
-                or stable_since is not None
-                and stable_duration >= library.stability_policy.stable_size_duration_seconds
-            )
-            status = FileScanStatus.READY if stable else FileScanStatus.UNSTABLE
+            if verdict is StabilityVerdict.STABLE:
+                status = FileScanStatus.READY
+            else:
+                status = FileScanStatus.UNSTABLE
+                # A not-yet-proven stable-size interval must not record a
+                # fabricated stable_since: the interval starts only once an
+                # unchanged observation exists.
+                if verdict is StabilityVerdict.UNSTABLE_SIZE and not (
+                    previous and change is FileChange.UNCHANGED
+                ):
+                    stable_since = None
         first_seen = previous.first_seen_at if previous else now
         created = previous.created_at if previous else now
         occurrence_id = (

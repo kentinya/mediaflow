@@ -1776,6 +1776,10 @@ import {
   type OrganizePreviewModel,
 } from "../../entities/operations/organize";
 import {
+  normalizeOrganizeDiscovery,
+  type OrganizeDiscoveryModel,
+} from "../../entities/operations/discovery";
+import {
   normalizeAutomationActivation,
   normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
@@ -3499,6 +3503,321 @@ function directFilesReadHeaders(token: string | null): HeadersInit {
 export interface FilesOrganizeAdmissionOptions {
   readonly resourceLibraryId: string;
   readonly paths: readonly string[];
+}
+
+export type FilesDiscoveryAdmissionResult =
+  | {
+      readonly ok: true;
+      readonly discoveryId: string;
+      readonly scopeCount: number;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/**
+ * Admit one bounded folder/mixed selection as a durable discovery (Slice 44
+ * RO-6).  The browser submits only the ResourceLibrary identity and exact
+ * ResourceLibrary-relative folder/file paths; the backend resolves real entry
+ * types, the pinned immutable Active revision and every concrete budget, and
+ * returns promptly.  No directory is enumerated and nothing is mutated here.
+ */
+export async function submitFilesDiscovery(
+  token: string | null,
+  options: FilesOrganizeAdmissionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<FilesDiscoveryAdmissionResult> {
+  if (
+    options.resourceLibraryId.trim().length === 0 ||
+    options.paths.length === 0
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_request",
+      nextAction: null,
+    };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/discoveries`,
+      {
+        method: "POST",
+        headers: {
+          ...operationsMutationHeaders(token),
+        },
+        body: JSON.stringify({ paths: [...options.paths] }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    const record = readRecord(payload, "discoveryError");
+    const error = readRecord(record["error"], "discoveryError.error");
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof error["code"] === "string"
+          ? error["code"]
+          : "discovery_rejected",
+      nextAction:
+        typeof error["nextAction"] === "string" ? error["nextAction"] : null,
+    };
+  }
+  const record = readRecord(payload, "discovery");
+  const discoveryId = record["discoveryId"];
+  if (typeof discoveryId !== "string" || discoveryId.length === 0) {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  const selection = readRecord(record["selection"], "discovery.selection");
+  return {
+    ok: true,
+    discoveryId,
+    scopeCount:
+      typeof selection["scopeCount"] === "number" ? selection["scopeCount"] : 0,
+  };
+}
+
+export type OrganizeDiscoveryReadResult =
+  | { readonly ok: true; readonly model: OrganizeDiscoveryModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/** Read one bounded discovery projection. */
+export async function fetchOrganizeDiscovery(
+  token: string | null,
+  discoveryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryReadResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(discoveryId)}`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    return discoveryErrorResult(response.status, payload);
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeDiscovery(payload) };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+}
+
+export interface OrganizeDiscoveryControlOptions {
+  readonly discoveryId: string;
+  readonly action: "pause" | "resume" | "cancel";
+  readonly expectedVersion: number;
+}
+
+export type OrganizeDiscoveryControlResult =
+  | { readonly ok: true; readonly model: OrganizeDiscoveryModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/**
+ * Submit one cooperative, versioned discovery control.  Pause and cancel only
+ * record a request the resident Worker honours at its next safe boundary; they
+ * never grant execution authority.
+ */
+export async function controlOrganizeDiscovery(
+  token: string | null,
+  options: OrganizeDiscoveryControlOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryControlResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+        options.discoveryId,
+      )}/${options.action}`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    return discoveryErrorResult(response.status, payload);
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeDiscovery(payload) };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+}
+
+export interface OrganizeDiscoveryFinalizeOptions {
+  readonly discoveryId: string;
+  readonly expectedVersion: number;
+}
+
+export type OrganizeDiscoveryFinalizeResult =
+  | { readonly ok: true; readonly intentId: string | null }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/**
+ * Freeze the discovered source list and link the existing durable manual
+ * intent.  It grants no execution authority: a separate exact Preview and a
+ * confirmed execution remain required.
+ */
+export async function finalizeOrganizeDiscovery(
+  token: string | null,
+  options: OrganizeDiscoveryFinalizeOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryFinalizeResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+        options.discoveryId,
+      )}/finalize`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    return discoveryErrorResult(response.status, payload);
+  }
+  try {
+    const model = normalizeOrganizeDiscovery(payload);
+    return { ok: true, intentId: model.intentId };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+}
+
+function discoveryErrorResult(status: number, payload: unknown) {
+  const record = readRecord(payload, "discoveryError");
+  const error = readRecord(record["error"], "discoveryError.error");
+  const details = readRecord(error["details"], "discoveryError.details");
+  return {
+    ok: false as const,
+    status,
+    code:
+      typeof error["code"] === "string" ? error["code"] : "discovery_rejected",
+    nextAction:
+      typeof details["nextAction"] === "string"
+        ? details["nextAction"]
+        : typeof error["nextAction"] === "string"
+          ? error["nextAction"]
+          : null,
+  };
 }
 
 export type FilesOrganizeAdmissionResult =

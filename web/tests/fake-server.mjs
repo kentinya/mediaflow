@@ -43,6 +43,10 @@ const EXPIRED_TOKENS = new Set(["e2e-expired-token"]);
 // projections must advertise no actionable control.
 const READ_ONLY_TOKENS = new Set(["e2e-readonly-token"]);
 const OPERATOR_TOKENS = new Set([...VIEWER_TOKENS]);
+// Principals that hold the manual-organize manage permission.  The e2e viewer
+// token is the ordinary operator identity, exactly like the existing Files
+// organize admission.
+const MANAGE_TOKENS = new Set([...VIEWER_TOKENS]);
 // Principals that may read every surface but hold no lifecycle permission.
 const READABLE_TOKENS = new Set([...VIEWER_TOKENS, ...READ_ONLY_TOKENS]);
 const KNOWN_TOKENS = new Set([
@@ -1411,6 +1415,9 @@ function resourceLibraryState(session) {
       // The Files-originated Organize admission of this session: the exact
       // ordered paths the browser submitted, or null before the first one.
       filesOrganizePaths: null,
+      // The bounded folder/mixed discovery admission of this session, or null
+      // before the first one.
+      discovery: null,
       // A deterministic admission failure for the failure-path journey.
       filesOrganizeFailure: null,
       // ResourceLibrary-relative directories removed outside MediaFlow in this
@@ -1968,6 +1975,11 @@ function fileEntry(name, path, size, modifiedAt, options = {}) {
     // composition presents as organize candidates and keeps skipped sidecars
     // display-only, exactly like the backend-admitted eligibility flag.
     organizeEligible: options.organizeEligible ?? options.selectable === true,
+    organizeKind:
+      options.organizeKind ??
+      ((options.organizeEligible ?? options.selectable === true)
+        ? "file"
+        : null),
     ...(options.selectable === true ? { selectKind: "file" } : {}),
     ...(options.recognitionResult !== undefined
       ? { recognitionResult: options.recognitionResult }
@@ -2017,6 +2029,9 @@ function directoryEntry(name, path, modifiedAt) {
     traversable: true,
     selectable: true,
     selectKind: "directory",
+    // RO-6: a traversable directory is a bounded discovery scope.
+    organizeEligible: true,
+    organizeKind: "directory",
   };
 }
 
@@ -3200,6 +3215,7 @@ function manualActionMatrixDocument(request, permitted) {
 // resolves to the same durable execution identity.
 
 const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
+const ORGANIZE_DISCOVERY_ID = "organize-discovery-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
 // Durable remaining-scope continuations recorded by the fake population, keyed
@@ -3307,6 +3323,109 @@ function organizeIntentItems(state) {
       version: state.itemVersion,
     };
   });
+}
+
+function organizeDiscoveryDocument(discovery) {
+  const directory = discovery.paths.some((path) => !path.includes("."));
+  const completed = discovery.frozen;
+  return {
+    actions: {
+      cancel: {
+        available: !completed && discovery.status !== "cancelled",
+        method: "POST",
+        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/cancel`,
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      finalize: {
+        available: completed === false && discovery.status === "completed",
+        durableOutcome:
+          "one immutable deduplicated source list is linked to a durable manual intent; a separate exact Preview and confirmed execution are still required",
+        method: "POST",
+        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/finalize`,
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      pause: {
+        available: !completed && discovery.status !== "paused",
+        method: "POST",
+        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/pause`,
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      resume: {
+        available: discovery.status === "paused",
+        method: "POST",
+        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/resume`,
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+    },
+    cancelRequested: discovery.status === "cancelled",
+    createdAt: MANUAL_RECORDED_AT,
+    discoveryId: ORGANIZE_DISCOVERY_ID,
+    execution: "not_available_from_discovery",
+    failure: null,
+    frozen: discovery.frozen,
+    frozenAt: discovery.frozen ? MANUAL_RECORDED_AT : null,
+    intentId: discovery.intentId,
+    journey: "discovery",
+    nextAction: discovery.frozen
+      ? "open the linked manual intent to review choices and create an exact Preview"
+      : "the resident Processing Worker continues this bounded discovery",
+    pauseRequested: discovery.status === "paused",
+    primarySourceCount: discovery.paths.length,
+    progress: {
+      activeSeconds: 0.5,
+      errorEntries: 0,
+      excludedEntries: 0,
+      findings: discovery.paths.map((path) => ({
+        depth: 1,
+        kind: "primary",
+        path,
+        reason: "eligible_primary_source",
+      })),
+      incomplete: false,
+      incompleteReason: null,
+      message: discovery.frozen
+        ? "the discovered source list is frozen; a separate exact Preview and a confirmed execution are still required"
+        : "bounded discovery completed the whole admitted scope",
+      pageFetches: 1,
+      phase: discovery.frozen ? "frozen" : "completed",
+      primarySources: discovery.paths.length,
+      reasons: [],
+      unstableEntries: 0,
+      visitedDirectories: directory ? 1 : 0,
+      visitedEntries: discovery.paths.length,
+    },
+    resourceLibraryId: discovery.libraryId,
+    selection: {
+      scopeCount: discovery.paths.length,
+      scopes: discovery.paths.map((path) => ({
+        kind: path.includes(".") ? "file" : "directory",
+        path,
+      })),
+    },
+    sideEffects: "none",
+    sources: discovery.paths.map((path) => ({
+      extension: path.includes(".") ? path.split(".").pop() : "media",
+      filename: path.split("/").pop(),
+      modifiedAt: MANUAL_RECORDED_AT,
+      path,
+      size: 512,
+    })),
+    status: discovery.status,
+    updatedAt: MANUAL_RECORDED_AT,
+    version: discovery.version,
+    worker: {
+      condition: "ready",
+      durableState: "a resident Processing Worker is ready",
+      nextAction:
+        "the resident Processing Worker continues this bounded discovery",
+      ready: true,
+    },
+    zeroMutation: true,
+  };
 }
 
 function organizeIntentDocument(state) {
@@ -8508,6 +8627,139 @@ const server = createServer(async (req, res) => {
     state.itemVersion = 1;
     state.fileIndexReconciled = false;
     sendJson(res, 201, organizeIntentDocument(state));
+    return;
+  }
+  const discoveryAdmissionMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/discoveries$/,
+  );
+  if (discoveryAdmissionMatch && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!MANAGE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const libraryId = decodeURIComponent(discoveryAdmissionMatch[1]);
+    const paths = Array.isArray(body?.paths) ? body.paths : null;
+    if (!paths || paths.length === 0) {
+      sendJson(res, 400, {
+        error: {
+          code: "selection_empty",
+          message: "discovery requires at least one selected folder or file",
+          details: { sideEffects: "none", retrySafe: true },
+        },
+      });
+      return;
+    }
+    recordManualRequestForSession({
+      body: { paths: [...paths] },
+      method: "POST",
+      objectId: ORGANIZE_DISCOVERY_ID,
+      objectType: "organize_discovery",
+      path: "/api/v1/resource-libraries/:id/files/discoveries",
+    });
+    const state = resourceLibraryState(session);
+    state.discovery = {
+      discoveryId: ORGANIZE_DISCOVERY_ID,
+      libraryId,
+      paths: [...paths],
+      status: "queued",
+      version: 1,
+      frozen: false,
+      intentId: null,
+    };
+    sendJson(res, 202, organizeDiscoveryDocument(state.discovery));
+    return;
+  }
+  const discoveryDetailMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)$/,
+  );
+  if (discoveryDetailMatch && req.method === "GET") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const state = resourceLibraryState(session);
+    if (
+      !state.discovery ||
+      state.discovery.discoveryId !==
+        decodeURIComponent(discoveryDetailMatch[1])
+    ) {
+      sendJson(res, 404, {
+        error: { code: "discovery_not_found", message: "discovery not found" },
+      });
+      return;
+    }
+    sendJson(res, 200, organizeDiscoveryDocument(state.discovery));
+    return;
+  }
+  const discoveryControlMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(pause|resume|cancel|finalize)$/,
+  );
+  if (discoveryControlMatch && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!MANAGE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const state = resourceLibraryState(session);
+    const action = discoveryControlMatch[2];
+    if (
+      !state.discovery ||
+      state.discovery.discoveryId !==
+        decodeURIComponent(discoveryControlMatch[1])
+    ) {
+      sendJson(res, 404, {
+        error: { code: "discovery_not_found", message: "discovery not found" },
+      });
+      return;
+    }
+    if (body?.expectedVersion !== state.discovery.version) {
+      sendJson(res, 409, {
+        error: {
+          code: "discovery_conflict",
+          message: "the discovery changed before this action was applied",
+          details: {
+            currentVersion: state.discovery.version,
+            sideEffects: "none",
+          },
+        },
+      });
+      return;
+    }
+    state.discovery.version += 1;
+    if (action === "pause") state.discovery.status = "paused";
+    if (action === "cancel") state.discovery.status = "cancelled";
+    if (action === "resume") state.discovery.status = "running";
+    if (action === "finalize") {
+      state.discovery.frozen = true;
+      state.discovery.status = "completed";
+      state.discovery.intentId = ORGANIZE_INTENT_ID;
+      state.filesOrganizePaths = [...state.discovery.paths];
+      state.intentVersion = 1;
+      state.itemVersion = 1;
+      state.fileIndexReconciled = false;
+    }
+    sendJson(
+      res,
+      action === "finalize" ? 201 : 200,
+      organizeDiscoveryDocument(state.discovery),
+    );
     return;
   }
   const resourceDeleteStatusMatch = url.pathname.match(
@@ -15770,6 +16022,7 @@ const server = createServer(async (req, res) => {
       deletedEntries: [],
       filesTransfers: new Map(),
       filesOrganizePaths: null,
+      discovery: null,
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
       externallyRemovedDirectories: [],
       whitespaceDirectory: url.searchParams.get("whitespace") === "1",

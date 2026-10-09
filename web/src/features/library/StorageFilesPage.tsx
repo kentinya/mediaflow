@@ -62,6 +62,7 @@ import {
   fetchResourceLibraryEdit,
   editResourceLibrary,
   submitDirectFileCommand,
+  submitFilesDiscovery,
   submitFilesOrganizeIntent,
   submitTransfer,
   type AutomationMutationFailureDetails,
@@ -129,6 +130,7 @@ interface FilesRowVm {
   readonly traversable: boolean;
   readonly selectable: boolean;
   readonly organizeEligible: boolean;
+  readonly organizeKind: "file" | "directory" | null;
   readonly typeLabel: string;
   readonly sizeLabel: string;
   readonly modifiedLabel: string;
@@ -355,6 +357,35 @@ function updateDirectoryRouteState(relativePath: string): void {
   );
 }
 
+function discoveryAdmissionFailureMessage(code: string): string {
+  switch (code) {
+    case "source_missing":
+      return "所选文件夹或文件已不存在，请刷新后重试。";
+    case "source_symlink":
+      return "符号链接不会被整理，请选择真实的文件夹或文件。";
+    case "source_unsupported":
+      return "所选条目的类型不支持整理，请选择普通文件夹或文件。";
+    case "invalid_path":
+    case "malformed_selection":
+      return "所选范围无效，请重新选择资源库内的文件夹或文件。";
+    case "selection_empty":
+      return "请选择至少一个文件夹或文件。";
+    case "selection_over_limit":
+      return "所选范围过大，请缩小选择后重试。";
+    case "resource_library_not_found":
+      return "所选资源库不可用，请刷新后重新选择。";
+    case "forbidden":
+    case "permission_denied":
+      return "当前账号没有创建整理任务的权限。";
+    case "storage_unavailable":
+    case "transport_unavailable":
+    case "service_unavailable":
+      return "存储或服务暂时不可用，请稍后重试；不会创建任何任务。";
+    default:
+      return "无法开始整理发现，请刷新后重试。";
+  }
+}
+
 function organizeAdmissionFailureMessage(code: string): string {
   switch (code) {
     case "source_missing":
@@ -572,11 +603,14 @@ function buildRows(
         // their own capability checks to this bounded local selection set.
         selectable: true,
         organizeEligible,
+        organizeKind: entry.organizeKind,
         typeLabel: entryTypeLabel(entry),
         sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
         modifiedLabel: formatModified(entry.modifiedAt),
         organizeAction: entry.isDirectory
-          ? "打开"
+          ? organizeEligible
+            ? "整理"
+            : "打开"
           : organizeEligible
             ? "整理"
             : "查看",
@@ -972,7 +1006,7 @@ function FileBrowseView({
   readonly onDiscoverDirectories: (paths: readonly string[]) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
-  readonly onPreviewOne: (path: string) => void;
+  readonly onPreviewOne: (path: string, discovery: boolean) => void;
   readonly onPreviewSelected: () => void;
   readonly onClearSelection: () => void;
   readonly onRefresh: () => void;
@@ -1059,7 +1093,7 @@ function FileBrowseView({
             编辑
           </button>
         )}
-        {!row.isDirectory && row.organizeEligible && (
+        {row.organizeEligible && (
           <button
             type="button"
             role="menuitem"
@@ -1067,7 +1101,7 @@ function FileBrowseView({
             disabled={previewing}
             onClick={() => {
               setRowMenu(null);
-              onPreviewOne(row.path);
+              onPreviewOne(row.path, row.organizeKind === "directory");
             }}
           >
             整理
@@ -1877,13 +1911,28 @@ export function StorageFilesPage() {
     mutationFn: async ({
       libraryId,
       paths,
+      discovery,
     }: {
       readonly libraryId: string;
       readonly paths: readonly string[];
       readonly returnPath: string;
+      readonly discovery: boolean;
     }) => {
       if (paths.length === 0) {
-        throw new Error("请选择至少一个可整理的文件。");
+        throw new Error("请选择至少一个可整理的文件夹或文件。");
+      }
+      if (discovery === true) {
+        // A folder or mixed selection enters the bounded discovery stage: the
+        // backend admits one durable discovery and the resident Worker performs
+        // the metadata-only walk before the existing intent/Preview/execution.
+        const admitted = await submitFilesDiscovery(token, {
+          resourceLibraryId: libraryId,
+          paths,
+        });
+        if (!admitted.ok) {
+          throw new Error(discoveryAdmissionFailureMessage(admitted.code));
+        }
+        return { kind: "discovery" as const, id: admitted.discoveryId };
       }
       const result = await submitFilesOrganizeIntent(token, {
         resourceLibraryId: libraryId,
@@ -1892,13 +1941,27 @@ export function StorageFilesPage() {
       if (!result.ok) {
         throw new Error(organizeAdmissionFailureMessage(result.code));
       }
-      return result.intentId;
+      return { kind: "intent" as const, id: result.intentId };
     },
-    onSuccess: (intentId, variables) => {
+    onSuccess: (admitted, variables) => {
       setPreviewError(null);
+      if (admitted.kind === "discovery") {
+        void navigate({
+          to: "/operations/organize/discovery/$discoveryId",
+          params: { discoveryId: admitted.id },
+          search: {
+            ...filesReturnSearch({
+              resourceLibraryId: variables.libraryId,
+              path: variables.returnPath,
+            }),
+            ...operationsReturnSearch(operationsReturn),
+          },
+        });
+        return;
+      }
       void navigate({
         to: "/operations/organize/intent/$intentId",
-        params: { intentId },
+        params: { intentId: admitted.id },
         search: {
           ...filesReturnSearch({
             resourceLibraryId: variables.libraryId,
@@ -3126,26 +3189,32 @@ export function StorageFilesPage() {
                             return every ? new Set() : new Set(selectablePaths);
                           });
                         }}
-                        onPreviewOne={(entryPath) =>
+                        onPreviewOne={(entryPath, discovery) =>
                           organizeMutation.mutate({
                             libraryId: currentLibrary.id,
                             paths: [entryPath],
                             returnPath: model.path,
+                            discovery,
                           })
                         }
-                        onPreviewSelected={() =>
+                        onPreviewSelected={() => {
+                          const admitted = model.entries.filter(
+                            (entry) =>
+                              selectedFiles.has(entry.path) &&
+                              entry.organizeEligible === true,
+                          );
                           organizeMutation.mutate({
                             libraryId: currentLibrary.id,
-                            paths: model.entries
-                              .filter(
-                                (entry) =>
-                                  selectedFiles.has(entry.path) &&
-                                  entry.organizeEligible === true,
-                              )
-                              .map((entry) => entry.path),
+                            paths: admitted.map((entry) => entry.path),
                             returnPath: model.path,
-                          })
-                        }
+                            // Any admitted folder makes the whole selection a
+                            // bounded discovery; a file-only selection keeps
+                            // the existing direct intent admission.
+                            discovery: admitted.some(
+                              (entry) => entry.organizeKind === "directory",
+                            ),
+                          });
+                        }}
                         onClearSelection={() => setSelectedFiles(new Set())}
                         onRefresh={() => refreshBrowse(refresh)}
                         onOpenPath={openPath}

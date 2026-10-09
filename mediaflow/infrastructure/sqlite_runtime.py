@@ -120,6 +120,13 @@ from mediaflow.domain.manual_scan import (
     ManualScanScopeKind,
     ManualScanTask,
 )
+from mediaflow.domain.media_discovery import (
+    DiscoveryConflict,
+    DiscoveryObservation,
+    DiscoveryStatus,
+    DiscoveryUnavailable,
+    MediaDiscovery,
+)
 from mediaflow.domain.media_evidence import (
     PipelineEvidence,
     evidence_from_document,
@@ -287,7 +294,15 @@ from mediaflow.infrastructure.file_index_schema import (
 # ManualExecution/Task rows complete it after explicit execution. This is
 # history and scope-accounting evidence only; execution still uses the normal
 # one-shot authority, Worker and OrganizerExecutor boundaries.
-SCHEMA_VERSION = 44
+# Schema 45 adds the additive ``media_discoveries`` and
+# ``media_discovery_observations`` tables: one durable bounded discovery record
+# per ResourceLibrary folder/mixed-selection admission, its persisted counters,
+# bounded findings, frozen source list and Worker claim/lease columns, plus the
+# bounded per-source observations that prove stability over time.  Both are
+# observation and ownership evidence only: discovery performs metadata-only
+# reads, creates no execution authority, and a legacy database simply has no
+# discovery rows, so nothing is backfilled.
+SCHEMA_VERSION = 45
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -9765,6 +9780,499 @@ class SQLiteTaskRepository:
             items.sort(key=lambda value: selected_order.get(value.item_id, len(selected_order)))
         return self._manual_execution(row, tuple(items))
 
+    # ------------------------------------------------------------------
+    # Bounded media discovery (Slice 44 RO-6)
+    #
+    # One durable record per admitted ResourceLibrary folder/mixed-selection
+    # discovery, plus its bounded per-source observations.  These rows are
+    # observation, counter and Worker-ownership evidence only: they carry no
+    # execution authority, and every write is a bounded, additive upsert.
+    # ------------------------------------------------------------------
+
+    _DISCOVERY_COLUMNS = (
+        "discovery_id, actor, resource_library_id, storage_id, "
+        "configuration_snapshot_id, configuration_snapshot_digest, status, version, "
+        "budgets_json, progress_json, sources_json, intent_id, frozen_at, "
+        "claim_worker_id, claim_token, claim_expires_at, attempts, "
+        "pause_requested, cancel_requested, error, created_at, updated_at"
+    )
+
+    def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
+        """Insert one admitted discovery record exactly once."""
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        with self._lock, self._connection:
+            try:
+                self._connection.execute(
+                    f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._discovery_values(discovery),
+                )
+            except sqlite3.IntegrityError as error:
+                raise DiscoveryConflict(
+                    "this discovery admission identity already exists",
+                    details={"discoveryId": discovery.discovery_id},
+                ) from error
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def get_media_discovery(self, discovery_id: str) -> MediaDiscovery | None:
+        if not isinstance(discovery_id, str) or not discovery_id.strip():
+            raise ValueError("media discovery ID is required")
+        with self._lock:
+            return self._load_media_discovery_locked(discovery_id)
+
+    def list_media_discoveries(
+        self, *, actor: str | None = None, limit: int = 100
+    ) -> tuple[MediaDiscovery, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("media discovery limit must be between 1 and 500")
+        with self._lock:
+            if actor is None:
+                rows = self._connection.execute(
+                    "SELECT discovery_id FROM media_discoveries "
+                    "ORDER BY created_at DESC, discovery_id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT discovery_id FROM media_discoveries WHERE actor=? "
+                    "ORDER BY created_at DESC, discovery_id DESC LIMIT ?",
+                    (actor, limit),
+                ).fetchall()
+            return tuple(self._load_media_discovery_locked(row["discovery_id"]) for row in rows)
+
+    def find_media_discovery_for_intent(self, intent_id: str) -> MediaDiscovery | None:
+        if not isinstance(intent_id, str) or not intent_id.strip():
+            raise ValueError("manual intent ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries WHERE intent_id=? "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._load_media_discovery_locked(row["discovery_id"])
+
+    def update_media_discovery(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+    ) -> MediaDiscovery:
+        """Persist one discovery progress/state transition with a version CAS."""
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
+                "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
+                "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
+                "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
+                "WHERE discovery_id=? AND version=?",
+                (
+                    discovery.status.value,
+                    discovery.version,
+                    json.dumps(discovery.budgets.document(), ensure_ascii=False, sort_keys=True),
+                    json.dumps(discovery.progress.document(), ensure_ascii=False, sort_keys=True),
+                    json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                    discovery.intent_id,
+                    discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None,
+                    discovery.claim_worker_id,
+                    discovery.claim_token,
+                    (
+                        discovery.claim_expires_at.isoformat()
+                        if discovery.claim_expires_at is not None
+                        else None
+                    ),
+                    discovery.attempts,
+                    1 if discovery.pause_requested else 0,
+                    1 if discovery.cancel_requested else 0,
+                    discovery.error,
+                    discovery.updated_at.isoformat(),
+                    discovery.discovery_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                current = self._load_media_discovery_locked(discovery.discovery_id)
+                raise DiscoveryConflict(
+                    "the discovery changed before this transition was published",
+                    details={
+                        "discoveryId": discovery.discovery_id,
+                        "currentVersion": current.version if current is not None else None,
+                    },
+                )
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def claim_next_media_discovery(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> MediaDiscovery | None:
+        """Atomically lease the oldest queued or expired discovery for one Worker.
+
+        A discovery that already crossed a metadata read boundary is safe to
+        resume: the whole stage is zero mutation, so a stale owner can never
+        cause a media effect.  The claim is still exclusive so two Workers can
+        never append duplicate findings or sources for one record.
+        """
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("media discovery claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?) "
+                "AND cancel_requested=0 "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "ORDER BY created_at, discovery_id LIMIT 1",
+                (
+                    DiscoveryStatus.QUEUED.value,
+                    DiscoveryStatus.RUNNING.value,
+                    DiscoveryStatus.WAITING_STABILITY.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
+                "WHERE discovery_id=? AND status IN (?, ?, ?) AND cancel_requested=0 "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
+                (
+                    worker_id,
+                    claim_token,
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    row["discovery_id"],
+                    DiscoveryStatus.QUEUED.value,
+                    DiscoveryStatus.RUNNING.value,
+                    DiscoveryStatus.WAITING_STABILITY.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_media_discovery(row["discovery_id"])
+
+    def media_discovery_claim(self, discovery_id: str) -> dict[str, object] | None:
+        """Read one durable discovery claim without reinterpreting its values."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT claim_worker_id, claim_token, claim_expires_at, attempts "
+                "FROM media_discoveries WHERE discovery_id=?",
+                (discovery_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "workerId": row["claim_worker_id"],
+            "claimToken": row["claim_token"],
+            "claimExpiresAt": row["claim_expires_at"],
+            "attempts": row["attempts"],
+        }
+
+    def heartbeat_media_discovery_claim(
+        self,
+        discovery_id: str,
+        claim_token: str,
+        now: datetime,
+        lease_seconds: float,
+    ) -> bool:
+        """Renew one live discovery lease without changing its ownership."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("media discovery claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("media discovery heartbeat timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE media_discoveries SET claim_expires_at=?, updated_at=? "
+                "WHERE discovery_id=? AND claim_token=? AND status IN (?, ?, ?)",
+                (
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    discovery_id,
+                    claim_token,
+                    DiscoveryStatus.QUEUED.value,
+                    DiscoveryStatus.RUNNING.value,
+                    DiscoveryStatus.WAITING_STABILITY.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def release_media_discovery_claim(self, discovery_id: str, claim_token: str) -> bool:
+        """Drop one *unstarted* claim so another Worker may pick the record up."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("media discovery claim token is invalid")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE media_discoveries SET claim_worker_id=NULL, claim_token=NULL, "
+                "claim_expires_at=NULL WHERE discovery_id=? AND claim_token=? "
+                "AND status IN (?, ?, ?)",
+                (
+                    discovery_id,
+                    claim_token,
+                    DiscoveryStatus.QUEUED.value,
+                    DiscoveryStatus.RUNNING.value,
+                    DiscoveryStatus.WAITING_STABILITY.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def list_media_discovery_observations(
+        self, discovery_id: str, *, limit: int = 100
+    ) -> tuple[DiscoveryObservation, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("media discovery observation limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT source_path, size, modified_at, fingerprint, observed_at, "
+                "stable_since FROM media_discovery_observations WHERE discovery_id=? "
+                "ORDER BY observed_at DESC, source_path ASC LIMIT ?",
+                (discovery_id, limit),
+            ).fetchall()
+        return tuple(self._media_discovery_observation(row) for row in rows)
+
+    def upsert_media_discovery_observations(
+        self, discovery_id: str, observations: tuple[DiscoveryObservation, ...]
+    ) -> None:
+        """Persist bounded observations atomically with the caller's progress write.
+
+        The caller publishes progress and observations in one repository call so
+        a replay of a safely resumed observation cannot duplicate a source or
+        reset a persisted bound.
+        """
+
+        values = tuple(observations)
+        if not values:
+            return
+        with self._lock, self._connection:
+            for observation in values:
+                self._connection.execute(
+                    "INSERT INTO media_discovery_observations "
+                    "(discovery_id, source_path, size, modified_at, fingerprint, "
+                    "observed_at, stable_since) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(discovery_id, source_path) DO UPDATE SET "
+                    "size=excluded.size, modified_at=excluded.modified_at, "
+                    "fingerprint=excluded.fingerprint, observed_at=excluded.observed_at, "
+                    "stable_since=excluded.stable_since",
+                    (
+                        discovery_id,
+                        observation.path,
+                        observation.size,
+                        observation.modified_at.isoformat(),
+                        observation.fingerprint,
+                        observation.observed_at.isoformat(),
+                        (
+                            observation.stable_since.isoformat()
+                            if observation.stable_since is not None
+                            else None
+                        ),
+                    ),
+                )
+
+    def record_media_discovery_progress(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        observations: tuple[DiscoveryObservation, ...] = (),
+    ) -> MediaDiscovery:
+        """Publish progress, counters, findings and observations in one transaction."""
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        values = tuple(observations)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
+                    "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
+                    "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
+                    "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
+                    "WHERE discovery_id=? AND version=?",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.budgets.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(
+                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                        discovery.intent_id,
+                        (
+                            discovery.frozen_at.isoformat()
+                            if discovery.frozen_at is not None
+                            else None
+                        ),
+                        discovery.claim_worker_id,
+                        discovery.claim_token,
+                        (
+                            discovery.claim_expires_at.isoformat()
+                            if discovery.claim_expires_at is not None
+                            else None
+                        ),
+                        discovery.attempts,
+                        1 if discovery.pause_requested else 0,
+                        1 if discovery.cancel_requested else 0,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        discovery.discovery_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    raise DiscoveryConflict(
+                        "the discovery changed before this progress was published",
+                        details={
+                            "discoveryId": discovery.discovery_id,
+                            "currentVersion": current.version if current is not None else None,
+                        },
+                    )
+                for observation in values:
+                    self._connection.execute(
+                        "INSERT INTO media_discovery_observations "
+                        "(discovery_id, source_path, size, modified_at, fingerprint, "
+                        "observed_at, stable_since) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(discovery_id, source_path) DO UPDATE SET "
+                        "size=excluded.size, modified_at=excluded.modified_at, "
+                        "fingerprint=excluded.fingerprint, observed_at=excluded.observed_at, "
+                        "stable_since=excluded.stable_since",
+                        (
+                            discovery.discovery_id,
+                            observation.path,
+                            observation.size,
+                            observation.modified_at.isoformat(),
+                            observation.fingerprint,
+                            observation.observed_at.isoformat(),
+                            (
+                                observation.stable_since.isoformat()
+                                if observation.stable_since is not None
+                                else None
+                            ),
+                        ),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def _discovery_values(self, discovery: MediaDiscovery) -> tuple[object, ...]:
+        return (
+            discovery.discovery_id,
+            discovery.actor,
+            discovery.resource_library_id,
+            discovery.storage_id,
+            discovery.snapshot_id,
+            discovery.snapshot_digest,
+            discovery.status.value,
+            discovery.version,
+            json.dumps(discovery.budgets.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(discovery.progress.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+            discovery.intent_id,
+            discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None,
+            discovery.claim_worker_id,
+            discovery.claim_token,
+            (
+                discovery.claim_expires_at.isoformat()
+                if discovery.claim_expires_at is not None
+                else None
+            ),
+            discovery.attempts,
+            1 if discovery.pause_requested else 0,
+            1 if discovery.cancel_requested else 0,
+            discovery.error,
+            discovery.created_at.isoformat(),
+            discovery.updated_at.isoformat(),
+        )
+
+    def _load_media_discovery_locked(self, discovery_id: str) -> MediaDiscovery | None:
+        row = self._connection.execute(
+            "SELECT * FROM media_discoveries WHERE discovery_id=?", (discovery_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            budgets = json.loads(row["budgets_json"])
+            progress = json.loads(row["progress_json"])
+            sources = json.loads(row["sources_json"] or "[]")
+            return MediaDiscovery.from_document(
+                {
+                    "discoveryId": row["discovery_id"],
+                    "actor": row["actor"],
+                    "resourceLibraryId": row["resource_library_id"],
+                    "storageId": row["storage_id"],
+                    "snapshotId": row["configuration_snapshot_id"],
+                    "snapshotDigest": row["configuration_snapshot_digest"],
+                    "status": row["status"],
+                    "version": row["version"],
+                    "budgets": budgets,
+                    "progress": progress,
+                    "sources": sources,
+                    "intentId": row["intent_id"],
+                    "frozenAt": row["frozen_at"],
+                    "claimWorkerId": row["claim_worker_id"],
+                    "claimToken": row["claim_token"],
+                    "claimExpiresAt": row["claim_expires_at"],
+                    "attempts": row["attempts"],
+                    "pauseRequested": bool(row["pause_requested"]),
+                    "cancelRequested": bool(row["cancel_requested"]),
+                    "error": row["error"],
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                }
+            )
+        except Exception as error:
+            raise DiscoveryUnavailable(
+                "durable media discovery state is corrupt or unavailable",
+                details={"discoveryId": discovery_id, "reason": type(error).__name__},
+            ) from error
+
+    @staticmethod
+    def _media_discovery_observation(row) -> DiscoveryObservation:
+        return DiscoveryObservation(
+            row["source_path"],
+            int(row["size"]),
+            datetime.fromisoformat(row["modified_at"]),
+            row["fingerprint"],
+            datetime.fromisoformat(row["observed_at"]),
+            (
+                datetime.fromisoformat(row["stable_since"])
+                if row["stable_since"] is not None
+                else None
+            ),
+        )
+
     @staticmethod
     def _require_claim_values(worker_id: str, claim_token: str, lease_seconds: float) -> None:
         """Validate one Worker claim identity before any durable write."""
@@ -12110,6 +12618,36 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS manual_intent_audit_order
                     ON manual_intent_audit(intent_id, occurred_at, audit_id);
+                CREATE TABLE IF NOT EXISTS media_discoveries (
+                    discovery_id TEXT PRIMARY KEY, actor TEXT NOT NULL,
+                    resource_library_id TEXT NOT NULL, storage_id TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    status TEXT NOT NULL, version INTEGER NOT NULL,
+                    budgets_json TEXT NOT NULL, progress_json TEXT NOT NULL,
+                    sources_json TEXT NOT NULL DEFAULT '[]',
+                    intent_id TEXT, frozen_at TEXT,
+                    claim_worker_id TEXT, claim_token TEXT, claim_expires_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    pause_requested INTEGER NOT NULL DEFAULT 0,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS media_discoveries_status_created
+                    ON media_discoveries(status, created_at, discovery_id);
+                CREATE INDEX IF NOT EXISTS media_discoveries_actor_created
+                    ON media_discoveries(actor, created_at, discovery_id);
+                CREATE TABLE IF NOT EXISTS media_discovery_observations (
+                    discovery_id TEXT NOT NULL, source_path TEXT NOT NULL,
+                    size INTEGER NOT NULL, modified_at TEXT NOT NULL,
+                    fingerprint TEXT, observed_at TEXT NOT NULL,
+                    stable_since TEXT,
+                    PRIMARY KEY (discovery_id, source_path),
+                    FOREIGN KEY(discovery_id) REFERENCES media_discoveries(discovery_id)
+                );
+                CREATE INDEX IF NOT EXISTS media_discovery_observations_discovery
+                    ON media_discovery_observations(discovery_id, source_path);
                 CREATE TABLE IF NOT EXISTS manual_previews (
                     preview_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
                     actor TEXT NOT NULL, configuration_snapshot_id TEXT NOT NULL,
@@ -12626,6 +13164,20 @@ class SQLiteTaskRepository:
             ).fetchone():
                 ensure_file_index_schema(self._connection)
             ensure_task_occurrence_columns(self._connection)
+            if self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='media_discovery_observations'"
+            ).fetchone():
+                observation_columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(media_discovery_observations)"
+                    ).fetchall()
+                }
+                if "stable_since" not in observation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE media_discovery_observations ADD COLUMN stable_since TEXT"
+                    )
             manual_item_columns = {
                 row["name"]
                 for row in self._connection.execute(

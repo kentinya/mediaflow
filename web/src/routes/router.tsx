@@ -26,6 +26,7 @@ import { ScanDetailPage } from "../features/operations/ScanDetailPage";
 import { PreviewNewPage } from "../features/operations/PreviewNewPage";
 import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
 import { OrganizeNewPage } from "../features/operations/OrganizeNewPage";
+import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { OrganizePreviewPage } from "../features/operations/OrganizePreviewPage";
 import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
@@ -194,6 +195,12 @@ const organizeIntentRoute = createRoute({
   component: OrganizeIntentPage,
 });
 
+const organizeDiscoveryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/organize/discovery/$discoveryId",
+  component: OrganizeDiscoveryPage,
+});
+
 const organizePreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/organize/preview/$previewId",
@@ -327,6 +334,7 @@ const routeTree = rootRoute.addChildren([
   organizeNewRoute,
   organizeIntentRoute,
   organizePreviewRoute,
+  organizeDiscoveryRoute,
   organizeExecutionRoute,
   automationListRoute,
   automationNewRoute,
