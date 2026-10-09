@@ -1179,7 +1179,7 @@ class OperationsProjectionTests(_DiscoveryFixture):
             worker = MediaDiscoveryWorker(
                 value.discovery, worker_id="cli-worker", notice=lambda line: None
             )
-            self.assertEqual(("discovery",), worker.commands)
+            self.assertEqual(("media_discovery",), worker.commands)
             result = worker.run_next()
             self.assertIsNotNone(result)
             self.assertEqual(admitted["discoveryId"], result.discovery_id)

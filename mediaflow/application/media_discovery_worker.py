@@ -62,9 +62,14 @@ class MediaDiscoveryWorker:
 
     @property
     def commands(self) -> tuple[str, ...]:
-        """The Task command family this runner serves, for Worker registration."""
+        """The command family this runner serves, for Worker registration.
 
-        return ("discovery",)
+        It is advertised alongside the existing ``manual_organize`` family so a
+        live Worker's registration truthfully states that it serves the bounded
+        discovery boundary too.
+        """
+
+        return ("media_discovery",)
 
     def run_next(self) -> MediaDiscovery | None:
         """Claim and advance at most one admitted discovery.
