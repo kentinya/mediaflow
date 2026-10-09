@@ -444,6 +444,7 @@ def main() -> int:
                 "primarySourceCount": frozen["primarySourceCount"],
             },
             "safety": {
+                "discoveryAdmissionsOnly": True,
                 "activeRevisionUnchanged": active_before["revisionId"],
                 "activeDigestUnchanged": active_before["digest"],
                 "activationsBefore": activations_before,
@@ -554,8 +555,17 @@ try {
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
   evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
 
+  // Only the two bounded discovery admissions may be non-GET; every other
+  // request in this journey is a read.  Nothing here mutates media.
   evidence.mutatingRequests = requests.filter(
     (entry) => entry.method !== 'GET' && entry.method !== 'HEAD',
+  );
+  evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
+    entry.url.includes('/files/discoveries'),
+  );
+  require_(
+    evidence.discoveryAdmissions.length === evidence.mutatingRequests.length,
+    `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
   fs.writeFileSync(path.join(ARTIFACTS, 'evidence.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ ok: true, passes: evidence.passes.length }));

@@ -114,8 +114,12 @@ try {
   evidence.passes.push({ case: 'folder-selection', screenshot: await shoot('folder-selection') });
   await page.getByRole('button', { name: '批量整理' }).click();
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  await page.waitForTimeout(1500);
   const text = await page.getByRole('main').innerText();
-  require_(/已选范围/.test(text), 'the discovery page did not show the admitted scope');
+  require_(
+    /已选范围/.test(text),
+    `the discovery page did not show the admitted scope: ${JSON.stringify(text)}`,
+  );
   require_(
     /不会移动、复制或删除任何文件/.test(text),
     'the discovery page did not advertise zero mutation',
@@ -137,8 +141,17 @@ try {
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
   evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
 
+  // Only the two bounded discovery admissions may be non-GET; every other
+  // request in this journey is a read.  Nothing here mutates media.
   evidence.mutatingRequests = requests.filter(
     (entry) => entry.method !== 'GET' && entry.method !== 'HEAD',
+  );
+  evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
+    entry.url.includes('/files/discoveries'),
+  );
+  require_(
+    evidence.discoveryAdmissions.length === evidence.mutatingRequests.length,
+    `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
   fs.writeFileSync(path.join(ARTIFACTS, 'evidence.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify({ ok: true, passes: evidence.passes.length }));
@@ -325,7 +338,20 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             )
             if paused.get("pauseRequested") is not True:
                 raise RuntimeError(f"the cooperative pause was not recorded: {paused}")
+            # Continue the same durable scope, let the Worker finish the walk,
+            # then finalize explicitly.
+            _, resumed = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/discoveries/{target_id}/resume",
+                {"expectedVersion": paused["version"]},
+            )
+            if resumed.get("pauseRequested") is not False:
+                raise RuntimeError(f"continue did not clear the pause: {resumed}")
             settled_control = settle(base, api_token, target_id)
+            if settled_control["status"] not in {"completed", "partial_success"}:
+                raise RuntimeError(f"the walk did not finish: {settled_control}")
             _, frozen = api(
                 base,
                 api_token,
@@ -371,9 +397,13 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 "activeRevision": active.get("revisionId"),
                 "activeDigest": active.get("digest"),
                 "cases": results,
+                "control": {"paused": True, "resumed": True},
                 "frozenIntentId": frozen["intentId"],
                 "measured": evidence,
-                "safety": {"mutatingRequests": []},
+                "safety": {
+                    "discoveryAdmissionsOnly": True,
+                    "nonReadRequests": evidence["mutatingRequests"],
+                },
             }
             (ARTIFACT_ROOT / "matrix.json").write_text(
                 json.dumps(matrix, ensure_ascii=False, indent=2), encoding="utf-8"
