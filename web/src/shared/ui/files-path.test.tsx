@@ -23,6 +23,7 @@ import {
   FilesBreadcrumbs,
   IdentityLabel,
   identityAccessibleName,
+  placeDisclosure,
 } from "./files-path";
 
 afterEach(() => {
@@ -175,5 +176,77 @@ describe("bounded Files breadcrumbs", () => {
     );
     expect(onOpenPath).toHaveBeenNthCalledWith(1, "SSH");
     expect(onOpenPath).toHaveBeenNthCalledWith(2, "SSH ");
+  });
+});
+
+describe("complete-name disclosure placement", () => {
+  const viewport = { width: 390, height: 844 };
+
+  it("uses the real rendered height instead of a fixed reserve", () => {
+    // A legal 240-byte Storage name wraps to many lines: preferring a fixed
+    // 34px flip reserve put its distinguishing suffix below the viewport.
+    const placement = placeDisclosure(
+      { top: 727, bottom: 749, left: 189 },
+      130,
+      viewport,
+    );
+    expect(placement.visible).toBe(true);
+    // The complete 130px disclosure is inside the viewport: 755 + 130 would
+    // exceed 844, so it flips above its anchor instead of being clipped.
+    expect(placement.top + 130).toBeLessThanOrEqual(viewport.height);
+    expect(placement.top).toBe(727 - 6 - 130);
+  });
+
+  it("flips above the anchor when the real height does not fit below", () => {
+    const placement = placeDisclosure(
+      { top: 700, bottom: 722, left: 20 },
+      130,
+      viewport,
+    );
+    expect(placement.top).toBe(700 - 6 - 130);
+    expect(placement.top).toBeGreaterThanOrEqual(8);
+  });
+
+  it("clamps a very tall disclosure inside the viewport", () => {
+    const height = 830;
+    const placement = placeDisclosure(
+      { top: 400, bottom: 422, left: 20 },
+      height,
+      viewport,
+    );
+    expect(placement.top).toBe(8);
+    expect(placement.top + height).toBeLessThanOrEqual(viewport.height);
+  });
+
+  it("keeps the plain below placement before the height is measured", () => {
+    const placement = placeDisclosure(
+      { top: 700, bottom: 722, left: 20 },
+      0,
+      viewport,
+    );
+    expect(placement.top).toBe(728);
+  });
+
+  it("hides the disclosure when its anchor leaves the viewport", () => {
+    expect(
+      placeDisclosure({ top: -60, bottom: -38, left: 20 }, 130, viewport)
+        .visible,
+    ).toBe(false);
+    expect(
+      placeDisclosure({ top: 900, bottom: 922, left: 20 }, 130, viewport)
+        .visible,
+    ).toBe(false);
+  });
+
+  it("keeps the horizontal placement inside the viewport", () => {
+    const placement = placeDisclosure(
+      { top: 100, bottom: 122, left: 380 },
+      60,
+      viewport,
+    );
+    expect(placement.left).toBeGreaterThanOrEqual(8);
+    expect(placement.left + placement.maxWidth).toBeLessThanOrEqual(
+      viewport.width,
+    );
   });
 });

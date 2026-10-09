@@ -13,8 +13,10 @@ It therefore closes the specific gap RO-5 names: a source/jsdom-only change or
 an old image cannot prove the reported overlap is resolved.  The proof records
 the served ``index.html``/JS/CSS identities read back from the running API,
 the measured geometry on both routes in list and grid at 1536x1024, 1024x900,
-760x900 and 390x844, the full-name hover/focus disclosure, exact raw-path
-navigation, read-error recovery and the absence of any mutating request.
+760x900 and 390x844, the full-name hover/focus disclosure (including a legal
+240-byte segment whose wrapped disclosure must stay entirely inside the
+viewport), exact raw-path navigation, read-error recovery and the absence of
+any mutating request.
 
 Isolation: a dedicated project name, free host ports, temporary bind paths that
 this Docker daemon can actually see, and its own image tag.  It never reads or
@@ -69,9 +71,15 @@ VIEWPORTS: tuple[tuple[str, int, int], ...] = (
 LONG_CHINESE = "华语电影收藏系列之特别加长导演剪辑最终收藏版本"
 LONG_MIXED = "The.Exact.Movie.Name.2024.2160p.WEB-DL.HDR.Extended.Remastered.Edition"
 UNBROKEN = "A" * 96
+# One legal Local Storage basename: 232 ASCII bytes plus a distinguishing
+# suffix, 240 bytes in total and therefore well under NAME_MAX.  This is the
+# case that exposes a disclosure whose vertical placement reserves a fixed
+# amount instead of the name's real wrapped height.
+LONG_TAIL = "A" * 232 + "-Tail007"
 PREFIX_PLAIN = "SSH"
 PREFIX_SPACE = "SSH "
 DEEP_PATH = "/".join([LONG_CHINESE, LONG_MIXED, UNBROKEN])
+TAIL_PATH = "/".join([LONG_CHINESE, LONG_MIXED, LONG_TAIL])
 PREFIX_PATH = "/".join([PREFIX_PLAIN, PREFIX_SPACE])
 
 BROWSER_PROOF = r"""
@@ -254,7 +262,27 @@ async function inspect(page, label, route, mode, viewport) {
     disclosureBox.x >= 0 && disclosureBox.right <= viewport.width + 1,
     `${label}: the disclosure is clipped by the viewport`,
   );
+  // The vertical bound is what a fixed placement reserve used to break: a
+  // legal long name wraps to many lines, so the complete name must still end
+  // inside the viewport instead of hiding its distinguishing suffix.
+  const disclosureFit = await disclosure.evaluate((element) => ({
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    innerHeight: window.innerHeight,
+  }));
+  require_(
+    disclosureBox.y >= 0 && disclosureBox.bottom <= viewport.height + 1,
+    `${label}: the disclosure extends outside the viewport `
+      + JSON.stringify({ disclosureBox, viewport, disclosureFit }),
+  );
+  require_(
+    disclosureFit.scrollHeight <= disclosureFit.clientHeight + 1,
+    `${label}: the disclosure clips its own complete name `
+      + JSON.stringify(disclosureFit),
+  );
   record.hoverDisclosure = hovered;
+  record.hoverDisclosureBox = disclosureBox;
+  record.hoverDisclosureFit = disclosureFit;
   await page.mouse.move(2, 2);
   await expect(disclosure).toHaveCount(0);
 
@@ -267,6 +295,14 @@ async function inspect(page, label, route, mode, viewport) {
     focused === exactName,
     `${label}: focus disclosed ${JSON.stringify(focused)} instead of ${JSON.stringify(exactName)}`,
   );
+  const focusedBox = await bounds(disclosure);
+  require_(
+    focusedBox.y >= 0 && focusedBox.bottom <= viewport.height + 1,
+    `${label}: the focused disclosure extends outside the viewport `
+      + JSON.stringify({ focusedBox, viewport }),
+  );
+  // Visual evidence while the complete name is actually disclosed.
+  record.disclosureScreenshot = await shoot(page, `${label}-disclosure`);
   const accessible = await target.getAttribute('aria-label');
   require_(
     accessible === route.accessibleNames[last],
@@ -314,6 +350,39 @@ try {
           .evaluate((element) => Math.round(element.getBoundingClientRect().width));
         evidence.passes.push(record);
       }
+    }
+  }
+
+  // -- legal 240-byte segment: the complete name stays readable ---------
+  // A legal Storage basename can be far longer than the 96-byte segment above.
+  // Both routes, list and grid, at the narrowest viewport where the wrapped
+  // disclosure is tallest relative to the visible height.
+  for (const route of ROUTES) {
+    for (const mode of ['list', 'grid']) {
+      await open(page, route.tailLink, 390, 844);
+      if (mode === 'grid') {
+        await page.getByRole('button', { name: '网格视图' }).click();
+        await expect(page.locator('.mf-files-grid')).toBeVisible();
+      } else {
+        await page.getByRole('button', { name: '列表视图' }).click();
+        await expect(page.getByRole('table')).toBeVisible();
+      }
+      const tailRoute = {
+        ...route,
+        crumbs: route.tailCrumbs,
+        accessibleNames: route.tailAccessibleNames,
+      };
+      const record = await inspect(
+        page,
+        `${route.name}-tail-${mode}-mobile-390x844`,
+        tailRoute,
+        mode,
+        { name: 'mobile-390x844', width: 390, height: 844 },
+      );
+      record.paneWidth = await page
+        .locator('.mf-files-pane')
+        .evaluate((element) => Math.round(element.getBoundingClientRect().width));
+      evidence.passes.push(record);
     }
   }
 
@@ -412,7 +481,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     passes: evidence.passes.length,
-    screenshots: evidence.passes.length + 2 * ROUTES.length,
+    screenshots: evidence.passes.length * 2 + 2 * ROUTES.length,
   }));
 } finally {
   await browser.close();
@@ -425,6 +494,7 @@ def route_cases() -> list[dict]:
         return urllib.parse.quote(value)
 
     deep_names = [LONG_CHINESE, LONG_MIXED, UNBROKEN]
+    tail_names = [LONG_CHINESE, LONG_MIXED, LONG_TAIL]
     prefix_names = [PREFIX_PLAIN, PREFIX_SPACE, "nested"]
     prefix_accessible = [PREFIX_PLAIN, f"{PREFIX_SPACE}（名称结尾包含空格）", "nested"]
     return [
@@ -433,11 +503,14 @@ def route_cases() -> list[dict]:
             "crumbLabel": "资源库面包屑",
             "homeLabel": "返回资源库根目录",
             "deepLink": f"/ui-v2/resourcelib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/ui-v2/resourcelib/files?path={encoded(TAIL_PATH)}",
             "prefixLink": f"/ui-v2/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
             "missingLink": "/ui-v2/resourcelib/files?path=missing-directory",
             "shortLink": "/ui-v2/resourcelib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
+            "tailCrumbs": [{"name": name} for name in tail_names],
+            "tailAccessibleNames": tail_names,
             "shortCrumbs": [{"name": name} for name in ["Shows", "nested"]],
             "shortAccessibleNames": ["Shows", "nested"],
             "prefixCrumbs": [{"name": name} for name in prefix_names],
@@ -449,11 +522,14 @@ def route_cases() -> list[dict]:
             "crumbLabel": "媒体库面包屑",
             "homeLabel": "返回媒体库根目录",
             "deepLink": f"/ui-v2/medialib/files?path={encoded(DEEP_PATH)}",
+            "tailLink": f"/ui-v2/medialib/files?path={encoded(TAIL_PATH)}",
             "prefixLink": f"/ui-v2/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
             "missingLink": "/ui-v2/medialib/files?path=missing-directory",
             "shortLink": "/ui-v2/medialib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
+            "tailCrumbs": [{"name": name} for name in tail_names],
+            "tailAccessibleNames": tail_names,
             "shortCrumbs": [{"name": name} for name in ["Shows", "nested"]],
             "shortAccessibleNames": ["Shows", "nested"],
             "prefixCrumbs": [{"name": name} for name in prefix_names],
@@ -476,6 +552,11 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path]:
         deep = base.joinpath(*DEEP_PATH.split("/"))
         deep.mkdir(parents=True, exist_ok=True)
         (deep / "sample.mkv").write_bytes(b"synthetic browser media")
+        # The legal 240-byte basename used to prove the complete-name
+        # disclosure stays readable when it wraps to many lines.
+        tail = base.joinpath(*TAIL_PATH.split("/"))
+        tail.mkdir(parents=True, exist_ok=True)
+        (tail / "sample.mkv").write_bytes(b"synthetic browser media")
         prefix = base.joinpath(*PREFIX_PATH.split("/"))
         (prefix / "nested").mkdir(parents=True, exist_ok=True)
         (prefix / "nested" / "deep.mkv").write_bytes(b"synthetic nested media")

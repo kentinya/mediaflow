@@ -110,6 +110,80 @@ export function IdentityLabel({ value }: { readonly value: string }) {
   );
 }
 
+/** One measured placement of the complete-name disclosure. */
+export interface DisclosurePlacement {
+  /** False when the anchor itself is outside the visible viewport. */
+  readonly visible: boolean;
+  readonly top: number;
+  readonly left: number;
+  readonly maxWidth: number;
+}
+
+const DISCLOSURE_GAP = 6;
+const DISCLOSURE_MARGIN = 8;
+const DISCLOSURE_MAX_WIDTH = 520;
+const DISCLOSURE_MIN_WIDTH = 160;
+
+/**
+ * Place the complete-name disclosure against its anchor using the element's
+ * real rendered height.
+ *
+ * The height matters: a legal Storage segment can be up to 255 bytes, so its
+ * wrapped disclosure is many lines tall.  A fixed reserve would push the
+ * distinguishing suffix of a long name below the viewport bottom and hide
+ * exactly the characters the disclosure exists to reveal.  The disclosure is
+ * therefore preferred below its anchor, flipped above when it does not fit
+ * there, and finally clamped inside the viewport.  A zero height (jsdom, or
+ * before the first measurement) keeps the plain below-the-anchor placement.
+ */
+export function placeDisclosure(
+  anchor: {
+    readonly top: number;
+    readonly bottom: number;
+    readonly left: number;
+  },
+  renderedHeight: number,
+  viewport: { readonly width: number; readonly height: number },
+): DisclosurePlacement {
+  const maxWidth = Math.max(
+    DISCLOSURE_MIN_WIDTH,
+    Math.min(DISCLOSURE_MAX_WIDTH, viewport.width - 2 * DISCLOSURE_MARGIN),
+  );
+  const left = Math.max(
+    DISCLOSURE_MARGIN,
+    Math.min(anchor.left, viewport.width - maxWidth - DISCLOSURE_MARGIN),
+  );
+  // The anchor can scroll out of the visible pane; a fixed disclosure
+  // pointing at nothing is worse than none, so hide it instead.
+  if (anchor.bottom < 0 || anchor.top > viewport.height) {
+    return { visible: false, top: 0, left, maxWidth };
+  }
+  let top = anchor.bottom + DISCLOSURE_GAP;
+  if (renderedHeight > 0) {
+    if (top + renderedHeight > viewport.height - DISCLOSURE_MARGIN) {
+      top = anchor.top - DISCLOSURE_GAP - renderedHeight;
+    }
+    const lowest = Math.max(
+      DISCLOSURE_MARGIN,
+      viewport.height - renderedHeight - DISCLOSURE_MARGIN,
+    );
+    top = Math.max(DISCLOSURE_MARGIN, Math.min(top, lowest));
+  }
+  return { visible: true, top, left, maxWidth };
+}
+
+function samePlacement(
+  first: DisclosurePlacement,
+  second: DisclosurePlacement,
+): boolean {
+  return (
+    first.visible === second.visible &&
+    first.top === second.top &&
+    first.left === second.left &&
+    first.maxWidth === second.maxWidth
+  );
+}
+
 /**
  * The complete exact name of one breadcrumb segment, disclosed on hover and on
  * keyboard focus.
@@ -128,44 +202,49 @@ function CrumbDisclosure({
   readonly anchor: HTMLElement;
   readonly value: string;
 }) {
-  const [position, setPosition] = useState<{
-    readonly top: number;
-    readonly left: number;
-    readonly maxWidth: number;
-  } | null>(null);
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<DisclosurePlacement | null>(null);
 
   useLayoutEffect(() => {
+    const node = nodeRef.current;
     const measure = () => {
       const rect = anchor.getBoundingClientRect();
-      // The anchor can scroll out of the visible pane; a fixed disclosure
-      // pointing at nothing is worse than none, so hide it instead.
-      if (rect.bottom < 0 || rect.top > window.innerHeight) {
-        setPosition(null);
-        return;
-      }
-      const maxWidth = Math.max(160, Math.min(520, window.innerWidth - 16));
-      const left = Math.max(
-        8,
-        Math.min(rect.left, window.innerWidth - maxWidth - 8),
+      // The real rendered height of this exact value, not a fixed reserve.
+      // jsdom reports zero, which keeps the plain below-the-anchor placement.
+      const renderedHeight = node === null ? 0 : node.offsetHeight;
+      const next = placeDisclosure(
+        { top: rect.top, bottom: rect.bottom, left: rect.left },
+        renderedHeight,
+        { width: window.innerWidth, height: window.innerHeight },
       );
-      let top = rect.bottom + 6;
-      if (top > window.innerHeight - 48) top = Math.max(8, rect.top - 34);
-      setPosition({ top, left, maxWidth });
+      setPosition((previous) =>
+        previous !== null && samePlacement(previous, next) ? previous : next,
+      );
     };
     measure();
+    // Re-measure when the disclosure's own box changes: the first pass applies
+    // the viewport-aware max width, which can change how many lines the value
+    // wraps to, and that height is what the vertical decision needs.
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => measure());
+    if (observer !== null && node !== null) observer.observe(node);
     // The disclosure follows its anchor rather than dismissing on scroll:
     // focusing or hovering an elided segment legitimately scrolls it into
     // view, and that must not hide the name being disclosed.
     window.addEventListener("resize", measure);
     window.addEventListener("scroll", measure, true);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
-  }, [anchor]);
+  }, [anchor, value]);
 
   return createPortal(
     <div
+      ref={nodeRef}
       id={DISCLOSURE_ID}
       className="mf-crumb-disclosure"
       data-testid="crumb-disclosure"
@@ -173,8 +252,9 @@ function CrumbDisclosure({
       style={{
         top: position?.top ?? -9999,
         left: position?.left ?? -9999,
-        maxWidth: position?.maxWidth ?? 520,
-        visibility: position === null ? "hidden" : "visible",
+        maxWidth: position?.maxWidth ?? DISCLOSURE_MAX_WIDTH,
+        visibility:
+          position === null || !position.visible ? "hidden" : "visible",
       }}
     >
       {value}
