@@ -18,6 +18,7 @@ import {
   ruleCandidateFields,
   ruleFailureCopy,
   validateRuleCandidate,
+  type FieldIssue,
   type RuleFormAuthority,
   type RuleFormFamily,
   type RuleFormValue,
@@ -30,7 +31,11 @@ import {
   type RulesCommandResult,
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import {
+  RulesObjectForm,
+  ruleFieldLabel,
+  type FormValues,
+} from "./RulesObjectForm";
 import { RulesObjectTestPanel } from "./RulesObjectTestPanel";
 import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
@@ -68,6 +73,7 @@ export type SaveState =
   | { kind: "saving" }
   | { kind: "verifying" }
   | { kind: "verified"; summary: string }
+  | { kind: "invalid"; issues: readonly FieldIssue[] }
   | SaveFailureState;
 
 export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
@@ -151,11 +157,24 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
     });
     setDirty(true);
     setLocalIssues((current) => {
-      if (!current.has(field)) return current;
+      // A nested change rewrites the whole `rules` array, so every issue that
+      // belonged to one of those internal rules is now describing input the
+      // operator already replaced. Keeping it would leave a stale refusal
+      // pointing at a field that no longer holds the refused value.
+      const owned = (key: string) =>
+        key === field || (field === "rules" && /^rules\[\d+\]\./.test(key));
+      if (!Array.from(current.keys()).some(owned)) return current;
       const next = new Map(current);
-      next.delete(field);
+      for (const key of Array.from(next.keys())) {
+        if (owned(key)) next.delete(key);
+      }
       return next;
     });
+    // Correcting a field retires the refusal summary: it described the exact
+    // input that was just changed, so keeping it would be stale.
+    setState((current) =>
+      current.kind === "invalid" ? { kind: "idle" } : current,
+    );
   };
 
   /**
@@ -194,6 +213,9 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
       setLocalIssues(
         new Map(problems.map((item) => [item.field, item.message])),
       );
+      // A refused Save must never look like a no-op: state plainly that
+      // nothing was published and point at the retained correctable fields.
+      setState({ kind: "invalid", issues: problems });
       return;
     }
     setLocalIssues(new Map());
@@ -303,6 +325,21 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
                   继续编辑
                 </button>
               </div>
+            </div>
+          )}
+          {state.kind === "invalid" && (
+            <div className="mf-rules-save-invalid" role="alert">
+              <p>
+                保存未生效:有 {state.issues.length} 处输入未通过校验,Active
+                没有发生任何变化。请修正下面列出的字段后重新保存。
+              </p>
+              <ul>
+                {state.issues.map((item) => (
+                  <li key={item.field}>
+                    <span>{ruleFieldLabel(item.field)}</span>:{item.message}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
           {state.kind === "known-failure" && (

@@ -181,6 +181,38 @@ try {
     throw new Error('the Rules keyword search is not to the right of the title');
   }
 
+  // The reference hierarchy: title/search/account on one row, then the
+  // business description as a separate full-width line, then navigation.
+  const notificationBox = await bounds(page.getByRole('button', { name: '通知' }));
+  const description = page.getByText(/管理从识别到整理的完整规则体系/);
+  const descriptionBox = await bounds(description);
+  const headerBox = await bounds(page.locator('.mf-shell-topbar-rules'));
+  const titleRowBottom = Math.max(
+    titleBox.y + titleBox.height,
+    searchBox.y + searchBox.height,
+    notificationBox.y + notificationBox.height,
+  );
+  // The description is its own line below the whole title row, not a paragraph
+  // sharing the title column beside the search.
+  if (descriptionBox.y < titleRowBottom - 2) {
+    throw new Error(
+      'the Rules description overlaps the title/search row ('
+        + descriptionBox.y + ' < ' + titleRowBottom + ')',
+    );
+  }
+  if (descriptionBox.width < headerBox.width * 0.9) {
+    throw new Error(
+      'the Rules description is confined to ' + descriptionBox.width
+        + 'px of the ' + headerBox.width + 'px header',
+    );
+  }
+  if (descriptionBox.height > 24) {
+    throw new Error(
+      'the Rules description wraps to ' + descriptionBox.height
+        + 'px at the required viewport',
+    );
+  }
+
   const nav = page.getByRole('navigation', { name: '规则分类' });
   const cards = nav.getByRole('button');
   await expect(cards).toHaveCount(8);
@@ -207,6 +239,26 @@ try {
   }
   await expect(cards.nth(2)).toHaveAttribute('aria-current', 'page');
   const navBox = await bounds(nav);
+  // Family navigation follows the header directly. The only space between them
+  // may be the page's own layout gap; the identity/refresh utility line must
+  // not sit in between.
+  const diagnostics = page.locator('.mf-rules-diagnostics');
+  const diagnosticsBox = (await diagnostics.count())
+    ? await bounds(diagnostics)
+    : null;
+  if (diagnosticsBox !== null && diagnosticsBox.y < navBox.y + navBox.height) {
+    throw new Error(
+      'the diagnostics/action row sits between the Rules header and family '
+        + 'navigation (diagnostics y=' + diagnosticsBox.y
+        + ', navigation ends at ' + (navBox.y + navBox.height) + ')',
+    );
+  }
+  if (navBox.y - (headerBox.y + headerBox.height) > 24) {
+    throw new Error(
+      'a dominant row sits between the Rules header and family navigation ('
+        + (navBox.y - (headerBox.y + headerBox.height)) + 'px gap)',
+    );
+  }
 
   const inventoryTitle = page.getByRole('heading', { name: '识别类型', exact: true });
   await expect(inventoryTitle).toBeVisible();
@@ -257,7 +309,14 @@ try {
   await expect(page.getByRole('row', { name: /TV/ })).toBeVisible();
 
   evidence.viewports.desktop = {
-    header: { title: titleBox, search: searchBox },
+    header: {
+      header: headerBox,
+      title: titleBox,
+      search: searchBox,
+      notification: notificationBox,
+      description: descriptionBox,
+      titleRowBottom,
+    },
     navigation: navBox,
     inventory: { title: await bounds(inventoryTitle), add: addBox },
     table: tableBox,
@@ -319,6 +378,7 @@ try {
     },
   ];
   const drawerEvidence = {};
+  const formLayout = {};
   for (const family of families) {
     await nav.getByRole('button', { name: family.label, exact: true }).click();
     await expect(
@@ -346,9 +406,85 @@ try {
     const switches = drawer.getByRole('switch');
     if (family.switch) {
       await expect(switches).toHaveCount(1);
+      // The real rendered control, not just its role: the track must contain
+      // its thumb in both states and the state text must stay legible beside it.
+      const toggle = switches.first();
+      const toggleBox = await bounds(toggle);
+      if (toggleBox.width < 40 || toggleBox.height < 20) {
+        throw new Error(
+          `${family.label} switch track collapsed to `
+            + `${toggleBox.width}x${toggleBox.height}`,
+        );
+      }
+      const switchText = drawer.locator('.mf-rules-switch-text').first();
+      const switchTextBox = await bounds(switchText);
+      const switchContainer = drawer.locator('.mf-rules-switch').first();
+      const switchContainerBox = await bounds(switchContainer);
+      if (switchTextBox.y < toggleBox.y - 1
+          || switchTextBox.y + switchTextBox.height > toggleBox.y + toggleBox.height + 1) {
+        throw new Error(
+          `${family.label} switch state text is not on the track's row `
+            + `(text ${switchTextBox.y}..${switchTextBox.y + switchTextBox.height}, `
+            + `track ${toggleBox.y}..${toggleBox.y + toggleBox.height})`,
+        );
+      }
+      if (switchContainerBox.height > Math.max(toggleBox.height, switchTextBox.height) + 8) {
+        throw new Error(
+          `${family.label} switch container stacks the state text onto its own row `
+            + `(${switchContainerBox.height}px)`,
+        );
+      }
+      // The unchecked state must keep the thumb inside the track too.
+      const thumbOffsets = await toggle.evaluate((node) => {
+        const track = node.getBoundingClientRect();
+        const style = getComputedStyle(node, '::after');
+        return {
+          trackWidth: track.width,
+          trackHeight: track.height,
+          thumbWidth: parseFloat(style.width),
+          thumbHeight: parseFloat(style.height),
+        };
+      });
+      if (
+        thumbOffsets.thumbWidth >= thumbOffsets.trackWidth
+        || thumbOffsets.thumbHeight >= thumbOffsets.trackHeight
+      ) {
+        throw new Error(
+          `${family.label} switch thumb (${thumbOffsets.thumbWidth}x${thumbOffsets.thumbHeight}) `
+            + `does not fit its track (${thumbOffsets.trackWidth}x${thumbOffsets.trackHeight})`,
+        );
+      }
     } else if ((await switches.count()) !== 0) {
       throw new Error(`${family.label} invented an enable switch its domain does not own`);
     }
+    // The required marker must stay on its own field label's row rather than
+    // being pushed onto a separate line by a section-wide selector.
+    const requiredLabel = drawer.locator('label[data-required="true"]').first();
+    const requiredBox = await requiredLabel.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const style = getComputedStyle(node, '::after');
+      return {
+        height: box.height,
+        display: getComputedStyle(node).display,
+        lineHeight: parseFloat(getComputedStyle(node).lineHeight) || 0,
+        marker: style.content,
+      };
+    });
+    if (requiredBox.marker === 'none' || !requiredBox.marker.includes('*')) {
+      throw new Error(`${family.label} required marker is not rendered`);
+    }
+    if (requiredBox.height > requiredBox.lineHeight + 4) {
+      throw new Error(
+        `${family.label} required marker is on its own row `
+          + `(label ${requiredBox.height}px at ${requiredBox.lineHeight}px line height)`,
+      );
+    }
+    formLayout[family.label] = {
+      switchTrack: family.switch
+        ? await bounds(drawer.getByRole('switch').first())
+        : null,
+      requiredLabel: requiredBox,
+    };
     // Footer stays pinned and aligned right in 取消, 保存 order.
     const footer = drawer.locator('.mf-rules-drawer-actions');
     const footerButtons = footer.locator('button');
@@ -385,6 +521,7 @@ try {
     await expect(drawer).toHaveCount(0);
   }
   evidence.drawers = drawerEvidence;
+  evidence.formLayout = formLayout;
 
   // -- Classification compact internal-rule list and distinct inner Add ----
   await nav.getByRole('button', { name: '分类规则', exact: true }).click();
@@ -414,6 +551,54 @@ try {
   await classificationDrawer.getByRole('button', { name: '取消' }).click();
   await classificationDrawer.getByRole('button', { name: '放弃并关闭' }).click();
   await expect(classificationDrawer).toHaveCount(0);
+
+  // -- a refused Save on a closed Classification rule stays explainable -----
+  // The compact internal-rule list is the default surface. An invalid relative
+  // path entered in the explicit inner editor, then closed, must still produce
+  // a visible refusal that names the affected rule, its retained message and a
+  // native route back into the correctable input.
+  const refusalStart = mutations.length;
+  await page.getByRole('button', { name: '添加分类规则' }).first().click();
+  const refusalDrawer = page.getByRole('dialog', { name: '添加分类规则' });
+  await refusalDrawer.getByLabel(/^ID/).fill('proof-refusal');
+  await refusalDrawer.getByLabel(/^名称/).fill('保存拒绝证明');
+  await refusalDrawer.getByRole('button', { name: '添加规则' }).click();
+  const refusalPath = refusalDrawer.getByLabel('相对路径').first();
+  await expect(refusalPath).toBeVisible();
+  await refusalPath.fill('..');
+  await refusalDrawer.getByRole('button', { name: '完成' }).click();
+  await expect(refusalDrawer.getByLabel('相对路径')).toHaveCount(0);
+  await refusalDrawer.getByRole('button', { name: '保存' }).click();
+  const refusal = refusalDrawer.locator('.mf-rules-nested-issues');
+  await expect(refusal).toBeVisible();
+  await expect(refusal).toContainText('保存未生效');
+  await expect(refusal).toContainText('相对路径只能由 1 到 32 个安全的非空名称段组成');
+  const correction = refusalDrawer.getByRole('button', { name: '修正规则 1' });
+  await expect(correction).toBeVisible();
+  // Scroll the refusal into the captured viewport so the saved screenshot shows
+  // the operator-visible explanation rather than an unrelated scroll position.
+  await refusal.scrollIntoViewIfNeeded();
+  evidence.screenshots.push(
+    await shoot(page, 'desktop-1536x1024-classification-refused-save'),
+  );
+  if (mutations.length !== refusalStart) {
+    throw new Error('the refused Save sent a mutating request: ' + mutations.join(', '));
+  }
+  // The correction route is a real keyboard journey into the retained input.
+  await correction.click();
+  const correctedPath = refusalDrawer.getByLabel('相对路径').first();
+  await expect(correctedPath).toHaveValue('..');
+  await expect(correctedPath).toBeFocused();
+  await correctedPath.fill('电影/华语');
+  await expect(refusalDrawer.locator('.mf-rules-nested-issues')).toHaveCount(0);
+  evidence.recovery = {
+    refusalVisible: true,
+    mutatingRequestsDuringRefusal: 0,
+    correctionReopenedRetainedInput: true,
+  };
+  await refusalDrawer.getByRole('button', { name: '取消' }).click();
+  await refusalDrawer.getByRole('button', { name: '放弃并关闭' }).click();
+  await expect(refusalDrawer).toHaveCount(0);
 
   // -- representative narrow and mobile widths -----------------------------
   for (const viewport of VIEWPORTS) {
@@ -718,8 +903,11 @@ def main() -> int:
                     "assertion": (
                         "one shell header carries the Rules title at left and the "
                         "functional keyword search plus account/notification controls "
-                        "at right on the same desktop row; the annotated black "
-                        "rectangle is annotation only, not product chrome"
+                        "at right on the same desktop row, with the business "
+                        "description as a separate full-width line below that row and "
+                        "family navigation following the header without an intervening "
+                        "dominant row; the annotated black rectangle is annotation "
+                        "only, not product chrome"
                     ),
                     "measured": evidence["viewports"]["desktop"]["header"],
                     "state": "STRUCTURALLY_ALIGNED",
@@ -733,7 +921,9 @@ def main() -> int:
                     "assertion": (
                         "separate title/description row; blue left Add; right keyword "
                         "search; real columns; ID/name/description/enable form with "
-                        "multiline description and a labelled switch"
+                        "multiline description and a labelled switch whose measured "
+                        "track contains its thumb and keeps its state text on the "
+                        "same row, with the required marker inline on its own label"
                     ),
                     "measured": evidence["viewports"]["desktop"]["inventory"],
                     "state": "STRUCTURALLY_ALIGNED",
@@ -794,12 +984,19 @@ def main() -> int:
                     "assertion": (
                         "classification keeps a compact internal-rule list with "
                         "priority/ID/name/condition/destination columns and an inner "
-                        "添加规则 distinct from the outer 添加分类规则"
+                        "添加规则 distinct from the outer 添加分类规则; a refused Save "
+                        "on a closed rule states the failure, names the affected rule "
+                        "and its retained error, and offers a native correction route "
+                        "without sending a mutating request"
                     ),
-                    "measured": evidence["drawers"]["分类规则"],
+                    "measured": {
+                        "drawer": evidence["drawers"]["分类规则"],
+                        "recovery": evidence.get("recovery"),
+                    },
                     "state": "STRUCTURALLY_ALIGNED",
                 },
             ],
+            "formLayout": evidence.get("formLayout"),
         }
         (ARTIFACT_ROOT / "comparison-matrix.json").write_text(
             json.dumps(matrix, ensure_ascii=False, indent=2), encoding="utf-8"

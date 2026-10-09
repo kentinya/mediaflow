@@ -148,6 +148,64 @@ export function AppShell({ children }: AppShellProps) {
     document.title = pageTitle;
   }, [pageTitle]);
 
+  // The functional keyword input is one shared element for every route; the
+  // Rules header places it inside its own title row, other routes keep the
+  // existing right-aligned top bar.
+  const searchField = (
+    <div className="mf-shell-search">
+      <Icon name="search" />
+      <input
+        type="search"
+        aria-label={
+          searchIsRules
+            ? RULES_HEADER_SEARCH_LABEL
+            : searchIsStorage
+              ? "搜索存储、路径"
+              : "搜索文件、文件夹或媒体库"
+        }
+        placeholder={
+          searchIsRules
+            ? rulesSearchInapplicable
+              ? RULES_OVERVIEW_SEARCH_PLACEHOLDER
+              : RULES_HEADER_SEARCH_PLACEHOLDER
+            : searchIsStorage
+              ? "搜索存储、路径..."
+              : "搜索文件、文件夹或媒体库..."
+        }
+        title={rulesSearchInapplicable ? RULES_OVERVIEW_SEARCH_HINT : undefined}
+        value={
+          searchIsFiles
+            ? filesSearch
+            : searchIsStorage
+              ? storageSearch
+              : searchIsRules
+                ? rulesSearch
+                : ""
+        }
+        onChange={(event) => {
+          if (searchIsStorage) setStorageSearch(event.target.value);
+          else if (searchIsRules) setRulesSearch(event.target.value);
+          else setFilesSearch(event.target.value);
+        }}
+        readOnly={!searchIsFiles && !searchIsStorage && !searchIsRules}
+        disabled={rulesSearchInapplicable}
+      />
+    </div>
+  );
+  const shellActions = (
+    <div className="mf-shell-actions">
+      <button
+        type="button"
+        className="mf-notification-button"
+        aria-label="通知"
+        title="通知"
+      >
+        <Icon name="bell" />
+      </button>
+      <AuthControls />
+    </div>
+  );
+
   return (
     <div className="mf-shell">
       <a className="mf-skip-link" href="#main-content">
@@ -202,63 +260,25 @@ export function AppShell({ children }: AppShellProps) {
           className={`mf-shell-topbar${searchIsRules ? " mf-shell-topbar-rules" : ""}`}
         >
           {searchIsRules ? (
-            <div className="mf-rules-topbar-title">
-              <h1>{RULES_WORKSPACE_TITLE}</h1>
-              <p>{RULES_WORKSPACE_DESCRIPTION}</p>
+            // The reference row hierarchy: title, functional keyword search and
+            // the existing account/notification controls on one row, then the
+            // business description as a separate full-width line below it.
+            <div className="mf-rules-topbar">
+              <div className="mf-rules-topbar-row">
+                <h1>{RULES_WORKSPACE_TITLE}</h1>
+                {searchField}
+                {shellActions}
+              </div>
+              <p className="mf-rules-topbar-description">
+                {RULES_WORKSPACE_DESCRIPTION}
+              </p>
             </div>
-          ) : null}
-          <div className="mf-shell-search">
-            <Icon name="search" />
-            <input
-              type="search"
-              aria-label={
-                searchIsRules
-                  ? RULES_HEADER_SEARCH_LABEL
-                  : searchIsStorage
-                    ? "搜索存储、路径"
-                    : "搜索文件、文件夹或媒体库"
-              }
-              placeholder={
-                searchIsRules
-                  ? rulesSearchInapplicable
-                    ? RULES_OVERVIEW_SEARCH_PLACEHOLDER
-                    : RULES_HEADER_SEARCH_PLACEHOLDER
-                  : searchIsStorage
-                    ? "搜索存储、路径..."
-                    : "搜索文件、文件夹或媒体库..."
-              }
-              title={
-                rulesSearchInapplicable ? RULES_OVERVIEW_SEARCH_HINT : undefined
-              }
-              value={
-                searchIsFiles
-                  ? filesSearch
-                  : searchIsStorage
-                    ? storageSearch
-                    : searchIsRules
-                      ? rulesSearch
-                      : ""
-              }
-              onChange={(event) => {
-                if (searchIsStorage) setStorageSearch(event.target.value);
-                else if (searchIsRules) setRulesSearch(event.target.value);
-                else setFilesSearch(event.target.value);
-              }}
-              readOnly={!searchIsFiles && !searchIsStorage && !searchIsRules}
-              disabled={rulesSearchInapplicable}
-            />
-          </div>
-          <div className="mf-shell-actions">
-            <button
-              type="button"
-              className="mf-notification-button"
-              aria-label="通知"
-              title="通知"
-            >
-              <Icon name="bell" />
-            </button>
-            <AuthControls />
-          </div>
+          ) : (
+            <>
+              {searchField}
+              {shellActions}
+            </>
+          )}
         </header>
         <main id="main-content" className="mf-shell-main" tabIndex={-1}>
           {destination ? (

@@ -1306,6 +1306,99 @@ describe("RulesWorkspacePage reference-aligned workspace", () => {
       within(dialog).getByRole("columnheader", { name: "目标位置" }),
     ).toBeVisible();
   });
+
+  it("names the closed Classification rule and its retained error when Save is refused", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=classificationPolicies");
+    await screen.findByRole("heading", { name: "分类规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加分类规则" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加分类规则" });
+
+    await user.click(within(dialog).getByRole("button", { name: "添加规则" }));
+    await user.type(within(dialog).getByLabelText(/^ID/), "proof-policy");
+    await user.type(within(dialog).getByLabelText(/^名称/), "证明分类策略");
+    const path = await within(dialog).findByLabelText("相对路径");
+    // An unsafe relative path is a real field error the backend authority
+    // rejects; `..` is not a safe relative name segment.
+    await user.clear(path);
+    await user.type(path, "..");
+    // Closing the inner editor keeps the compact list as the default surface.
+    await user.click(within(dialog).getByRole("button", { name: "完成" }));
+    expect(within(dialog).queryByLabelText("相对路径")).toBeNull();
+
+    const mutatingBefore = calls.filter((call) => call.method !== "GET").length;
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    // The refusal is stated on the compact surface: nothing was published and
+    // the affected rule is named with its retained message and correction route.
+    const refusal =
+      await within(dialog).findByText(/有 1 条内部规则未通过校验,保存未生效/);
+    expect(refusal).toBeVisible();
+    const issueSummary = dialog.querySelector(".mf-rules-nested-issues");
+    expect(issueSummary).not.toBeNull();
+    expect(issueSummary?.textContent).toContain(
+      "相对路径只能由 1 到 32 个安全的非空名称段组成",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "修正规则 1" }),
+    ).toBeVisible();
+    // Save sent no mutating request: the refusal never reached the server.
+    expect(calls.filter((call) => call.method !== "GET").length).toBe(
+      mutatingBefore,
+    );
+
+    // The correction route reopens the exact retained input for correction.
+    await user.click(
+      within(dialog).getByRole("button", { name: "修正规则 1" }),
+    );
+    const reopened = await within(dialog).findByLabelText("相对路径");
+    expect(reopened).toHaveValue("..");
+    // The correction route carries focus onto the exact retained input.
+    expect(reopened).toHaveFocus();
+    await user.clear(reopened);
+    await user.type(reopened, "电影/华语");
+    // The refusal summary retires once the input it described was corrected.
+    expect(within(dialog).queryByText(/有 1 条内部规则未通过校验/)).toBeNull();
+
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(
+        calls.filter((call) => call.method === "POST").length,
+      ).toBeGreaterThan(0),
+    );
+    // The corrected candidate reached the server and published.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("states the same refusal on the copy surface of a Classification policy", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=classificationPolicies");
+    await screen.findByRole("heading", { name: "分类规则" });
+    const user = userEvent.setup();
+    // Copy is an explicit row action, never an automatic editor open.
+    await user.click(screen.getAllByRole("button", { name: "复制" })[0]!);
+    const dialog = await screen.findByRole("dialog", { name: /复制分类规则/ });
+    await user.click(within(dialog).getByRole("button", { name: "添加规则" }));
+    const path = await within(dialog).findByLabelText("相对路径");
+    await user.clear(path);
+    await user.type(path, "..");
+    await user.click(within(dialog).getByRole("button", { name: "完成" }));
+
+    const mutatingBefore = calls.filter((call) => call.method !== "GET").length;
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+    expect(
+      await within(dialog).findByText(/有 1 条内部规则未通过校验,保存未生效/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "修正规则 1" }),
+    ).toBeVisible();
+    expect(calls.filter((call) => call.method !== "GET").length).toBe(
+      mutatingBefore,
+    );
+  });
 });
 
 describe("RulesWorkspacePage purpose-built family forms", () => {

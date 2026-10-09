@@ -434,6 +434,18 @@ body {
   width: 1.15rem;
   height: 1.15rem;
 }
+/* The enable switch is a checkbox inside `.mf-rules-field`, so the base
+   checkbox sizing above would otherwise win on specificity and shrink the real
+   44x24 track until the 18px thumb left it. This scoped selector ties on
+   specificity and is declared later, so the track keeps its own dimensions. */
+.mf-rules-field .mf-rules-switch input {
+  width: 44px;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+}
 .mf-rules-field[data-disabled="true"] {
   opacity: 0.72;
 }
@@ -4270,16 +4282,27 @@ tr[aria-selected="true"] {
    geometry. Nothing here changes another page's composition.
    --------------------------------------------------------------------------- */
 
-/* The Rules header is composed inside the one shared shell: title at left and
-   the functional keyword search plus the existing account/notification controls
-   at right on the same desktop row. */
+/* The Rules header is composed inside the one shared shell. Its hierarchy is
+   the reference's: title, functional keyword search and the existing
+   account/notification controls on one row, then the business description as a
+   separate full-width line, so the search/account controls align against the
+   title row instead of against title plus paragraph. */
 .mf-shell-topbar-rules {
+  display: block;
   height: auto;
   min-height: 96px;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 18px;
   padding: 14px 18px;
+}
+
+.mf-rules-topbar {
+  display: grid;
+  gap: 6px;
+}
+
+.mf-rules-topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 27px;
 }
 
 /* The header already carries the Rules title and description, so the generic
@@ -4292,12 +4315,9 @@ tr[aria-selected="true"] {
   padding: 0 0 40px;
 }
 
-.mf-rules-topbar-title {
-  min-width: 0;
+.mf-rules-topbar-row h1 {
   flex: 1 1 auto;
-}
-
-.mf-rules-topbar-title h1 {
+  min-width: 0;
   margin: 0;
   color: #0e1728;
   font-size: 26px;
@@ -4305,8 +4325,10 @@ tr[aria-selected="true"] {
   line-height: 32px;
 }
 
-.mf-rules-topbar-title p {
-  margin: 4px 0 0;
+/* The description is a full-width line below the title row, not a paragraph
+   confined to the title column. */
+.mf-rules-topbar-description {
+  margin: 0;
   color: #53698e;
   font-size: 14px;
   line-height: 20px;
@@ -4315,6 +4337,10 @@ tr[aria-selected="true"] {
 .mf-shell-topbar-rules .mf-shell-search {
   flex: 0 1 420px;
   min-width: 180px;
+}
+
+.mf-shell-topbar-rules .mf-shell-actions {
+  flex: 0 0 auto;
 }
 
 .mf-shell-topbar-rules .mf-shell-search input:disabled {
@@ -4331,12 +4357,15 @@ tr[aria-selected="true"] {
   background: #fafbfc;
 }
 
+/* The identity/refresh utility line sits below the family navigation so the
+   reference hierarchy (header → navigation → inventory) is never interrupted. */
 .mf-rules-diagnostics {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+  min-height: 30px;
 }
 
 .mf-rules-diagnostics .mf-eyebrow {
@@ -4349,13 +4378,14 @@ tr[aria-selected="true"] {
 }
 
 .mf-rules-diagnostics button {
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 30px;
+  padding: 0 12px;
   border: 1px solid #d8e2ef;
   border-radius: 6px;
   background: #fff;
   color: #14223c;
   font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -4626,9 +4656,16 @@ tr[aria-selected="true"] {
 
 /* Purpose-built sections use the same label-above-control language as the
    top-level fields, including the nested Organize/duplicate controls. The
-   checkbox flags keep their own inline flex layout. */
-.mf-rules-section-body label:not(.mf-rules-flag),
-.mf-rules-section-body fieldset label:not(.mf-rules-flag) {
+   `Field` component already owns its own label/control relationship through
+   `.mf-rules-field-label`, and the switch/checkbox flags keep their own inline
+   flex layout, so all three are excluded here — otherwise this grid would win
+   on specificity and split the required marker or the switch state text onto
+   its own row. */
+.mf-rules-section-body
+  label:not(.mf-rules-flag):not(.mf-rules-switch):not(.mf-rules-field-label),
+.mf-rules-section-body
+  fieldset
+  label:not(.mf-rules-flag):not(.mf-rules-switch):not(.mf-rules-field-label) {
   display: grid;
   gap: 5px;
   color: #3c4a63;
@@ -4636,9 +4673,15 @@ tr[aria-selected="true"] {
   font-weight: 600;
 }
 
-.mf-rules-section-body label:not(.mf-rules-flag) input,
-.mf-rules-section-body label:not(.mf-rules-flag) select,
-.mf-rules-section-body label:not(.mf-rules-flag) textarea {
+.mf-rules-section-body
+  label:not(.mf-rules-flag):not(.mf-rules-switch):not(.mf-rules-field-label)
+  input,
+.mf-rules-section-body
+  label:not(.mf-rules-flag):not(.mf-rules-switch):not(.mf-rules-field-label)
+  select,
+.mf-rules-section-body
+  label:not(.mf-rules-flag):not(.mf-rules-switch):not(.mf-rules-field-label)
+  textarea {
   min-height: 36px;
   padding: 7px 9px;
   border: 1px solid #d8e2ef;
@@ -4824,6 +4867,87 @@ tr[aria-selected="true"] {
 
 .mf-rules-flag-inline {
   align-self: end;
+}
+
+/* A refused Save is visible outside the closed Classification rule editor:
+   the compact list names the affected rule, its retained messages and offers a
+   native route back into the correctable input. */
+.mf-rules-nested-issues {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #f0c36d;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #7a4b00;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-rules-nested-issues p {
+  margin: 0;
+  font-weight: 600;
+}
+
+.mf-rules-nested-issues ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.mf-rules-nested-issues li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mf-rules-nested-issues button {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid #d8a63a;
+  border-radius: 5px;
+  background: #fff;
+  color: #7a4b00;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mf-rules-row-error {
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The refused-Save summary shared by the drawer and the full-page editor. */
+.mf-rules-save-invalid {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #f0c36d;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #7a4b00;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.mf-rules-save-invalid p {
+  margin: 0;
+}
+
+.mf-rules-save-invalid ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.mf-rules-save-invalid code {
+  font-size: 12px;
 }
 
 /* --- compact Classification internal-rule inventory ---------------------- */
@@ -5023,7 +5147,7 @@ tr[aria-selected="true"] {
 }
 
 @media (max-width: 900px) {
-  .mf-shell-topbar-rules {
+  .mf-rules-topbar-row {
     flex-wrap: wrap;
     gap: 12px;
   }

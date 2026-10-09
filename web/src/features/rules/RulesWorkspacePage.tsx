@@ -799,9 +799,27 @@ export function RulesWorkspacePage() {
         };
         return (
           <section className="mf-rules-page">
-            {/* Identity diagnostics stay reachable but no longer dominate the
-                page: the shared header already carries the Rules title and
-                business description. */}
+            {/* The reference order is header hierarchy, then family navigation,
+                then the inventory. The shared header already carries the Rules
+                title and business description, so family navigation follows it
+                directly. */}
+            <FamilyNavigation section={section} onSelect={goToSection} />
+            {notice !== null && (
+              <p className="mf-rules-verified" role="status">
+                {notice}
+              </p>
+            )}
+            {draftFamilies.length > 0 && (
+              <p className="mf-rules-verified" role="status">
+                仍有未保存的输入保存在本次会话中:
+                {draftFamilies.map((item) => LABELS[item]).join("、")}
+                。再次打开对应的添加或编辑表单即可继续修正。
+              </p>
+            )}
+            {/* Identity diagnostics, the Settings handoff and the explicit
+                Active refresh stay reachable as one compact utility line below
+                the family navigation, instead of a dominant row between the
+                header and the family cards. */}
             <div className="mf-rules-diagnostics">
               <p className="mf-eyebrow">
                 Active · 序号 {data.active?.sequence}
@@ -821,19 +839,6 @@ export function RulesWorkspacePage() {
                 </button>
               </div>
             </div>
-            {notice !== null && (
-              <p className="mf-rules-verified" role="status">
-                {notice}
-              </p>
-            )}
-            {draftFamilies.length > 0 && (
-              <p className="mf-rules-verified" role="status">
-                仍有未保存的输入保存在本次会话中:
-                {draftFamilies.map((item) => LABELS[item]).join("、")}
-                。再次打开对应的添加或编辑表单即可继续修正。
-              </p>
-            )}
-            <FamilyNavigation section={section} onSelect={goToSection} />
             {section === "overview" ? (
               <Overview
                 model={data}

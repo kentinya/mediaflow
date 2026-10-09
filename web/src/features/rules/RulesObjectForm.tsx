@@ -18,7 +18,7 @@
  * purposeful sections; nothing is dropped to match an image.
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   type MediaLibraryReference,
   type RuleFormAuthority,
@@ -55,8 +55,14 @@ function Field({
     >
       {/* The required marker is drawn by CSS (`::after`) rather than a text
           node, so the control's accessible name stays exactly the label and
-          the requirement itself is exposed through `aria-required`. */}
-      <label htmlFor={id} data-required={required || undefined}>
+          the requirement itself is exposed through `aria-required`. The
+          `mf-rules-field-label` class keeps this label's own inline marker from
+          being re-laid-out by the section-wide label selector. */}
+      <label
+        className="mf-rules-field-label"
+        htmlFor={id}
+        data-required={required || undefined}
+      >
         {label}
         {error ? <span className="mf-rules-field-error"> {error}</span> : null}
       </label>
@@ -492,6 +498,45 @@ const TV_TEMPLATE_FIELDS = new Set([
   "episodeFilenameTemplate",
   "multiEpisodeFileTemplate",
 ]);
+
+/**
+ * Human label for one candidate field path used by a refusal summary.
+ *
+ * The operator must see the affected control's real name (for example
+ * `分类规则 1 · 相对路径`), not the internal `rules[0].path` key, so the
+ * summary and the form cannot disagree about what to correct.
+ */
+export function ruleFieldLabel(field: string): string {
+  const nested = /^rules\[(\d+)\]\.(.+)$/.exec(field);
+  if (nested !== null) {
+    const index = Number(nested[1]) + 1;
+    const suffix = nested[2];
+    const condition = /^conditions\.(.+)$/.exec(suffix);
+    if (condition !== null)
+      return `分类规则 ${index} · ${
+        CONDITION_LABELS[condition[1]] ?? condition[1]
+      }`;
+    if (suffix === "mediaLibraryId") return `分类规则 ${index} · 目标媒体库`;
+    if (suffix === "path") return `分类规则 ${index} · 相对路径`;
+    if (suffix === "id") return `分类规则 ${index} · 规则 ID`;
+    if (suffix === "name") return `分类规则 ${index} · 规则名称`;
+    if (suffix === "priority") return `分类规则 ${index} · 优先级`;
+    return `分类规则 ${index} · ${suffix}`;
+  }
+  const group = /^([A-Za-z]+)\.(.+)$/.exec(field);
+  if (group !== null) {
+    const groupLabel =
+      group[1] === "sourceDirectoryCleanup"
+        ? "回滚与源目录清理"
+        : group[1] === "duplicateDetection"
+          ? "重复检测"
+          : group[1] === "attachments"
+            ? "附件处理"
+            : group[1];
+    return `${groupLabel} · ${FIELD_LABELS[group[2]] ?? group[2]}`;
+  }
+  return FIELD_LABELS[field] ?? field;
+}
 
 interface Props {
   readonly family: RuleFormFamily;
@@ -1296,6 +1341,27 @@ function ClassificationRules({
   const rules = readRules(values);
   const libraries = authority.mediaLibraries;
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  // A refused Save must point at the exact closed rule that owns the retained
+  // error, so opening the correction route also carries focus into that editor.
+  const [focusRequest, setFocusRequest] = useState(0);
+  const pendingFocus = useRef(false);
+  const ruleEditorRef = useRef<HTMLDivElement>(null);
+  const openRuleEditor = (index: number) => {
+    pendingFocus.current = true;
+    setOpenIndex(index);
+    setFocusRequest((value) => value + 1);
+  };
+  // Every retained issue that belongs to one of this policy's internal rules.
+  // They are counted here (not only inside the open editor) so a refused Save
+  // can name the affected rule even while the compact list is the only visible
+  // surface.
+  const ruleIssueCounts = new Map<number, number>();
+  for (const key of issues.keys()) {
+    const match = /^rules\[(\d+)\]\./.exec(key);
+    if (match === null) continue;
+    const index = Number(match[1]);
+    ruleIssueCounts.set(index, (ruleIssueCounts.get(index) ?? 0) + 1);
+  }
 
   const write = (next: readonly RuleRow[]) => onChange("rules", next);
 
@@ -1356,6 +1422,26 @@ function ClassificationRules({
 
   const openRule = openIndex !== null ? rules[openIndex] : undefined;
 
+  // The correction route is a real keyboard journey: opening the affected rule
+  // moves focus onto the exact control that still owns a retained error, or the
+  // first editable control when the error is not field-local.
+  useEffect(() => {
+    if (!pendingFocus.current) return;
+    pendingFocus.current = false;
+    const editor = ruleEditorRef.current;
+    if (editor === null) return;
+    // The exact refused control wins over the first editable one, so the
+    // operator lands on the input the message is about.
+    const control =
+      editor.querySelector<HTMLElement>(
+        '[aria-invalid="true"]:not([disabled])',
+      ) ??
+      editor.querySelector<HTMLElement>(
+        "input:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+      );
+    (control ?? editor).focus();
+  }, [focusRequest]);
+
   return (
     <div className="mf-rules-nested">
       <div className="mf-rules-nested-head">
@@ -1372,6 +1458,45 @@ function ClassificationRules({
         <p className="mf-rules-field-error" role="alert">
           {issues.get("rules")}
         </p>
+      ) : null}
+      {/* A refused Save keeps the compact list as the default surface, but the
+          affected rule and its retained message must stay visible outside the
+          closed editor, with a native route back into the correctable input. */}
+      {ruleIssueCounts.size > 0 ? (
+        <div className="mf-rules-nested-issues" role="alert">
+          <p>
+            {ruleIssueCounts.size === 1
+              ? "有 1 条内部规则未通过校验,保存未生效:"
+              : `有 ${ruleIssueCounts.size} 条内部规则未通过校验,保存未生效:`}
+          </p>
+          <ul>
+            {Array.from(ruleIssueCounts.entries())
+              .sort((a, b) => a[0] - b[0])
+              .map(([index, count]) => (
+                <li key={index}>
+                  <span>
+                    规则 {index + 1}
+                    {typeof rules[index]?.name === "string"
+                      ? `(${rules[index].name as string})`
+                      : ""}
+                    :{count} 处待修正 —
+                    {Array.from(issues.entries())
+                      .filter(([key]) => key.startsWith(`rules[${index}].`))
+                      .map(([, message]) => message)
+                      .join(";")}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    aria-label={`修正规则 ${index + 1}`}
+                    onClick={() => openRuleEditor(index)}
+                  >
+                    修正
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </div>
       ) : null}
       {rules.length === 0 ? (
         <p className="mf-rules-field-hint">
@@ -1392,14 +1517,22 @@ function ClassificationRules({
             </thead>
             <tbody>
               {rules.map((rule, index) => (
-                <tr key={index}>
+                <tr
+                  key={index}
+                  data-invalid={ruleIssueCounts.has(index) ? "true" : undefined}
+                >
                   <td>
                     {typeof rule.priority === "number" ? rule.priority : 0}
                   </td>
                   <td>
                     <code>{typeof rule.id === "string" ? rule.id : ""}</code>
                   </td>
-                  <td>{typeof rule.name === "string" ? rule.name : ""}</td>
+                  <td>
+                    {typeof rule.name === "string" ? rule.name : ""}
+                    {ruleIssueCounts.has(index) ? (
+                      <span className="mf-rules-row-error"> 待修正</span>
+                    ) : null}
+                  </td>
                   <td>{conditionSummary(conditionsOf(rule))}</td>
                   <td>{destinationSummary(resultOf(rule), libraries)}</td>
                   <td>
@@ -1451,6 +1584,8 @@ function ClassificationRules({
           className="mf-rules-rule-editor"
           role="group"
           aria-label={`规则编辑 ${openIndex + 1}`}
+          ref={ruleEditorRef}
+          tabIndex={-1}
         >
           <div className="mf-rules-rule-grid">
             <label>

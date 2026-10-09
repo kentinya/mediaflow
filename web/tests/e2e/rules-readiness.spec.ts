@@ -426,6 +426,39 @@ test.describe("Rules reference-aligned workspace presentation", () => {
     );
     await expect(page.getByRole("button", { name: "通知" })).toBeVisible();
 
+    // The reference row hierarchy: title/search/account share one row, and the
+    // business description is its own full-width line below that row.
+    const titleBox = (await page
+      .getByRole("heading", { name: "整理规则", exact: true })
+      .boundingBox())!;
+    const searchBox = (await headerSearch.boundingBox())!;
+    const descriptionBox = (await page
+      .getByText(/管理从识别到整理的完整规则体系/)
+      .boundingBox())!;
+    const headerBox = (await page
+      .locator(".mf-shell-topbar-rules")
+      .boundingBox())!;
+    expect(
+      Math.abs(
+        titleBox.y + titleBox.height / 2 - (searchBox.y + searchBox.height / 2),
+      ),
+    ).toBeLessThan(30);
+    expect(descriptionBox.y).toBeGreaterThanOrEqual(
+      Math.max(titleBox.y + titleBox.height, searchBox.y + searchBox.height) -
+        2,
+    );
+    expect(descriptionBox.width).toBeGreaterThan(headerBox.width * 0.9);
+    expect(descriptionBox.height).toBeLessThanOrEqual(24);
+    // Family navigation follows the header directly; the diagnostics/refresh
+    // utility line never interrupts that hierarchy.
+    const navBox = (await page
+      .getByRole("navigation", { name: "规则分类" })
+      .boundingBox())!;
+    const diagnosticsBox = (await page
+      .locator(".mf-rules-diagnostics")
+      .boundingBox())!;
+    expect(diagnosticsBox.y).toBeGreaterThanOrEqual(navBox.y + navBox.height);
+
     // The eight reference cards keep their order, business names and descriptions.
     const nav = page.getByRole("navigation", { name: "规则分类" });
     await expect(nav.getByRole("button")).toHaveCount(8);

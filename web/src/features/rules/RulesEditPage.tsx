@@ -20,6 +20,7 @@ import {
   ruleCandidateFields,
   ruleFailureCopy,
   validateRuleCandidate,
+  type FieldIssue,
   type RuleFormAuthority,
   type RuleFormFamily,
   type RuleFormValue,
@@ -35,7 +36,11 @@ import {
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { classifySaveFailure } from "./RulesObjectDrawer";
-import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import {
+  RulesObjectForm,
+  ruleFieldLabel,
+  type FormValues,
+} from "./RulesObjectForm";
 import { RulesObjectTestPanel } from "./RulesObjectTestPanel";
 import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
@@ -79,6 +84,7 @@ export function RulesEditPage() {
   const [state, setState] = useState<
     | { kind: "idle" }
     | { kind: "saving" }
+    | { kind: "invalid"; issues: readonly FieldIssue[] }
     | { kind: "known-failure"; code: string; nextAction: string | null }
     | { kind: "unknown"; code: string }
     | { kind: "published"; message: string }
@@ -146,11 +152,23 @@ export function RulesEditPage() {
     writeRuleDraft(family as RuleFormFamily, objectId, next);
     setLoaded({ subject, values: next, dirty: true });
     setIssues((current) => {
-      if (!current.has(field)) return current;
+      // A nested change rewrites the whole `rules` array, so every issue that
+      // belonged to one of those internal rules describes input the operator
+      // already replaced.
+      const owned = (key: string) =>
+        key === field || (field === "rules" && /^rules\[\d+\]\./.test(key));
+      if (!Array.from(current.keys()).some(owned)) return current;
       const merged = new Map(current);
-      merged.delete(field);
+      for (const key of Array.from(merged.keys())) {
+        if (owned(key)) merged.delete(key);
+      }
       return merged;
     });
+    // Correcting one field clears the whole refusal summary so a stale
+    // "nothing was saved" banner cannot outlive the corrected input.
+    setState((current) =>
+      current.kind === "invalid" ? { kind: "idle" } : current,
+    );
   };
 
   const saved = state.kind === "published";
@@ -238,11 +256,13 @@ export function RulesEditPage() {
     const problems = validateRuleCandidate(typedFamily, candidate, authority);
     if (problems.length > 0) {
       setIssues(new Map(problems.map((item) => [item.field, item.message])));
+      // The refused Save is stated explicitly instead of returning silently;
+      // the page keeps the correctable input and the previous Active.
+      setState({ kind: "invalid", issues: problems });
       return;
     }
     setIssues(new Map());
-    setState({ kind: "saving" });
-    // The Save composes against the exact Active identity this projection was
+    setState({ kind: "saving" }); // The Save composes against the exact Active identity this projection was
     // read from, so a concurrent publication fails as a stale conflict instead
     // of rewriting over whatever became Active since the page opened.
     const observed = authorityIdentity(projectionOutcome.model.active);
@@ -329,6 +349,21 @@ export function RulesEditPage() {
       {saved && (
         <div className="mf-rules-published" role="status">
           <p>{state.kind === "published" ? state.message : ""}</p>
+        </div>
+      )}
+      {state.kind === "invalid" && (
+        <div className="mf-rules-save-invalid" role="alert">
+          <p>
+            保存未生效:有 {state.issues.length} 处输入未通过校验,Active
+            没有发生任何变化。请修正下面列出的字段后重新保存。
+          </p>
+          <ul>
+            {state.issues.map((item) => (
+              <li key={item.field}>
+                <span>{ruleFieldLabel(item.field)}</span>:{item.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {state.kind === "known-failure" && (

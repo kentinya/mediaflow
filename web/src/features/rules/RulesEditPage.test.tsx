@@ -327,6 +327,116 @@ describe("RulesEditPage previews", () => {
   });
 });
 
+describe("RulesEditPage classification save recovery", () => {
+  const classificationAuthority = {
+    ...formAuthorityPayload,
+    mediaLibraries: [
+      {
+        id: "movies",
+        name: "Movies",
+        enabled: true,
+        storageId: "media-target",
+        rootPath: "/Media",
+      },
+    ],
+    families: formAuthorityPayload.families.map((entry) =>
+      entry.family === "classificationPolicies"
+        ? {
+            ...entry,
+            fields: [
+              "id",
+              "name",
+              "description",
+              "enabled",
+              "priority",
+              "rules",
+            ],
+          }
+        : entry,
+    ),
+  };
+
+  it("states a refused Save and keeps the affected rule reachable on the full page", async () => {
+    const calls: { method: string; url: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        calls.push({ method, url });
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(classificationAuthority));
+        if (url.includes("/objects/classificationPolicies/"))
+          return new Response(
+            JSON.stringify({
+              family: "classificationPolicies",
+              object: {
+                id: "policy-a",
+                name: "Policy A",
+                description: "",
+                enabled: true,
+                priority: 0,
+                rules: [
+                  {
+                    id: "rule-1",
+                    name: "规则 1",
+                    priority: 10,
+                    enabled: true,
+                    conditions: { mediaType: ["movie"] },
+                    result: { mediaLibraryId: "movies", path: ["电影"] },
+                  },
+                ],
+              },
+              references: {
+                total: 0,
+                items: [],
+                truncated: false,
+                removalBlocked: false,
+              },
+              active: formAuthorityPayload.active,
+              sideEffects: "none",
+            }),
+          );
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules/edit/classificationPolicies/policy-a");
+    await screen.findByRole("heading", { name: "policy-a" });
+    const user = userEvent.setup();
+
+    // The compact internal-rule list is the default state on the full page too.
+    expect(screen.queryByLabelText("相对路径")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "编辑规则 1" }));
+    const path = await screen.findByLabelText("相对路径");
+    await user.clear(path);
+    await user.type(path, "..");
+    await user.click(screen.getByRole("button", { name: "完成" }));
+    expect(screen.queryByLabelText("相对路径")).toBeNull();
+
+    const mutatingBefore = calls.filter((call) => call.method !== "GET").length;
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    // The page-level refusal names the closed rule, its retained error and the
+    // correction route; nothing was sent to the server.
+    expect(
+      await screen.findByText(/保存未生效:有 1 处输入未通过校验/),
+    ).toBeVisible();
+    expect(screen.getByText("分类规则 1 · 相对路径")).toBeVisible();
+    expect(screen.getByRole("button", { name: "修正规则 1" })).toBeVisible();
+    expect(calls.filter((call) => call.method !== "GET").length).toBe(
+      mutatingBefore,
+    );
+
+    // The correction route reopens the exact retained input.
+    await user.click(screen.getByRole("button", { name: "修正规则 1" }));
+    const reopened = await screen.findByLabelText("相对路径");
+    expect(reopened).toHaveValue("..");
+  });
+});
+
 describe("RulesEditPage object identity", () => {
   it("opens backend-legal IDs — plus, at, space and dot — on the same route", async () => {
     const requested: string[] = [];
