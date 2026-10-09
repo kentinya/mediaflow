@@ -431,7 +431,7 @@ Developer does not judge RO-2 acceptance or choose the next Task.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: NOT SET — filled after this checkpoint commit
+Head SHA: ddd4bd5b82bd8d32d83cc15e57a9b0bb20cad96b
 ```
 
 ## B Review Result
