@@ -351,6 +351,29 @@ try {
   // -- exact raw path identity through pointer navigation --------------
   // The common-prefix sibling whose real name ends in one space must be
   // requested with that exact raw value, never the trimmed one.
+  // -- short-name density case: the same contract at desktop width --------
+  for (const route of ROUTES) {
+    await open(page, route.shortLink, 1536, 1024);
+    await page.getByRole('button', { name: '列表视图' }).click();
+    await expect(page.getByRole('table')).toBeVisible();
+    const shortRoute = {
+      ...route,
+      crumbs: route.shortCrumbs,
+      accessibleNames: route.shortAccessibleNames,
+    };
+    const record = await inspect(
+      page,
+      `${route.name}-short-list-desktop-1536x1024`,
+      shortRoute,
+      'list',
+      { name: 'desktop-1536x1024', width: 1536, height: 1024 },
+    );
+    record.paneWidth = await page
+      .locator('.mf-files-pane')
+      .evaluate((element) => Math.round(element.getBoundingClientRect().width));
+    evidence.passes.push(record);
+  }
+
   for (const route of ROUTES) {
     await open(page, route.prefixLink, 1536, 1024);
     const nav = page.getByRole('navigation', { name: route.crumbLabel });
@@ -489,6 +512,10 @@ def seed_tree(root: Path) -> None:
         multilevel.mkdir(parents=True, exist_ok=True)
         (multilevel / "level.mkv").write_bytes(b"synthetic multilevel media")
         (base / SHORT).write_bytes(b"synthetic short media")
+        # A short-name directory for the density/identity case.
+        short_dir = base / "Shows" / "nested"
+        short_dir.mkdir(parents=True, exist_ok=True)
+        (short_dir / "episode.mkv").write_bytes(b"synthetic short media")
 
 
 def route_cases() -> list[dict]:
@@ -510,8 +537,11 @@ def route_cases() -> list[dict]:
             "deepLink": f"/ui-v2/resourcelib/files?path={encoded(DEEP_PATH)}",
             "prefixLink": f"/ui-v2/resourcelib/files?path={encoded(PREFIX_PATH + '/nested')}",
             "missingLink": "/ui-v2/resourcelib/files?path=missing-directory",
+            "shortLink": "/ui-v2/resourcelib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
+            "shortCrumbs": [{"name": name} for name in ["Shows", "nested"]],
+            "shortAccessibleNames": ["Shows", "nested"],
             "prefixCrumbs": [{"name": name} for name in prefix_names],
             "prefixAccessibleNames": prefix_accessible,
             "exactNavigationPath": PREFIX_PATH,
@@ -523,8 +553,11 @@ def route_cases() -> list[dict]:
             "deepLink": f"/ui-v2/medialib/files?path={encoded(DEEP_PATH)}",
             "prefixLink": f"/ui-v2/medialib/files?path={encoded(PREFIX_PATH + '/nested')}",
             "missingLink": "/ui-v2/medialib/files?path=missing-directory",
+            "shortLink": "/ui-v2/medialib/files?path=Shows/nested",
             "crumbs": [{"name": name} for name in deep_names],
             "accessibleNames": deep_names,
+            "shortCrumbs": [{"name": name} for name in ["Shows", "nested"]],
+            "shortAccessibleNames": ["Shows", "nested"],
             "prefixCrumbs": [{"name": name} for name in prefix_names],
             "prefixAccessibleNames": prefix_accessible,
             "exactNavigationPath": PREFIX_PATH,
