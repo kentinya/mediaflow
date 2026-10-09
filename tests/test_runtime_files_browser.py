@@ -384,11 +384,15 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 status, files = _request(api, "/api/v1/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
                 entries = {entry["name"]: entry for entry in files["entries"]}
-                # Regular files are the only Organize candidates; a directory is
-                # navigation and a symbolic link is never organized.
+                # RO-6: a regular file is a directly reviewable primary source
+                # and a traversable directory is a bounded discovery scope; a
+                # symbolic link is never an Organize candidate.
                 self.assertTrue(entries["Movie.2001.mkv"]["organizeEligible"])
-                self.assertFalse(entries["Season"]["organizeEligible"])
+                self.assertEqual("file", entries["Movie.2001.mkv"]["organizeKind"])
+                self.assertTrue(entries["Season"]["organizeEligible"])
+                self.assertEqual("directory", entries["Season"]["organizeKind"])
                 self.assertFalse(entries["linked.mkv"]["organizeEligible"])
+                self.assertIsNone(entries["linked.mkv"]["organizeKind"])
                 self.assertTrue(entries["linked.mkv"]["isSymlink"])
                 # Privacy/authority: the projection still publishes no physical
                 # FileIndex identity and performs no Task work.

@@ -461,6 +461,122 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await expect(page.getByRole("table")).toBeVisible();
 });
 
+test("a folder selection starts the bounded discovery journey instead of a direct intent", async ({
+  page,
+}) => {
+  const discoveryBodies: string[] = [];
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "POST") return;
+    if (request.url().includes("/files/discoveries")) {
+      discoveryBodies.push(request.postData() ?? "");
+    }
+    if (request.url().includes("/files/organize")) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
+  await resetFakeOrganize(page);
+  await openFiles(page);
+
+  // A directory is a bounded discovery scope: the row menu offers Organize and
+  // the batch action counts it as an admissible selection.
+  const moviesRow = page.getByRole("row", { name: /Movies/ });
+  await moviesRow.getByRole("checkbox").check();
+  // Every selected row is an admitted Organize scope, so the batch action is
+  // enabled and no ineligible-remainder hint is shown.
+  await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "批量整理" })).toBeEnabled();
+  await page.getByRole("button", { name: "批量整理" }).click();
+
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+  expect(discoveryBodies).toHaveLength(1);
+  expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
+  // The discovery stage never uses the direct file-only intent admission.
+  expect(admissionBodies).toHaveLength(0);
+  // Zero mutation is advertised truthfully.
+  await expect(page.getByText(/不会移动、复制或删除任何文件/)).toBeVisible();
+});
+
+test("a mixed folder and file selection enters one bounded discovery", async ({
+  page,
+}) => {
+  const discoveryBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/discoveries")
+    ) {
+      discoveryBodies.push(request.postData() ?? "");
+    }
+  });
+  await resetFakeOrganize(page);
+  await openFiles(page);
+
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("checkbox", { name: "选择 sample.mkv" }).check();
+  await expect(page.getByText(/已选择 2 个项目/)).toBeVisible();
+  await page.getByRole("button", { name: "批量整理" }).click();
+
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+  expect(discoveryBodies).toHaveLength(1);
+  expect(discoveryBodies[0]).toContain("Movies");
+  expect(discoveryBodies[0]).toContain("sample.mkv");
+});
+
+test("a folder row Organize action admits exactly that discovery scope", async ({
+  page,
+}) => {
+  const discoveryBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/discoveries")
+    ) {
+      discoveryBodies.push(request.postData() ?? "");
+    }
+  });
+  await resetFakeOrganize(page);
+  await openFiles(page);
+
+  await page
+    .getByRole("row", { name: /Movies/ })
+    .click({ button: "right", position: { x: 40, y: 20 } });
+  await page.getByRole("menuitem", { name: "整理" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+  expect(discoveryBodies).toHaveLength(1);
+  expect(discoveryBodies[0]).toContain('"paths":["Movies"]');
+});
+
+test("the discovery page freezes the source list and continues into the intent", async ({
+  page,
+}) => {
+  await resetFakeOrganize(page);
+  await openFiles(page);
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+
+  // The page advertises only the backend-admitted actions.
+  await expect(page.getByRole("button", { name: "暂停发现" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消发现" })).toBeVisible();
+  // The fake Worker completes the walk, so finalize becomes available.
+  await expect(
+    page.getByRole("button", { name: "冻结来源并继续整理" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "冻结来源并继续整理" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
+  );
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+});
+
 test("the row Organize action admits the existing durable intent for one eligible file", async ({
   page,
 }) => {

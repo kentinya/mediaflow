@@ -963,7 +963,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 44)
+                self.assertEqual(SCHEMA_VERSION, 45)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1082,6 +1082,160 @@ class Schema42To44UpgradeTests(unittest.TestCase):
                     )
 
             self.assertEqual(admit(upgraded), admit(fresh))
+
+
+class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
+    """The additive 44 -> 45 discovery upgrade preserves prior durable facts.
+
+    Schema 45 adds the durable bounded-discovery boundary.  The fixture is a
+    genuine schema-44 runtime database with a real admitted manual intent, so
+    the upgrade is proven to add only the two discovery tables and their
+    observation column without touching pre-existing work.
+    """
+
+    _SCHEMA44_OBJECTS = (
+        "DROP INDEX IF EXISTS media_discovery_observations_discovery",
+        "DROP TABLE IF EXISTS media_discovery_observations",
+        "DROP INDEX IF EXISTS media_discoveries_status_created",
+        "DROP INDEX IF EXISTS media_discoveries_actor_created",
+        "DROP TABLE IF EXISTS media_discoveries",
+    )
+
+    @staticmethod
+    def _create_schema44_database(path: Path) -> None:
+        with SQLiteTaskRepository(path) as repository:
+            repository.create_manual_intent_with_audit(
+                _manual_intent("intent-base"),
+                _manual_items("intent-base"),
+                _manual_audit("intent-base"),
+            )
+            connection = repository._connection
+            for statement in Schema44To45DiscoveryUpgradeTests._SCHEMA44_OBJECTS:
+                connection.execute(statement)
+            connection.execute("INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)", (44,))
+            connection.commit()
+
+    def test_schema44_upgrades_additively_and_keeps_the_admitted_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-44.sqlite3")
+            self._create_schema44_database(database)
+            with sqlite3.connect(database) as connection:
+                marker = connection.execute(
+                    "SELECT version FROM schema_version WHERE component='runtime'"
+                ).fetchone()[0]
+                objects = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'media_discover%'"
+                    ).fetchall()
+                }
+            self.assertEqual(marker, 44)
+            self.assertEqual(objects, set())
+
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                self.assertEqual(SCHEMA_VERSION, 45)
+                # The pre-existing admitted intent survived the additive upgrade.
+                intent = repository.get_manual_intent("intent-base")
+                self.assertIsNotNone(intent)
+                self.assertEqual(1, len(intent.items))
+                # The new discovery boundary is present and empty.
+                self.assertEqual((), repository.list_media_discoveries())
+                tables = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'media_discover%'"
+                    ).fetchall()
+                }
+                self.assertEqual({"media_discoveries", "media_discovery_observations"}, tables)
+                columns = {
+                    row[1]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(media_discovery_observations)"
+                    ).fetchall()
+                }
+                self.assertIn("stable_since", columns)
+
+
+def _manual_intent(intent_id: str):
+    from mediaflow.domain.manual_organize import (
+        ManualConfigurationSnapshot,
+        ManualIntentStatus,
+        ManualOrganizeIntent,
+    )
+
+    now = datetime(2026, 10, 4, tzinfo=UTC)
+    return ManualOrganizeIntent(
+        intent_id,
+        "operator",
+        "snap-base",
+        "digest-base",
+        ManualIntentStatus.OPEN,
+        1,
+        now,
+        now,
+        _manual_items(intent_id),
+        ManualConfigurationSnapshot("snap-base", "digest-base", (), (), (), (), ()),
+        "continue to an exact zero-mutation Preview",
+        None,
+        (),
+    )
+
+
+def _manual_items(intent_id: str):
+    from mediaflow.domain.manual_organize import (
+        ManualChoice,
+        ManualIntentItem,
+        ManualIntentItemStatus,
+        ManualSourceIdentity,
+    )
+
+    now = datetime(2026, 10, 4, tzinfo=UTC)
+    source = ManualSourceIdentity(
+        "file-base",
+        "storage-base",
+        "library-base",
+        "Movies/One.2001.mkv",
+        "One.2001.mkv",
+        "mkv",
+        512,
+        now,
+        now,
+        now,
+        now,
+        "ready",
+        None,
+        "occ-base",
+        "a" * 64,
+        "storage-entry-sha256",
+        {"source": "storage_entry"},
+        "verified",
+    )
+    return (
+        ManualIntentItem(
+            "item-base",
+            intent_id,
+            0,
+            source,
+            ManualChoice("A", None, "A", "A", "A"),
+            ManualIntentItemStatus.READY,
+            None,
+            1,
+            now,
+            now,
+        ),
+    )
+
+
+def _manual_audit(intent_id: str):
+    from mediaflow.domain.manual_organize import ManualIntentAudit
+
+    now = datetime(2026, 10, 4, tzinfo=UTC)
+    return ManualIntentAudit(
+        "audit-base", intent_id, None, "operator", "created_from_storage_source", {}, {}, now
+    )
 
 
 if __name__ == "__main__":

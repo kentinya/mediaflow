@@ -211,7 +211,10 @@ class MediaDiscoveryService:
             DiscoveryIncompleteReason.NONE,
             (),
             (),
-            (),
+            # An explicitly selected file is observed directly; an explicitly
+            # selected folder is walked recursively.  Both are seeded here so
+            # the first Worker pass covers the whole admitted scope.
+            tuple(entry.path for entry in deduplicated if entry.kind is DiscoveryEntryKind.FILE),
             tuple(
                 entry.path for entry in deduplicated if entry.kind is DiscoveryEntryKind.DIRECTORY
             ),

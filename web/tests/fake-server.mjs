@@ -8408,7 +8408,8 @@ const server = createServer(async (req, res) => {
   // own namespace: it is a distinct read family, not an alias of /api/v1/runs.
   if (
     url.pathname.startsWith("/api/v1/operations/") &&
-    !url.pathname.startsWith("/api/v1/operations/runs")
+    !url.pathname.startsWith("/api/v1/operations/runs") &&
+    !url.pathname.startsWith("/api/v1/operations/organize/discoveries")
   ) {
     url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
   }
@@ -8646,7 +8647,13 @@ const server = createServer(async (req, res) => {
       return;
     }
     const libraryId = decodeURIComponent(discoveryAdmissionMatch[1]);
-    const paths = Array.isArray(body?.paths) ? body.paths : null;
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const paths = Array.isArray(parsed.document.paths)
+      ? parsed.document.paths
+      : null;
     if (!paths || paths.length === 0) {
       sendJson(res, 400, {
         error: {
@@ -8669,7 +8676,9 @@ const server = createServer(async (req, res) => {
       discoveryId: ORGANIZE_DISCOVERY_ID,
       libraryId,
       paths: [...paths],
-      status: "queued",
+      // The fake Worker completes the bounded walk immediately, exactly like
+      // the real metadata-only stage; the operator still has to finalize.
+      status: "completed",
       version: 1,
       frozen: false,
       intentId: null,
@@ -8729,7 +8738,11 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    if (body?.expectedVersion !== state.discovery.version) {
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    if (parsed.document.expectedVersion !== state.discovery.version) {
       sendJson(res, 409, {
         error: {
           code: "discovery_conflict",

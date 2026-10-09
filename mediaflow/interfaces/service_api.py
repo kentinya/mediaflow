@@ -12345,8 +12345,7 @@ class MediaFlowApi:
             "selection": {
                 "scopeCount": len(progress.scope_entries),
                 "scopes": [
-                    {"path": item.path, "kind": item.kind.value}
-                    for item in progress.scope_entries
+                    {"path": item.path, "kind": item.kind.value} for item in progress.scope_entries
                 ],
             },
             "budgets": discovery.budgets.document(),
@@ -12382,8 +12381,7 @@ class MediaFlowApi:
                     "available": can_manage and not terminal and not discovery.pause_requested,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/"
-                        f"{discovery.discovery_id}/pause"
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/pause"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -12392,8 +12390,7 @@ class MediaFlowApi:
                     "available": can_manage and not terminal and not discovery.cancel_requested,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/"
-                        f"{discovery.discovery_id}/cancel"
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/cancel"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -12402,8 +12399,7 @@ class MediaFlowApi:
                     "available": can_manage and discovery.pause_requested and not terminal,
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/"
-                        f"{discovery.discovery_id}/resume"
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/resume"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
@@ -12416,8 +12412,7 @@ class MediaFlowApi:
                     in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS},
                     "method": "POST",
                     "path": (
-                        f"/api/v1/operations/organize/discoveries/"
-                        f"{discovery.discovery_id}/finalize"
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",

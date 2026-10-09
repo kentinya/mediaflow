@@ -3996,6 +3996,7 @@ def _run_worker(
                         configuration_snapshot_resolver=pending_snapshot,
                         runtime_schema_version=SCHEMA_VERSION,
                         manual_organize_worker=manual_organize_worker,
+                        media_discovery_worker=media_discovery_worker,
                         files_transfer_worker=files_transfer_worker,
                     )
                     if arguments.worker_command == "run-next":
@@ -4082,13 +4083,14 @@ def _run_worker(
                     stdout.write(f"Worker stopped; processed={processed}\n")
                     return 0
 
-    def _resident_worker_heartbeat(runtime, instance_id) -> None:
-        """Refresh the resident presence row, tolerating a transient database fault."""
 
-        try:
-            runtime.service.heartbeat(instance_id)
-        except Exception:
-            return
+def _resident_worker_heartbeat(runtime, instance_id) -> None:
+    """Refresh the resident presence row, tolerating a transient database fault."""
+
+    try:
+        runtime.service.heartbeat(instance_id)
+    except Exception:
+        return
 
 
 def _worker_notification_publisher(

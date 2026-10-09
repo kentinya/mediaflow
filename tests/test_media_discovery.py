@@ -481,7 +481,7 @@ class AdmissionAndScopeTests(_DiscoveryFixture):
             cases = (
                 (["../escape.mkv"], 400, "invalid_path"),
                 (["/etc/passwd"], 400, "invalid_path"),
-                (["Movies\One.mkv"], 400, "invalid_path"),
+                (["Movies" + chr(92) + "One.mkv"], 400, "invalid_path"),
                 (["Movies/./One.mkv"], 400, "invalid_path"),
                 ([], 400, "selection_empty"),
                 (["Movies/Missing.mkv"], 404, "source_missing"),
@@ -1115,3 +1115,104 @@ class ZeroMutationTests(_DiscoveryFixture):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class OperationsProjectionTests(_DiscoveryFixture):
+    """Scope 5/6: the native readback, list and control surface."""
+
+    def test_the_principal_scoped_list_publishes_the_admitted_discoveries(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            status, page = self.request(value, "/api/v1/operations/organize/discoveries")
+            self.assertEqual(200, status, page)
+            self.assertEqual("discovery", page["journey"])
+            self.assertEqual(1, page["total"])
+            self.assertEqual(admitted["discoveryId"], page["items"][0]["discoveryId"])
+            # The list projection never publishes the exact source rows.
+            self.assertNotIn("sources", page["items"][0])
+            self.assertEqual("none", page["sideEffects"])
+
+    def test_the_readback_never_publishes_a_claim_token_or_digest(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.run_discovery(value)
+            _, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            encoded = json.dumps(detail)
+            for forbidden in (
+                "claimToken",
+                "fingerprint",
+                "occurrenceId",
+                SNAPSHOT_DIGEST,
+                "Bearer ",
+                "storagePath",
+            ):
+                self.assertNotIn(forbidden, encoded)
+            self.assertEqual("not_available_from_discovery", detail["execution"])
+            self.assertTrue(detail["zeroMutation"])
+
+    def test_a_worker_can_advance_the_discovery_through_the_cli_runner(self) -> None:
+        from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            worker = MediaDiscoveryWorker(
+                value.discovery, worker_id="cli-worker", notice=lambda line: None
+            )
+            self.assertEqual(("discovery",), worker.commands)
+            result = worker.run_next()
+            self.assertIsNotNone(result)
+            self.assertEqual(admitted["discoveryId"], result.discovery_id)
+            # A second pass finds no claimable work because the first pass
+            # settled the bounded scope.
+            self.assertIsNone(worker.run_next())
+
+    def test_an_unknown_discovery_read_fails_closed(self) -> None:
+        with self.journey() as value:
+            status, document = self.request(
+                value, "/api/v1/operations/organize/discoveries/does-not-exist"
+            )
+            self.assertEqual(404, status, document)
+            self.assertEqual("discovery_not_found", document["error"]["code"])
+
+    def test_an_unknown_worker_readiness_is_reported_truthfully(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            _, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            # No Worker is registered in this fixture, so readiness is false and
+            # the operator receives an actionable next step.
+            self.assertFalse(detail["worker"]["ready"])
+            self.assertTrue(detail["worker"]["nextAction"])
+            self.assertEqual(
+                "start or repair the resident Processing Worker so discovery can continue",
+                detail["nextAction"],
+            )
