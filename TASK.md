@@ -308,8 +308,8 @@ Test Level T4. All commands run from the repository root with `.venv/bin/python`
 (commit `3bb4574`); Docker gates used the documented daemon-visible `TMPDIR=/run/mf-docker-tmp`.
 
 - `scripts/check_governance.py` — **PASS** (exit 0).
-- `python -m unittest discover -s tests` — **PASS**: 2380 tests, OK (skipped=7).
-- `tests.test_media_discovery tests.test_media_discovery_provider_manifest` — **PASS**: 65 tests.
+- `python -m unittest discover -s tests` — **PASS**: 2381 tests, OK (skipped=7).
+- `tests.test_media_discovery tests.test_media_discovery_provider_manifest` — **PASS**: 68 tests.
 - `tests.test_manual_organize_intent|preview|execution`, `tests.test_operations_run_inventory`,
   `tests.test_operations_run_detail`, `tests.test_migration_rehearsal`, `tests.test_task_persistence`
   — **PASS**: 153 tests.
