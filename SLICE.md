@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: NOT SET
+Implementation Head: 9637e7b766fdba5287a68b1f708a7fc1f76f4a68
 Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: B PLANS ONE COHERENT IMPLEMENTATION TASK INSIDE THIS ACTIVE CONTRACT
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -1135,7 +1135,91 @@ with governance and diff checks; those checks do not establish runtime acceptanc
 
 ## Closure Packet
 
-Not submitted. No Slice 44 implementation Task exists, and no Required Outcome is marked complete.
+```text
+Slice: 44 — Existing V2 Pages Functional Improvements
+Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Head SHA: 9637e7b766fdba5287a68b1f708a7fc1f76f4a68
+
+Required Outcomes:
+- RO-1 — COMPLETE: consistent ordinary file maintenance on both supported library surfaces.
+- RO-2 — COMPLETE: reference-aligned Rules workspace and purpose-built forms.
+- RO-3 — COMPLETE: classification destinations use MediaLibrary plus explicit path; legacy contracts remain readable.
+- RO-4 — COMPLETE: object-scoped Rules tests and separate complete-flow checks.
+- RO-5 — COMPLETE: usable exact long-name paths/toolbars on both Files routes, list/grid and production-built Docker assets.
+- RO-6 — COMPLETE: bounded folder/file/mixed discovery, durable control/readback, pinned manifest and existing exact confirmed Organize journey.
+
+Required Surfaces:
+- COMPLETE — ResourceLibrary Files and MediaLibrary Files menus, selection/dialogs/text editor, live context, recovery and long-name browsing.
+- COMPLETE — Both scoped typed/authenticated APIs and shared application/domain/Storage/OrganizerExecutor behavior.
+- COMPLETE — Existing Task/Worker/Operations transfer/Delete admission, pins, claims, per-item checkpoints and continuation.
+- COMPLETE — ResourceLibrary discovery APIs/native selection/progress/control, manual choices, Preview/execution, per-item recovery and Files/Operations return; MediaLibrary remains file management.
+- COMPLETE — Existing Local/SMB/OpenList/S3-R2 adapter boundaries and bounded fake/local-service regressions; no new provider.
+- COMPLETE — Eight Rules navigation sections, inventories, Add/copy drawers, Edit forms, previews and publication recovery.
+- COMPLETE — Scoped shared V2 shell/header/controls; existing Storage/Settings/Operations/Automation routes retained.
+- COMPLETE — Classification/configuration/Planner/API/CLI/scheduled and historical pinned consumers.
+- COMPLETE — Family-specific Rules tests/results, Overview complete-flow, bounded candidate/evidence behavior and historical complete-test readback.
+
+Implemented:
+- Provider-neutral metadata fences, ordinary commands on both library kinds and durable per-item Delete/transfer recovery.
+- Canonical MediaLibrary/path destinations with explicit checked legacy conversion and unchanged historical pins/results.
+- Local object analysis, separate complete-flow/evidence purpose, reference-aligned Rules layout/forms and retained-input Save recovery.
+- Bounded exact breadcrumbs, measured complete-name disclosure and usable toolbar controls across four viewports/list/grid/both routes.
+- Metadata-only bounded discovery inside the existing resident Worker, additive schema 45 persistence, scope/library/Storage/actor/pin binding, limits, observations, claims and cooperative control.
+- Immutable deduplicated source handoff, original path context, C identity, exact zero-mutation Preview, separate confirmed Executor work and non-replay recovery.
+
+Tasks completed:
+- 44.1 — Consistent ordinary file maintenance and recovery.
+- 44.2 — Classification destination semantics and compatibility.
+- 44.3 — Object-scoped Rules tests and separate complete flow.
+- 44.4 — Reference-aligned Rules workspace and forms.
+- 44.5 — Both-library long-name paths and toolbars.
+- 44.6 — Bounded folder and mixed-selection discovery through native manual Organize.
+
+Final Tests:
+- .venv/bin/python -m unittest discover -s tests — PASS: 2352 tests, 7 skipped, 0 failures/errors, 554.317 seconds. Unfiltered fresh Slice Final after Task PASS.
+- First independent full Python run — 2352 tests / 7 skipped / 1 failure: unchanged Rules simultaneous-Save allowed-code assertion. Current isolated test PASS; genuine Task Base reproduces the same failure on original repetition 4, genuine Slice Base on repetition 3. Original failures/repetitions retained; no assertion/selection/timeout/retry/skip changes. Final full command above passes unchanged.
+- .venv/bin/python scripts/check_governance.py; .venv/bin/ruff format --check .; .venv/bin/ruff check .; .venv/bin/python -m compileall -q mediaflow tests scripts; .venv/bin/python -m pip check; git diff --check — PASS. Governance/diff are rechecked on the documentation-only closure checkpoint.
+- .venv/bin/mediaflow --config config/strategy.example.json config validate; corresponding config/mediaflow.phase13.2.example.json validation — PASS, both examples.
+- .venv/bin/python -m pip wheel . --no-deps -w dist; .venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-2.0.0.dev0-py3-none-any.whl — PASS; one freshly built wheel, schema-45 backup verified, SHA-256 17cb08b398f95899ccb44471bd45b9ad5dc02eccc4e20c2a18d1b59902ab99ee.
+- web/: npm run test -- --run — PASS: 72 files / 1083 tests / 0 skipped or failed; npm run format:check, lint, typecheck and build — PASS.
+- web/: npm run test:e2e — PASS: 246 tests / 0 skipped or failed, original 2 workers and retries 0; Python Operations config/spec — PASS 21; Python DirectFiles config/spec — PASS 10.
+- Real Python discovery proof — PASS: 11 browser passes, four selections, limit refusals, reconciliation, one exact confirmed completed effect and successor isolation. B separate native mixed journey — PASS: overlap dedup, changed Active/old pin, native freeze/C choice/two-item exact Preview/confirmation/completion and no replay. Actual API restart/pause/resume and real Local missing subtree/explicit subset freeze — PASS. Full regression includes controlled-clock size-stability/reset and stale-owner/uncertain/index-sync non-replay cases.
+- scripts/files_toolbar_browser_proof.py — PASS: 22 passes / 48 screenshots, both routes/four viewports/list-grid, exact paths, no work or activation.
+- scripts/rules_workspace_browser_proof.py, rules_object_analysis_browser_proof.py, classification_destination_browser_proof.py, rules_identity_browser_proof.py, storage_settings_browser_proof.py — all PASS on current Python/built assets; Rules includes 13 current screenshots, preserved reference hashes, measured layout/refused-Save retention and zero unintended work.
+- scripts/docker_release_security_smoke_test.py --image mediaflow:b-slice44-final-9637e7b766fd — PASS: fresh committed-source image, RBAC/redaction/build-context/log/SQLite/export and unsupported-host-access gates.
+- scripts/docker_files_organize_discovery_browser_proof.py --image same candidate — PASS: 7 browser passes, four selections, real resident Worker exact completed Move and no replay.
+- scripts/docker_files_toolbar_browser_proof.py --image same candidate — PASS: 22 passes, current served index/JS/CSS matches local build.
+- scripts/docker_health_smoke_test.py --image mediaflow:b-slice44-health-9637e7b766fd — PASS: health/readiness, stopped Worker and repaired secret-reference/mount conditions.
+- scripts/docker_upgrade_recovery_smoke_test.py — PASS: genuine archived schema-38 application (360e59e0791c60635f050a0444b1a2d0b4458ea4) to schema 45, verified backup/preflight/rehearsal/injected failure/restore, old-code manual intents/Previews/authorizations/admitted/completed/partial/uncertain state and new discovery persistence. Schema44-to45 unit fixture is explicitly a schema-shape fixture, not prior-artifact evidence.
+- Unavailable: 7 original dedicated real SMB/S3/OpenList and Local/remote endurance profiles; skips are unchanged and reported. Isolated Docker is available. No production service, user media or live deployment is certified or changed.
+
+Safety Evidence:
+- B inspected actual Task Base..Head and correction diff; no removed/weakened tests, added skips, silent fallback, dependency expansion, config/alist.json, real credentials, unrelated user files or frozen Slice 43 changes.
+- Admission/discovery/analysis/Preview remain metadata-only or their explicitly permitted bounded reads, with zero media mutation and no discovery execution authority. Only separately confirmed existing OrganizerExecutor work produces tested effects.
+- Actual two-library equal-relative-path API/native test freezes the correct second-library sources; actual lost-response recovery/reconnect preserves one original discovery and return context. Whole invalid scopes and primary/safety limits cannot authorize a prefix.
+- Actual changed Active retains old discovery/intent/Preview/execution pins; C stays C with A policies. Paused scope survives actual API restart; actual missing subtree preserves independent findings. Completed effects refuse replay; existing full/upgrade gates retain partial/uncertain/historical facts.
+- Current root/packaging/Docker gates protect RBAC, confinement, capabilities/conflicts, explicit mutation/destructive authority, attribution, redaction and claims. Existing remote fake/local-server coverage is not presented as a real-service run or universal conditional identity guarantee.
+- Local and Docker served index SHA-256 ce9351ee0bfaab0a5d66c5a2fc6066b15a86646754cf95d0d507bc1c02fbe705; JS 25f90668d49b971f309ce365b2a0e8e163b70e9c2996b4b84e50d55432aebb77; CSS abd3206d693af6f937f159cd238bfd6c1df97d065d8b64d9ed882a1d582e5f3b. Tested Docker image ID sha256:4a604e4fdcad753c767ca765e6b2ae3a4116fde0e39e1e39afd280dc3bebac5e.
+
+Known Non-blocking Issues:
+- P2 — Pre-existing simultaneous Rules Save test omits the safe refused-destination-check code from its allowed set. Genuine Task/Slice Base reproductions and first failure remain visible; final unchanged full suite passes. Publication consistency/Active preservation assertions pass. No test-only Task or relaxed assertion is introduced.
+- P2 — Discovery queued/paused progress can display “已完整遍历所选范围” while the main status correctly says queued/paused. Actual native screenshot/receipt records this wording inconsistency; finalize remains unavailable, no sources/authority are fabricated, and limit/incomplete states retain their refusal. This is non-blocking copy, not completion authority.
+
+Explicitly Deferred:
+- Unchanged: all items in the Contract's Explicitly Deferred section above, including frozen Slice 43, unselected pages/features, Upload/Download, unbounded/cross-kind/Replace/universal rollback/new providers, conditional-generation redesign, full-media Rename/Delete hashing/universal identical-metadata replacement detection, global Rules search/new shell/rule-engine redesign, historical rewrite/replay/automatic relocation, live deployment changes, MediaLibrary/root organization, automatic splitting/higher primary bound/second engine and selection-implied cleanup.
+
+Documentation Reconciliation Needed:
+- A to reconcile Roadmap/Progress/current development pointer only after A's final decision; B has not changed them or declared Slice PASS/CLOSED.
+- A to reconcile CURRENT architecture/product/requirement descriptions for canonical versus historical destination behavior, object-test versus complete/physical readiness, Rules/Files presentation, schema-45 bounded discovery/pins/claims/native control and exact confirmed handoff; distinguish actual managed ResourceLibrary controls from policy-model test coverage.
+- Evidence is local and retained through A review, not pushed: .git/validation-evidence/9637e7b766fdba5287a68b1f708a7fc1f76f4a68/b-review-final/ (review-index.json, original logs/receipts/helpers, Base reproductions, accepted Task snapshot and current visuals). Matching Developer Task evidence at bf0e00e9a7253ef93684265589e3849e568369be/task44-6-correction2 was verified; it does not substitute for this fresh Slice Final.
+
+Decision: SLICE READY FOR A REVIEW
+```
+
+`Head SHA` is the tested implementation/report checkpoint. The closure checkpoint changes only
+SLICE.md/TASK.md documentation; runtime, tests, dependencies, configuration, harnesses and built
+artifacts remain those identified above. Task 44.6's accepted review is retained in TASK.md and
+`task44-6-pass-TASK.md`. This packet is a handoff to A, not a Slice acceptance or closure decision.
 
 ## A Final Review
 
