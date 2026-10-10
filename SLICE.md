@@ -1,6 +1,6 @@
 # Slice 44 — Existing V2 Pages Functional Improvements
 
-This is the A-owned ACTIVE Contract for one Slice covering functional improvements across
+This is the A-owned Contract for one Slice covering functional improvements across
 already implemented pages. The user has selected consistent ordinary file-operation behavior for
 ResourceLibrary Files and MediaLibrary Files, reference-aligned organizing-rules presentation, and
 classification destinations defined by MediaLibrary plus `path`, plus object-scoped Rules tests
@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: 9637e7b766fdba5287a68b1f708a7fc1f76f4a68
 Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: A FINAL REVIEW
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ```
 
 ## Authority and sequencing
@@ -1223,5 +1223,98 @@ artifacts remain those identified above. Task 44.6's accepted review is retained
 
 ## A Final Review
 
-Not performed. This is the ACTIVE Contract for RO-1 through RO-6; no Slice acceptance or
-closure is claimed.
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..9637e7b766fdba5287a68b1f708a7fc1f76f4a68
+Decision: FIX REQUIRED
+Review Date: 2026-10-10
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+P0/P1 Blockers:
+- P1 / A44-1 — RO-6, acceptance 27/28/30: repeated stability observations duplicate
+  an already eligible source and break the required discovery-to-intent journey.
+  With two media files and a 60-second stable-size policy, observe both, advance
+  120 seconds while changing B, then advance another 120 seconds without changes.
+  The completed discovery contains [A, A, B] for two physical files. Finalize
+  returns HTTP 201 with status failed / failure duplicate_source and no intent.
+  Evidence: mediaflow/application/media_discovery.py:549-570 and :686-691 carry
+  forward sources and append each stable observation again; independent receipt
+  mixedStability reproduces the authenticated API failure with real temporary
+  Local Storage, SQLite and a controlled clock. Minimum correction: keep one
+  source per exact admitted Storage/library/path through repeated observations,
+  retain valid identity/stability evidence, and count unique sources for limits
+  and handoff. Verify mixed stable/unstable files over multiple passes and restart;
+  the operator must reach one exact intent without duplicate_source or false limits.
+- P1 / A44-2 — RO-6 selection confinement, acceptance 29/31/32 and the Safety
+  Invariants: provider entries can expand discovery outside the selected subtree.
+  Submit paths=[Selected], then make that directory's list_page return an actual
+  ordinary file Outside/B.2002.mkv within the same ResourceLibrary. Discovery
+  reports completed, advertises Finalize, and freezes an intent containing that
+  unselected source. Evidence: mediaflow/application/media_discovery.py:761-771
+  checks only ResourceLibrary-root membership; :1429-1440 accepts the sibling.
+  Independent receipt escapedSelection preserves the exact submitted scope,
+  authenticated readback and resulting intent. Minimum correction: validate every
+  provider entry's safe path/name/type and membership in the exact requested
+  directory and admitted selection before counting, queueing, observing or
+  freezing it. Unsafe/out-of-scope entries must remain excluded and visibly
+  incomplete where required, never enlarge the frozen source list. Verify sibling,
+  ancestor, traversal, absolute and inconsistent provider paths with confined fakes.
+- P1 / A44-3 — RO-6 bounded truthful discovery, acceptance 29/31: a later ordinary
+  read failure erases an earlier cyclic-cursor refusal and allows a truncated
+  source prefix to become an intent. Select Loop and Locked; Loop returns one
+  primary source followed by a repeated cursor, then Locked denies listing.
+  The durable reasons retain repeated_provider_cursor, but incompleteReason is
+  overwritten with read_failure. Finalize becomes available and creates an intent
+  for Loop/A.2001.mkv. Evidence: mediaflow/application/media_discovery.py:832-844
+  records CURSOR_REPEATED, :743-758 replaces it, and :441 checks only the final
+  reason. Independent receipt maskedCursorLimit reproduces the API handoff.
+  Minimum correction: preserve all material incomplete/safety facts, or an
+  equivalent durable strongest refusal, across scopes, passes and restart.
+  Any budget/safety/cursor refusal must prevent Finalize even when another subtree
+  later has an ordinary read failure. Preserve the separately legal explicitly
+  reviewed read-failure-only subset journey and verify both event orders.
+```
+
+These are unmet outcomes and a selected-source safety regression inside the existing RO-6
+Contract, not a Contract impossibility or a scope change. Base, Implementation Head, Required
+Outcomes, Required Surfaces, Safety Invariants, acceptance and Explicitly Deferred remain unchanged.
+The Closure Packet above remains B's submission record; its RO-6 COMPLETE conclusion is contradicted
+by A's independent reproductions. No Slice acceptance or factual closure reconciliation occurs.
+B owns the next focused correction Task; A creates no Task and changes no implementation code.
+
+### Validation and evidence
+
+- A independently ran the unchanged full Python suite on the reviewed executable candidate:
+  `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2352 tests, 7 skipped,
+  0 failures/errors, 408.520 seconds. Ruff format/check and pip dependency checks also passed.
+  The new negative reproductions confirm three defects outside that suite's current coverage;
+  the suite's PASS does not satisfy the affected RO-6 criteria.
+- The reviewed Implementation Head and workspace HEAD `786dc81f27ecd764048c190a4bc5dc929225fc32`
+  differ only in SLICE.md/TASK.md. No source, tests, dependencies, runtime configuration,
+  harnesses or built artifacts changed during A's review. A verified all 237 B-indexed artifact
+  hashes and all input/build/wheel digests against the workspace, read original full/Web/Docker/
+  packaging/migration logs and Base concurrency reproductions, and inspected actual saved Rules,
+  Docker narrow-toolbar and native Preview images. The supplied seven external-service/endurance
+  skips remain SKIPPED/UNAVAILABLE; no production-service certification is inferred.
+- Independent probes use temporary synthetic Local files, the existing SQLite/application/API
+  fixture, a controlled clock and deliberately bounded provider responses. All three record zero
+  Storage mutation/content-read calls; no Preview execution or execution authority is requested.
+  Original helper errors and the final harness/receipts are retained. No product source or tests
+  were edited to reproduce the defects.
+- Additional independent Web/browser/Docker/packaging/migration reruns are **NOT RUN** after the
+  proven P1 blockers. The verified matching B Slice Final evidence remains available for review;
+  this rejecting decision does not certify complete final acceptance of the other outcomes.
+- Evidence is local and retained at
+  `.git/validation-evidence/9637e7b766fdba5287a68b1f708a7fc1f76f4a68/a-final-review/`, including
+  `review-index.json`, `root-runs.json`, `discovery-probes.py`, `discovery-probe-receipts.json`
+  and original logs. B's `b-review-final/` evidence remains intact. No push or deployment occurred.
+- The pre-decision governance check and complete reviewed-range diff check passed.
+  The existing guard at `scripts/check_governance.py:161-162` rejects the workflow's required
+  `FIX REQUIRED` plus `NO ACTIVE IMPLEMENTATION TASK` handoff with
+  `Slice FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK`. This is an existing tooling
+  mismatch, not evidence that A may fabricate a B-owned Task, revert the decision to ACTIVE,
+  move Base or change the Contract. Post-decision governance failure is recorded honestly;
+  B must account for this handoff mismatch in its planning preflight.
+- The four pre-existing untracked user PNGs are preserved and excluded from the checkpoint;
+  `config/alist.json` remains ignored, untracked and unstaged. The reported P2 concurrent-Save
+  allowed-code assertion and discovery progress wording are not closure blockers.
+
+NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
