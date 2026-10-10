@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: fd52b0332c4baed3dd5417bf18799a91dd74d028
 Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: A FINAL REVIEW
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ```
 
 ## Authority and sequencing
@@ -1308,7 +1308,7 @@ SLICE.md/TASK.md documentation; runtime, tests, dependencies, configuration, har
 artifacts remain those identified above. Task 44.6's accepted review is retained in TASK.md and
 `task44-6-pass-TASK.md`. This packet is a handoff to A, not a Slice acceptance or closure decision.
 
-## A Final Review
+## Prior A Final Review — 2026-10-10 / 9637e7b766fd
 
 ```text
 Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..9637e7b766fdba5287a68b1f708a7fc1f76f4a68
@@ -1403,5 +1403,102 @@ B owns the next focused correction Task; A creates no Task and changes no implem
 - The four pre-existing untracked user PNGs are preserved and excluded from the checkpoint;
   `config/alist.json` remains ignored, untracked and unstaged. The reported P2 concurrent-Save
   allowed-code assertion and discovery progress wording are not closure blockers.
+
+NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
+
+## A Final Review
+
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..fd52b0332c4baed3dd5417bf18799a91dd74d028
+Decision: FIX REQUIRED
+Review Date: 2026-10-10
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+P0/P1 Blockers:
+- P1 / A44-4 — RO-6 cooperative cancellation and recovery, acceptance 30:
+  an accepted cancellation can permanently strand the discovery. Cancel a queued
+  discovery before Worker pickup: POST returns 200 with cancelRequested=true,
+  but three actual MediaDiscoveryWorker.run_next calls, each after advancing the
+  controlled clock by 600 seconds, return no work; readback remains queued.
+  Repeating the same Files selection reconciles to that stranded discovery.
+  Cancel during a blocked list_page call: the returning Worker reads the old
+  control/version snapshot, its progress CAS fails, and all later pickups exclude
+  the cancellation request. Again the discovery never reaches cancelled.
+  Evidence: mediaflow/application/media_discovery.py:960-964 checks the originally
+  loaded flags; :1556-1572 only persists a cancel request. The production claimant
+  at mediaflow/infrastructure/sqlite_runtime.py:10095-10113 excludes every row
+  with cancel_requested=1. Authenticated API and actual Worker receipts
+  queuedCancel/runningCancel reproduce both cases with temporary Local/SQLite.
+  Minimum correction: ensure queued, paused/waiting and in-flight cancellation
+  can reach a durable terminal acknowledgement at a safe boundary, including
+  after process restart or lease loss. Reconcile concurrent control/version
+  changes without losing known findings, resetting bounds, leaving unclaimable
+  open work or trapping deliberate successor selection. Preserve zero mutation
+  and no execution authority; verify actual Worker pickup rather than only
+  calling run_claimed manually after a pre-established claim.
+- P1 / A44-5 — RO-6 restart/ownership/recovery, acceptance 30/31 and the
+  concurrency-fencing Safety Invariant: a stale Worker can clear the successor's
+  valid claim and leave an unrecoverable paused discovery. Block old Worker's
+  list_page; advance the clock beyond its lease; let successor Worker acquire
+  the discovery; release the old call. Its heartbeat correctly detects claim
+  loss, but _publish_paused writes status=paused and clears the successor claim.
+  Readback has pauseRequested=false and resume.available=false; no Worker can
+  claim paused work, and the same selection returns this stranded record.
+  Evidence: mediaflow/application/media_discovery.py:771-773 and :1483-1502;
+  mediaflow/infrastructure/sqlite_runtime.py:10109-10128 replaces claim ownership
+  without advancing the version, while :10271-10307 writes Worker progress using
+  only discovery ID/version and overwrites claim/control fields. The staleOwner
+  receipt records the real successor claim before the old Worker removes it.
+  Minimum correction: fence every Worker-owned progress/state/observation write
+  atomically by its current valid claim, distinguish control writes from Worker
+  publication, and let a lost owner stop without changing successor state.
+  Any retained paused/waiting state needs a valid native continuation. Verify
+  overlapping owners, lease expiry/restart and concurrent pause/cancel while
+  retaining the exact scope/pin/manifest and monotonic limits/refusals.
+```
+
+Both blockers are inside the existing RO-6 Contract. No Contract impossibility or material scope
+change is established. Base, Implementation Head, Required Outcomes, Required Surfaces, Safety
+Invariants, acceptance and Explicitly Deferred remain unchanged. The current Closure Packet stays
+as B's submission record; its complete RO-6 conclusion is contradicted by these independent
+reproductions. A creates no Task, changes no implementation and performs no closure reconciliation.
+B owns one focused correction Task and its normal review loop.
+
+### Validation and evidence
+
+- Independent unchanged full Python regression: `.venv/bin/python -m unittest discover -s tests`
+  — **PASS**, 2374 tests, 7 skipped, 0 failures/errors, 422.303 seconds. Ruff format/check,
+  dependency check and complete Base..Head diff check also passed. A green suite does not satisfy
+  the two uncovered control/ownership criteria above.
+- A repeated the original A44-1/A44-2/A44-3 negative scenarios on the current candidate: mixed
+  stability freezes exactly A/B once each; sibling escape freezes no source and returns 409;
+  cyclic-cursor refusal survives the later read failure and Finalize returns 409. The accepted
+  correction remains valid on these scenarios. Independent managed Local/SQLite/authenticated
+  concurrent Finalize also passes 10/10: 201/409, one linked intent, intact source and no execution
+  Task. These facts do not certify the remaining control/ownership boundary.
+- Reviewed Head and workspace HEAD `4e73fafac846027ca0e0efabe72efbc78913c29a` differ only in
+  SLICE.md/TASK.md. A verified all 589 indexed candidate inputs, all 99 current B-indexed artifact
+  hashes and all four preserved user PNG hashes without mismatch, and checked original final
+  regression/security/upgrade logs. B's first Web timeout and Docker health-wait failures remain
+  failures with exact subsequent passing runs; no source/assertion/timeout/retry/skip change is
+  used to hide them. Seven original real-service/endurance profiles remain SKIPPED/UNAVAILABLE.
+- The new probes use authenticated API, real temporary Local/SQLite, actual MediaDiscoveryWorker
+  and controlled clock/event coordination. They record zero Storage content-read/mutation calls
+  and zero execution Tasks. No production service, media, live deployment or frozen Slice 43 code
+  is changed. Additional independent Web/browser/Docker/wheel/migration reruns are **NOT RUN**
+  after the proven P1 blockers; verified B evidence is provenance, not A acceptance of other RO.
+- Evidence is local/not pushed and retained at
+  `.git/validation-evidence/fd52b0332c4baed3dd5417bf18799a91dd74d028/a-final-review2/`, including
+  `review-index.json`, original full log, `control-probes.py`, `control-probe-receipts.json`,
+  original-scenario and concurrent-Finalize receipts. The first adapted original-scenario helper
+  had an incorrect HTTP expectation; its error log and corrected harness/run remain preserved.
+  No application source or repository tests changed during reproduction.
+- Governance passed before the decision. The existing guard still rejects `FIX REQUIRED` plus
+  `NO ACTIVE IMPLEMENTATION TASK` with `Slice FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION
+  TASK`; the post-decision failure is a tooling mismatch already recorded by the prior review.
+  A does not fabricate a B-owned Task, revert to ACTIVE, move Base or edit guard implementation
+  to avoid it. B must account for the handoff mismatch in its planning preflight.
+- Four pre-existing untracked user PNGs remain preserved and outside the checkpoint;
+  config/alist.json remains ignored, untracked and unstaged. Known P2 wording/assertion issues
+  are not blockers. Roadmap, Progress and other CURRENT documents receive no closure update.
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
