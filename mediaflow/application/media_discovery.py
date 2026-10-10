@@ -108,6 +108,14 @@ _REASON_SAFETY_DEPTH = "safety_depth_limit"
 
 _TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
 
+#: How many times one returning owner re-reads and re-applies the reconciliation
+#: rule when a concurrent operator control keeps moving the record.  The loop is
+#: bounded because the outcome is already safe: every retry either settles the
+#: operator's control with the same bounded work or yields the claim so the next
+#: pass continues.  It never spins on a live lock and never overwrites a
+#: successor's ownership.
+_CONTROL_RECONCILE_ATTEMPTS = 4
+
 
 class MediaDiscoveryService:
     """Admit, run, control and finalize one bounded selected-scope discovery."""
@@ -546,15 +554,27 @@ class MediaDiscoveryService:
             return self._fail(discovery, claim_token, error.code)
         try:
             return self._advance(discovery, claim_token, storage, library, heartbeat)
-        except (DiscoveryConflict, DiscoveryOwnershipLost):
+        except (DiscoveryConflict, DiscoveryOwnershipLost) as error:
             # Either an operator control (pause/cancel/resume) changed the record
             # while this Worker was walking, or its lease was taken over.  React
             # to the *fresh* durable state at this safe boundary instead of
             # stranding the record, discarding the accepted control, or writing
             # over a successor's ownership.
-            return self._settle_after_conflict(discovery_id, claim_token)
+            #
+            # A refused publication carries the bounded work this pass already
+            # completed.  A same-owner control change (pause/cancel/resume) is
+            # reconciled *with* that work, so an accepted control can never
+            # discard the observations, counters and material refusals the live
+            # owner had already established.  A lost claim keeps nothing: the
+            # successor owns every durable field now.
+            return self._settle_after_conflict(discovery_id, claim_token, error)
 
-    def _settle_after_conflict(self, discovery_id: str, claim_token: str) -> MediaDiscovery:
+    def _settle_after_conflict(
+        self,
+        discovery_id: str,
+        claim_token: str,
+        refusal: DiscoveryConflict | DiscoveryOwnershipLost,
+    ) -> MediaDiscovery:
         """React to a refused stale publication at a safe boundary.
 
         Ownership loss is deliberately distinguished from a lease lapse or an
@@ -562,34 +582,131 @@ class MediaDiscoveryService:
         Worker owns the walk now, so this owner stops without writing anything.
         A record the operator already settled is returned as-is: that terminal
         outcome is the operator's, and this Worker has nothing left to change.
-        Otherwise the claim is still this Worker's, so an accepted pause is
-        acknowledged under it, and a lapsed lease or a cleared pause simply
-        yields the claim so the very next Worker pass continues the same durable
-        scope instead of waiting for the lease to expire.
+        Otherwise the claim is still this Worker's, so an accepted pause or
+        cancellation is acknowledged *together with* this pass's bounded work,
+        and a lapsed lease or a cleared pause simply yields the claim so the
+        very next Worker pass continues the same durable scope.
+
+        ``refusal`` carries the fenced projection whose version CAS lost the
+        race, and the stability observations written with it.  That work is
+        reconciled with the fresh operator-owned record under the exact persisted
+        claim: the operator's control flags and lifecycle win, while the same
+        owner's counters, findings, manifest, pending traversal, stability
+        observations and monotonic material refusals are preserved.  Discarding
+        them would reset consumed budgets and let a later continuation silently
+        re-walk a scope the operator never narrowed.
+
+        A concurrent control may itself race this reconciliation.  Each retry
+        re-reads the fresh record and re-applies the same rule; the bounded loop
+        ends by yielding the claim, which leaves the operator's control durable
+        and lets the next pass continue instead of stranding the record.
         """
 
-        fresh = self._read(discovery_id)
-        if fresh is None:
-            raise DiscoveryUnavailable("the claimed discovery is no longer readable")
-        if fresh.claim_token != claim_token:
-            if fresh.terminal or fresh.cancel_requested:
+        attempted = refusal.attempted if isinstance(refusal, DiscoveryConflict) else None
+        observations = (
+            refusal.attempted_observations if isinstance(refusal, DiscoveryConflict) else ()
+        )
+        fresh: MediaDiscovery | None = None
+        for _ in range(_CONTROL_RECONCILE_ATTEMPTS):
+            fresh = self._read(discovery_id)
+            if fresh is None:
+                raise DiscoveryUnavailable("the claimed discovery is no longer readable")
+            if fresh.claim_token != claim_token:
+                if fresh.terminal or fresh.cancel_requested:
+                    return fresh
+                raise DiscoveryOwnershipLost(
+                    "this Worker no longer owns the discovery claim",
+                    details={"discoveryId": discovery_id},
+                )
+            if fresh.terminal:
                 return fresh
-            raise DiscoveryOwnershipLost(
-                "this Worker no longer owns the discovery claim",
-                details={"discoveryId": discovery_id},
-            )
-        if fresh.terminal:
-            return fresh
-        if fresh.cancel_requested:
-            return self._cancel(fresh, claim_token)
-        if fresh.pause_requested:
-            return self._publish_paused(fresh, claim_token)
-        # The claim is still ours but this pass may not publish: the operator
-        # cleared the pause, or our lease lapsed.  Yield the claim so the next
-        # pickup continues the same durable scope immediately; every bound,
-        # finding and refusal stays exactly as durable.
+            # The operator owns the control flags and the lifecycle transition;
+            # this pass only contributes the bounded work it actually completed,
+            # and only when that work belongs to the same immutable scope/pin.
+            carried = self._merge_attempted_work(fresh, attempted)
+            try:
+                if fresh.cancel_requested:
+                    return self._cancel(carried, claim_token, observations=observations)
+                if fresh.pause_requested:
+                    return self._publish_paused(carried, claim_token, observations=observations)
+                if self._publication_differs(fresh, carried):
+                    # The operator cleared the pause (or our lease lapsed) *and*
+                    # this pass completed bounded work that is not durable yet.
+                    # Publish it under the live claim in the same transaction
+                    # that releases that claim, so a Continue never re-walks or
+                    # resets the work this pass already established.
+                    return self._settle_control(
+                        replace(carried, version=fresh.version + 1),
+                        expected_version=fresh.version,
+                        claim_token=claim_token,
+                        observations=observations,
+                    )
+            except (DiscoveryConflict, DiscoveryOwnershipLost) as retry:
+                # The control state moved again while we reconciled.  Re-read and
+                # re-apply the same rule; the attempted work stays with us unless
+                # the claim itself was taken over.
+                attempted = retry.attempted if isinstance(retry, DiscoveryConflict) else None
+                if isinstance(retry, DiscoveryConflict) and retry.attempted_observations:
+                    observations = retry.attempted_observations
+                continue
+            # The claim is still ours but there is nothing new to publish: yield
+            # it so the next pickup continues the same durable scope immediately.
+            self._release_claim(discovery_id, claim_token)
+            return self._read(discovery_id) or fresh
+        # The control state kept moving; the operator's own request is durable,
+        # so yield the claim and let the next pass continue safely.
         self._release_claim(discovery_id, claim_token)
         return self._read(discovery_id) or fresh
+
+    @staticmethod
+    def _merge_attempted_work(
+        fresh: MediaDiscovery, attempted: MediaDiscovery | None
+    ) -> MediaDiscovery:
+        """Keep the live owner's bounded work while the operator keeps control.
+
+        Only progress that belongs to the *same* immutable admitted scope and
+        pinned configuration is carried across a refused publication.  Anything
+        else (a different pin, a different scope, a stale attempt from another
+        owner's record) is discarded, so a control can never be reconciled with
+        work that was never admitted for this discovery.
+        """
+
+        if attempted is None or attempted.discovery_id != fresh.discovery_id:
+            return fresh
+        if attempted.snapshot_id != fresh.snapshot_id:
+            return fresh
+        if attempted.snapshot_digest != fresh.snapshot_digest:
+            return fresh
+        if attempted.resource_library_id != fresh.resource_library_id:
+            return fresh
+        if attempted.storage_id != fresh.storage_id:
+            return fresh
+        if discovery_scope_signature(attempted.progress.scope_entries) != (
+            discovery_scope_signature(fresh.progress.scope_entries)
+        ):
+            return fresh
+        # The operator owns the control flags and the lifecycle *transition*; the
+        # completed bounded pass owns the truthful outcome of its own walk
+        # (status, counters, findings, manifest, observations and refusals).  A
+        # pause/cancel settlement replaces the status explicitly, so carrying it
+        # here only makes a cleared-pause publication report the real completed
+        # state instead of forcing a redundant full re-walk of the same scope.
+        return replace(
+            fresh,
+            status=attempted.status,
+            progress=attempted.progress,
+            sources=attempted.sources,
+        )
+
+    @staticmethod
+    def _publication_differs(fresh: MediaDiscovery, carried: MediaDiscovery) -> bool:
+        """Whether the reconciled work adds anything the durable record lacks."""
+
+        return (
+            carried.status is not fresh.status
+            or carried.progress != fresh.progress
+            or carried.sources != fresh.sources
+        )
 
     # ------------------------------------------------------------------
     # Internal execution
@@ -1511,12 +1628,21 @@ class MediaDiscoveryService:
         )
         return linked
 
-    def _cancel(self, discovery: MediaDiscovery, claim_token: str) -> MediaDiscovery:
+    def _cancel(
+        self,
+        discovery: MediaDiscovery,
+        claim_token: str,
+        *,
+        observations: tuple[DiscoveryObservation, ...] = (),
+    ) -> MediaDiscovery:
         """Record a cooperative cancellation that preserves every known finding.
 
         The transition is settled under the exact current claim, so a Worker
         whose lease was already taken over can never cancel the successor's
         work, and the settlement releases the claim in the same transaction.
+        A returning owner that already completed bounded observations passes
+        them here so the accepted cancellation keeps that work durable instead
+        of discarding it.
         """
 
         now = self._clock()
@@ -1540,18 +1666,29 @@ class MediaDiscoveryService:
             ),
         )
         return self._settle_control(
-            updated, expected_version=discovery.version, claim_token=claim_token
+            updated,
+            expected_version=discovery.version,
+            claim_token=claim_token,
+            observations=observations,
         )
 
     def _publish_paused(
-        self, discovery: MediaDiscovery, claim_token: str, message: str = ""
+        self,
+        discovery: MediaDiscovery,
+        claim_token: str,
+        message: str = "",
+        *,
+        observations: tuple[DiscoveryObservation, ...] = (),
     ) -> MediaDiscovery:
         """Acknowledge a cooperative pause at a safe boundary under the live claim.
 
         A Worker that no longer owns the claim never reaches this method: the
         caller stops with ``DiscoveryOwnershipLost`` instead, so a stale owner
         can never pause the successor's work or leave it without a native
-        continuation.
+        continuation.  A returning owner that already completed bounded work
+        passes its counters, findings, manifest, stability observations and
+        monotonic material refusals through the same settlement, so an accepted
+        pause acknowledges the pause without resetting consumed budgets.
         """
 
         now = self._clock()
@@ -1571,7 +1708,10 @@ class MediaDiscoveryService:
             ),
         )
         return self._settle_control(
-            updated, expected_version=discovery.version, claim_token=claim_token
+            updated,
+            expected_version=discovery.version,
+            claim_token=claim_token,
+            observations=observations,
         )
 
     def _fail(self, discovery: MediaDiscovery, claim_token: str, code: str) -> MediaDiscovery:
@@ -1710,21 +1850,34 @@ class MediaDiscoveryService:
         *,
         expected_version: int,
         claim_token: str | None = None,
+        observations: tuple[DiscoveryObservation, ...] = (),
     ) -> MediaDiscovery:
         """Settle one boundary and release the claim as one durable outcome.
 
-        Status, progress and the claim release are one transaction, so an
-        accepted cancellation or acknowledged pause can never leave an open
-        record that no Worker is allowed to claim again.  When ``claim_token``
-        is supplied the settlement is fenced by the exact current claim, so a
+        Status, progress, the stability observations that were part of the same
+        atomic write and the claim release are one transaction, so an accepted
+        cancellation or acknowledged pause can never leave an open record that
+        no Worker is allowed to claim again, and can never discard the bounded
+        work the returning owner had already completed.  When ``claim_token`` is
+        supplied the settlement is fenced by the exact current claim, so a
         Worker that already lost its lease cannot pause, fail or cancel the
         successor's work.
         """
 
         settler = getattr(self._repository, "settle_media_discovery_control", None)
         if callable(settler):
-            return settler(discovery, expected_version=expected_version, claim_token=claim_token)
-        return self._persist(discovery, expected_version=expected_version, claim_token=claim_token)
+            return settler(
+                discovery,
+                expected_version=expected_version,
+                claim_token=claim_token,
+                observations=observations,
+            )
+        return self._persist(
+            discovery,
+            expected_version=expected_version,
+            claim_token=claim_token,
+            observations=observations,
+        )
 
     def _read(self, discovery_id: str) -> MediaDiscovery | None:
         reader = getattr(self._repository, "get_media_discovery", None)

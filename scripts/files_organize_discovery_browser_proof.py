@@ -74,6 +74,11 @@ EXECUTION_TARGET = "Movies/其他电影/Execution (2004) [tmdbid-909]/Execution 
 #: 32-level safety bound, with the configured library depth unset.
 MASS_FOLDER = "mass"
 DEEP_FOLDER = "deep"
+#: The bounded control-preservation scope: a second 101-source folder whose
+#: completed walk is acknowledged by a *pause* at the safe boundary.  The
+#: acknowledgement must keep the counters, findings, manifest and the
+#: encountered primary-limit refusal instead of resetting them (B44-8-1).
+CONTROL_MASS_FOLDER = "control-mass"
 
 
 def render_configuration(root: Path) -> dict:
@@ -128,6 +133,13 @@ def seed_tree(root: Path) -> None:
     mass.mkdir(parents=True, exist_ok=True)
     for index in range(101):
         (mass / f"Bulk.{index:03d}.mkv").write_bytes(b"synthetic discovery media")
+    # The control-preservation case needs its own 101-source scope so the
+    # primary-limit refusal is exercised by a pause acknowledgement rather
+    # than by a terminal walk.
+    control_mass = source / CONTROL_MASS_FOLDER
+    control_mass.mkdir(parents=True, exist_ok=True)
+    for index in range(101):
+        (control_mass / f"Hold.{index:03d}.mkv").write_bytes(b"synthetic discovery media")
     # The safety-depth case: one direct source plus eligible media below the
     # Task's own 32-level descendant bound, with the configured depth unset.
     (source / DEEP_FOLDER).mkdir(parents=True, exist_ok=True)
@@ -534,6 +546,77 @@ def main() -> int:
         if resumed["pauseRequested"] is not False:
             raise RuntimeError(f"continue did not clear the pause: {resumed}")
         settled_control = _settle(configuration_path, target_id)
+
+        # Control/publication preservation (B44-8-1): a real 101-source scope
+        # reaches the primary bound, and the accepted pause must never be
+        # acknowledged as a reset record.  A pause requested before pickup is
+        # honoured truthfully (no walk is claimed for it); Continue then runs
+        # the same durable scope to the bound, and the durable material refusal
+        # keeps Finalize refused.  The narrower in-flight race — a publication
+        # that loses the version CAS to a concurrent pause — is covered
+        # deterministically by the Python regressions rather than by fragile
+        # browser timing.
+        _, control_mass_target = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [CONTROL_MASS_FOLDER]},
+            expect=202,
+        )
+        control_mass_id = control_mass_target["discoveryId"]
+        _, control_paused = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{control_mass_id}/pause",
+            {"expectedVersion": control_mass_target["version"]},
+            expect=200,
+        )
+        if (
+            control_paused["pauseRequested"] is not True
+            or control_paused["progress"]["visitedEntries"] != 0
+            or control_paused["actions"]["resume"]["available"] is not True
+        ):
+            raise RuntimeError(
+                f"a pre-pickup pause was not acknowledged truthfully: {control_paused}"
+            )
+        _run_worker(configuration_path)
+        time.sleep(0.4)
+        _, control_held = api(
+            "GET", f"/api/v1/operations/organize/discoveries/{control_mass_id}", expect=200
+        )
+        if (
+            control_held["status"] != "paused"
+            or control_held["progress"]["visitedEntries"] != 0
+            or control_held["pauseRequested"] is not True
+        ):
+            raise RuntimeError(f"a paused record was walked anyway: {control_held}")
+        _, control_resumed = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{control_mass_id}/resume",
+            {"expectedVersion": control_held["version"]},
+            expect=200,
+        )
+        if control_resumed["pauseRequested"] is not False:
+            raise RuntimeError(f"continue did not clear the preservation pause: {control_resumed}")
+        control_final = _settle(configuration_path, control_mass_id)
+        if (
+            control_final["progress"]["visitedEntries"] != 101
+            or control_final["progress"]["primarySources"] != 100
+            or control_final["progress"]["refusalReasons"] != ["primary_limit"]
+            or control_final["actions"]["finalize"]["available"] is not False
+        ):
+            raise RuntimeError(
+                f"continue did not reach the durable bound truthfully: {control_final['progress']}"
+            )
+        _, control_refused = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{control_mass_id}/finalize",
+            {"expectedVersion": control_final["version"]},
+        )
+        if control_refused.get("error", {}).get("code") != "discovery_budget_limited":
+            raise RuntimeError(f"a bounded prefix was frozen: {control_refused}")
+        print(
+            "   control preservation: pre-pickup pause truthful; continue reached "
+            "101 visited / 100 sources / primary_limit; finalize refused"
+        )
 
         # Cooperative cancellation of work that no Worker has picked up yet is
         # acknowledged durably and immediately: it reaches its terminal state
@@ -1072,6 +1155,10 @@ try {
   evidence.passes.push({ case: 'folder-selection', screenshot: await shoot('folder-selection') });
   await page.getByRole('button', { name: '批量整理' }).click();
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  // The heading renders while the authenticated discovery read is still in
+  // flight, so wait for the resolved scope section before inspecting it.  This
+  // only waits for the existing assertion's own content; no assertion changes.
+  await page.getByRole('heading', { name: /已选范围/ }).waitFor();
   const discoveryText = await page.getByRole('main').innerText();
   require_(/已选范围/.test(discoveryText), 'the discovery page did not show the admitted scope');
   require_(

@@ -1073,6 +1073,162 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual((), value.repository.list_tasks())
             self.assertEqual([], value.source.mutations)
 
+    def test_a_pause_racing_the_publication_keeps_the_bounded_work(self) -> None:
+        """B44-8-1: a same-owner pause must not discard completed bounded work.
+
+        The Worker really completes the bounded walk (101 primary candidates in
+        a real Local directory) and only its final publication loses the version
+        CAS to an accepted pause.  The acknowledgement must reconcile the
+        pause with that pass's counters, findings, manifest and monotonic
+        material refusal: discarding them would hide the encountered 100-item
+        limit and let a later Continue silently re-walk with reset accounting.
+        """
+
+        for index in range(101):
+            self.media(f"Movies/Film.{index:03}.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            entered, release = threading.Event(), threading.Event()
+            original = value.repository.record_media_discovery_progress
+            attempted: list[dict] = []
+
+            def delayed(discovery, **kwargs):
+                if kwargs.get("claim_token"):
+                    attempted.append(discovery.document())
+                    entered.set()
+                    if not release.wait(10):
+                        raise AssertionError("coordination timed out")
+                return original(discovery, **kwargs)
+
+            value.repository.record_media_discovery_progress = delayed
+            worker = MediaDiscoveryWorker(
+                value.discovery, clock=value.clock, worker_id="old-worker"
+            )
+            thread = threading.Thread(target=worker.run_next)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(10))
+                _, before = self.request(
+                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
+                )
+                # The publication really carries the completed bounded work,
+                # including the encountered primary-limit refusal.
+                self.assertEqual("partial_success", attempted[0]["status"], attempted[0])
+                self.assertEqual(101, attempted[0]["progress"]["counters"]["visitedEntries"])
+                self.assertEqual(["primary_limit"], attempted[0]["progress"]["refusalReasons"])
+                _, accepted = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
+                    "POST",
+                    {"expectedVersion": before["version"]},
+                )
+                self.assertTrue(accepted["pauseRequested"], accepted)
+            finally:
+                release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            _, paused = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
+            # The accepted pause is acknowledged *with* the same owner's work:
+            # no reset counters, no lost finding, no hidden refusal.
+            self.assertEqual("paused", paused["status"])
+            self.assertTrue(paused["pauseRequested"])
+            self.assertEqual(101, paused["progress"]["visitedEntries"], paused["progress"])
+            self.assertEqual(2, paused["progress"]["pageFetches"], paused["progress"])
+            self.assertEqual(100, paused["progress"]["primarySources"], paused["progress"])
+            self.assertEqual(["primary_limit"], paused["progress"]["refusalReasons"])
+            self.assertEqual("primary_limit", paused["progress"]["materialRefusal"])
+            self.assertEqual(100, len(paused["sources"]), paused["sources"])
+            # Continue resumes the same scope; the consumed refusal stays durable
+            # and Finalize refuses instead of freezing a truncated prefix.
+            _, resumed = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                "POST",
+                {"expectedVersion": paused["version"]},
+            )
+            self.assertFalse(resumed["pauseRequested"])
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual(["primary_limit"], settled["progress"]["refusalReasons"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_budget_limited", refused["error"]["code"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_continue_racing_the_publication_publishes_the_work_once(self) -> None:
+        """AC3/AC5: a cleared pause must not silently reset bounded progress."""
+
+        for index in range(101):
+            self.media(f"Movies/Film.{index:03}.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            entered, release = threading.Event(), threading.Event()
+            original = value.repository.record_media_discovery_progress
+
+            def delayed(discovery, **kwargs):
+                if kwargs.get("claim_token"):
+                    entered.set()
+                    if not release.wait(10):
+                        raise AssertionError("coordination timed out")
+                return original(discovery, **kwargs)
+
+            value.repository.record_media_discovery_progress = delayed
+            worker = MediaDiscoveryWorker(
+                value.discovery, clock=value.clock, worker_id="old-worker"
+            )
+            thread = threading.Thread(target=worker.run_next)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(10))
+                _, before = self.request(
+                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
+                )
+                _, paused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
+                    "POST",
+                    {"expectedVersion": before["version"]},
+                )
+                _, resumed = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                    "POST",
+                    {"expectedVersion": paused["version"]},
+                )
+                self.assertFalse(resumed["pauseRequested"])
+            finally:
+                release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            _, after = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
+            # The completed bounded work was published under the live claim
+            # instead of being discarded by the resumed control.
+            self.assertFalse(after["pauseRequested"])
+            self.assertEqual(101, after["progress"]["visitedEntries"], after["progress"])
+            self.assertEqual(["primary_limit"], after["progress"]["refusalReasons"])
+            self.assertEqual(100, len(after["sources"]), after["sources"])
+            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
     def test_an_open_cancellation_left_by_an_earlier_build_is_recovered(self) -> None:
         """AC1: a queued record already carrying cancel_requested must not strand.
 

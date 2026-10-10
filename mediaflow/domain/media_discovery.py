@@ -218,7 +218,25 @@ class DiscoveryError(ValueError):
 
 
 class DiscoveryConflict(DiscoveryError):
-    def __init__(self, message: str, *, details: dict[str, object] | None = None) -> None:
+    """A fenced discovery publication lost its version CAS.
+
+    ``attempted`` carries the exact bounded projection the live owner tried to
+    publish, and ``attempted_observations`` the stability observations that were
+    part of the same atomic write, when the raiser has them.  A same-owner
+    operator control reconciles that work with the fresh record instead of
+    discarding it; a lost claim ignores it entirely.  Neither is part of
+    ``details``: the operator projection must never publish a claim token, a
+    fingerprint or a physical Storage path.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, object] | None = None,
+        attempted: object | None = None,
+        attempted_observations: tuple = (),
+    ) -> None:
         super().__init__(
             message,
             code="discovery_conflict",
@@ -226,6 +244,8 @@ class DiscoveryConflict(DiscoveryError):
             next_action="reload the discovery and retry the same deliberate action",
             details=details,
         )
+        self.attempted = attempted
+        self.attempted_observations = attempted_observations
 
 
 class DiscoveryUnavailable(DiscoveryError):

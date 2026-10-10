@@ -10066,13 +10066,25 @@ class SQLiteTaskRepository:
         return self.get_media_discovery(discovery.discovery_id)
 
     def _raise_discovery_write_conflict(
-        self, current: MediaDiscovery | None, discovery: MediaDiscovery, claim_token: str | None
+        self,
+        current: MediaDiscovery | None,
+        discovery: MediaDiscovery,
+        claim_token: str | None,
+        *,
+        observations: tuple[DiscoveryObservation, ...] = (),
     ) -> None:
         """Raise the precise reason one fenced discovery write was refused.
 
         A claim mismatch means another Worker owns the walk now: the caller must
         stop without touching the successor's state.  Anything else is an
         ordinary version conflict the caller may settle against the fresh record.
+
+        A version conflict carries the exact projection that lost the CAS, and
+        the stability observations that were part of the same atomic write, so a
+        same-owner operator control can be reconciled *with* the bounded work
+        this pass already completed.  A claim mismatch deliberately carries
+        nothing: the successor owns every durable field, including the counters,
+        findings, manifest and stability observations the old owner had.
         """
 
         if claim_token is not None and (current is None or current.claim_token != claim_token):
@@ -10089,6 +10101,8 @@ class SQLiteTaskRepository:
                 "discoveryId": discovery.discovery_id,
                 "currentVersion": current.version if current is not None else None,
             },
+            attempted=discovery,
+            attempted_observations=tuple(observations),
         )
 
     def claim_next_media_discovery(
@@ -10338,7 +10352,9 @@ class SQLiteTaskRepository:
                 cursor = self._connection.execute(statement, tuple(parameters))
                 if cursor.rowcount != 1:
                     current = self._load_media_discovery_locked(discovery.discovery_id)
-                    self._raise_discovery_write_conflict(current, discovery, claim_token)
+                    self._raise_discovery_write_conflict(
+                        current, discovery, claim_token, observations=values
+                    )
                 for observation in values:
                     self._connection.execute(
                         "INSERT INTO media_discovery_observations "
@@ -10374,15 +10390,19 @@ class SQLiteTaskRepository:
         *,
         expected_version: int,
         claim_token: str | None = None,
+        observations: tuple[DiscoveryObservation, ...] = (),
     ) -> MediaDiscovery:
         """Settle one discovery at a safe boundary and release its claim atomically.
 
-        Status, progress, counters, the operator control flags and the claim
-        release are one statement, so an accepted cancellation can never be left
-        as a non-terminal ``queued`` record that no Worker may ever pick up
-        again.  When ``claim_token`` is supplied the write is additionally fenced
-        by the exact current persisted claim, so a Worker that already lost its
-        lease cannot pause, fail or cancel the successor's work.
+        Status, progress, counters, the operator control flags, the stability
+        observations that belong to the same bounded pass and the claim release
+        are one statement, so an accepted cancellation can never be left as a
+        non-terminal ``queued`` record that no Worker may ever pick up again, and
+        an acknowledged pause can never discard the work the returning owner had
+        already completed.  When ``claim_token`` is supplied the write is
+        additionally fenced by the exact current persisted claim, so a Worker
+        that already lost its lease cannot pause, fail or cancel the successor's
+        work.
         """
 
         if not isinstance(discovery, MediaDiscovery):
@@ -10397,6 +10417,7 @@ class SQLiteTaskRepository:
             not isinstance(claim_token, str) or not claim_token.strip()
         ):
             raise ValueError("media discovery claim token is invalid")
+        values = tuple(observations)
         statement = (
             "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
             "sources_json=?, attempts=?, pause_requested=?, cancel_requested=?, "
@@ -10419,11 +10440,42 @@ class SQLiteTaskRepository:
         if claim_token is not None:
             statement += " AND claim_token=?"
             parameters.append(claim_token)
-        with self._lock, self._connection:
-            cursor = self._connection.execute(statement, tuple(parameters))
-            if cursor.rowcount != 1:
-                current = self._load_media_discovery_locked(discovery.discovery_id)
-                self._raise_discovery_write_conflict(current, discovery, claim_token)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(statement, tuple(parameters))
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    self._raise_discovery_write_conflict(
+                        current, discovery, claim_token, observations=values
+                    )
+                for observation in values:
+                    self._connection.execute(
+                        "INSERT INTO media_discovery_observations "
+                        "(discovery_id, source_path, size, modified_at, fingerprint, "
+                        "observed_at, stable_since) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(discovery_id, source_path) DO UPDATE SET "
+                        "size=excluded.size, modified_at=excluded.modified_at, "
+                        "fingerprint=excluded.fingerprint, observed_at=excluded.observed_at, "
+                        "stable_since=excluded.stable_since",
+                        (
+                            discovery.discovery_id,
+                            observation.path,
+                            observation.size,
+                            observation.modified_at.isoformat(),
+                            observation.fingerprint,
+                            observation.observed_at.isoformat(),
+                            (
+                                observation.stable_since.isoformat()
+                                if observation.stable_since is not None
+                                else None
+                            ),
+                        ),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
         return self.get_media_discovery(discovery.discovery_id)
 
     def _discovery_values(self, discovery: MediaDiscovery) -> tuple[object, ...]:
