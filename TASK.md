@@ -372,7 +372,7 @@ factual handoff; no further discovery scope is claimed here.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: —
+Head SHA: 62178d37927c861fd1275d84cba9fd6f2488a643
 ```
 
 
