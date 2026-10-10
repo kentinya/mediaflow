@@ -11,7 +11,9 @@ against the assets the production image actually serves.
 It proves the served artifact/source identity, the real resident Worker pickup,
 folder-only/file-only/multiple-folder/mixed discovery, the configured filter and
 exclusion findings, cooperative pause/continue, explicit finalize into the
-existing manual intent, and zero media mutation.
+existing manual intent, zero-mutation discovery/analysis, and the native
+reviewed-Choice -> exact Preview -> separately confirmed Execute journey whose
+exact reviewed item the production Worker and OrganizerExecutor complete.
 
 Isolation: a dedicated project name, free host ports, temporary bind paths that
 this Docker daemon can actually see, and its own image tag.  It never reads or
@@ -65,6 +67,12 @@ UNSUPPORTED = "notes.txt"
 #: (eligible media below the Task's own 32-level bound).
 MASS_FOLDER = "mass"
 DEEP_FOLDER = "deep"
+#: The dedicated confirmed-execution scope: one ordinary source the reviewed
+#: exact Preview moves through the production OrganizerExecutor.
+EXECUTION_FOLDER = "执行范围"
+EXECUTION_FILE = "Execution.2004.mkv"
+EXECUTION_RELATIVE = f"{EXECUTION_FOLDER}/{EXECUTION_FILE}"
+EXECUTION_TARGET = "Movies/其他电影/Execution (2004) [tmdbid-909]/Execution (2004).mkv"
 
 BROWSER_PROOF = r"""
 import { chromium } from 'playwright';
@@ -145,16 +153,70 @@ try {
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
   evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
 
-  // Only the two bounded discovery admissions may be non-GET; every other
-  // request in this journey is a read.  Nothing here mutates media.
+  // -- native reviewed choices -> exact Preview -> confirmed Execute -------
+  // The harness admitted and froze one dedicated execution discovery and
+  // recorded the reviewed Choice (grounded in durable source-linked evidence).
+  // The browser drives the ordinary manual journey and makes exactly one
+  // explicit Execute confirmation; it never handles a token or digest.
+  const executionIntentId = process.env.MF_PROOF_EXECUTION_INTENT;
+  await connect(`/ui-v2/operations/organize/intent/${executionIntentId}`);
+  await page.getByText('Execution.2004.mkv').first().waitFor();
+  const intentText = await page.getByRole('main').innerText();
+  require_(
+    /Execution\.2004\.mkv/.test(intentText),
+    `the intent did not show the reviewed source: ${
+      JSON.stringify({ url: page.url(), intentText: intentText.slice(0, 900) })
+    }`,
+  );
+  const previewButton = page.getByRole('button', { name: '生成精确预览' });
+  await previewButton.waitFor();
+  evidence.passes.push({ case: 'intent-choice', screenshot: await shoot('intent-choice') });
+  await previewButton.click();
+  await page.getByRole('heading', { name: '整理预览' }).waitFor();
+  const previewText = await page.getByRole('main').innerText();
+  require_(
+    /预览不会修改文件/.test(previewText),
+    'the exact Preview did not advertise zero mutation',
+  );
+  require_(
+    /Movies\/其他电影\/Execution \(2004\)/.test(previewText),
+    'the exact Preview did not show the exact destination',
+  );
+  evidence.passes.push({ case: 'exact-preview', screenshot: await shoot('exact-preview') });
+  const executeButton = page.getByRole('button', { name: '确认执行所选条目' });
+  await executeButton.waitFor();
+  await executeButton.click();
+  await page.getByRole('heading', { name: '整理执行情况' }).waitFor();
+  const executionText = await page.getByRole('main').innerText();
+  require_(
+    /整理执行情况/.test(executionText) && /已准入/.test(executionText),
+    `the execution page did not report the durable admission: ${executionText.slice(0, 900)}`,
+  );
+  require_(
+    /已选 1/.test(executionText),
+    `the execution page did not report the exact reviewed selection: ${
+      executionText.slice(0, 500)
+    }`,
+  );
+  evidence.passes.push({
+    case: 'confirmed-execution',
+    screenshot: await shoot('confirmed-execution'),
+  });
+
+  // Every non-GET request is one bounded discovery admission, one Choice, one
+  // Preview or the one confirmed Execute; nothing else mutates media.
   evidence.mutatingRequests = requests.filter(
     (entry) => entry.method !== 'GET' && entry.method !== 'HEAD',
   );
   evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
     entry.url.includes('/files/discoveries'),
   );
+  evidence.executionRequests = evidence.mutatingRequests.filter(
+    (entry) => entry.url.includes('/previews') || entry.url.includes('/execute'),
+  );
   require_(
-    evidence.discoveryAdmissions.length === evidence.mutatingRequests.length,
+    evidence.discoveryAdmissions.length + evidence.executionRequests.length ===
+      evidence.mutatingRequests.length,
     `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
   fs.writeFileSync(path.join(ARTIFACTS, 'evidence.json'), JSON.stringify(evidence, null, 2));
@@ -165,7 +227,7 @@ try {
 """
 
 
-def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Path]:
+def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Path, Path]:
     """Temporary configuration, environment file and Local Storage roots."""
 
     source_root = root / "media" / "incoming"
@@ -178,6 +240,8 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     (source_root / SECOND_FOLDER).mkdir(parents=True, exist_ok=True)
     (source_root / SECOND_FOLDER / "Extra.2003.mkv").write_bytes(b"synthetic discovery media")
     (source_root / MIXED_FILE).write_bytes(b"synthetic discovery media")
+    (source_root / EXECUTION_FOLDER).mkdir(parents=True, exist_ok=True)
+    (source_root / EXECUTION_FOLDER / EXECUTION_FILE).write_bytes(b"synthetic execution media")
     mass = source_root / MASS_FOLDER
     mass.mkdir(parents=True, exist_ok=True)
     for index in range(101):
@@ -190,9 +254,14 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     deep.mkdir(parents=True, exist_ok=True)
     (deep / "Buried.2002.mkv").write_bytes(b"synthetic discovery media")
     (target_root / "Movies").mkdir(parents=True, exist_ok=True)
-    # The container runs as the unprivileged MediaFlow UID/GID.
-    source_root.chmod(0o755)
-    target_root.chmod(0o777)
+    # The container runs as the unprivileged MediaFlow UID/GID.  The source
+    # root is writable because this isolated proof's confirmed MOVE really
+    # deletes its verified source, exactly like a deployment whose
+    # ResourceLibrary Storage permits Move.
+    for root_path in (source_root, target_root):
+        root_path.chmod(0o777)
+        for child in root_path.rglob("*"):
+            child.chmod(0o777 if child.is_dir() else 0o666)
 
     document = json.loads(
         subprocess.check_output(
@@ -222,13 +291,60 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     document["resourceLibraries"][0]["extensions"] = ["mkv", "mp4"]
     document["resourceLibraries"][0]["maxDepth"] = None
     document["mediaLibraries"][0]["rootPath"] = "Movies"
+    # The ordinary MOVE journey deletes its verified source, so this isolated
+    # temporary deployment declares the source Storage writable — exactly like
+    # a real deployment whose ResourceLibrary Storage permits Move.  The
+    # production overlay's read-only source mount is overridden below for this
+    # proof's own temporary roots only.
+    document["storages"][0]["readOnly"] = False
+    # Offline MetadataPolicies: the confirmed-execution stage runs with no
+    # external Provider or credential, and the exact Preview pins the identity
+    # the operator's Choice carried (grounded in the source-linked Result the
+    # harness seeds through the production persistence write path).
+    for policy in document["metadataPolicies"]:
+        policy["mediaQueryType"] = "none"
+    # RO-3 revised destination contract: no display-name prefix segment.
+    for policy in document["classificationPolicies"]:
+        for rule in policy["rules"]:
+            rule["result"].pop("library", None)
     config = root / "mediaflow.json"
     config.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     config.chmod(0o644)
     environment_file = root / "deployment.env"
     environment_file.write_text(f"MEDIAFLOW_API_TOKEN={api_token}\n", encoding="utf-8")
     environment_file.chmod(0o644)
-    return config, environment_file, source_root, target_root
+    # The temporary source root is writable for the confirmed MOVE.  Compose
+    # merges a service `volumes` list by container target, so this override
+    # replaces the production overlay's read-only source mount for this
+    # proof's own isolated stack and nothing else.
+    override = root / "compose.discovery-execution.yaml"
+    override.write_text(
+        "x-mediaflow-execution-volumes: &mediaflow-execution-volumes\n"
+        "  - type: bind\n"
+        "    source: ${MEDIAFLOW_SOURCE_MEDIA_ROOT:?set MEDIAFLOW_SOURCE_MEDIA_ROOT}\n"
+        "    target: /media/incoming\n"
+        "    read_only: false\n"
+        "    bind:\n"
+        "      create_host_path: false\n"
+        "  - type: bind\n"
+        "    source: ${MEDIAFLOW_TARGET_MEDIA_ROOT:?set MEDIAFLOW_TARGET_MEDIA_ROOT}\n"
+        "    target: /media/organized\n"
+        "    read_only: false\n"
+        "    bind:\n"
+        "      create_host_path: false\n"
+        "services:\n"
+        "  api:\n"
+        "    volumes: *mediaflow-execution-volumes\n"
+        "  worker:\n"
+        "    volumes: *mediaflow-execution-volumes\n"
+        "  scheduler:\n"
+        "    volumes: *mediaflow-execution-volumes\n"
+        "  notification-worker:\n"
+        "    volumes: *mediaflow-execution-volumes\n",
+        encoding="utf-8",
+    )
+    override.chmod(0o644)
+    return config, environment_file, source_root, target_root, override
 
 
 def api(base: str, token: str, method: str, path: str, document: dict | None = None):
@@ -258,6 +374,90 @@ def settle(base: str, token: str, discovery_id: str, *, attempts: int = 40) -> d
     raise RuntimeError("the production Worker did not finish the bounded discovery in time")
 
 
+#: The one production persistence write path the harness uses to ground the
+#: reviewed Choice's metadata identity in durable source-linked evidence.  It
+#: runs *inside the running deployment's own container* against the same SQLite
+#: file the API/Worker use, exactly like the Docker upgrade/restart proofs seed
+#: their durable state.
+SEED_SOURCE_LINKED_RESULT = r"""
+import json
+from datetime import UTC, datetime
+
+from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
+    PersistentTask,
+    PersistentTaskStatus,
+)
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+NOW = datetime.now(UTC)
+with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
+    if repository.get_task("discovery-proof-prior") is None:
+        repository.create_task(
+            PersistentTask(
+                "discovery-proof-prior",
+                "preview",
+                PersistentTaskStatus.COMPLETED,
+                False,
+                NOW,
+                NOW,
+            )
+        )
+    repository.append_result(
+        PersistentResultRecord(
+            "discovery-proof-prior-result",
+            "discovery-proof-prior",
+            "discovery-proof-prior-item",
+            "source-storage",
+            "__RELATIVE__",
+            "media-target",
+            "__TARGET__",
+            "A",
+            "tmdb",
+            "909",
+            "A",
+            "A",
+            "A",
+            "A",
+            "MOVE",
+            "dry_run",
+            NOW,
+            title="Execution",
+        )
+    )
+print(json.dumps({"seeded": True}))
+""".replace("__RELATIVE__", EXECUTION_RELATIVE).replace("__TARGET__", EXECUTION_TARGET)
+
+
+def seed_source_linked_result(command: list[str], environment: dict[str, str]) -> None:
+    """Run the production persistence seeding inside the running api container."""
+
+    run_docker(
+        [*command, "exec", "-T", "api", "python", "-c", SEED_SOURCE_LINKED_RESULT],
+        environment=environment,
+    )
+
+
+def wait_for_execution(base: str, token: str, task_id: str, *, attempts: int = 60) -> dict:
+    """Wait for the production Worker to complete the confirmed execution."""
+
+    for _ in range(attempts):
+        _, document = api(base, token, "GET", f"/api/v1/tasks/{task_id}")
+        if document.get("status") in {"completed", "partial_success", "failed", "cancelled"}:
+            return document
+        time.sleep(0.5)
+    raise RuntimeError("the production Worker did not complete the confirmed execution in time")
+
+
+def _execution_state(source_root: Path, target_root: Path) -> dict:
+    """Read-only state of the execution source and its planned destination."""
+
+    return {
+        "sourceExists": (source_root / EXECUTION_RELATIVE).is_file(),
+        "targetExists": (target_root / EXECUTION_TARGET).is_file(),
+    }
+
+
 def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> None:
     api_token = secrets.token_urlsafe(24)
     api_port = free_port()
@@ -268,7 +468,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
     with tempfile.TemporaryDirectory(prefix="mediaflow-discovery-docker-") as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
-        config, env_file, source_root, target_root = prepare(root, api_token, api_port)
+        config, env_file, source_root, target_root, override = prepare(root, api_token, api_port)
         environment = compose_environment(
             root,
             image,
@@ -285,6 +485,8 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             str(ROOT / "compose.yaml"),
             "-f",
             str(ROOT / "compose.media-mounts.yaml"),
+            "-f",
+            str(override),
             "--project-name",
             project,
         ]
@@ -478,6 +680,66 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 f"{len(runs['items'])} run rows include every admitted discovery"
             )
 
+            # Confirmed execution (AC1/AC5): one dedicated frozen discovery
+            # feeds the existing manual journey; the production Worker and
+            # OrganizerExecutor complete the exact reviewed item.
+            before_execution = _execution_state(source_root, target_root)
+            if not before_execution["sourceExists"] or before_execution["targetExists"]:
+                raise RuntimeError(f"the execution fixture was not pristine: {before_execution}")
+            status, execution_target = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                {"paths": [EXECUTION_FOLDER]},
+            )
+            if status != 202:
+                raise RuntimeError(f"execution admission failed: {status} {execution_target}")
+            execution_discovery = settle(base, api_token, execution_target["discoveryId"])
+            if execution_discovery["status"] != "completed" or [
+                value["path"] for value in execution_discovery["sources"]
+            ] != [EXECUTION_RELATIVE]:
+                raise RuntimeError(f"the execution discovery was not exact: {execution_discovery}")
+            status, execution_frozen = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/discoveries/"
+                f"{execution_discovery['discoveryId']}/finalize",
+                {"expectedVersion": execution_discovery["version"]},
+            )
+            if status != 201 or not execution_frozen.get("intentId"):
+                raise RuntimeError(f"execution finalize failed: {status} {execution_frozen}")
+            execution_intent_id = execution_frozen["intentId"]
+            seed_source_linked_result(command, environment)
+            _, intent_document = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/organize/intents/{execution_intent_id}",
+            )
+            intent_item = intent_document["items"][0]
+            status, chosen = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/intents/{execution_intent_id}"
+                f"/items/{intent_item['itemId']}/choice",
+                {
+                    "expectedVersion": intent_document["version"],
+                    "expectedItemVersion": intent_item["version"],
+                    "recognitionTypeId": "A",
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "909",
+                        "mediaType": "movie",
+                        "title": "Execution",
+                    },
+                },
+            )
+            if status != 200:
+                raise RuntimeError(f"the reviewed Choice was not recorded: {status} {chosen}")
+
             result = subprocess.run(
                 ["node", "--input-type=module", "-e", BROWSER_PROOF],
                 cwd=ROOT / "web",
@@ -486,6 +748,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     "MF_PROOF_BASE": base,
                     "MF_PROOF_TOKEN": api_token,
                     "MF_PROOF_ARTIFACTS": str(ARTIFACT_ROOT),
+                    "MF_PROOF_EXECUTION_INTENT": execution_intent_id,
                     "MF_PROOF_SCOPE": json.dumps(
                         {"folder": FOLDER, "file": MIXED_FILE, "secondFolder": SECOND_FOLDER},
                         ensure_ascii=False,
@@ -499,6 +762,53 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     f"docker discovery browser journey failed:\n{result.stdout}\n{result.stderr}"
                 )
             print("   " + result.stdout.strip().splitlines()[-1])
+
+            # The browser's one confirmation admitted the exact reviewed item;
+            # the production Worker completes it and the file effect is exact.
+            _, executions = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/organize/executions?intentId={execution_intent_id}&limit=50",
+            )
+            execution_rows = executions.get("items") or []
+            if len(execution_rows) != 1 or not execution_rows[0].get("taskId"):
+                raise RuntimeError(f"the journey admitted the wrong executions: {executions}")
+            execution_task_id = execution_rows[0]["taskId"]
+            execution_task = wait_for_execution(base, api_token, execution_task_id)
+            if execution_task.get("status") != "completed":
+                raise RuntimeError(f"the confirmed execution did not complete: {execution_task}")
+            after_execution = _execution_state(source_root, target_root)
+            if after_execution != {"sourceExists": False, "targetExists": True}:
+                raise RuntimeError(
+                    f"the confirmed execution did not produce its exact effect: {after_execution}"
+                )
+            # The completed effect is never replayed: a re-Preview of the same
+            # executed intent is refused truthfully because the source moved.
+            status, replay = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/intents/{execution_intent_id}/previews",
+                {"expectedVersion": chosen["version"]},
+            )
+            if replay.get("error", {}).get("code") != "source_missing":
+                raise RuntimeError(f"a re-Preview was not refused truthfully: {replay}")
+            _, execution_items = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/runs/{execution_task_id}/items",
+            )
+            execution_item_rows = execution_items.get("items") or []
+            if not execution_item_rows or execution_item_rows[0].get("status") != "success":
+                raise RuntimeError(
+                    f"the completed execution lost its item outcome: {execution_items}"
+                )
+            print(
+                "   confirmed execution: production Worker moved "
+                f"{EXECUTION_RELATIVE} to its exact target; no replay"
+            )
 
             evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
             matrix = {
@@ -529,16 +839,28 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     "runInventoryRows": len(runs["items"]),
                 },
                 "frozenIntentId": frozen["intentId"],
+                "confirmedExecution": {
+                    "intentId": execution_intent_id,
+                    "taskId": execution_task_id,
+                    "sourcePath": EXECUTION_RELATIVE,
+                    "targetPath": EXECUTION_TARGET,
+                    "sourceMoved": after_execution == {"sourceExists": False, "targetExists": True},
+                    "taskStatus": execution_task.get("status"),
+                    "replayRefusal": replay.get("error", {}).get("code"),
+                },
                 "measured": evidence,
                 "safety": {
-                    "discoveryAdmissionsOnly": True,
+                    "discoveryAdmissionsOnly": False,
                     "nonReadRequests": evidence["mutatingRequests"],
                 },
             }
             (ARTIFACT_ROOT / "matrix.json").write_text(
                 json.dumps(matrix, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            print(f"   {len(results)} docker discovery cases; frozen intent {frozen['intentId']}")
+            print(
+                f"   {len(results)} docker discovery cases; frozen intent "
+                f"{frozen['intentId']}; confirmed execution {execution_task_id[:8]}..."
+            )
         finally:
             if not keep:
                 run_docker(

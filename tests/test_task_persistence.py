@@ -1087,10 +1087,15 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
     """The additive 44 -> 45 discovery upgrade preserves prior durable facts.
 
-    Schema 45 adds the durable bounded-discovery boundary.  The fixture is a
-    genuine schema-44 runtime database with a real admitted manual intent, so
-    the upgrade is proven to add only the two discovery tables and their
-    observation column without touching pre-existing work.
+    This is a bounded schema-shape fixture: it creates a current-schema
+    database, removes exactly the schema-45 discovery objects and rewinds the
+    marker, so the additive DDL is exercised over a database that still holds
+    real admitted manual work.  It deliberately does not claim to be a
+    rehearsal against a prior committed application build; that genuine
+    prior-artifact rehearsal is the schema-38 -> 45 Docker upgrade smoke
+    (``scripts/docker_upgrade_recovery_smoke_test.py``), which seeds historical
+    manual intents/Previews/admitted/completed/partial/uncertain executions
+    through the old image's own code and verifies them after the upgrade.
     """
 
     _SCHEMA44_OBJECTS = (
@@ -1157,6 +1162,52 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                     ).fetchall()
                 }
                 self.assertIn("stable_since", columns)
+                # The new boundary really persists work after the upgrade: a
+                # discovery round-trips through the same repository, and the
+                # pre-existing admitted manual intent still reads back.
+                self._assert_discovery_round_trip(repository)
+
+    @staticmethod
+    def _assert_discovery_round_trip(repository) -> None:
+        from mediaflow.domain.media_discovery import (
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        now = datetime(2026, 10, 4, tzinfo=UTC)
+        discovery = MediaDiscovery(
+            "discovery-round-trip",
+            "operator",
+            "library-base",
+            "storage-base",
+            "snap-base",
+            "digest-base",
+            DiscoveryStatus.COMPLETED,
+            1,
+            DiscoveryBudgets(),
+            DiscoveryProgress(
+                "completed",
+                (DiscoveryScopeEntry("Movies", DiscoveryEntryKind.DIRECTORY),),
+                DiscoveryCounters(),
+                DiscoveryIncompleteReason.NONE,
+                (),
+                (),
+            ),
+            now,
+            now,
+        )
+        repository.create_media_discovery(discovery)
+        stored = repository.get_media_discovery("discovery-round-trip")
+        assert stored is not None
+        assert stored.resource_library_id == "library-base"
+        assert stored.storage_id == "storage-base"
+        assert stored.progress.scope_entries[0].path == "Movies"
 
 
 def _manual_intent(intent_id: str):

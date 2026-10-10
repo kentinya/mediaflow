@@ -235,6 +235,7 @@ def seed_state_code() -> str:
     """Create representative durable state in the old deployment."""
 
     return r"""
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -275,6 +276,7 @@ with SQLiteConfigurationRepository(DATABASE) as configuration:
         raise RuntimeError("no Active managed revision is present")
     snapshot_id = active.revision_id
     snapshot_digest = active.digest
+    active_revision = active
 
 with (
     SQLiteTaskRepository(DATABASE) as repository,
@@ -515,6 +517,458 @@ with (
             )
         )
 
+    # Write the assigned historical manual states through the old code's own
+    # paths.  This runs inside the genuine prior committed schema-38 image, so
+    # the manual intents, Previews, one-shot authorizations, admitted
+    # executions and terminal completed/partial/uncertain outcomes below are
+    # produced by the old application's own domain objects and repository write
+    # paths.  They are real historical rows, not a hand-written newer-format
+    # document.
+
+    from dataclasses import replace
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from mediaflow.domain.manual_execution import (
+        ManualExecution,
+        ManualExecutionAuthorization,
+        ManualExecutionEffect,
+        ManualExecutionItem,
+        ManualExecutionItemStatus,
+        ManualExecutionScopeItem,
+        ManualExecutionStatus,
+    )
+    from mediaflow.domain.manual_organize import (
+        ManualChoice,
+        ManualConfigurationSnapshot,
+        ManualIntentAudit,
+        ManualIntentItem,
+        ManualIntentItemStatus,
+        ManualIntentStatus,
+        ManualOrganizeIntent,
+        ManualSourceIdentity,
+    )
+    from mediaflow.domain.manual_organize_preview import (
+        ManualOrganizePreview,
+        ManualPreviewItem,
+        ManualPreviewItemStatus,
+        ManualPreviewStatus,
+    )
+
+    def canonical(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def fingerprint(value):
+        return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
+
+    def legacy_source(path, name):
+        return ManualSourceIdentity(
+            f"legacy-file-{name}",
+            "source-storage",
+            "source",
+            path,
+            name,
+            "mkv",
+            512,
+            NOW - timedelta(hours=2),
+            NOW,
+            NOW,
+            NOW,
+            "ready",
+            None,
+            f"legacy-occ-{name}",
+            "a" * 64,
+            "storage-entry-sha256",
+            {"source": "storage_entry"},
+            "verified",
+        )
+
+    def legacy_snapshot():
+        # The pinned option projection must be the real projection of the exact
+        # managed Active revision, so a historical intent stays readable under
+        # the same configuration authority the candidate API resolves.
+        from mediaflow.application.manual_organize import ManualOrganizeIntentService
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+        )
+
+        runtime = load_managed_runtime_configuration(
+            active_revision.document, bootstrap_database_path=DATABASE
+        )
+        return ManualOrganizeIntentService._snapshot_from_runtime(
+            runtime, snapshot_id, snapshot_digest
+        )
+
+    def legacy_intent(intent_id, items):
+        return ManualOrganizeIntent(
+            intent_id,
+            "upgrade-operator",
+            snapshot_id,
+            snapshot_digest,
+            ManualIntentStatus.OPEN,
+            1,
+            NOW,
+            NOW,
+            items,
+            legacy_snapshot(),
+            "continue to an exact zero-mutation Preview",
+            None,
+            (),
+        )
+
+    def legacy_item(intent_id, item_id, source):
+        return ManualIntentItem(
+            item_id,
+            intent_id,
+            0,
+            source,
+            ManualChoice("A", None, "A", "A", "A"),
+            ManualIntentItemStatus.READY,
+            None,
+            1,
+            NOW,
+            NOW,
+        )
+
+    def legacy_preview(preview_id, intent_id, item, source, target):
+        plan = {
+            "planId": f"legacy-plan-{source.filename}",
+            "operation": "MOVE",
+            "zeroMutation": True,
+            "executionPlan": {
+                "planId": f"legacy-plan-{source.filename}",
+                "operation": "MOVE",
+                "sourceStorageId": source.storage_id,
+                "sourcePath": source.path,
+                "targetStorageId": "media-target",
+                "targetPath": target,
+            },
+            "executionState": "ready_for_explicit_authorization",
+        }
+        preview_item = ManualPreviewItem(
+            f"{preview_id}-item",
+            preview_id,
+            intent_id,
+            item.item_id,
+            0,
+            1,
+            item.version,
+            source,
+            item.choice,
+            snapshot_id,
+            snapshot_digest,
+            source.fingerprint,
+            (),
+            (),
+            (),
+            "b" * 64,
+            fingerprint(plan),
+            ManualPreviewItemStatus.PREVIEWED,
+            plan,
+            None,
+            "inspect this exact zero-mutation plan",
+            True,
+            "ready_for_explicit_authorization",
+            False,
+            NOW,
+            NOW,
+            True,
+        )
+        return (
+            ManualOrganizePreview(
+                preview_id,
+                intent_id,
+                "upgrade-operator",
+                1,
+                snapshot_id,
+                snapshot_digest,
+                ManualPreviewStatus.PREVIEWED,
+                (preview_item,),
+                NOW,
+                NOW,
+                "inspect each item",
+                None,
+                True,
+                True,
+                False,
+                None,
+                (),
+                "file",
+                item.item_id,
+            ),
+            preview_item,
+        )
+
+    def legacy_authorization(auth_id, preview_id, intent_id, item, preview_item, source):
+        return ManualExecutionAuthorization(
+            auth_id,
+            preview_id,
+            intent_id,
+            1,
+            snapshot_id,
+            snapshot_digest,
+            "upgrade-operator",
+            "execute_manual_organize",
+            True,
+            False,
+            False,
+            (
+                ManualExecutionScopeItem(
+                    item.item_id,
+                    preview_item.preview_item_id,
+                    item.version,
+                    source.fingerprint,
+                    preview_item.plan_fingerprint,
+                    source,
+                    item.choice,
+                ),
+            ),
+            NOW,
+            NOW + timedelta(minutes=10),
+        )
+
+    def legacy_execution(execution_id, preview_id, intent_id, auth_id, task_id, item,
+                         preview_item, source):
+        execution_item = ManualExecutionItem(
+            f"{execution_id}-item",
+            execution_id,
+            preview_id,
+            preview_item.preview_item_id,
+            intent_id,
+            item.item_id,
+            task_id,
+            f"{task_id}-task-item",
+            item.version,
+            source.fingerprint,
+            preview_item.plan_fingerprint,
+            source,
+            item.choice,
+            preview_item.plan,
+            ManualExecutionItemStatus.ADMITTED,
+            "admitted",
+            None,
+            "unknown",
+            (),
+            (),
+            None,
+            "wait for exact execution to finish",
+            (),
+            NOW,
+            NOW,
+        )
+        return ManualExecution(
+            execution_id,
+            preview_id,
+            intent_id,
+            auth_id,
+            task_id,
+            "upgrade-operator",
+            1,
+            snapshot_id,
+            snapshot_digest,
+            (item.item_id,),
+            (),
+            (execution_item,),
+            ManualExecutionStatus.ADMITTED,
+            "inspect each exact execution item",
+            None,
+            False,
+            False,
+            NOW,
+            NOW,
+            None,
+        )
+
+    def admit(name, source, execution_status, item_status, result_status, certainty,
+              operations, uncertain):
+        item = legacy_item(f"intent-{name}", f"item-{name}", source)
+        repository.create_manual_intent_with_audit(
+            legacy_intent(f"intent-{name}", (item,)),
+            (item,),
+            ManualIntentAudit(
+                f"audit-{name}", f"intent-{name}", None, "upgrade-operator",
+                "created", {}, {}, NOW,
+            ),
+        )
+        target = f"Movies/Legacy {name} (2002)/Legacy {name} (2002).mkv"
+        preview_value, preview_item = legacy_preview(
+            f"preview-{name}", f"intent-{name}", item, source, target
+        )
+        repository.create_manual_preview(preview_value, preview_value.items)
+        auth = legacy_authorization(
+            f"auth-{name}", f"preview-{name}", f"intent-{name}", item, preview_item, source
+        )
+        repository.create_manual_execution_authorization(auth)
+        execution_value = legacy_execution(
+            f"exec-{name}", f"preview-{name}", f"intent-{name}", f"auth-{name}",
+            f"task-{name}", item, preview_item, source,
+        )
+        repository.admit_manual_execution(
+            auth,
+            execution_value,
+            (execution_value.items[0],),
+            (("source-storage", source.path), ("media-target", target)),
+            NOW,
+        )
+        if execution_status is ManualExecutionStatus.ADMITTED:
+            return
+        admitted = repository.get_manual_execution(f"exec-{name}")
+        terminal_item = replace(
+            admitted.items[0],
+            status=item_status,
+            stage="completed" if item_status is ManualExecutionItemStatus.SUCCESS else "failed",
+            result_id=f"legacy-result-{name}",
+            effect_certainty=certainty,
+            completed_operations=operations,
+            uncertain_effects=uncertain,
+            error=None if item_status is ManualExecutionItemStatus.SUCCESS else f"{name} failure",
+            next_action="inspect the durable Result",
+            updated_at=NOW,
+        )
+        terminal_execution = replace(
+            admitted,
+            items=(terminal_item,),
+            status=execution_status,
+            next_action="inspect each item outcome",
+            updated_at=NOW,
+            completed_at=NOW,
+        )
+        task_item = PersistentTaskItem(
+            terminal_item.task_item_id,
+            f"task-{name}",
+            "source-storage",
+            "source",
+            source.path,
+            f"source-storage:{source.path}",
+            (
+                TaskItemStatus.SUCCESS
+                if item_status is ManualExecutionItemStatus.SUCCESS
+                else TaskItemStatus.FAILED
+            ),
+            terminal_item.stage,
+            1,
+            NOW,
+            NOW,
+            plan_id=terminal_item.plan.get("planId"),
+            destination_storage_id="media-target",
+            destination_path=target,
+            error=terminal_item.error,
+            source_occurrence_id=source.occurrence_id,
+            source_fingerprint=source.fingerprint,
+            source_fingerprint_state="verified",
+        )
+        task = PersistentTask(
+            f"task-{name}",
+            "manual_organize",
+            (
+                PersistentTaskStatus.COMPLETED
+                if execution_status is ManualExecutionStatus.COMPLETED
+                else PersistentTaskStatus.PARTIAL_SUCCESS
+            ),
+            True,
+            NOW,
+            NOW,
+            NOW,
+            NOW,
+            1,
+            1 if item_status is ManualExecutionItemStatus.SUCCESS else 0,
+            0 if item_status is ManualExecutionItemStatus.SUCCESS else 1,
+            None,
+            False,
+            None,
+            1,
+            snapshot_id,
+            snapshot_digest,
+        )
+        result = PersistentResultRecord(
+            f"legacy-result-{name}",
+            f"task-{name}",
+            terminal_item.task_item_id,
+            "source-storage",
+            source.path,
+            "media-target",
+            target,
+            "A",
+            "tmdb",
+            "1",
+            "A",
+            "A",
+            "A",
+            "A",
+            "MOVE",
+            result_status,
+            NOW,
+            title=f"Legacy {name}",
+            completed_operations=operations,
+            effect_certainty=certainty,
+            uncertain_effects=uncertain,
+            error=terminal_item.error,
+        )
+        effect = ManualExecutionEffect(
+            f"legacy-effect-{name}",
+            terminal_item.execution_item_id,
+            0,
+            "MOVE",
+            "source-storage",
+            source.path,
+            "media-target",
+            target,
+            certainty == "verified_complete",
+            certainty,
+            {},
+            NOW,
+        )
+        repository.complete_manual_execution_item(
+            terminal_execution,
+            terminal_item,
+            task_item,
+            task,
+            result,
+            (effect,),
+            (("source-storage", source.path), ("media-target", target)),
+        )
+
+    admit(
+        "admitted",
+        legacy_source("电影/LegacyAdmitted.2001.mkv", "LegacyAdmitted.2001.mkv"),
+        ManualExecutionStatus.ADMITTED,
+        ManualExecutionItemStatus.ADMITTED,
+        "dry_run",
+        "unknown",
+        (),
+        (),
+    )
+    admit(
+        "completed",
+        legacy_source("电影/LegacyCompleted.2002.mkv", "LegacyCompleted.2002.mkv"),
+        ManualExecutionStatus.COMPLETED,
+        ManualExecutionItemStatus.SUCCESS,
+        "SUCCESS",
+        "verified_complete",
+        ("MOVE",),
+        (),
+    )
+    admit(
+        "partial",
+        legacy_source("电影/LegacyPartial.2003.mkv", "LegacyPartial.2003.mkv"),
+        ManualExecutionStatus.PARTIAL_SUCCESS,
+        ManualExecutionItemStatus.FAILED,
+        "FAILED",
+        "none",
+        (),
+        (),
+    )
+    admit(
+        "uncertain",
+        legacy_source("电影/LegacyUncertain.2004.mkv", "LegacyUncertain.2004.mkv"),
+        ManualExecutionStatus.PARTIAL_SUCCESS,
+        ManualExecutionItemStatus.PARTIAL,
+        "PARTIAL",
+        "attempted_unverified",
+        ("MOVE",),
+        ("mutation_outcome",),
+    )
+
     print(
         json.dumps(
             {
@@ -522,6 +976,12 @@ with (
                 "taskId": "upgrade-task",
                 "fileId": "upgrade-file",
                 "notifications": len(repository.list_deliveries()),
+                "manualIntents": len(repository.list_manual_intents(limit=50)),
+                "manualExecutions": sorted(
+                    value.execution_id for value in repository.list_manual_executions_for_intent(
+                        "intent-admitted", limit=10
+                    )
+                ),
             }
         )
     )
@@ -669,6 +1129,13 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
         root = Path(directory)
         os.chmod(root, 0o755)
         config_file, environment_file, source_root, target_root = prepare_files(root, token)
+        # A real ResourceLibrary-relative source for the post-upgrade discovery
+        # persistence check.  The source mount stays read-only in production, so
+        # the file is created on the host before the stack starts.
+        (source_root / "电影").mkdir(parents=True, exist_ok=True)
+        (source_root / "电影" / "Upgrade.2001.mkv").write_bytes(b"post-upgrade discovery media")
+        for child in source_root.rglob("*"):
+            child.chmod(0o755 if child.is_dir() else 0o644)
         environment = compose_environment(
             root,
             old_image,
@@ -929,6 +1396,107 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
             )
             if success_item.get("status") != "success":
                 raise RuntimeError("success per-item disposition changed after upgrade")
+
+            # The genuine prior-committed manual work must survive the upgrade
+            # with its own intent, Preview, admitted execution and terminal
+            # completed/partial/uncertain outcomes intact.
+            # The terminal historical states must be preserved exactly.  The
+            # one historically *admitted* execution is genuine claimable work:
+            # the live candidate Worker may claim it, so it must stay readable
+            # and must never fabricate a verified effect it never performed.
+            expected_manual = {
+                "completed": ("completed", "success", "verified_complete"),
+                "partial": ("partial_success", "failed", "none"),
+                "uncertain": ("partial_success", "partial", "attempted_unverified"),
+            }
+            for name in ("admitted", *expected_manual):
+                status, intent_document = json_request(
+                    base, f"/api/v1/operations/organize/intents/intent-{name}", token
+                )
+                if status != 200:
+                    raise RuntimeError(
+                        f"legacy manual intent {name} is unreadable after upgrade: HTTP {status}"
+                    )
+                status, execution_document = json_request(
+                    base,
+                    f"/api/v1/operations/organize/executions?intentId=intent-{name}&limit=10",
+                    token,
+                )
+                if status != 200 or len(execution_document.get("items") or []) != 1:
+                    raise RuntimeError(
+                        f"legacy manual execution {name} is unreadable after upgrade: "
+                        f"HTTP {status} {execution_document}"
+                    )
+                execution_id = execution_document["items"][0]["executionId"]
+                status, execution_detail = json_request(
+                    base,
+                    f"/api/v1/operations/organize/executions/{execution_id}",
+                    token,
+                )
+                if status != 200:
+                    raise RuntimeError(
+                        f"legacy manual execution detail {name} is unreadable: HTTP {status}"
+                    )
+                item_document = (execution_detail.get("items") or [{}])[0]
+                if name == "admitted":
+                    if execution_detail.get("status") not in {
+                        "admitted",
+                        "running",
+                        "partial_success",
+                        "failed",
+                        "completed",
+                    }:
+                        raise RuntimeError(
+                            "legacy admitted execution lost its durable state: "
+                            f"{execution_detail.get('status')}"
+                        )
+                    if item_document.get("effectCertainty") == "verified_complete":
+                        raise RuntimeError(
+                            "the upgrade fabricated a verified effect for admitted work"
+                        )
+                    continue
+                execution_status, item_status, certainty = expected_manual[name]
+                if (
+                    execution_detail.get("status") != execution_status
+                    or item_document.get("status") != item_status
+                    or item_document.get("effectCertainty") != certainty
+                ):
+                    raise RuntimeError(
+                        f"legacy manual state {name} changed across the upgrade: {execution_detail}"
+                    )
+            # Historical manual work gains no discovery scope or new authority.
+            status, discovery_list = json_request(
+                base, "/api/v1/operations/organize/discoveries", token
+            )
+            if status != 200 or (discovery_list.get("items") or []):
+                raise RuntimeError(
+                    f"the upgraded database fabricated discovery scope: {discovery_list}"
+                )
+            # The new discovery boundary persists real work after the upgrade.
+            status, admitted_discovery = json_request(
+                base,
+                "/api/v1/resource-libraries/source/files/discoveries",
+                token,
+                method="POST",
+                body={"paths": ["电影"]},
+            )
+            if status != 202 or not admitted_discovery.get("discoveryId"):
+                raise RuntimeError(
+                    f"post-upgrade discovery admission failed: {status} {admitted_discovery}"
+                )
+            discovery_id = admitted_discovery["discoveryId"]
+            settled = None
+            for _ in range(60):
+                _, settled = json_request(
+                    base,
+                    f"/api/v1/operations/organize/discoveries/{discovery_id}",
+                    token,
+                )
+                if settled.get("status") not in {"queued", "running"}:
+                    break
+                time.sleep(0.5)
+            if settled is None or settled.get("status") != "completed":
+                raise RuntimeError(f"post-upgrade discovery did not complete: {settled}")
 
             status, ui = http_request(f"{base}/ui/")
             if status != 200 or b"MediaFlow Operator" not in ui:

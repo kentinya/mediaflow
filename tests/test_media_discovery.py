@@ -141,6 +141,8 @@ class _DiscoveryFixture(unittest.TestCase):
         self.root = Path(self._temporary.name)
         self.source_root = self.root / "source"
         self.source_root.mkdir()
+        self.second_root = self.root / "second-root"
+        self.second_root.mkdir()
         self.target_root = self.root / "target"
         self.target_root.mkdir()
         self.database = self.root / "runtime.sqlite3"
@@ -149,8 +151,15 @@ class _DiscoveryFixture(unittest.TestCase):
     def tearDown(self) -> None:
         self._temporary.cleanup()
 
-    def media(self, relative: str, *, size: int = 512, modified_at: datetime | None = None):
-        path = self.source_root / relative
+    def media(
+        self,
+        relative: str,
+        *,
+        size: int = 512,
+        modified_at: datetime | None = None,
+        second: bool = False,
+    ):
+        path = (self.second_root if second else self.source_root) / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"m" * size)
         if modified_at is not None:
@@ -165,6 +174,7 @@ class _DiscoveryFixture(unittest.TestCase):
         max_depth: int | None = None,
         extensions: tuple[str, ...] = ("mkv", "mp4"),
         exclude_rules: tuple[str, ...] = (),
+        second_library: bool = False,
     ) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"]["databasePath"] = str(self.database)
@@ -195,6 +205,30 @@ class _DiscoveryFixture(unittest.TestCase):
             "maxDepth": max_depth,
         }
         document["resourceLibraries"] = [library]
+        if second_library:
+            # A second enabled ResourceLibrary with a *different* Storage and
+            # root but the same legal relative folder names — the exact
+            # cross-library reconciliation hazard B's P1 describes.
+            document["storages"].append(
+                {
+                    "id": "source2",
+                    "name": "Source2",
+                    "type": "local",
+                    "rootPath": str(self.second_root),
+                    "enabled": True,
+                }
+            )
+            document["resourceLibraries"].append(
+                {
+                    "id": "library2",
+                    "name": "Library2",
+                    "storageId": "source2",
+                    "storagePath": "",
+                    "enabled": True,
+                    "extensions": list(extensions),
+                    "maxDepth": max_depth,
+                }
+            )
         document["mediaLibraries"] = [
             {
                 "id": "movies",
@@ -226,11 +260,20 @@ class _DiscoveryFixture(unittest.TestCase):
         extensions: tuple[str, ...] = ("mkv", "mp4"),
         exclude_rules: tuple[str, ...] = (),
         budgets: DiscoveryBudgets | None = None,
+        second_library: bool = False,
     ):
 
-        document = self.document(stability=stability, max_depth=max_depth, extensions=extensions)
+        document = self.document(
+            stability=stability,
+            max_depth=max_depth,
+            extensions=extensions,
+            second_library=second_library,
+        )
         source = _RecordingStorage(LocalStorage("source", self.source_root))
         target = _RecordingStorage(LocalStorage("target", self.target_root))
+        storages = {"source": source, "target": target}
+        if second_library:
+            storages["source2"] = _RecordingStorage(LocalStorage("source2", self.second_root))
         with (
             SQLiteConfigurationRepository(self.database) as configuration_repository,
             SQLiteTaskRepository(self.database) as repository,
@@ -248,14 +291,14 @@ class _DiscoveryFixture(unittest.TestCase):
                 None,
                 managed,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
-                storage_factory=lambda value, ids: {"source": source, "target": target},
+                storage_factory=lambda value, ids: dict(storages),
             )
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
                 None,
                 configuration=runtime,
-                storages={"source": source, "target": target},
+                storages=dict(storages),
                 clock=self.clock,
             )
             discovery = MediaDiscoveryService(
@@ -263,7 +306,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 intents,
                 configuration=runtime,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
-                storages={"source": source, "target": target},
+                storages=dict(storages),
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
@@ -289,7 +332,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 manual_intent_service=intents,
                 manual_preview_service=previews,
                 media_discovery_service=discovery,
-                storage_adapters={"source": source, "target": target},
+                storage_adapters=dict(storages),
             )
             try:
                 yield SimpleNamespace(
@@ -302,6 +345,7 @@ class _DiscoveryFixture(unittest.TestCase):
                     clock=self.clock,
                     source=source,
                     target=target,
+                    storages=storages,
                     revision=revision,
                 )
             finally:
@@ -1018,6 +1062,138 @@ class WorkerOwnershipTests(_DiscoveryFixture):
 
 class FreezeAndHandoffTests(_DiscoveryFixture):
     """Scope 6 and AC5: frozen lists feed the existing pipeline unchanged."""
+
+    def test_two_libraries_with_the_same_relative_path_never_reconcile(self) -> None:
+        """B blocker (P1): the admission binds the exact library/Storage binding.
+
+        Two enabled ResourceLibraries with different roots can contain the
+        same legal relative folder.  While the first library's discovery is
+        still open, submitting the same relative path through the second
+        library is a *different source selection*: it must admit its own
+        discovery bound to the second library/Storage, and its finalize must
+        freeze that second library's real files — never the first library's
+        sources under the second library's return context.
+        """
+
+        self.media("SP/Extra.2003.mkv")
+        self.media("SP/Second.Library.2024.mkv", second=True)
+        with self.journey(second_library=True) as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["SP"]},
+            )
+            self.assertEqual("library", first["resourceLibraryId"], first)
+            # The same relative path through the second enabled library is a
+            # different admission: a separate durable record bound to
+            # library2/source2, never a reconciliation to the first record.
+            status, second = self.request(
+                value,
+                "/api/v1/resource-libraries/library2/files/discoveries",
+                "POST",
+                {"paths": ["SP"]},
+            )
+            self.assertEqual(202, status, second)
+            self.assertEqual("library2", second["resourceLibraryId"], second)
+            self.assertNotEqual(first["discoveryId"], second["discoveryId"])
+            # Both durable records exist, each with its own binding.
+            stored = {
+                row.discovery_id: row for row in value.repository.list_media_discoveries(limit=50)
+            }
+            self.assertEqual(
+                ("library", "source"),
+                (
+                    stored[first["discoveryId"]].resource_library_id,
+                    stored[first["discoveryId"]].storage_id,
+                ),
+            )
+            self.assertEqual(
+                ("library2", "source2"),
+                (
+                    stored[second["discoveryId"]].resource_library_id,
+                    stored[second["discoveryId"]].storage_id,
+                ),
+            )
+            # The second walk discovers the second library's own file.
+            settled = self.run_discovery(value)
+            if settled["discoveryId"] != second["discoveryId"]:
+                for _ in range(8):
+                    stored_second = value.repository.get_media_discovery(second["discoveryId"])
+                    if stored_second is not None and stored_second.terminal:
+                        settled = self.request(
+                            value,
+                            f"/api/v1/operations/organize/discoveries/{second['discoveryId']}",
+                        )[1]
+                        break
+                    self.run_discovery(value)
+            self.assertEqual(1, settled["primarySourceCount"], settled)
+            self.assertEqual(
+                ["SP/Second.Library.2024.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            # Freezing the second discovery hands the second library's exact
+            # source to the existing manual intent boundary.
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{second['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertIsNotNone(intent)
+            self.assertEqual(
+                [("source2", "library2", "SP/Second.Library.2024.mkv")],
+                [
+                    (item.source.storage_id, item.source.resource_library_id, item.source.path)
+                    for item in intent.items
+                ],
+            )
+            # The first library's file never entered the second discovery.
+            self.assertNotIn(
+                "SP/Extra.2003.mkv",
+                [item.source.path for item in intent.items],
+            )
+
+    def test_two_libraries_with_the_same_relative_path_discover_their_own_sources(
+        self,
+    ) -> None:
+        """Both libraries complete their own walks from the same relative path."""
+
+        self.media("SP/Extra.2003.mkv")
+        self.media("SP/Second.Library.2024.mkv", second=True)
+        with self.journey(second_library=True) as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["SP"]},
+            )
+            _, second = self.request(
+                value,
+                "/api/v1/resource-libraries/library2/files/discoveries",
+                "POST",
+                {"paths": ["SP"]},
+            )
+            # Drive the Worker until both walks settle.
+            for _ in range(10):
+                if (
+                    value.repository.get_media_discovery(first["discoveryId"]).terminal
+                    and value.repository.get_media_discovery(second["discoveryId"]).terminal
+                ):
+                    break
+                value.discovery.claim_and_run(worker_id=f"worker-{_}", claim_token=f"token-{_}")
+            first_doc = value.repository.get_media_discovery(first["discoveryId"])
+            second_doc = value.repository.get_media_discovery(second["discoveryId"])
+            self.assertEqual(["SP/Extra.2003.mkv"], [item["path"] for item in first_doc.sources])
+            self.assertEqual(
+                ["SP/Second.Library.2024.mkv"], [item["path"] for item in second_doc.sources]
+            )
+            # Zero mutation across both libraries.
+            for storage in value.storages.values():
+                self.assertEqual([], storage.mutations)
 
     def test_finalize_freezes_one_deduplicated_list_and_links_the_intent(self) -> None:
         self.media("Movies/One.2001.mkv")

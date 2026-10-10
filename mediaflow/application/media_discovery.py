@@ -210,13 +210,19 @@ class MediaDiscoveryService:
                 next_action="select one or more folders or files and retry",
             )
         # Actor/scope/pin-bound admission identity: an identical open
-        # submission for the same principal, the same deduplicated scope and
+        # submission for the same principal, the same enabled
+        # ResourceLibrary/Storage binding, the same deduplicated scope and
         # the same immutable Active pin is reconciled to its durable record
         # instead of admitting a second duplicate walk.  A *terminal* record
         # is never reopened by resubmission — deliberate successor work is
         # always a new discovery.
         reconciliation = self._reconcile_admission(
-            actor, deduplicated, snapshot_id, snapshot_digest
+            actor,
+            deduplicated,
+            snapshot_id,
+            snapshot_digest,
+            resource_library_id,
+            library.storage_id,
         )
         if reconciliation is not None:
             return reconciliation
@@ -276,15 +282,20 @@ class MediaDiscoveryService:
         scope: tuple[DiscoveryScopeEntry, ...],
         snapshot_id: str,
         snapshot_digest: str,
+        resource_library_id: str,
+        storage_id: str,
     ) -> MediaDiscovery | None:
         """Find one already durable open discovery for this exact admission.
 
-        The match is bound to the actor, the canonical deduplicated scope
-        signature and the admitted configuration pin.  A lost admission
-        response therefore reconciles to the original durable record instead
-        of admitting a duplicate walk, while a different scope, a different
-        principal or a repinned Active configuration is always a new
-        admission.
+        The match is bound to the actor, the *exact ResourceLibrary binding*
+        (library identity plus its pinned Storage/root context), the canonical
+        deduplicated scope signature and the admitted configuration pin.  A
+        lost admission response therefore reconciles to the original durable
+        record instead of admitting a duplicate walk, while a different scope,
+        a different principal, a different library/Storage binding or a
+        repinned Active configuration is always a new admission.  Two enabled
+        ResourceLibraries with the same relative path can never answer for
+        each other: the relative path alone is not the source identity.
         """
 
         lister = getattr(self._repository, "list_media_discoveries", None)
@@ -296,6 +307,14 @@ class MediaDiscoveryService:
         # principal with a long discovery history.
         for candidate in lister(actor=actor, limit=50):
             if candidate.terminal or candidate.frozen:
+                continue
+            if (
+                candidate.resource_library_id != resource_library_id
+                or candidate.storage_id != storage_id
+            ):
+                # A different ResourceLibrary (or a different Storage/root
+                # binding for the same relative path) is a different source
+                # selection, never the same admitted scope.
                 continue
             if candidate.snapshot_id != snapshot_id or candidate.snapshot_digest != snapshot_digest:
                 continue
