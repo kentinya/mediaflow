@@ -6,7 +6,7 @@ current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 44.6
 Parent Slice: 44
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 001bae34769c718033f147873ab16cc22630e484
 Difficulty: High
 Test Level: T4
@@ -571,109 +571,325 @@ First failures and repeats (retained, not hidden)
 Status: READY FOR B REVIEW
 Head SHA: 71d9aa1a08655fccda247e2f99594737daa19e30
 ```
-## B Independent Review Evidence — 2026-10-09
+
+## Developer Completion Report — Correction Round 2
+
+Correction round 2 addresses exactly the two blockers in the retained B Review Result above:
+(P1) admission reconciliation could substitute another ResourceLibrary's source scope, and
+(blocker 2) the assigned complete native execution/recovery and prior-work compatibility
+acceptance was not actually driven. Task ID, Task Base, Goal, Scope, acceptance criteria and
+assigned Test Level are unchanged. Correction implementation checkpoint:
+`bf0e00e9a7253ef93684265589e3849e568369be`.
+
+### Changed Files (correction round 2)
+
+- `mediaflow/application/media_discovery.py` — `admit()` now records the resolved
+  ResourceLibrary binding, and `_reconcile_admission` additionally requires the exact
+  `resource_library_id` and its pinned `storage_id` before any candidate may be reconciled.
+  A different library, or a different Storage/root binding for the same relative path, is now
+  always a new admission. Single-library recovery and terminal-successor behavior are
+  unchanged.
+- `tests/test_media_discovery.py` — the fixture gained a second enabled ResourceLibrary on a
+  second Storage (`library2` / `source2`); two new `FreezeAndHandoffTests` drive both
+  libraries selecting the *same* legal relative path through native API admission, prove the
+  second submission never reconciles to the first library's record, and prove each library's
+  own walk and frozen handoff stay bound to its own sources.
+- `scripts/files_organize_discovery_browser_proof.py` — the real-Python acceptance now
+  continues past discovery into the ordinary manual journey: a reviewed Choice, one exact
+  zero-mutation Preview and one separately confirmed Execute whose exact item the real
+  OrganizerExecutor completes, plus truthful re-Preview refusal and explicit successor
+  recovery.
+- `scripts/docker_files_organize_discovery_browser_proof.py` — the same continuation against
+  the production image, including the production Worker pickup, the exact target, the
+  non-replay refusal and the post-execution discovery of the changed successor source.
+- `scripts/docker_upgrade_recovery_smoke_test.py` — the genuine schema-38 → 45 rehearsal now
+  seeds historical manual intents, Previews, one-shot authorizations and admitted/completed/
+  partial/uncertain executions *through the old image's own domain objects and repository
+  write paths*, then verifies each state through the candidate API after the upgrade and
+  proves new discovery persistence works on the upgraded database.
+- `tests/test_task_persistence.py` — the schema-44 → 45 fixture is now explicitly documented
+  as a bounded schema-shape fixture rather than a prior-artifact rehearsal, and it asserts a
+  real discovery round-trip plus the preserved pre-existing admitted manual intent.
+
+### Implemented (correction round 2)
+
+1. **P1 — reconciliation is bound to the exact library and Storage.** The previous
+   reconciliation key was actor + canonical scope signature + configuration pin. Two enabled
+   ResourceLibraries whose roots both contain the same legal relative folder therefore
+   produced the same signature, so a submission through the second library returned the
+   first library's durable record and would later freeze the first library's sources under
+   the second library's return context. Reconciliation now also requires the exact
+   `resource_library_id` and its pinned `storage_id`; because the pin plus the library
+   identity deterministically fix the root path, no extra root field is stored. A different
+   library — or the same relative path under a different Storage binding — is always a new
+   admission. The two-library equal-relative-path regression drives native API admission for
+   both libraries and asserts, through the durable repository, that the second admission
+   carries its own `resourceLibraryId`/`storageId` and its own sources.
+2. **Blocker 2 — the assigned execution/recovery acceptance is now actually driven.** Both
+   the real-Python proof and the isolated Docker proof continue from the frozen discovery
+   into a reviewed Choice, exactly one zero-mutation Preview and one separately confirmed
+   Execute. The real `OrganizerExecutor` performs the planned Move, the proof asserts the
+   exact destination Storage and relative path from the current durable Preview, asserts the
+   Task completed and that the source is gone and the target exists, asserts a re-Preview is
+   truthfully refused (`source_missing`) with no replay, and then admits and finalizes a
+   *successor* discovery for the changed source with its own intent while the earlier frozen
+   list stays unchanged.
+3. **Blocker 2 — prior-work compatibility is rehearsed on genuine prior artifacts.** The
+   upgrade smoke seeds the assigned historical manual states (admitted, completed, partial,
+   uncertain) inside the real schema-38 image using that image's own code, and the candidate
+   upgrade must preserve each terminal state exactly while never inventing a verified effect
+   for the genuinely claimable admitted work; the upgraded database must fabricate no
+   discovery scope and must still persist new discovery work.
+
+### Tests and Results (correction round 2)
+
+All commands from `/root/mediaflow` (Web commands from `web/`). The tested candidate is the
+committed correction checkpoint `bf0e00e9a7253ef93684265589e3849e568369be`; raw original
+logs, proof matrices and screenshots are retained under
+`.git/validation-evidence/bf0e00e9a7253ef93684265589e3849e568369be/task44-6-correction2/`
+(`evidence-index.json`, `raw/`, `browser/`, `docker-discovery/`).
+
+Python (repository root) — all on the committed candidate
+- `python scripts/check_governance.py` — **PASS**.
+- `python -m unittest discover -s tests` — **PASS**, 2352 tests, 7 skipped (the pre-existing
+  external-service skips; no test deleted, skipped or weakened).
+- `ruff format --check .` / `ruff check .` — **PASS** (357 files).
+- `python -m compileall -q mediaflow tests scripts` — **PASS**.
+- `python -m pip check` — **PASS**.
+- `mediaflow --config config/strategy.example.json config validate` and
+  `config/mediaflow.phase13.2.example.json` — **PASS**.
+- `python -m pip wheel . --no-deps -w dist` — **PASS**; wheel
+  `mediaflow-2.0.0.dev0-py3-none-any.whl` sha256
+  `96d14370794dd326440b097f5d10be1b7184adc2acea59678ef7a5e6765e096a`; then
+  `python scripts/wheel_smoke_test.py dist/mediaflow-2.0.0.dev0-py3-none-any.whl` —
+  **PASS** (schema 45 backup verified).
+- `git diff --check` — **PASS**.
+- Cross-library regression (the P1 falsification): the two new tests **PASS**; with the
+  library/Storage guard temporarily removed the reconciliation test **FAILS** (the second
+  library reconciles to the first library's `resourceLibraryId`), and the guard was restored
+  before the commit.
+
+Web (`web/`) — all on the committed candidate
+- `npm run format:check`, `npm run lint`, `npm run typecheck` — **PASS**.
+- `npm run build` — **PASS**; index `ce9351ee…`, JS `25f90668…`, CSS `abd3206d…` (identical
+  to the previously reviewed artifact, so the served identity is unchanged).
+- `npm run test -- --run` — **PASS**, 1083 tests.
+- `npm run test:e2e` (default suite) — **PASS**, 246 tests.
+- `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 21 tests.
+- `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **PASS**, 10 tests.
+
+Real-Python acceptance (real API + real SQLite + current Worker + built Chromium)
+- `python scripts/files_organize_discovery_browser_proof.py` — **PASS**, 11 browser passes.
+  The four selections reproduce; the confirmed execution moved
+  `执行范围/Execution.2004.mkv` to
+  `Movies/其他电影/Execution (2004) [tmdbid-909]/Execution (2004).mkv`, the Task completed,
+  the re-Preview was refused (`source_missing`) with no replay, and the successor discovery
+  of the changed source finalized with its own intent while the earlier frozen list stayed
+  unchanged.
+- `python scripts/files_toolbar_browser_proof.py` — **PASS**, 22 passes / 48 screenshots;
+  served index `ce9351ee…` identical to the local candidate.
+
+Isolated Docker acceptance (production image `mediaflow:task44-6-discovery-bf0e00e9a725`,
+built by `git archive HEAD` of the committed candidate; isolated project/ports/volumes;
+`TMPDIR=/run/mf-docker-tmp`)
+- `python scripts/docker_files_organize_discovery_browser_proof.py` — **PASS**, 7 passes.
+  `matrix.json` records `candidateSha bf0e00e9a725…`, `confirmedExecution` with
+  `sourceMoved true`, `taskStatus completed`, `replayRefusal source_missing`; the production
+  Worker moved the exact reviewed item and never replayed it.
+- `python scripts/docker_upgrade_recovery_smoke_test.py` — **PASS**. Genuine schema-38 image
+  seeded the four historical manual states through the old code; after upgrade all four
+  intents and executions read back through the candidate API with their exact statuses
+  (`completed/success/verified_complete`, `partial_success/failed/none`,
+  `partial_success/partial/attempted_unverified`) and the admitted one never fabricated a
+  verified effect; the upgraded database published no fabricated discovery scope and
+  persisted a fresh post-upgrade discovery to `completed`.
+- `python scripts/docker_files_toolbar_browser_proof.py` — **PASS**, 22 passes; served index
+  equals the local candidate.
+- `python scripts/docker_health_smoke_test.py` — **PASS**.
+- `python scripts/docker_release_security_smoke_test.py` — **PASS**.
+
+First failures and repeats (retained, not hidden)
+- The first extended upgrade run failed because the seeded legacy intents pinned a fabricated
+  snapshot id; the seed now derives the real option projection from the exact managed Active
+  revision through the old image's own
+  `ManualOrganizeIntentService._snapshot_from_runtime`, and the rerun passed.
+- The next upgrade run failed the terminal-state assertion for the *admitted* execution: the
+  live candidate Worker legitimately claimed that genuine claimable work, so it presented as
+  `running`. The assertion was corrected to require a durable admitted/running/terminal state
+  and to forbid any invented `verified_complete` effect, rather than demanding a frozen
+  `admitted` status that would contradict real Worker behavior.
+- The first discovery-list readback used `?limit=100`, which the route rejects
+  (`invalid_request`); the bounded default read is used instead.
+- The upgrade rehearsal's source root was empty, so the post-upgrade discovery had no real
+  source; a real `电影/Upgrade.2001.mkv` is now created on the host before the stack starts.
+
+### Decisions (correction round 2)
+
+- **The reconciliation key is identity, not geometry.** Binding to the exact
+  `resource_library_id` and its pinned `storage_id` is strictly stronger than comparing
+  roots, and it needs no new persisted field because the pin plus the library identity
+  already determine the root. The binding is passed explicitly into the match rather than
+  held on the service instance, so concurrent admissions on one service cannot observe
+  each other's library.
+- **Legacy manual states are seeded by the old image's own code.** Building the rows with the
+  old domain objects and repository write paths (rather than a hand-written newer-format
+  document) is what makes the rehearsal a real compatibility proof.
+- **Claimable historical work is asserted truthfully.** An admitted legacy execution is real
+  work the live Worker may complete; the rehearsal asserts state fidelity and non-fabrication
+  instead of demanding a status the product must not force.
+- **The unit fixture no longer overclaims.** The schema-44 → 45 test is documented as a
+  bounded schema-shape fixture; the prior-artifact rehearsal is the schema-38 Docker upgrade.
+
+### Remaining In-Slice Work (correction round 2)
+
+- B still owns the all-Required-Outcome recheck and any further Task inside Slice 44.
+- The discovery list read remains principal-scoped and bounded; a dedicated paged history
+  surface was not part of this Task.
+- Only the Local Storage adapter was exercised end-to-end; SMB/OpenList/S3 folder discovery
+  was not run against a real remote provider.
+
+### Risks / Deviations (correction round 2)
+
+- **Docker images are built from committed trees only.** Every Docker gate above was run
+  after the correction commit, so `git archive HEAD` includes the P1 fix and the extended
+  proofs; the recorded `candidateSha` in the proof matrix confirms it.
+- **`CURRENT_SCHEMA = 45`** with the additive discovery tables; the schema-44 → 45 unit
+  fixture and the genuine schema-38 → 45 Docker rehearsal both cover the upgrade.
+- **The legacy seed uses internal old-code helpers** (`_snapshot_from_runtime`) inside the
+  isolated old image to produce a faithful pinned projection; this is proof-side seeding of
+  historical rows, not production code, and it runs only in the disposable rehearsal.
+- **Unrelated untracked files preserved.** Four untracked screenshots under `docs/pics/`
+  predate this Task and were left untouched; no stash, reset, restore, checkout or clean was
+  used against them.
+
+### Checkpoint (correction round 2)
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: bf0e00e9a7253ef93684265589e3849e568369be
+```
+
+## B Independent Review Evidence — 2026-10-10
 
 Reviewed actual Task Base `001bae34769c718033f147873ab16cc22630e484` through
-`4f70ba49dd170ee32a462ee8bc38aa871fe65bb2`, including Developer's executable checkpoint
-`c1c2340d3d6584994f4ec426230bce363fadd96c`. The successor changes only TASK.md.
-The header remained PLANNED, but the latest Developer Checkpoint requested READY FOR B REVIEW;
-this review resolves that checkpoint and leaves the same Task in its correction loop.
+`3b7dacf45564d63386486d832b0f3b326b497429`, including correction implementation
+`71d9aa1a08655fccda247e2f99594737daa19e30`. The implementation-to-HEAD diff changes only
+TASK.md; executable sources, tests, dependencies and harnesses are identical. The header still
+said IN PROGRESS while the latest Developer Checkpoint requested READY FOR B REVIEW. This review
+resolves that submission and sets the same Task to FIX REQUIRED. This is B correction round 2;
+Task ID/Base/Goal/Scope/acceptance/test plan remain unchanged. Earlier review history is retained
+in Git, including the first review's `4f70ba4` snapshot and ignored evidence.
 
-Independent evidence, reproducible probe and original receipts/logs/screenshots:
-`.git/validation-evidence/4f70ba49dd170ee32a462ee8bc38aa871fe65bb2/b44-6-review/`.
-Run `.venv/bin/python
-.git/validation-evidence/4f70ba49dd170ee32a462ee8bc38aa871fe65bb2/b44-6-review/production-boundary-probe-v7.py`
-from the repository root after the current Web build. The completed probe exits 0 as a diagnostic;
-it records product refusals/missing refusals and is not an acceptance PASS. Its `repeat-v7/`
-contains actual API responses, durable actor/scope/pin-bound rows and inspected screenshots.
-The fixture uses the actual managed configuration, real Local Storage/SQLite, production CLI API
-and resident Worker pickup, current built Chromium assets and synthetic temporary media. The
-response-loss case forwards the real admission, then drops only its browser response; it does
-not remove a production Storage capability, invent an adapter or use mixed runtime versions.
+Independent evidence, runnable diagnostic, API receipts, native browser logs and inspected images:
+`.git/validation-evidence/3b7dacf45564d63386486d832b0f3b326b497429/b44-6-correction-review/`
+(`review-index.json`, `production-probe.py`, `recovery-and-intent.mjs`, `production-results.json`,
+`browser-results.json`, `native-results.json`, original logs and screenshots). The diagnostic uses
+current CLI API/Worker, managed published configuration, actual Local adapters and SQLite, default
+budgets and current built Chromium assets. It adds two enabled ResourceLibraries with different
+roots using supported configuration, validates and activates through the real CLI, and selects the
+second library through native Files. No adapter capability is removed; no mixed runtime or future
+provider is used. Its exit 0 means the diagnostic completed, not that the product passed.
 
-Independent checks: focused discovery/Scanner/persistence/release-policy modules 82 PASS;
-Web production build, governance and Base..Head diff check PASS, with raw `review-receipts.json`
-and logs. No pre-existing failure exclusion is claimed. B stops on the reproducible P1 blockers
-below, before complete native Preview/execution, remaining full Python/Web/E2E, real-Python
-Operations/DirectFiles, toolbar, Docker/security/wheel/migration gates. Developer's reported totals
-are not certified by this rejecting review; the corrected T4 candidate still needs every assigned
-gate and verifiable raw evidence. The submitted proof currently demonstrates discovery/admission,
-control and intent linkage, rather than the required complete confirmed-execution/recovery journey.
+Independent runs:
+- `.venv/bin/python -m unittest tests.test_media_discovery tests.test_scanner
+  tests.test_operations_run_inventory tests.test_task_persistence`: 116 PASS, 0 skipped,
+  12.848 seconds, original `focused.log` retained (including ResourceWarnings).
+- `npm run build`: PASS; served index SHA-256
+  `ce9351ee0bfaab0a5d66c5a2fc6066b15a86646754cf95d0d507bc1c02fbe705`, JS
+  `25f90668d49b971f309ce365b2a0e8e163b70e9c2996b4b84e50d55432aebb77`, CSS
+  `abd3206d693af6f937f159cd238bfd6c1df97d065d8b64d9ed882a1d582e5f3b`.
+- `production-probe.py`: completed; independently reproduces the cross-library defect below,
+  101-primary and safety-depth finalize refusals (409), native lost-response reconciliation to one
+  original mixed-scope admission, and reload/reconnect to the same discovery and Files return.
+- Current committed `scripts/files_organize_discovery_browser_proof.py` via its unchanged `main()`
+  with isolated port 4899 and reviewer-only artifact-root override: exit 0, 8 browser passes,
+  four discovery selections, limit refusals, open reconciliation, Operations inventory/overview
+  and refresh continuation. Original `assigned-native-proof.log`, matrix and visuals retained.
+  The command and exact invocation are in `review-index.json`. It establishes only the boundary
+  it actually exercises, not confirmed execution or migration.
+- Governance and Task Base..Head diff check: PASS before the review edit; rerun after it.
 
-All earlier diagnostic scripts/logs remain: the first helper used wrong SQLite column names;
-intermediate helpers incorrectly expected a connection field or loaded data on the newly discovered
-unsupported reconnection route, and one used a fetch Response status as a function. The final
-probe observes the actual Not connected state, follows its native entry link and records the
-wrong Dashboard return instead. These helper failures are not counted as failed project gates.
+Previous blockers 1 and 2 (budget and safety-depth finalization) are independently resolved on the
+legal default-budget Local cases. Previous blocker 3's lost-response/native Operations readback and
+blocker 4's reconnect/return behavior work for the independently exercised single-library mixed
+scope. Their new reconciliation implementation exposes the separate cross-library P1 below.
+The native wrong-library source proceeds into a frozen intent; this review does not claim a media
+mutation was executed. No execution Task/Job was created by the independent diagnostic.
 
-No existing test was deleted. Exact schema assertions and the pre-RO-6 directory eligibility
-expectation were updated for the selected behavior; the new 101-item test contains a vacuous
-assertion documented in blocker 1. Slice/AGENTS/Roadmap/configuration/dependency files are unchanged
-in this Task diff. No real credential/private configuration or unrelated user asset is included;
-config/alist.json remains ignored/untracked/unstaged, and four untracked user images are untouched.
-This is B correction round 1; Task ID/Base/Goal/Scope/acceptance/test plan remain unchanged.
+The first reviewer helper used a wrong manual-intent table name; its failure log is retained.
+An intermediate read used an unsupported intent URL; the final run reads the actual Operations
+intent route (200). The first deep-entry helper expected the old Go-to-entry link where the current
+route already presents the connection entry; the corrected helper follows either supported native
+entry and completes. Initial evidence-directory commands failed from a wrong cwd and unavailable
+bare `python`; the reviewer-created empty directory was removed and commands rerun with `.venv/bin/python`.
+These helper/setup failures are not product gate failures or pre-existing-failure exclusions.
+
+B stops on the proven P1 before complete Python/Web/E2E, Docker/security/wheel/migration and remaining
+independent high-risk reproductions. The Developer evidence directory contains an index, proof
+JSON/images and wheel digest, but no original full-suite/quality/Docker gate logs or complete
+source/environment/selection receipts. Reported totals are therefore not independently certified;
+no unavailable gate is called PASS and no pre-existing failure exclusion is accepted. The corrected
+T4 candidate still requires the unchanged complete assigned gate plan and retained matching evidence.
+
+No existing test deletion, new skip, silent fallback, dependency addition or private configuration
+is present in the actual Task diff. The 101-item vacuous assertion was replaced with real refusal
+assertions; schema-version and directory-eligibility assertions reflect the selected Contract.
+SLICE.md, Roadmap, AGENTS.md and unrelated user images are unchanged. `config/alist.json` is not
+tracked or included. B changes only TASK.md; ignored reviewer evidence is outside product files.
 
 ## B Review Result
 
 ```text
-Reviewed: 001bae34769c718033f147873ab16cc22630e484..4f70ba49dd170ee32a462ee8bc38aa871fe65bb2
+Reviewed: 001bae34769c718033f147873ab16cc22630e484..3b7dacf45564d63386486d832b0f3b326b497429
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Exceeded discovery budgets still admit a first-N ordinary Organize intent
-  (AC2; Scope 2; Slice RO-6 / AC29).** With the default legal production budgets and 101 ordinary
-  Local MKV files under `mass`, the actual Worker produces `partial_success`, 100 sources and
-  `incompleteReason=primary_limit`. Its API advertises finalize as available; POST finalize with
-  the actual version returns 201 and creates an open 100-item manual intent whose next action
-  is `continue to an exact zero-mutation Preview`. `MediaDiscoveryService.finalize/_finalize`
-  accepts any PARTIAL_SUCCESS without checking budget exhaustion, while `_over_primary_limit`
-  drops the overflow source. This admits the truncated prefix rather than requiring the operator
-  to narrow the oversized scope; no execution is claimed by this reproduction. Evidence:
-  `repeat-v7/production-boundary-results.json` (`primary-limit`, including intent readback) and
-  `production-boundary-probe-v7.log`. Refuse budget/safety/cursor-limited finalization in backend
-  and Web, preserve the narrowing action, and distinguish ordinary read-failure subsets from
-  exceeded budgets. Replace the always-passing assertion at `tests/test_media_discovery.py:753`
-  (`assertFalse(available is False and False)`) with actual unavailable-action and rejected-finalize
-  checks, retaining the existing 100-item success and other assertions.
+- **P1 — Admission reconciliation substitutes another ResourceLibrary's source scope
+  (AC1/AC2/AC4/AC5; Scope 1/5/6; Slice RO-6 / AC27/30/31 and source-confinement invariant).**
+  Current production reachability: two enabled Local ResourceLibraries in one valid, published
+  configuration, one at Storage root and `source2` at `second-root`, each with a legal relative
+  `SP` directory. Admit `source/SP` while queued, then select `source2/SP` through native Files.
+  Both actual authenticated POSTs return 202 and the same discovery ID; the second response says
+  `resourceLibraryId=source`. User impact: the selected second library's
+  `second-root/SP/Second.Library.2024.mkv` is omitted; the actual Worker discovers the first
+  library's `SP/Extra.2003.mkv`. Finalize returns 201, intent read returns 200 and native
+  `打开整理意图` displays that wrong source under `source / source-storage`, while return context
+  still names `source2`. This is a wrong current source selection, not a hypothetical future
+  adapter issue; no executed data-loss claim is made. Evidence: `production-probe.py` exit 0,
+  `production-results.json.crossLibrary`, `browser-results.json.admissions`,
+  `native-results.json.wrongIntent`, and inspected `second-library-selection.png`,
+  `wrong-library-discovery.png`, `wrong-library-intent.png`. Root cause:
+  `MediaDiscoveryService.admit/_reconcile_admission` compares actor, relative path/kind signature
+  and pin but never the requested library/Storage binding. Bind reconciliation to the exact
+  ResourceLibrary and its pinned Storage/root context as well as actor/scope/pin. Retain original
+  single-library unknown-response recovery and deliberate successor behavior; add real
+  two-library equal-relative-path regression through API/native admission and frozen handoff.
 
-- **P1 — Safety-depth truncation claims complete discovery and offers normal finalization
-  (AC2–3; Scope 2–3; Slice RO-6 / AC29).** With pinned configured `maxDepth=null`, select legal
-  Local folder `deep`, containing one direct MKV and another below 33 descendant directories.
-  The safety cutoff in `mediaflow/application/media_discovery.py:705–709` silently omits the
-  deep subtree, labels it `configured_depth_exceeded`, then returns `completed`,
-  `incomplete=false`, one source, finalize available and POST finalize 201. The operator is told
-  the selected scope was fully traversed although eligible media was never reached. Evidence:
-  `repeat-v7/production-boundary-results.json` (`safety-depth`) and the completed probe log.
-  Measure the Task's safety depth below each selected folder, keep configured library-root depth
-  semantics separate, and publish a truthful safety-limit/incomplete outcome that requires native
-  scope narrowing and cannot finalize a truncated prefix. Add real Local/default-budget coverage.
-
-- **P1 — Lost admission response causes duplicate discoveries and leaves no native Operations
-  recovery (AC1/AC4; Scope 5/7; Slice RO-6 / AC30 and Required Surfaces).** In the current Files
-  page, select `电影` and click batch Organize. Forward its real POST to completion (202), then
-  drop only the response. Web says `存储或服务暂时不可用，请稍后重试；不会创建任何任务。` despite
-  durable admission. Following that instruction and clicking again returns another 202 and a
-  distinct discovery ID; SQLite contains both queued records with the identical actor, scope
-  and admitted pin. No reconciliation read occurs before resubmission. Both discoveries are
-  absent from the real Operations run inventory (`GET /api/v1/operations/runs`: 200, total 0,
-  items []); the native center displays no admitted runs, so the lost first discovery cannot be
-  found/continued there. Evidence: `repeat-v7/browser-evidence.json`, durable rows/inventory in
-  `production-boundary-results.json`, `unknown-admission-error.png`, `operations-center.png` and
-  API log. Add actor/scope/pin-bound admission identity and unknown-outcome reconciliation, retain
-  an honest unknown state instead of promising no work, and expose durable discoveries through
-  existing Operations readback/control so recovery locates the original admission without raw
-  identifiers or duplicate work. Keep deliberate successor work distinct.
-
-- **P1 — Refresh/reconnect loses the admitted discovery and Files return context
-  (AC1/AC4; Scope 1/5; Slice RO-6 / AC27/30).** Refresh the successfully admitted native discovery
-  URL carrying `returnTo=files&returnResourceLibraryId=source`. Memory-only auth correctly clears,
-  but the new discovery route is absent from `shared/navigation/destination-model.ts` and its
-  return-search allowlist. The page stays Not connected; following its actual `Go to the V2 entry`
-  link and reconnecting returns to `/ui-v2/dashboard` rather than that durable discovery.
-  The same discovery remains readable through its authenticated API (200). Evidence:
-  `repeat-v7/browser-evidence.json.refreshRecovery`, `discovery-reload.png` and
-  `discovery-reconnect-dashboard.png`. Register the discovery destination and safe Files/Operations
-  return context in the shared route/auth continuation model; verify fresh deep entry, browser
-  refresh and rejected-token reconnection return to the same discovery without admitting work.
+- **Required acceptance not met — the assigned complete native execution/recovery and prior-work
+  compatibility gates are still absent, and final T4 runs lack retained verifiable receipts
+  (AC7; Scope 7; Required Tests: Final checkpoint gates / B independent verification / Evidence
+  and rerun rules; Slice RO-6 / AC27/30/31/32 and Final Validation Expectations).** This is a
+  mandatory acceptance gap, not an additional inferred production defect or an optional proof
+  enhancement. B reran the committed real-Python proof: exit 0, 8 browser passes, ending at
+  discovery/frozen intent with zero executable work. Its browser assertion at
+  `scripts/files_organize_discovery_browser_proof.py:814–824` permits only discovery admissions;
+  the Docker equivalent at `scripts/docker_files_organize_discovery_browser_proof.py:148–159`
+  has the same boundary. Neither drives choices → exact Preview → separate confirmed execution
+  and per-item recovery, including the assigned pin/source-change/non-replay cases. The added
+  schema44→45 unit fixture creates a current-schema repository, drops the new discovery tables
+  and changes its marker; it is not an actual prior committed application/database rehearsal.
+  The existing genuine schema38→45 Docker smoke seeds no manual intents/previews/executions, so
+  it does not cover the specifically assigned historical admitted/completed/partial/uncertain
+  manual work. Original final full-suite/quality/Docker logs and full matching candidate receipts
+  are absent from the reported evidence directory. Extend the already assigned coherent
+  real-Python/Docker journey through exact confirmed execution and required independent recovery,
+  keeping zero-mutation assertions for discovery/analysis and exact authority/effect checks for
+  execution. Rehearse the assigned legacy manual states using actual prior committed artifacts;
+  retain original T4 gate logs and source/dependency/configuration/selection/build identities,
+  first failures, repeats and honest skips/unavailable. Rerun changed-candidate gates before
+  submission. This remains the same Task's existing plan; do not add a proof-only Task or change
+  its Base/Goal/Scope/acceptance.
