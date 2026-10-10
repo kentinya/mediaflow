@@ -56,9 +56,41 @@ claim replacement does not fence publications. Existing metadata-only discovery,
 resident Worker and native controls suffice. Correct this one boundary coherently; no new engine,
 queue/supervisor, parallel lifecycle or Task per race is needed. Prior manifest/confinement/refusal/
 atomic-finalize fixes remain required; no material Contract impossibility is established.
-If this Task exceeds three correction rounds, reassess the whole control/ownership model before
-another patch, keeping ID/Base/Goal/Scope. Return necessary Contract changes to A; do not automatically
-plan a ninth Task.
+Count repeated corrections at the same capability boundary across Tasks 44.6–44.8; a new Task ID
+does not reset the user's three-round complexity threshold. That boundary has already had several
+corrections, so reassessment applies now. Keep this Task's ID/Base/Goal/Scope and return necessary
+Contract changes to A; do not automatically plan a ninth Task.
+
+### B global reassessment — next correction approach
+
+History contains the initial discovery implementation followed by five functional correction
+checkpoints: budget/admission recovery (`71d9aa1`), library/Storage binding (`bf0e00e`), exact manifest/
+durable refusal (`62178d3`), atomic Finalize (`f514c15`) and controls/ownership (`3bb4574`). These
+are real current-Contract defects, but the recurring publication/control failures indicate that
+isolated case fixes have not established one consistent write/transition model. B's earlier local
+acceptance and repeated full-gate handoffs also contributed to late discovery and avoidable rework.
+
+The next correction should explain and consolidate the existing ownership boundary: immutable
+actor/scope/pin, operator control requests, Worker-owned traversal/progress/observations/refusals,
+and the existing one-shot frozen intent link. Trace the current writers and make control reconciliation,
+claim validation, progress publication and resulting lifecycle transition agree at the SQLite
+transaction boundary. A control-version change is not ownership loss. A live owner must preserve
+its bounded work when acknowledging a control; a lost owner must stop without publishing over a
+successor; a terminal cancellation must not be reopened. Keep Finalize's existing atomic link.
+
+Prefer consolidation of the current operations over another exception-specific recovery branch.
+Checkpoint granularity is an implementation choice inside Scope 1–3: this reassessment requires
+no new schema, queue, general workflow framework or per-file persistence mechanism. Verify the
+already identified control/publication/ownership cases together before the existing final T4 gates;
+do not introduce an open-ended race matrix or another Task for optional proof. This is implementation
+guidance, not a new acceptance criterion or a reduction of the assigned tests. Reuse verified matching
+candidate evidence across reviewers as the workflow permits; Slice Final's required run remains.
+
+The current P1 reproduction establishes lost progress/refusal and same-discovery Finalize after
+the synthetic directory shrinks from 101 to 100 files. It does not establish execution of 101 files,
+unauthorized media mutation or data loss. Do not inflate its impact or require an old Worker to
+publish private in-memory findings after ownership loss. The fix remains the current live-owner
+control/publication boundary, with the same RO-6 outcomes and safety invariants.
 
 Initial governance fails with the recorded FIX REQUIRED + NO ACTIVE IMPLEMENTATION TASK mismatch.
 The user/workflow authorize this correction Task. Recheck with the legitimate Task, without changing
