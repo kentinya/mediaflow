@@ -7,7 +7,7 @@ This Task follows [the development workflow](docs/development-workflow.md), uses
 ```text
 Task ID: 44.8
 Parent Slice: 44
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c
 Difficulty: High
 Test Level: T4
@@ -291,144 +291,154 @@ skips, timeouts, selection or retries to manufacture green results.
 
 ### Changed Files
 
-Six files, one coherent correction boundary; no schema change and no Task/Base/Scope change.
+Five files, one coherent correction boundary; no schema change and no Task/Base/Scope change.
 
-- `mediaflow/domain/media_discovery.py` — new `DiscoveryOwnershipLost` (code
-  `discovery_ownership_lost`, status 409) distinguishing lost claim from `DiscoveryConflict`.
-- `mediaflow/infrastructure/sqlite_runtime.py` — claim-fenced `record_media_discovery_progress`
-  (required `claim_token`, `AND claim_token=?` in the same statement as the version CAS), new
-  atomic `settle_media_discovery_control` (status + progress + control flags + claim release in one
-  transaction), operator-only `update_media_discovery` and `create_manual_intent_for_discovery`
-  (never write claim columns), precise `_raise_discovery_write_conflict`, and claim selection that
-  still admits an unacknowledged `cancel_requested` row.
-- `mediaflow/application/media_discovery.py` — `run_claimed`/`_advance` raise ownership loss instead
-  of publishing a pause; `_settle_after_conflict` reacts to the fresh record at a safe boundary;
-  `_cancel`/`_publish_paused`/`_fail` settle atomically under the live claim; `request_cancel`
-  settles terminal cancellation immediately; `resume`/pause stay operator-owned.
-- `mediaflow/interfaces/service_api.py` — truthful `nextAction` for a pending cancellation.
-- `scripts/files_organize_discovery_browser_proof.py` — bounded native cancellation step
-  (durable terminal acknowledgement, no stranded claim, explicit successor work).
-- `tests/test_media_discovery.py` — A44-4/A44-5 regressions (below).
+- `mediaflow/domain/media_discovery.py` — `DiscoveryConflict` now carries the refused
+  `attempted` projection and its `attempted_observations` (never in `details`, so no claim
+  token/fingerprint/physical path is published).
+- `mediaflow/infrastructure/sqlite_runtime.py` — `_raise_discovery_write_conflict` attaches that
+  projection on a version conflict and attaches nothing on a claim mismatch;
+  `settle_media_discovery_control` now accepts `observations` and persists status/progress/
+  sources/control flags/claim release *and* the stability observations in one `BEGIN IMMEDIATE`
+  transaction.
+- `mediaflow/application/media_discovery.py` — `run_claimed` hands the refused projection to
+  `_settle_after_conflict`, which reconciles a same-owner control with the bounded work of the
+  losing publication under the exact persisted claim (`_merge_attempted_work` verifies discovery/
+  pin/Storage/library/scope identity first); a cleared-pause publication settles through the same
+  atomic claim-releasing path; a bounded retry re-reads when a concurrent control moves again; a
+  lost claim still carries nothing and stops.
+- `scripts/files_organize_discovery_browser_proof.py` — bounded native control-preservation step
+  (truthful pre-pickup pause, Continue to the real 100/101 bound, refused Finalize), plus a
+  deterministic wait for the resolved scope section that removes a pre-existing harness race.
+- `tests/test_media_discovery.py` — two new A44-8-1 regressions (below).
 
 ### Implemented
 
-A44-5 (ownership fencing). Every Worker-owned write — status, progress, findings, counters,
-manifest and stability observations — is fenced by the *exact current persisted claim* in the same
-statement as the version CAS, so a takeover between a successful heartbeat and the publication can
-no longer rewrite a successor. A lost claim raises `DiscoveryOwnershipLost` and the old owner stops
-without pausing, failing, releasing or otherwise touching successor work; a version conflict stays
-`DiscoveryConflict` so the live owner can settle an operator control. Operator-owned writes (pause
-request, resume, freeze/intent link) never write claim columns, so a control cannot restore a stale
-claim. `claim_and_run`/`run_claimed` keep actor/version/permission checks and fail closed.
+B44-8-1 (AC3/AC5, RO-6 acceptance 29/30). A publication that loses the version CAS to a
+*same-owner* operator control is no longer discarded. `record_media_discovery_progress` and
+`settle_media_discovery_control` raise `DiscoveryConflict` with the exact projection that lost the
+CAS (and, on the progress path, the stability observations written with it). The returning owner
+re-reads the fresh record and reconciles: the operator's control flags and lifecycle transition
+win, while the same owner's counters, findings, manifest, pending traversal, stability
+observations and monotonic material refusals are preserved — and only when the attempt belongs to
+the same discovery, pin, Storage, ResourceLibrary and admitted scope. An accepted pause is
+therefore acknowledged *with* the completed walk (101 visited entries, 2 page fetches, 100
+retained sources, `refusalReasons=[primary_limit]`) instead of a reset record; Continue publishes
+the same work through the atomic claim-releasing settlement, so it never re-walks with reset
+accounting; Finalize keeps refusing the truncated prefix with `discovery_budget_limited`. A
+cleared pause, a lapsed lease or a still-pending control yields the claim for the next pass. A
+claim mismatch still carries nothing: a lost owner stops without touching successor state.
 
-A44-4 (cancellation settlement). An accepted cancellation is settled atomically as one terminal
-outcome: record, request flag and claim release are a single transaction, so a cancellation can
-never be left as an open record no Worker may claim. Claim selection no longer excludes
-`cancel_requested` rows, so a request left open by an earlier build is still picked up and
-acknowledged through a real Worker pass. Concurrent controls reconcile at a safe boundary: an
-accepted pause is acknowledged under the live claim, a resume or lapsed lease yields the claim for
-the next pass, and resume/progress/renewal can never undo a cancellation. Readback explains a
-pending cancellation truthfully and Finalize refuses cancellation.
-
-Preserved from prior accepted work: confined/deduplicated manifest, monotonic material refusals,
-read-failure-only reviewed subset, one atomically linked intent, exact pins, consumed budgets and
-separate Preview/execution authority. Cancellation grants no intent/Preview/execution authority.
+Preserved unchanged: A44-4/A44-5 cancellation settlement, fencing and takeover behavior; the
+confined/deduplicated manifest; monotonic material refusals; the read-failure-only reviewed
+subset; one atomically linked intent; exact pins, consumed budgets and separate
+Preview/execution authority. No new schema, queue, supervisor or per-file persistence.
 
 ### Tests and Results
 
-Test Level T4. All commands run from the repository root with `.venv/bin/python` on the final tree
-(commit `3bb4574`); Docker gates used the documented daemon-visible `TMPDIR=/run/mf-docker-tmp`.
+Test Level T4. Commands run from the repository root with `.venv/bin/python` on the final tree
+(commit below); Docker gates used the documented daemon-visible `TMPDIR=/run/mf-docker-tmp`.
 
-- `scripts/check_governance.py` — **PASS** (exit 0).
-- `python -m unittest discover -s tests` — **PASS**: 2381 tests, OK (skipped=7).
-- `tests.test_media_discovery tests.test_media_discovery_provider_manifest` — **PASS**: 68 tests.
+- B's original probe `.git/validation-evidence/fe1e355.../b-review44-8/control-probes.py` — its
+  `pauseDropsRefusal` case now **FAILS by construction**: it asserts
+  `after['progress']['refusalReasons'] == []`, i.e. that an accepted pause *must* discard the same
+  owner's completed work. That assertion encoded the defect B reported, so it is retained
+  unmodified as the first-failure record and replaced by the corrected companion below.
+- Corrected companion probe (`control-probes-corrected.py`, same four cases, corrected
+  expectation) — **PASS** (4/4: queuedCancel, inFlightCancel, takeoverBeforeWrite, pauseKeepsWork;
+  zero Storage mutations and zero execution Tasks in every case).
+- `tests.test_media_discovery tests.test_media_discovery_provider_manifest` — **PASS**: 70 tests.
 - `tests.test_manual_organize_intent|preview|execution`, `tests.test_operations_run_inventory`,
-  `tests.test_operations_run_detail`, `tests.test_migration_rehearsal`, `tests.test_task_persistence`
-  — **PASS**: 153 tests.
+  `tests.test_operations_run_detail`, `tests.test_migration_rehearsal` — **PASS**: 137 tests.
+- `python -m unittest discover -s tests` — **PASS**: 2383 tests, OK (skipped=7).
+- `scripts/check_governance.py` — **PASS**.
 - `ruff format --check .` / `ruff check .` — **PASS** (358 files formatted, all checks passed).
 - `python -m compileall -q mediaflow tests scripts` — **PASS**.
 - `python -m pip check` — **PASS** (no broken requirements).
-- `mediaflow --config config/strategy.example.json config validate` and
-  `... config/mediaflow.phase13.2.example.json config validate` — **PASS**.
-- `python -m pip wheel . --no-deps -w dist/task44-8` + `scripts/wheel_smoke_test.py` — **PASS**
-  (one wheel, `sha256=79541860b688a4da10071f99db58dae10df9264638b555d782e8c0c007ff26ca`, schema 45,
-  database SHA-256 `260ed838a4feaa6278534bc678243b0e8f3f09f5f9df177275e8c702407503e9`).
+- Both example config validations — **PASS**.
+- Wheel build + `scripts/wheel_smoke_test.py` — **PASS** (one wheel,
+  `sha256=d137dd8289f194777e961d3f5adf7141509dbf40d93059fa735973dd0a728cae`, schema 45, database
+  SHA-256 `260ed838a4feaa6278534bc678243b0e8f3f09f5f9df177275e8c702407503e9`).
 - `scripts/docker_release_security_smoke_test.py` — **PASS**.
-- `scripts/docker_upgrade_recovery_smoke_test.py` — **PASS** (genuine schema-38 base image → schema-45
-  candidate, interrupted migration, restore and durability).
-- `scripts/files_organize_discovery_browser_proof.py` — **PASS** (`{"ok":true,"passes":11}`, including
-  the new cancellation step).
+- `scripts/docker_upgrade_recovery_smoke_test.py` — **PASS** (genuine schema-38 base image →
+  schema-45 candidate, injected failure, restore, durability).
+- `scripts/files_organize_discovery_browser_proof.py` — **PASS** (`{"ok":true,"passes":11}`, 3/3
+  consecutive runs on the final tree, including the new control-preservation step).
 - `scripts/docker_files_organize_discovery_browser_proof.py` — **PASS**
   (`{"ok":true,"passes":7}`).
 - From `web/`: `npm run test -- --run` — **PASS** (73 files, 1086 tests).
-- From `web/`: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run build` — **PASS**.
-- From `web/`: `npm run test:e2e` — **PASS** (246 tests). One earlier run reported two
-  `library-files.spec.ts` failures caused by two Playwright suites sharing `web/test-results/`
-  concurrently; both pass in isolation and the clean serial suite is green. One earlier
-  `operations-inventory.python.spec.ts` failure had the same artifact collision cause and passes in
-  isolation. No product defect.
-- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`
-  — **PASS**.
-- `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts`
-  — **PASS** (10 tests).
+- From `web/`: `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm run build` —
+  **PASS**.
+- From `web/`: `npm run test:e2e` — **PASS** (246 tests).
+- From `web/`: `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — **PASS** (21 tests).
+- From `web/`: `npm run test:e2e -- --config=playwright.direct-files.python.config.ts
+  tests/e2e/direct-files.python.spec.ts` — **PASS** (10 tests).
 - `git diff --check` — **PASS**.
 
-Added deterministic regressions in `tests/test_media_discovery.py` (all **PASS**):
+Added deterministic regressions in `tests/test_media_discovery.py` (both **PASS** on the final
+tree, both **FAIL** on the unmodified Base tree — verified in an isolated `git worktree` at
+`8d24958` with only the test file copied):
 
-- queued cancellation reaches durable terminal acknowledgement; three real Worker pickups find no
-  work, readback never regresses, Finalize refuses, a same-scope submission creates successor work,
-  zero mutation and zero Tasks;
-- cancellation during a blocked in-flight listing reaches terminal through the returning Worker
-  instead of stranding behind the stale CAS;
-- a stale owner cannot clear a successor claim: takeover between successful heartbeat and
-  publication leaves claim/status/controls/version untouched, and the valid successor still advances;
-- cancellation and takeover stay durable across separate connections and a repository reopen;
-- an accepted pause concurrent with an in-flight walk is acknowledged (not lost) and Continue
-  resumes the same scope with no duplicate/lost finding;
-- resume/pause/re-cancel cannot undo an accepted cancellation; a late claim finds no work;
-- a queued record already carrying `cancel_requested` from an earlier build is still claimed and
-  settled to `cancelled`;
-- the existing stale-owner expectation was corrected from `discovery_conflict` to
-  `discovery_ownership_lost` (the old assertion encoded the A44-5 defect).
+- `test_a_pause_racing_the_publication_keeps_the_bounded_work` — a real 101-source Local walk
+  completes, its publication is held immediately before the real repository write, an accepted
+  pause wins the version CAS, and the acknowledgement keeps 101 visited entries, 2 page fetches,
+  100 sources and `primary_limit`; Continue keeps the refusal and Finalize refuses with
+  `discovery_budget_limited`. Zero mutation, zero Tasks.
+- `test_a_continue_racing_the_publication_publishes_the_work_once` — the same race with pause then
+  Continue: the completed bounded work is published once under the live claim (no reset, no
+  re-walk), the claim is released and no duplicate finding/source appears.
 
 ### Decisions
 
-- One new domain error type instead of overloading `DiscoveryConflict`: a version conflict is an
-  operator change the live owner may settle, while a lost claim must stop without writing. The API
-  publishes both as 409 with distinct codes, so no Web change was needed.
-- Cancellation is settled synchronously by the control request rather than deferred to a Worker pass.
-  This is the smallest change that makes "cannot strand an unclaimable open record" true by
-  construction, and it keeps the request's version CAS semantics.
-- Pause stays cooperative (the Worker acknowledges at its safe boundary) because it is a
-  continuable state; only cancellation is terminal at request time.
-- Claim selection now admits `cancel_requested` rows instead of excluding them: exclusion was the
-  stranding mechanism, and the claimant settles the accepted cancellation through the normal fenced
-  path.
-- No schema change: existing version/claim columns and `BEGIN IMMEDIATE` transactions suffice, as
-  the Task allowed.
+- Reconciliation is driven by the *refused projection* carried on `DiscoveryConflict`, not by a
+  re-walk or a snapshot stored before the walk. The losing owner is the only party that still
+  holds the completed bounded work, and it is still the valid claim holder, so it is the correct
+  party to settle the operator's control with that work.
+- The refused projection is validated field-by-field against the fresh record (discovery id, pin
+  id and digest, Storage, ResourceLibrary, scope signature) before any of it is carried. A control
+  can never be reconciled with work that was never admitted for this discovery.
+- Observations now travel through the control-settlement transaction as well as the progress
+  transaction, so an acknowledged pause cannot lose the stability evidence that belongs to the
+  same pass.
+- A cleared pause publishes the completed work through the same atomic claim-releasing settlement
+  used for pause/cancel, rather than a plain progress write plus a separate release, so a
+  successful Continue can never leave a stale claim behind.
+- The reconciliation loop is bounded (`_CONTROL_RECONCILE_ATTEMPTS = 4`) and always ends safely:
+  it either settles the operator's control with the same work or yields the claim so the next pass
+  continues. It never spins on a live lock.
+- Cancellation keeps its A44-4 semantics unchanged: the request settles terminal and releases the
+  claim atomically, so the returning owner is no longer the claim holder and correctly writes
+  nothing.
+- The native browser proof's control-preservation step is deliberately about truthful pre-pickup
+  pause plus Continue-to-the-bound; the narrow in-flight race is proven deterministically in
+  Python instead of by fragile browser timing, exactly as the Task's test plan allows.
 
 ### Remaining In-Slice Work
 
-A44-4/A44-5 are resolved and the corrected Slice handoff returns to A. No new Task is defined here.
-The recorded P2/P3 wording/assertion notes were left untouched as non-blocking.
+B44-8-1 is resolved and the corrected handoff returns to B. No new Task is defined here. The
+recorded P2/P3 wording/assertion notes were left untouched as non-blocking.
 
 ### Risks / Deviations
 
-- The in-flight cancellation path is cooperative: the returning Worker acknowledges cancellation at
-  its next safe boundary, so an accepted cancel is durable immediately but its Worker-side
-  acknowledgement depends on that pass. This is the intended semantics and is covered by tests; no
-  work is stranded because the record is already terminal and the claim released.
-- The three Docker scripts fail in this environment unless run with the documented
-  `TMPDIR=/run/mf-docker-tmp`, because the Docker daemon cannot see this container's `/tmp`. This is
-  a pre-existing environment property, not a change from this Task; all three pass with the
-  documented setting.
+- A same-owner pause that is *acknowledged* now reports the completed walk's truthful status when
+  the operator later clears the pause (the settlement for the pause itself still reports
+  `paused`). This is the intended "preserve bounded work" semantics and is covered by the new
+  regressions.
+- The native browser proof's browser step reads the discovery page after a heading that renders
+  before the authenticated read resolves. A deterministic wait for the same assertion's own
+  content was added; no assertion, timeout or selection was weakened. The flake was reproduced on
+  the unmodified Base harness (2/3 failures) and the fixed harness passes 4/4 under 6-way CPU
+  load and 3/3 on the final tree. It is a pre-existing harness race, not a product defect.
+- Three Docker scripts need the documented `TMPDIR=/run/mf-docker-tmp` because the Docker daemon
+  cannot see this container's `/tmp`. Pre-existing environment property; all pass with it.
 - No material Contract problem found; no Slice/Contract change was required or made.
 
 ### Checkpoint
 
 ```text
-Status: SUBMITTED FOR REVIEW
-Head SHA: 3bb45747b6e50f6bc44fb57e7b6384f429e247bb
+Status: READY FOR B REVIEW
+Head SHA: 917baf6377c332b0a0cbd15e529d841016e64f69
 ```
 
 ## B Review Result
