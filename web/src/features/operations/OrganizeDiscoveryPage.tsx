@@ -88,15 +88,24 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The incomplete reasons that mean a durable budget/safety bound was
- * exhausted, published by the backend through the finalize action's bounded
- * refusal. Such a walk recorded a truncated prefix — never an executable
- * subset — so the page offers the native narrowing action instead of finalize.
+ * The durable, monotonic material refusal (budget, safety depth, cyclic cursor
+ * or an unsafe provider entry) that keeps Finalize refused. The backend
+ * publishes it separately from the current dominant fact, so a later ordinary
+ * read failure can never hide why the walk cannot be frozen.
+ */
+function materialRefusal(model: OrganizeDiscoveryModel): string | null {
+  return model.progress.materialRefusal;
+}
+
+/**
+ * Whether this walk is refused as a truncated/unconfined prefix. The backend's
+ * durable material refusal — not the current dominant incomplete reason — is
+ * the authority, so a read failure recorded after a cursor/budget/safety
+ * refusal cannot re-enable Finalize.
  */
 function budgetLimited(model: OrganizeDiscoveryModel): boolean {
   return (
-    model.progress.incomplete &&
-    model.progress.incompleteReason !== null &&
+    materialRefusal(model) !== null ||
     model.actions.finalize.refusal === "discovery_budget_limited"
   );
 }
@@ -252,8 +261,12 @@ export function OrganizeDiscoveryPage() {
                 ) : null}
                 {budgetLimited(model) ? (
                   <p role="status">
-                    本次发现已达到预算或安全上限,已记录的来源是一个被截断的前缀,
-                    不能冻结为可执行清单。请缩小所选范围后重新开始一次有界发现。
+                    本次发现已达到预算或安全上限
+                    {materialRefusal(model) !== null
+                      ? `（${label(REASON_LABELS, materialRefusal(model) ?? "")}）`
+                      : ""}
+                    ,已记录的来源是一个被截断的前缀, 不能冻结为可执行清单。
+                    请缩小所选范围后重新开始一次有界发现。
                   </p>
                 ) : null}
               </StatusBanner>

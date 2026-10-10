@@ -65,6 +65,13 @@ export interface OrganizeDiscoveryProgress {
   readonly errorEntries: number;
   readonly incomplete: boolean;
   readonly incompleteReason: string | null;
+  /** Durable, monotonic material refusals of this walk (budget, safety depth,
+   * cyclic cursor or an unsafe provider entry). They survive a later ordinary
+   * read failure, so Finalize stays refused even when the current dominant
+   * fact is a read failure. */
+  readonly refusalReasons: readonly string[];
+  /** The durable material refusal that disables Finalize, or `null`. */
+  readonly materialRefusal: string | null;
   readonly findings: readonly OrganizeDiscoveryFinding[];
   readonly reasons: readonly OrganizeDiscoveryReason[];
   readonly message: string;
@@ -259,6 +266,19 @@ export function normalizeOrganizeDiscovery(
       ),
       incomplete: progressRecord["incomplete"] === true,
       incompleteReason: optionalText(progressRecord, "incompleteReason"),
+      refusalReasons: (() => {
+        const raw = progressRecord["refusalReasons"];
+        if (raw === undefined || raw === null) return [];
+        if (!Array.isArray(raw)) fail("progress.refusalReasons");
+        return (raw as unknown[]).map((item, index) =>
+          normalizeBoundedText(
+            item,
+            `progress.refusalReasons[${index}]`,
+            MAX_DISCOVERY_TEXT,
+          ),
+        );
+      })(),
+      materialRefusal: optionalText(progressRecord, "materialRefusal"),
       findings: (rawFindings as unknown[]).map((item, index) => {
         const finding = readRecord(item, `progress.findings[${index}]`);
         return {

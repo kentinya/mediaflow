@@ -51,6 +51,7 @@ from mediaflow.domain.manual_organize import (
 )
 from mediaflow.domain.media_discovery import (
     BUDGET_LIMITED_REASONS,
+    MAX_DISCOVERY_REFUSALS,
     MAX_DISCOVERY_TEXT_LENGTH,
     DiscoveryBudgets,
     DiscoveryConflict,
@@ -69,6 +70,9 @@ from mediaflow.domain.media_discovery import (
     MediaDiscovery,
     bounded_path,
     deduplicate_scope,
+    deduplicate_sources,
+    discovery_budget_limited,
+    discovery_material_refusal,
     discovery_scope_signature,
 )
 from mediaflow.domain.storage import (
@@ -431,21 +435,21 @@ class MediaDiscoveryService:
                 next_action="wait for the resident Worker to finish, then finalize the findings",
                 details={"status": discovery.status.value},
             )
-        if not discovery.sources:
-            raise DiscoveryError(
-                "this discovery found no eligible primary source to freeze",
-                code="selection_empty",
-                status=409,
-                next_action="narrow the selected scope or correct the configured filters",
-            )
-        if discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS:
-            # A budget/safety/cursor-limited walk recorded a truncated prefix,
-            # never a complete scope: freezing it would silently admit a
-            # first-N subset as ordinary executable work.  The honest
-            # recovery is a narrowed scope and a new bounded discovery; an
-            # ordinary read-failure subset is unaffected and keeps its own
-            # explicit-review path.
-            reason = discovery.progress.incomplete_reason.value
+        material_refusal = discovery_material_refusal(discovery.progress)
+        if material_refusal is not None or (
+            discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS
+        ):
+            # A budget/safety/cursor/unsafe-entry-limited walk recorded a
+            # truncated or unconfined prefix, never a complete scope: freezing
+            # it would silently admit a first-N subset as ordinary executable
+            # work.  The refusal is durable and monotonic, so an ordinary read
+            # failure in another subtree can never re-enable Finalize.  It is
+            # reported before the empty-source case because the root cause is
+            # the exhausted bound or unsafe entry, not a genuinely empty scope.
+            # The honest recovery is a narrowed scope and a new bounded
+            # discovery; an ordinary read-failure-only subset is unaffected and
+            # keeps its own explicit-review path.
+            reason = (material_refusal or discovery.progress.incomplete_reason).value
             raise DiscoveryError(
                 "this discovery stopped at a budget or safety limit, so its findings are "
                 "an incomplete subset and cannot be frozen",
@@ -456,6 +460,13 @@ class MediaDiscoveryService:
                     "discovery; the recorded findings are not an executable subset"
                 ),
                 details={"incompleteReason": reason},
+            )
+        if not discovery.sources:
+            raise DiscoveryError(
+                "this discovery found no eligible primary source to freeze",
+                code="selection_empty",
+                status=409,
+                next_action="narrow the selected scope or correct the configured filters",
             )
         return self._finalize(discovery, discovery.claim_token or "", cancelled=False)
 
@@ -548,12 +559,29 @@ class MediaDiscoveryService:
         active_directory = progress.active_directory
         active_cursor = progress.active_cursor
         seen_cursors = list(progress.active_cursors_seen)
-        sources = [dict(item) for item in discovery.sources]
+        # The manifest is keyed by the exact ResourceLibrary-relative source
+        # path, so a repeated provider page, a repeated observation pass or a
+        # resumed Worker can never admit the same ordinary source twice.  The
+        # first durable identity/stability evidence wins.
+        sources: dict[str, dict[str, object]] = {}
+        for item in discovery.sources:
+            path = item.get("path")
+            if isinstance(path, str) and path and path not in sources:
+                sources[path] = dict(item)
         findings = list(progress.findings)
         reasons = {item.reason: item for item in progress.reasons}
+        # Material refusals are durable and monotonic: an ordinary read failure
+        # in another subtree must never erase an earlier budget/safety/cursor
+        # refusal, in either order or across a restart.  They are persisted
+        # separately from the *current* incomplete reason and are the single
+        # authority that disables Finalize.
+        refusals = list(progress.refusal_reasons)
         observations: list[DiscoveryObservation] = []
         previous = self._load_observations(discovery.discovery_id)
         stable_since: dict[str, datetime] = {}
+        # The candidate paths this pass actually observed, so a fully completed
+        # pass can drop a previously eligible source that disappeared.
+        observed_candidates: set[str] = set()
         if not pending_files and not pending_directories:
             # A later observation pass re-walks the exact admitted scope so a
             # not-yet-proven stable-size interval can be established.  The walk
@@ -585,6 +613,17 @@ class MediaDiscoveryService:
             else:
                 reasons[reason_value] = replace(existing, count=existing.count + 1)
 
+        def refuse(reason: DiscoveryIncompleteReason) -> None:
+            """Record one durable, monotonic material refusal.
+
+            A material refusal survives a later ordinary read failure in another
+            subtree, a later pass and a restart.  It is the single authority that
+            keeps Finalize disabled, so a truncated prefix can never be frozen.
+            """
+
+            if reason not in refusals and len(refusals) < MAX_DISCOVERY_REFUSALS:
+                refusals.append(reason)
+
         def note(kind: DiscoveryFindingKind, path: str, why: str, entry, depth: int) -> None:
             if len(findings) >= self._budgets.max_findings:
                 return
@@ -603,6 +642,7 @@ class MediaDiscoveryService:
             """Classify and observe one candidate; returns the updated counters."""
 
             nonlocal counters
+            observed_candidates.add(relative)
             if entry is None:
                 try:
                     entry = storage.stat(self._join(library.root_path, relative))
@@ -610,11 +650,30 @@ class MediaDiscoveryService:
                     bump(_REASON_UNREADABLE, relative)
                     note(DiscoveryFindingKind.ERROR, relative, _REASON_UNREADABLE, None, depth)
                     counters = replace(counters, error_entries=counters.error_entries + 1)
+                    # The path was seen but its current identity is unknown: it
+                    # must not survive in the manifest merely because it was
+                    # observed before.
+                    sources.pop(relative, None)
+                    return
+                if self._admit_stat_entry(entry, relative, library) is None:
+                    # A provider ``stat`` that answers for a different path than
+                    # the one requested is never normalized into authority.
+                    bump(_REASON_UNSAFE_ENTRY, relative)
+                    note(
+                        DiscoveryFindingKind.ERROR,
+                        getattr(entry, "path", relative),
+                        _REASON_UNSAFE_ENTRY,
+                        entry,
+                        depth,
+                    )
+                    counters = replace(counters, error_entries=counters.error_entries + 1)
+                    sources.pop(relative, None)
                     return
             if entry.entry_type is StorageEntryType.SYMLINK:
                 bump(_REASON_SYMLINK, relative)
                 note(DiscoveryFindingKind.EXCLUDED, relative, _REASON_SYMLINK, entry, depth)
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
+                sources.pop(relative, None)
                 return
             if entry.entry_type is not StorageEntryType.FILE:
                 bump(_REASON_UNSUPPORTED_TYPE, relative)
@@ -622,6 +681,7 @@ class MediaDiscoveryService:
                     DiscoveryFindingKind.EXCLUDED, relative, _REASON_UNSUPPORTED_TYPE, entry, depth
                 )
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
+                sources.pop(relative, None)
                 return
             verdict = classify_entry(library, relative, entry)
             if verdict is not ScanEntryVerdict.CANDIDATE:
@@ -638,12 +698,14 @@ class MediaDiscoveryService:
                 bump(why, relative)
                 note(DiscoveryFindingKind.EXCLUDED, relative, why, entry, depth)
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
+                sources.pop(relative, None)
                 return
             observed = source_fingerprint(library.storage_id, library.library_id, entry)
             if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
                 bump(_REASON_UNREADABLE, relative)
                 note(DiscoveryFindingKind.ERROR, relative, _REASON_UNREADABLE, entry, depth)
                 counters = replace(counters, error_entries=counters.error_entries + 1)
+                sources.pop(relative, None)
                 return
             now = self._clock()
             prior = previous.get(relative)
@@ -684,8 +746,12 @@ class MediaDiscoveryService:
                 )
             )
             if verdict is StabilityVerdict.STABLE:
-                sources.append(self._source_identity(library, entry, relative, observed, now))
-                counters = replace(counters, primary_sources=counters.primary_sources + 1)
+                # One exact source per admitted Storage/ResourceLibrary/path:
+                # a repeated page or a repeated observation pass keeps the first
+                # durable identity and never appends a second copy.
+                sources.setdefault(
+                    relative, self._source_identity(library, entry, relative, observed, now)
+                )
                 note(
                     DiscoveryFindingKind.PRIMARY, relative, "eligible_primary_source", entry, depth
                 )
@@ -698,6 +764,9 @@ class MediaDiscoveryService:
                 bump(why, relative)
                 note(DiscoveryFindingKind.UNSTABLE, relative, why, entry, depth)
                 pass_unstable.add(relative)
+                # A previously eligible source that is no longer proven stable
+                # cannot survive merely because its path was seen before.
+                sources.pop(relative, None)
 
         while not stop:
             if heartbeat is not None and not heartbeat():
@@ -706,24 +775,29 @@ class MediaDiscoveryService:
             if elapsed >= self._remaining_active(counters):
                 counters = replace(counters, active_seconds=counters.active_seconds + elapsed)
                 incomplete = DiscoveryIncompleteReason.TIME_LIMIT
+                refuse(incomplete)
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
             if counters.visited_entries >= self._budgets.max_visited_entries:
                 incomplete = DiscoveryIncompleteReason.ENTRY_LIMIT
+                refuse(incomplete)
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
             if counters.visited_directories >= self._budgets.max_visited_directories:
                 incomplete = DiscoveryIncompleteReason.DIRECTORY_LIMIT
+                refuse(incomplete)
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
             if counters.page_fetches >= self._budgets.max_page_fetches:
                 incomplete = DiscoveryIncompleteReason.PAGE_LIMIT
+                refuse(incomplete)
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
             if pending_files:
                 observe(pending_files.pop(0), 0, None)
                 if self._over_primary_limit(sources, bump, note):
                     incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
+                    refuse(incomplete)
                     status = DiscoveryStatus.PARTIAL_SUCCESS
                     break
                 continue
@@ -745,11 +819,14 @@ class MediaDiscoveryService:
                 bump(why, directory)
                 note(DiscoveryFindingKind.ERROR, directory, why, None, 0)
                 counters = replace(counters, error_entries=counters.error_entries + 1)
-                incomplete = (
-                    DiscoveryIncompleteReason.CURSOR_REPEATED
-                    if cursor_problem is not None
-                    else DiscoveryIncompleteReason.READ_FAILURE
-                )
+                if cursor_problem is not None:
+                    incomplete = DiscoveryIncompleteReason.CURSOR_REPEATED
+                    refuse(incomplete)
+                elif not any(discovery_budget_limited(item) for item in refusals):
+                    # An ordinary read failure is the *current* fact, but it
+                    # must never overwrite an already durable material refusal
+                    # (budget, safety depth, cyclic cursor or unsafe entry).
+                    incomplete = DiscoveryIncompleteReason.READ_FAILURE
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 degraded = True
                 active_directory = None
@@ -760,14 +837,28 @@ class MediaDiscoveryService:
             depth = directory.count("/") + 1 if directory else 0
             for raw in tuple(getattr(page, "entries", ())):
                 counters = replace(counters, visited_entries=counters.visited_entries + 1)
-                if not isinstance(raw, StorageEntry):
-                    bump(_REASON_UNSAFE_ENTRY, directory)
-                    continue
-                relative = self._relative(raw.path, library.root_path)
+                relative = self._admit_provider_entry(raw, directory, library)
                 if relative is None:
-                    bump(_REASON_UNSAFE_ENTRY, raw.path)
-                    note(DiscoveryFindingKind.ERROR, raw.path, _REASON_UNSAFE_ENTRY, raw, depth)
+                    # A provider entry whose path/name/type is not exactly one
+                    # ordinary child of the requested directory is never
+                    # normalized into authority, never stat-ed or traversed and
+                    # never allowed to enlarge the manifest.  It is a material
+                    # safety refusal: the walk is honestly incomplete and cannot
+                    # be frozen as if it were a complete scope.
+                    bump(_REASON_UNSAFE_ENTRY, directory)
+                    unsafe_path = getattr(raw, "path", None)
+                    note(
+                        DiscoveryFindingKind.ERROR,
+                        unsafe_path if isinstance(unsafe_path, str) else directory,
+                        _REASON_UNSAFE_ENTRY,
+                        raw if isinstance(raw, StorageEntry) else None,
+                        depth,
+                    )
                     counters = replace(counters, error_entries=counters.error_entries + 1)
+                    incomplete = DiscoveryIncompleteReason.UNSAFE_ENTRY
+                    refuse(incomplete)
+                    status = DiscoveryStatus.PARTIAL_SUCCESS
+                    degraded = True
                     continue
                 if raw.entry_type is StorageEntryType.DIRECTORY:
                     if excluded_directory(library, relative, raw):
@@ -816,6 +907,7 @@ class MediaDiscoveryService:
                         )
                         counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                         incomplete = DiscoveryIncompleteReason.SAFETY_DEPTH_LIMIT
+                        refuse(incomplete)
                         status = DiscoveryStatus.PARTIAL_SUCCESS
                         stop = True
                         break
@@ -824,6 +916,7 @@ class MediaDiscoveryService:
                 observe(relative, depth, raw)
                 if self._over_primary_limit(sources, bump, note):
                     incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
+                    refuse(incomplete)
                     status = DiscoveryStatus.PARTIAL_SUCCESS
                     stop = True
                     break
@@ -836,6 +929,7 @@ class MediaDiscoveryService:
                     note(DiscoveryFindingKind.ERROR, directory, _REASON_CURSOR, None, depth)
                     counters = replace(counters, error_entries=counters.error_entries + 1)
                     incomplete = DiscoveryIncompleteReason.CURSOR_REPEATED
+                    refuse(incomplete)
                     status = DiscoveryStatus.PARTIAL_SUCCESS
                     degraded = True
                     active_directory = None
@@ -849,6 +943,14 @@ class MediaDiscoveryService:
             active_cursor = None
             seen_cursors = []
 
+        if status is DiscoveryStatus.COMPLETED and not pending_files and not pending_directories:
+            # A fully completed walk observed the whole admitted scope, so a
+            # source that no longer appears (removed, renamed out of the media
+            # extension set or otherwise no longer eligible) cannot survive in
+            # the manifest merely because it was seen in an earlier pass.
+            for stale in tuple(sources):
+                if stale not in observed_candidates:
+                    sources.pop(stale, None)
         counters = replace(
             counters,
             active_seconds=counters.active_seconds + (self._monotonic() - started),
@@ -885,7 +987,7 @@ class MediaDiscoveryService:
             discovery,
             status=status,
             version=discovery.version + 1,
-            sources=tuple(sources),
+            sources=tuple(sources.values()),
             updated_at=self._clock(),
             error=None,
             progress=DiscoveryProgress(
@@ -901,6 +1003,7 @@ class MediaDiscoveryService:
                 active_cursor,
                 tuple(seen_cursors),
                 self._phase_message(status, incomplete),
+                tuple(refusals),
             ),
         )
         # A finished observation is never frozen automatically.  Completing a
@@ -930,11 +1033,82 @@ class MediaDiscoveryService:
     def _over_primary_limit(self, sources, bump, note) -> bool:
         if len(sources) <= self._budgets.max_primary_sources:
             return False
-        overflow = sources.pop()
-        path = str(overflow.get("path", ""))
+        path = next(reversed(sources))
+        sources.pop(path, None)
         bump(_REASON_UNSAFE_ENTRY, path)
         note(DiscoveryFindingKind.TRUNCATED, path, "primary_source_limit_exceeded", None, 0)
         return True
+
+    def _admit_provider_entry(self, raw, directory: str, library) -> str | None:
+        """The admitted ResourceLibrary-relative path of one provider entry.
+
+        Returns ``None`` when the entry is not exactly one ordinary child of the
+        requested directory inside the ResourceLibrary root.  A provider entry
+        is never normalized into authority: sibling, ancestor, absolute,
+        traversal, path/name-mismatched or non-entry values are refused before
+        any source construction, ``stat`` or traversal scheduling.  Legitimate
+        adapter conventions (root prefixes and exact whitespace names) are
+        preserved because the check compares the *exact* path the adapter
+        published for the requested directory.
+        """
+
+        if not isinstance(raw, StorageEntry):
+            return None
+        path = raw.path
+        if not isinstance(path, str) or not path or "\x00" in path or "\\" in path:
+            return None
+        root_value = (library.root_path or "").strip("/")
+        directory_value = directory.strip("/")
+        expected_parent = f"{root_value}/{directory_value}" if root_value else directory_value
+        expected_parent = expected_parent.strip("/")
+        if path.startswith("/"):
+            return None
+        parts = path.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            return None
+        parent = "/".join(parts[:-1])
+        if parent != expected_parent:
+            return None
+        relative = self._relative(path, library.root_path)
+        if relative is None:
+            return None
+        if relative != "/".join(filter(None, (directory_value, parts[-1]))):
+            return None
+        if raw.entry_type not in {
+            StorageEntryType.FILE,
+            StorageEntryType.DIRECTORY,
+            StorageEntryType.SYMLINK,
+            StorageEntryType.OTHER,
+        }:
+            return None
+        if raw.name != parts[-1]:
+            return None
+        return relative
+
+    def _admit_stat_entry(self, entry, relative: str, library) -> str | None:
+        """Whether a provider ``stat`` answer is exactly the requested source.
+
+        An explicit file scope is observed directly, so its ``stat`` result must
+        still describe the requested ResourceLibrary-relative path.  A provider
+        that answers for a sibling, ancestor, absolute or traversal path is
+        refused before source construction.
+        """
+
+        if not isinstance(entry, StorageEntry):
+            return None
+        path = entry.path
+        if not isinstance(path, str) or not path or "\x00" in path or "\\" in path:
+            return None
+        root_value = (library.root_path or "").strip("/")
+        expected = f"{root_value}/{relative}".strip("/") if root_value else relative
+        if path.startswith("/") or path != expected:
+            return None
+        parts = path.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            return None
+        if entry.name != parts[-1]:
+            return None
+        return relative
 
     def _load_observations(self, discovery_id: str) -> dict[str, ObservedSource]:
         reader = getattr(self._repository, "list_media_discovery_observations", None)
@@ -1194,7 +1368,11 @@ class MediaDiscoveryService:
     ) -> MediaDiscovery:
         """Freeze the discovered sources and hand them to the existing admission."""
 
-        sources = tuple(ManualSourceIdentity.from_document(value) for value in discovery.sources)
+        # The frozen manifest is exactly one source per admitted
+        # Storage/ResourceLibrary/source path, whatever an earlier record or a
+        # repeated provider page may have recorded.
+        unique_sources = deduplicate_sources(discovery.sources)
+        sources = tuple(ManualSourceIdentity.from_document(value) for value in unique_sources)
         now = self._clock()
         if cancelled:
             # A cooperative cancellation is a truthful terminal outcome, not a

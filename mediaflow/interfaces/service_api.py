@@ -158,11 +158,11 @@ from mediaflow.domain.manual_organize_preview import (
 )
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.media_discovery import (
-    BUDGET_LIMITED_REASONS,
     TERMINAL_DISCOVERY_STATUSES,
     DiscoveryError,
     DiscoveryIncompleteReason,
     DiscoveryStatus,
+    discovery_material_refusal,
 )
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
@@ -12329,6 +12329,10 @@ class MediaFlowApi:
         progress = discovery.progress
         counters = progress.counters
         incomplete = progress.incomplete_reason
+        # The durable, monotonic material refusal is the single authority for
+        # the finalize gate: an ordinary read failure in another subtree can
+        # never re-enable Finalize for a truncated or unconfined walk.
+        material_refusal = discovery_material_refusal(progress)
         terminal = discovery.status in TERMINAL_DISCOVERY_STATUSES
         frozen = discovery.intent_id is not None
         worker = self._discovery_worker_evidence(binding)
@@ -12365,6 +12369,12 @@ class MediaFlowApi:
                 "incompleteReason": (
                     None if incomplete is DiscoveryIncompleteReason.NONE else incomplete.value
                 ),
+                # The durable, monotonic material refusals of this walk.  They
+                # survive a later ordinary read failure, a later pass and a
+                # restart, so the operator can always see why Finalize stays
+                # refused even when the current dominant fact is a read failure.
+                "refusalReasons": [item.value for item in progress.refusal_reasons],
+                "materialRefusal": (None if material_refusal is None else material_refusal.value),
                 "findings": [item.document() for item in progress.findings],
                 "reasons": [item.document() for item in progress.reasons],
                 "message": progress.message,
@@ -12412,12 +12422,14 @@ class MediaFlowApi:
                     and bool(discovery.sources)
                     and discovery.status
                     in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS}
-                    # A budget/safety/cursor-limited walk recorded a truncated
-                    # prefix, never a complete scope: the backend refuses to
-                    # freeze it, so the action is not advertised either.  An
-                    # ordinary read-failure subset keeps its explicit-review
+                    # A budget/safety/cursor/unsafe-entry-limited walk recorded
+                    # a truncated or unconfined prefix, never a complete scope:
+                    # the backend refuses to freeze it, so the action is not
+                    # advertised either.  The refusal is durable and monotonic,
+                    # so a later ordinary read failure cannot re-enable it.  An
+                    # ordinary read-failure-only subset keeps its explicit-review
                     # path and stays available.
-                    and progress.incomplete_reason not in BUDGET_LIMITED_REASONS,
+                    and material_refusal is None,
                     "method": "POST",
                     "path": (
                         f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize"
@@ -12430,9 +12442,7 @@ class MediaFlowApi:
                         "required"
                     ),
                     "refusal": (
-                        "discovery_budget_limited"
-                        if progress.incomplete_reason in BUDGET_LIMITED_REASONS
-                        else None
+                        "discovery_budget_limited" if material_refusal is not None else None
                     ),
                 },
             },
@@ -12492,7 +12502,7 @@ class MediaFlowApi:
             return "inspect the recorded failure and start a new bounded discovery"
         if discovery.pause_requested:
             return "continue the paused discovery to finish the admitted scope"
-        if terminal and discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS:
+        if terminal and discovery_material_refusal(discovery.progress) is not None:
             # A budget/safety-limited walk is never an executable subset: the
             # native next action is the honest narrowing action, not finalize.
             return (

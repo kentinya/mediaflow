@@ -201,6 +201,36 @@ describe("normalizeOrganizeDiscovery", () => {
     expect(model.progress.incompleteReason).toBe("safety_depth_limit");
   });
 
+  it("keeps a durable material refusal visible behind a read failure", () => {
+    const model = normalizeOrganizeDiscovery(
+      payload({
+        progress: {
+          activeSeconds: 1.5,
+          errorEntries: 1,
+          excludedEntries: 0,
+          findings: [],
+          incomplete: true,
+          incompleteReason: "read_failure",
+          refusalReasons: ["cursor_repeated"],
+          materialRefusal: "cursor_repeated",
+          message: "bounded discovery stopped at a limit: read_failure",
+          pageFetches: 3,
+          phase: "partial",
+          primarySources: 1,
+          reasons: [{ count: 1, reason: "repeated_provider_cursor" }],
+          unstableEntries: 0,
+          visitedDirectories: 3,
+          visitedEntries: 20,
+        },
+      }),
+    );
+    // The current dominant fact is the read failure, but the durable material
+    // refusal survives and is published separately.
+    expect(model.progress.incompleteReason).toBe("read_failure");
+    expect(model.progress.refusalReasons).toEqual(["cursor_repeated"]);
+    expect(model.progress.materialRefusal).toBe("cursor_repeated");
+  });
+
   it("keeps exact scope and source paths including boundary whitespace", () => {
     const model = normalizeOrganizeDiscovery(
       payload({

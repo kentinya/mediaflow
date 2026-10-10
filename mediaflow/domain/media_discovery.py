@@ -36,6 +36,7 @@ MAX_DISCOVERY_CURSOR_BYTES = 2048
 MAX_DISCOVERY_FINDINGS = 100
 MAX_DISCOVERY_REASONS = 32
 MAX_DISCOVERY_OBSERVATIONS = 100
+MAX_DISCOVERY_REFUSALS = 16
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
 
@@ -135,6 +136,26 @@ def discovery_budget_limited(reason: DiscoveryIncompleteReason | str) -> bool:
     return value in {item.value for item in BUDGET_LIMITED_REASONS}
 
 
+def discovery_material_refusal(progress: DiscoveryProgress) -> DiscoveryIncompleteReason | None:
+    """The durable, monotonic material refusal of one discovery, if any.
+
+    A material refusal (budget, safety depth, cyclic cursor or an unsafe
+    provider entry) can never be erased by a later ordinary read failure, a
+    later pass or a restart: it is recorded separately from the *current*
+    ``incomplete_reason`` and is the single authority that disables Finalize.
+    The earliest recorded material fact wins so the explanation stays stable.
+    """
+
+    for reason in progress.refusal_reasons:
+        if discovery_budget_limited(reason):
+            return reason
+    if discovery_budget_limited(progress.incomplete_reason):
+        # A record written before the durable refusal list existed still keeps
+        # its own material final reason as an equivalent refusal.
+        return progress.incomplete_reason
+    return None
+
+
 def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
     """The canonical, order-stable signature of one deduplicated scope.
 
@@ -149,6 +170,32 @@ def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def deduplicate_sources(
+    sources: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    """One exact source per admitted Storage/ResourceLibrary/source path.
+
+    A repeated provider page, a repeated observation pass or a resumed Worker
+    must never enlarge the frozen manifest with the same ordinary source twice.
+    The first durable observation wins; its identity and stability evidence are
+    preserved unchanged.
+    """
+
+    seen: set[tuple[object, object, object]] = set()
+    kept: list[dict[str, object]] = []
+    for source in sources:
+        key = (
+            source.get("storageId"),
+            source.get("resourceLibraryId"),
+            source.get("path"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(source)
+    return tuple(kept)
 
 
 class DiscoveryError(ValueError):
@@ -450,6 +497,11 @@ class DiscoveryProgress:
     active_cursor: str | None = None
     active_cursors_seen: tuple[str, ...] = ()
     message: str = ""
+    #: Durable, monotonic material refusals observed anywhere in this walk.
+    #: Unlike ``incomplete_reason`` (the *current* dominant fact) this list is
+    #: never erased by a later ordinary read failure or a later pass, so a
+    #: truncated prefix can never be presented as a complete, freezable scope.
+    refusal_reasons: tuple[DiscoveryIncompleteReason, ...] = ()
 
     def document(self) -> dict[str, object]:
         return {
@@ -457,6 +509,7 @@ class DiscoveryProgress:
             "scopeEntries": [item.document() for item in self.scope_entries],
             "counters": self.counters.document(),
             "incompleteReason": self.incomplete_reason.value,
+            "refusalReasons": [item.value for item in self.refusal_reasons],
             "findings": [item.document() for item in self.findings],
             "reasons": [item.document() for item in self.reasons],
             "pendingFiles": list(self.pending_files),
@@ -477,7 +530,8 @@ class DiscoveryProgress:
         pending_files = value.get("pendingFiles", [])
         pending = value.get("pendingDirectories", [])
         seen = value.get("activeCursorsSeen", [])
-        for raw in (scope, findings, reasons, pending_files, pending, seen):
+        refusals = value.get("refusalReasons", [])
+        for raw in (scope, findings, reasons, pending_files, pending, seen, refusals):
             if not isinstance(raw, list):
                 raise ValueError("discovery progress is invalid")
         active_directory = value.get("activeDirectory")
@@ -499,6 +553,7 @@ class DiscoveryProgress:
             active_cursor,
             tuple(str(item) for item in seen),
             str(value.get("message", ""))[:MAX_DISCOVERY_TEXT_LENGTH],
+            tuple(DiscoveryIncompleteReason(str(item)) for item in refusals),
         )
 
 

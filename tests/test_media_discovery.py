@@ -23,13 +23,21 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
+from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.library import FileStabilityPolicy
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
     DiscoveryError,
+    DiscoveryObservation,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.storage import StorageError, StorageErrorCode
+from mediaflow.domain.storage import (
+    StorageEntry,
+    StorageEntryType,
+    StorageError,
+    StorageErrorCode,
+    StoragePage,
+)
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -1399,10 +1407,6 @@ class ZeroMutationTests(_DiscoveryFixture):
             self.assertEqual([], document["items"])
 
 
-if __name__ == "__main__":  # pragma: no cover
-    unittest.main()
-
-
 class OperationsProjectionTests(_DiscoveryFixture):
     """Scope 5/6: the native readback, list and control surface."""
 
@@ -1502,3 +1506,518 @@ class OperationsProjectionTests(_DiscoveryFixture):
                 "start or repair the resident Processing Worker so discovery can continue",
                 detail["nextAction"],
             )
+
+
+class RepeatedObservationManifestTests(_DiscoveryFixture):
+    """A44-1: one exact source per admitted path through repeated observations.
+
+    A repeated stability observation pass, a repeated provider page or a
+    resumed/restarted Worker must never append a second copy of an already
+    eligible source, and a source that changes or disappears must not survive
+    merely because its path was seen before.
+    """
+
+    def test_repeated_stability_passes_keep_one_copy_and_freeze_one_intent(self) -> None:
+        old = datetime(2025, 12, 31, tzinfo=UTC)
+        self.media("Movies/A.2001.mkv", modified_at=old)
+        changing = self.media("Movies/B.2002.mkv", modified_at=old)
+        with self.journey(stability=FileStabilityPolicy(stable_size_duration_seconds=60)) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            first = self.advance_once(value)
+            self.assertEqual(0, first["progress"]["primarySources"], first)
+            value.clock.advance(120)
+            # B is still being written: its changed size resets its interval,
+            # while the unchanged A proves the elapsed interval exactly once.
+            changing.write_bytes(b"m" * 1024)
+            second = self.advance_once(value, step=1)
+            self.assertEqual(1, second["progress"]["primarySources"], second)
+            value.clock.advance(120)
+            third = self.advance_once(value, step=2)
+            paths = [item["path"] for item in third["sources"]]
+            # A was observed stable in both passes but appears exactly once.
+            self.assertEqual(["Movies/A.2001.mkv", "Movies/B.2002.mkv"], paths, third)
+            self.assertEqual(2, third["progress"]["primarySources"], third)
+            self.assertEqual(2, third["primarySourceCount"], third)
+            # The unique manifest freezes into one valid intent.
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": third["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            self.assertIsNotNone(frozen["intentId"], frozen)
+            self.assertIsNone(frozen["failure"], frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(
+                ["Movies/A.2001.mkv", "Movies/B.2002.mkv"],
+                [item.source.path for item in intent.items],
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_duplicate_provider_pages_yield_one_source_and_one_intent(self) -> None:
+        """The real OpenList adapter's non-atomic repeated page.
+
+        The production HTTP parser/adapter legitimately publishes the same
+        ordinary filename on two pages because the provider listing is not an
+        atomic snapshot.  Discovery must still keep exactly one source and
+        freeze one valid intent instead of failing with ``duplicate_source``.
+        """
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            raw = value.source._storage
+            entry = raw.stat("Movies/A.2001.mkv")
+            original = value.source.list_page
+
+            def pages(path, *, limit, cursor=None):
+                if path == "Movies":
+                    # Page 1 and page 2 both return the same ordinary filename;
+                    # only the cursor distinguishes them, so the second page
+                    # never terminates the walk on its own.
+                    if cursor is None:
+                        return StoragePage([entry], "page:2")
+                    return StoragePage([entry], None)
+                return original(path, limit=limit, cursor=cursor)
+
+            value.source.list_page = pages
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(["Movies/A.2001.mkv"], [i["path"] for i in settled["sources"]])
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            self.assertIsNone(frozen["failure"], frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(["Movies/A.2001.mkv"], [item.source.path for item in intent.items])
+
+    def test_duplicate_observations_never_falsely_exhaust_the_primary_bound(self) -> None:
+        """Exactly 100 unique primaries are supported even across repeated pages."""
+
+        for index in range(100):
+            self.media(f"Movies/Bulk.{index:03d}.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            raw = value.source._storage
+            entries = [raw.stat(f"Movies/Bulk.{index:03d}.mkv") for index in range(100)]
+            original = value.source.list_page
+
+            def pages(path, *, limit, cursor=None):
+                if path == "Movies":
+                    # Every page re-publishes the whole directory, exactly like a
+                    # non-atomic provider listing; a naive append would count
+                    # 100 duplicates as 200 and falsely hit the primary limit.
+                    if cursor is None:
+                        return StoragePage(entries, "page:2")
+                    return StoragePage(entries, None)
+                return original(path, limit=limit, cursor=cursor)
+
+            value.source.list_page = pages
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(100, settled["progress"]["primarySources"], settled)
+            self.assertEqual(100, len(settled["sources"]), settled)
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(100, len(intent.items))
+
+    def test_a_source_that_disappears_is_not_retained_by_path_alone(self) -> None:
+        """A previously eligible file that disappears must not survive.
+
+        The manifest is keyed by the exact observed source, not by the fact
+        that a path was seen once.  A fully completed later pass over the same
+        admitted scope drops a file that is no longer there.
+        """
+
+        path = self.source_root / "Movies" / "Gone.2001.mkv"
+        old = datetime(2025, 12, 31, tzinfo=UTC)
+        self.media("Movies/One.2001.mkv", modified_at=old)
+        self.media("Movies/Gone.2001.mkv", modified_at=old)
+        with self.journey(stability=FileStabilityPolicy(stable_size_duration_seconds=60)) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            # Seed one real durable prior observation of Gone so the first pass
+            # legitimately proves its unchanged interval and admits it.
+            entry = value.source.stat("Movies/Gone.2001.mkv")
+            fingerprint = source_fingerprint("source", "library", entry)
+            value.clock.advance(120)
+            value.repository.upsert_media_discovery_observations(
+                admitted["discoveryId"],
+                (
+                    DiscoveryObservation(
+                        "Movies/Gone.2001.mkv",
+                        entry.size,
+                        entry.modified_at,
+                        fingerprint.value,
+                        self.clock.now - timedelta(seconds=120),
+                        self.clock.now - timedelta(seconds=120),
+                    ),
+                ),
+            )
+            first = self.advance_once(value)
+            self.assertIn(
+                "Movies/Gone.2001.mkv",
+                [item["path"] for item in first["sources"]],
+                first,
+            )
+            self.assertEqual("waiting_stability", first["status"], first)
+            # The file disappears and a later pass re-walks the same scope.
+            path.unlink()
+            value.clock.advance(120)
+            settled = self.run_discovery(value)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"], [item["path"] for item in settled["sources"]], settled
+            )
+
+    def test_a_changed_prior_source_keeps_truthful_stability_semantics(self) -> None:
+        old = datetime(2025, 12, 31, tzinfo=UTC)
+        self.media("Movies/A.2001.mkv", modified_at=old)
+        changing = self.source_root / "Movies" / "B.2002.mkv"
+        self.media("Movies/B.2002.mkv", modified_at=old)
+        with self.journey(stability=FileStabilityPolicy(stable_size_duration_seconds=60)) as value:
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.advance_once(value)
+            value.clock.advance(120)
+            changing.write_bytes(b"m" * 4096)
+            second = self.advance_once(value, step=1)
+            # A is proven stable; B changed, so its interval restarts and it is
+            # never claimed as an eligible primary.
+            self.assertEqual(["Movies/A.2001.mkv"], [i["path"] for i in second["sources"]], second)
+            self.assertEqual(1, second["progress"]["unstableEntries"], second)
+            reasons = {item["reason"] for item in second["progress"]["reasons"]}
+            self.assertIn("waiting_stable_size", reasons)
+
+
+class ConfinedProviderEntryTests(_DiscoveryFixture):
+    """A44-2: provider entries never expand discovery outside the selection."""
+
+    def _unconfined(self, value, entry):
+        original = value.source.list_page
+
+        def pages(path, *, limit, cursor=None):
+            return StoragePage([entry])
+
+        value.source.list_page = pages
+        return original
+
+    def test_sibling_provider_entry_is_refused_without_freezing(self) -> None:
+        """The exact A44-2 reproduction: a sibling file never becomes an intent."""
+
+        self.media("Selected/A.2001.mkv")
+        self.media("Outside/B.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Selected"]},
+            )
+            raw = value.source._storage
+            self._unconfined(value, raw.stat("Outside/B.2002.mkv"))
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("unsafe_entry", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual(["unsafe_entry"], settled["progress"]["refusalReasons"], settled)
+            self.assertEqual([], settled["sources"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            self.assertEqual("discovery_budget_limited", settled["actions"]["finalize"]["refusal"])
+            # No out-of-selection stat/traversal happened: the refused entry was
+            # never observed as a source.
+            self.assertNotIn(("stat", "Outside/B.2002.mkv"), value.source.reads)
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_ancestor_and_traversal_entries_are_refused(self) -> None:
+        self.media("Selected/A.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Selected"]},
+            )
+            raw = value.source._storage
+            real = raw.stat("Selected/A.2001.mkv")
+            hostile = (
+                StorageEntry(
+                    "B.2002.mkv",
+                    "Outside/B.2002.mkv",
+                    StorageEntryType.FILE,
+                    1024,
+                    real.modified_at,
+                ),
+                StorageEntry(
+                    "../B.2002.mkv",
+                    "Selected/../B.2002.mkv",
+                    StorageEntryType.FILE,
+                    1024,
+                    real.modified_at,
+                ),
+                StorageEntry(
+                    "B.2002.mkv",
+                    "/Selected/B.2002.mkv",
+                    StorageEntryType.FILE,
+                    1024,
+                    real.modified_at,
+                ),
+                # A deeper descendant returned while listing the selected
+                # directory is not one ordinary child of that directory.
+                StorageEntry(
+                    "Deep.2002.mkv",
+                    "Selected/Sub/Deep.2002.mkv",
+                    StorageEntryType.FILE,
+                    1024,
+                    real.modified_at,
+                ),
+            )
+            for index, entry in enumerate(hostile):
+                status, admitted_case = self.request(
+                    value,
+                    "/api/v1/resource-libraries/library/files/discoveries",
+                    "POST",
+                    {"paths": ["Selected"]},
+                )
+                self.assertEqual(202, status, admitted_case)
+                self._unconfined(value, entry)
+                settled = self.run_discovery(value)
+                self.assertEqual("partial_success", settled["status"], (index, settled))
+                self.assertEqual("unsafe_entry", settled["progress"]["incompleteReason"], settled)
+                self.assertEqual([], settled["sources"], (index, settled))
+                self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+                self.assertNotIn(
+                    ("stat", entry.path), value.source.reads, (index, value.source.reads)
+                )
+                self.assertEqual([], value.source.mutations)
+                # A legitimate exact whitespace name is not confused with the
+                # refused hostile entry.
+                self.assertNotIn(entry.path, [i["path"] for i in settled["sources"]])
+
+    def test_exact_whitespace_names_and_root_prefixes_still_admit(self) -> None:
+        """Legitimate adapter conventions are preserved, not over-rejected."""
+
+        self.media("Selected/  Padded.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Selected"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Selected/  Padded.2001.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+
+    def test_path_name_mismatch_is_refused(self) -> None:
+        self.media("Selected/A.2001.mkv")
+        with self.journey() as value:
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Selected"]},
+            )
+            raw = value.source._storage
+            real = raw.stat("Selected/A.2001.mkv")
+            inconsistent = StorageEntry(
+                "Different.2001.mkv",
+                "Selected/A.2001.mkv",
+                StorageEntryType.FILE,
+                real.size,
+                real.modified_at,
+            )
+            self._unconfined(value, inconsistent)
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("unsafe_entry", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual([], settled["sources"], settled)
+
+
+class DurableRefusalMonotonicityTests(_DiscoveryFixture):
+    """A44-3: material safety/budget/cursor refusals survive read failure."""
+
+    def _cursor_then_read_failure(self, value, *, read_failure_first: bool):
+        """Select Loop (repeated cursor) and Locked (ordinary read failure).
+
+        ``read_failure_first`` controls the event order, because the durable
+        refusal must hold in both orders and across a restart.
+        """
+
+        raw = value.source._storage
+        original = value.source.list_page
+
+        def pages(path, *, limit, cursor=None):
+            if path == "Loop":
+                if cursor is None:
+                    return StoragePage([raw.stat("Loop/A.2001.mkv")], "repeated")
+                return StoragePage([], "repeated")
+            return original(path, limit=limit, cursor=cursor)
+
+        value.source.list_page = pages
+        if not read_failure_first:
+            value.source.fail_listing("Locked")
+
+    def test_cursor_refusal_is_not_erased_by_a_later_read_failure(self) -> None:
+        self.media("Loop/A.2001.mkv")
+        self.media("Locked/B.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Loop", "Locked"]},
+            )
+            self._cursor_then_read_failure(value, read_failure_first=False)
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            # The current dominant fact may be the read failure, but the
+            # material cursor refusal stays durable and keeps Finalize refused.
+            self.assertEqual(["cursor_repeated"], settled["progress"]["refusalReasons"], settled)
+            self.assertEqual("cursor_repeated", settled["progress"]["materialRefusal"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            self.assertEqual("discovery_budget_limited", settled["actions"]["finalize"]["refusal"])
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_budget_limited", refused["error"]["code"])
+            self.assertIsNone(refused.get("intentId"))
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_read_failure_before_the_cursor_refusal_is_equally_durable(self) -> None:
+        self.media("Loop/A.2001.mkv")
+        self.media("Locked/B.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Locked", "Loop"]},
+            )
+            self._cursor_then_read_failure(value, read_failure_first=True)
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual(["cursor_repeated"], settled["progress"]["refusalReasons"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+
+    def test_material_refusal_survives_a_sqlite_restart(self) -> None:
+        self.media("Loop/A.2001.mkv")
+        self.media("Locked/B.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Loop", "Locked"]},
+            )
+            self._cursor_then_read_failure(value, read_failure_first=False)
+            settled = self.run_discovery(value)
+            self.assertEqual(["cursor_repeated"], settled["progress"]["refusalReasons"], settled)
+            reopened = SQLiteTaskRepository(self.database)
+            try:
+                stored = reopened.get_media_discovery(admitted["discoveryId"])
+            finally:
+                reopened.close()
+            self.assertEqual(
+                ("cursor_repeated",),
+                tuple(item.value for item in stored.progress.refusal_reasons),
+            )
+            from mediaflow.domain.media_discovery import discovery_material_refusal
+
+            self.assertIsNotNone(discovery_material_refusal(stored.progress))
+
+    def test_read_failure_only_subset_still_freezes(self) -> None:
+        """The separately legal explicitly reviewed read-failure subset works."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Locked/Two.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies", "Locked"]},
+            )
+            value.source.fail_listing("Locked")
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("read_failure", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual([], settled["progress"]["refusalReasons"], settled)
+            self.assertIsNone(settled["progress"]["materialRefusal"], settled)
+            self.assertTrue(settled["actions"]["finalize"]["available"], settled)
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(["Movies/One.2001.mkv"], [item.source.path for item in intent.items])
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()
