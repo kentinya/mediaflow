@@ -62,6 +62,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryFindingKind,
     DiscoveryIncompleteReason,
     DiscoveryObservation,
+    DiscoveryOwnershipLost,
     DiscoveryProgress,
     DiscoveryReasonCount,
     DiscoveryScopeEntry,
@@ -409,6 +410,9 @@ class MediaDiscoveryService:
                 message="resumed by the operator; the resident Worker continues the same scope",
             ),
         )
+        # Resume only clears the operator's own pause request: the operator-owned
+        # path never touches the claim columns, so a Worker that is still
+        # finishing its safe boundary keeps the exact claim it acquired.
         return self._persist(updated, expected_version=expected_version)
 
     def finalize(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
@@ -468,7 +472,7 @@ class MediaDiscoveryService:
                 status=409,
                 next_action="narrow the selected scope or correct the configured filters",
             )
-        return self._finalize(discovery, discovery.claim_token or "", cancelled=False)
+        return self._finalize(discovery, None)
 
     # ------------------------------------------------------------------
     # Worker execution
@@ -521,15 +525,17 @@ class MediaDiscoveryService:
         discovery = self._read(discovery_id)
         if discovery is None:
             raise DiscoveryUnavailable("the claimed discovery is no longer readable")
+        if discovery.terminal:
+            # Already settled by an operator control or a successor Worker: there
+            # is nothing this claim may still change, so it stops without writing.
+            return discovery
         if discovery.claim_token != claim_token:
-            raise DiscoveryConflict(
+            raise DiscoveryOwnershipLost(
                 "this Worker no longer owns the discovery claim",
                 details={"discoveryId": discovery_id},
             )
-        if discovery.terminal:
-            return discovery
         if discovery.cancel_requested:
-            return self._finalize(discovery, claim_token, cancelled=True)
+            return self._cancel(discovery, claim_token)
         if discovery.pause_requested:
             return self._publish_paused(discovery, claim_token)
         try:
@@ -538,7 +544,52 @@ class MediaDiscoveryService:
             storage = self._guarded_storage(runtime, library.storage_id)
         except DiscoveryError as error:
             return self._fail(discovery, claim_token, error.code)
-        return self._advance(discovery, claim_token, storage, library, heartbeat)
+        try:
+            return self._advance(discovery, claim_token, storage, library, heartbeat)
+        except (DiscoveryConflict, DiscoveryOwnershipLost):
+            # Either an operator control (pause/cancel/resume) changed the record
+            # while this Worker was walking, or its lease was taken over.  React
+            # to the *fresh* durable state at this safe boundary instead of
+            # stranding the record, discarding the accepted control, or writing
+            # over a successor's ownership.
+            return self._settle_after_conflict(discovery_id, claim_token)
+
+    def _settle_after_conflict(self, discovery_id: str, claim_token: str) -> MediaDiscovery:
+        """React to a refused stale publication at a safe boundary.
+
+        Ownership loss is deliberately distinguished from a lease lapse or an
+        operator version change.  A different persisted claim means another
+        Worker owns the walk now, so this owner stops without writing anything.
+        A record the operator already settled is returned as-is: that terminal
+        outcome is the operator's, and this Worker has nothing left to change.
+        Otherwise the claim is still this Worker's, so an accepted pause is
+        acknowledged under it, and a lapsed lease or a cleared pause simply
+        yields the claim so the very next Worker pass continues the same durable
+        scope instead of waiting for the lease to expire.
+        """
+
+        fresh = self._read(discovery_id)
+        if fresh is None:
+            raise DiscoveryUnavailable("the claimed discovery is no longer readable")
+        if fresh.claim_token != claim_token:
+            if fresh.terminal or fresh.cancel_requested:
+                return fresh
+            raise DiscoveryOwnershipLost(
+                "this Worker no longer owns the discovery claim",
+                details={"discoveryId": discovery_id},
+            )
+        if fresh.terminal:
+            return fresh
+        if fresh.cancel_requested:
+            return self._cancel(fresh, claim_token)
+        if fresh.pause_requested:
+            return self._publish_paused(fresh, claim_token)
+        # The claim is still ours but this pass may not publish: the operator
+        # cleared the pause, or our lease lapsed.  Yield the claim so the next
+        # pickup continues the same durable scope immediately; every bound,
+        # finding and refusal stays exactly as durable.
+        self._release_claim(discovery_id, claim_token)
+        return self._read(discovery_id) or fresh
 
     # ------------------------------------------------------------------
     # Internal execution
@@ -770,7 +821,14 @@ class MediaDiscoveryService:
 
         while not stop:
             if heartbeat is not None and not heartbeat():
-                return self._publish_paused(discovery, claim_token, "worker claim lost")
+                # The lease was taken over by another Worker.  The old owner
+                # must stop *without writing*: publishing a pause, a failure or
+                # a claim release here would rewrite the successor's ownership
+                # and could leave the record with no valid native continuation.
+                raise DiscoveryOwnershipLost(
+                    "this Worker lost the discovery claim before its next publication",
+                    details={"discoveryId": discovery.discovery_id},
+                )
             elapsed = self._monotonic() - started
             if elapsed >= self._remaining_active(counters):
                 counters = replace(counters, active_seconds=counters.active_seconds + elapsed)
@@ -959,7 +1017,7 @@ class MediaDiscoveryService:
         )
         if status is DiscoveryStatus.COMPLETED:
             if discovery.cancel_requested:
-                return self._cancel(discovery)
+                return self._cancel(discovery, claim_token)
             if discovery.pause_requested:
                 return self._publish_paused(discovery, claim_token)
             if counters.unstable_entries:
@@ -1011,12 +1069,15 @@ class MediaDiscoveryService:
         # finalize the reviewed findings, and an incomplete walk especially must
         # never silently become an executable first-N prefix.
         persisted = self._persist(
-            updated, expected_version=discovery.version, observations=tuple(observations)
+            updated,
+            expected_version=discovery.version,
+            claim_token=claim_token,
+            observations=tuple(observations),
         )
         # A non-terminal step yields its claim so the resident Worker can
         # continue the same durable scope on its next pass.  The stage is zero
-        # mutation and every publication is a version CAS, so a yielded claim
-        # can never duplicate a finding or a source.
+        # mutation and every publication is a version CAS fenced by this exact
+        # claim, so a yielded claim can never duplicate a finding or a source.
         self._release_claim(persisted.discovery_id, claim_token)
         return persisted
 
@@ -1363,9 +1424,7 @@ class MediaDiscoveryService:
             details={"relativePath": entry.path},
         )
 
-    def _finalize(
-        self, discovery: MediaDiscovery, claim_token: str, *, cancelled: bool = False
-    ) -> MediaDiscovery:
+    def _finalize(self, discovery: MediaDiscovery, claim_token: str | None) -> MediaDiscovery:
         """Freeze the discovered sources and hand them to the existing admission."""
 
         # The frozen manifest is exactly one source per admitted
@@ -1374,10 +1433,6 @@ class MediaDiscoveryService:
         unique_sources = deduplicate_sources(discovery.sources)
         sources = tuple(ManualSourceIdentity.from_document(value) for value in unique_sources)
         now = self._clock()
-        if cancelled:
-            # A cooperative cancellation is a truthful terminal outcome, not a
-            # failure: known findings are preserved and no authority is created.
-            return self._cancel(discovery)
         if not sources:
             return self._fail(discovery, claim_token, "selection_empty")
         # The intent projection is *built* here but never persisted on its own:
@@ -1456,14 +1511,20 @@ class MediaDiscoveryService:
         )
         return linked
 
-    def _cancel(self, discovery: MediaDiscovery) -> MediaDiscovery:
-        """Record a cooperative cancellation that preserves every known finding."""
+    def _cancel(self, discovery: MediaDiscovery, claim_token: str) -> MediaDiscovery:
+        """Record a cooperative cancellation that preserves every known finding.
+
+        The transition is settled under the exact current claim, so a Worker
+        whose lease was already taken over can never cancel the successor's
+        work, and the settlement releases the claim in the same transaction.
+        """
 
         now = self._clock()
         updated = replace(
             discovery,
             status=DiscoveryStatus.CANCELLED,
             version=discovery.version + 1,
+            cancel_requested=True,
             claim_worker_id=None,
             claim_token=None,
             claim_expires_at=None,
@@ -1478,11 +1539,21 @@ class MediaDiscoveryService:
                 ),
             ),
         )
-        return self._persist(updated, expected_version=discovery.version)
+        return self._settle_control(
+            updated, expected_version=discovery.version, claim_token=claim_token
+        )
 
     def _publish_paused(
         self, discovery: MediaDiscovery, claim_token: str, message: str = ""
     ) -> MediaDiscovery:
+        """Acknowledge a cooperative pause at a safe boundary under the live claim.
+
+        A Worker that no longer owns the claim never reaches this method: the
+        caller stops with ``DiscoveryOwnershipLost`` instead, so a stale owner
+        can never pause the successor's work or leave it without a native
+        continuation.
+        """
+
         now = self._clock()
         updated = replace(
             discovery,
@@ -1499,7 +1570,9 @@ class MediaDiscoveryService:
                 or "discovery is paused; findings and counters are durable and safe to continue",
             ),
         )
-        return self._persist(updated, expected_version=discovery.version)
+        return self._settle_control(
+            updated, expected_version=discovery.version, claim_token=claim_token
+        )
 
     def _fail(self, discovery: MediaDiscovery, claim_token: str, code: str) -> MediaDiscovery:
         now = self._clock()
@@ -1518,7 +1591,9 @@ class MediaDiscoveryService:
                 message="discovery could not continue under its pinned configuration",
             ),
         )
-        return self._persist(updated, expected_version=discovery.version)
+        return self._settle_control(
+            updated, expected_version=discovery.version, claim_token=claim_token
+        )
 
     def _request_control(
         self,
@@ -1553,23 +1628,38 @@ class MediaDiscoveryService:
                     ),
                 ),
             )
-        else:
-            if discovery.cancel_requested:
-                return discovery
-            updated = replace(
-                discovery,
-                cancel_requested=True,
-                version=discovery.version + 1,
-                updated_at=now,
-                progress=replace(
-                    discovery.progress,
-                    message=(
-                        "a cooperative cancellation was requested; known findings are preserved "
-                        "and no execution authority is created"
-                    ),
+            # A pause stays cooperative: the Worker acknowledges it at its next
+            # safe boundary.  The request itself must survive a concurrent
+            # Worker publication, so it is written by the operator-owned path
+            # that never touches the live claim.
+            return self._persist(updated, expected_version=expected_version)
+        # Cancellation is settled here, atomically, as one terminal
+        # acknowledgement: the record, the request flag and the claim release
+        # are a single transaction.  A cancellation can therefore never be left
+        # as an open record that no Worker is allowed to claim again, and an
+        # in-flight Worker that is still holding the old claim stops on its next
+        # fenced write without touching this outcome.  Every finding already
+        # durable is preserved; no execution authority is created.
+        cancelled = replace(
+            discovery,
+            status=DiscoveryStatus.CANCELLED,
+            version=discovery.version + 1,
+            cancel_requested=True,
+            claim_worker_id=None,
+            claim_token=None,
+            claim_expires_at=None,
+            updated_at=now,
+            progress=replace(
+                discovery.progress,
+                phase="cancelled",
+                incomplete_reason=DiscoveryIncompleteReason.CANCELLED,
+                message=(
+                    "discovery was cancelled cooperatively; known findings are preserved and "
+                    "no execution authority was created"
                 ),
-            )
-        return self._persist(updated, expected_version=expected_version)
+            ),
+        )
+        return self._settle_control(cancelled, expected_version=expected_version)
 
     def _require_version(self, discovery_id: str, expected_version: int) -> MediaDiscovery:
         if (
@@ -1598,15 +1688,43 @@ class MediaDiscoveryService:
         discovery: MediaDiscovery,
         *,
         expected_version: int,
+        claim_token: str | None = None,
         observations: tuple[DiscoveryObservation, ...] = (),
     ) -> MediaDiscovery:
         recorder = getattr(self._repository, "record_media_discovery_progress", None)
         if callable(recorder):
-            return recorder(discovery, expected_version=expected_version, observations=observations)
+            return recorder(
+                discovery,
+                expected_version=expected_version,
+                claim_token=claim_token,
+                observations=observations,
+            )
         updater = getattr(self._repository, "update_media_discovery", None)
         if callable(updater):
             return updater(discovery, expected_version=expected_version)
         raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+
+    def _settle_control(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        claim_token: str | None = None,
+    ) -> MediaDiscovery:
+        """Settle one boundary and release the claim as one durable outcome.
+
+        Status, progress and the claim release are one transaction, so an
+        accepted cancellation or acknowledged pause can never leave an open
+        record that no Worker is allowed to claim again.  When ``claim_token``
+        is supplied the settlement is fenced by the exact current claim, so a
+        Worker that already lost its lease cannot pause, fail or cancel the
+        successor's work.
+        """
+
+        settler = getattr(self._repository, "settle_media_discovery_control", None)
+        if callable(settler):
+            return settler(discovery, expected_version=expected_version, claim_token=claim_token)
+        return self._persist(discovery, expected_version=expected_version, claim_token=claim_token)
 
     def _read(self, discovery_id: str) -> MediaDiscovery | None:
         reader = getattr(self._repository, "get_media_discovery", None)

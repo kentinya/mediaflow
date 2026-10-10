@@ -239,6 +239,29 @@ class DiscoveryUnavailable(DiscoveryError):
         )
 
 
+class DiscoveryOwnershipLost(DiscoveryError):
+    """A Worker tried to publish a step it no longer owns.
+
+    This is deliberately *not* a ``DiscoveryConflict``: a version conflict is
+    an operator control change the current owner may still settle, while a lost
+    claim means another Worker owns the walk now.  The only correct reaction is
+    to stop without writing, so the successor's claim, state, controls, manifest,
+    counters and observations stay exactly as the successor published them.
+    """
+
+    def __init__(self, message: str, *, details: dict[str, object] | None = None) -> None:
+        super().__init__(
+            message,
+            code="discovery_ownership_lost",
+            status=409,
+            next_action=(
+                "refresh the discovery; another Processing Worker owns this walk and "
+                "continues it under its own claim"
+            ),
+            details=details,
+        )
+
+
 @dataclass(frozen=True)
 class DiscoveryScopeEntry:
     """One submitted ResourceLibrary-relative selection with its real entry type."""

@@ -27,6 +27,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
+from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
 from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.library import FileStabilityPolicy
 from mediaflow.domain.manual_organize import ManualSourceIdentity
@@ -1009,6 +1010,157 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual(len(paths), len(set(paths)), paths)
             self.assertEqual(4, settled["progress"]["primarySources"], settled)
 
+    def test_a_concurrent_pause_is_acknowledged_instead_of_losing_the_race(self) -> None:
+        """AC3: an accepted pause must not be lost to a Worker's version CAS."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            entered, release = threading.Event(), threading.Event()
+            original = value.source.list_page
+
+            def blocked(path, *, limit, cursor=None):
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError("coordination timed out")
+                return original(path, limit=limit, cursor=cursor)
+
+            value.source.list_page = blocked
+            worker = MediaDiscoveryWorker(value.discovery, clock=value.clock, worker_id="worker-1")
+            thread = threading.Thread(target=worker.run_next)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(10))
+                # The operator pauses mid-walk, so the Worker's next publication
+                # loses the version CAS and must react to the fresh record.
+                paused = value.discovery.request_pause(
+                    identifier, actor="operator", expected_version=admitted["version"]
+                )
+                self.assertTrue(paused.pause_requested)
+            finally:
+                release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            _, detail = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
+            # The accepted pause survived: it is durably acknowledged, natively
+            # continuable, and the record was never stranded on the conflict.
+            self.assertEqual("paused", detail["status"])
+            self.assertTrue(detail["pauseRequested"])
+            self.assertTrue(detail["actions"]["resume"]["available"])
+            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
+            self.assertEqual([], value.source.mutations)
+            # Continue resumes the same permitted scope with no lost finding.
+            _, resumed = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                "POST",
+                {"expectedVersion": detail["version"]},
+            )
+            self.assertFalse(resumed["pauseRequested"])
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual(
+                ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"],
+                sorted(item["path"] for item in settled["sources"]),
+                settled,
+            )
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_an_open_cancellation_left_by_an_earlier_build_is_recovered(self) -> None:
+        """AC1: a queued record already carrying cancel_requested must not strand.
+
+        An earlier build wrote the request flag without settling the record, and
+        its claimant excluded ``cancel_requested=1`` rows forever.  The recovery
+        path must still reach a durable terminal acknowledgement through a real
+        Worker pickup rather than leaving an unclaimable open record.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            # Reproduce the stranded durable state directly, exactly as an
+            # earlier build left it: the request flag is durable but the record
+            # is still open and would never be claimed again.
+            with SQLiteTaskRepository(self.database) as raw:
+                raw._connection.execute(
+                    "UPDATE media_discoveries SET cancel_requested=1 WHERE discovery_id=?",
+                    (identifier,),
+                )
+                raw._connection.commit()
+            _, stranded = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("queued", stranded["status"])
+            self.assertTrue(stranded["cancelRequested"])
+            self.assertFalse(stranded["actions"]["finalize"]["available"])
+            # The resident Worker really picks it up and settles the accepted
+            # cancellation instead of never being allowed to claim it again.
+            self.clock.advance(600)
+            claimed = value.discovery.claim_and_run(worker_id="recovery", claim_token="recovery-1")
+            self.assertIsNotNone(claimed)
+            self.assertEqual("cancelled", claimed.status.value)
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("cancelled", readback["status"])
+            self.assertTrue(readback["cancelRequested"])
+            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_resume_cannot_undo_an_accepted_cancellation(self) -> None:
+        """AC3: cancellation is terminal; every later control refuses actionably."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            _, cancelled = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/cancel",
+                "POST",
+                {"expectedVersion": admitted["version"]},
+            )
+            self.assertEqual("cancelled", cancelled["status"])
+            for action in ("resume", "pause", "cancel"):
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/{action}",
+                    "POST",
+                    {"expectedVersion": cancelled["version"]},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("discovery_not_open", refused["error"]["code"])
+            # Even the exact durable claim cannot resurrect cancelled work.
+            value.clock.advance(600)
+            self.assertIsNone(
+                value.discovery.claim_and_run(worker_id="w", claim_token="late-token")
+            )
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("cancelled", readback["status"])
+            self.assertEqual(cancelled["version"], readback["version"])
+            self.assertEqual([], value.source.mutations)
+
     def test_cancellation_preserves_findings_and_grants_no_authority(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey() as value:
@@ -1053,7 +1205,292 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                 value.discovery.run_claimed(
                     admitted["discoveryId"], worker_id="worker-2", claim_token="token-2"
                 )
-            self.assertEqual("discovery_conflict", caught.exception.code)
+            # A different persisted claim is ownership loss, not a mere version
+            # conflict: the stale owner must stop without writing anything.
+            self.assertEqual("discovery_ownership_lost", caught.exception.code)
+
+    def test_queued_cancellation_reaches_durable_terminal_acknowledgement(self) -> None:
+        """A44-4: an accepted cancel of unclaimed work must not strand the record."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            status, cancelled = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/cancel",
+                "POST",
+                {"expectedVersion": admitted["version"]},
+            )
+            self.assertEqual(200, status, cancelled)
+            # The acknowledgement is durable and terminal immediately: no Worker
+            # pass is required to make the operator's accepted cancellation real.
+            self.assertEqual("cancelled", cancelled["status"])
+            self.assertTrue(cancelled["cancelRequested"])
+            self.assertFalse(cancelled["actions"]["finalize"]["available"])
+            self.assertFalse(cancelled["actions"]["pause"]["available"])
+            self.assertFalse(cancelled["actions"]["resume"]["available"])
+            self.assertEqual("not_available_from_discovery", cancelled["execution"])
+            # Three real Worker pickups find no claimable work, and the readback
+            # never regresses to an open queued record.
+            for _ in range(3):
+                value.clock.advance(600)
+                self.assertIsNone(
+                    value.discovery.claim_and_run(
+                        worker_id="cancel-worker", claim_token="cancel-token"
+                    )
+                )
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("cancelled", readback["status"])
+            self.assertTrue(readback["cancelRequested"])
+            self.assertEqual(admitted["version"] + 1, readback["version"])
+            # Finalize refuses cancellation explicitly.
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/finalize",
+                "POST",
+                {"expectedVersion": readback["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_not_complete", refused["error"]["code"])
+            # A deliberate same-scope submission creates successor work instead
+            # of reconciling to the cancelled record.
+            _, successor = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertNotEqual(identifier, successor["discoveryId"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_cancellation_during_an_in_flight_walk_reaches_terminal(self) -> None:
+        """A44-4: an in-flight cancellation is not stranded by the stale CAS."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            entered, release = threading.Event(), threading.Event()
+            original = value.source.list_page
+
+            def blocked(path, *, limit, cursor=None):
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError("coordination timed out")
+                return original(path, limit=limit, cursor=cursor)
+
+            value.source.list_page = blocked
+            worker = MediaDiscoveryWorker(
+                value.discovery, clock=value.clock, worker_id="old-worker"
+            )
+            results: list[object] = []
+            thread = threading.Thread(target=lambda: results.append(worker.run_next()))
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(10))
+                _, before = self.request(
+                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
+                )
+                status, control = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/cancel",
+                    "POST",
+                    {"expectedVersion": before["version"]},
+                )
+                self.assertEqual(200, status, control)
+            finally:
+                release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            # The returning old Worker honoured the accepted cancellation at its
+            # safe boundary instead of stranding it behind a stale version.
+            self.assertEqual("cancelled", readback["status"])
+            self.assertTrue(readback["cancelRequested"])
+            self.assertFalse(readback["actions"]["finalize"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_stale_owner_cannot_clear_a_successor_claim(self) -> None:
+        """A44-5: takeover must leave the successor's claim and state untouched."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            entered, release = threading.Event(), threading.Event()
+            original = value.source.list_page
+
+            def blocked(path, *, limit, cursor=None):
+                entered.set()
+                if not release.wait(10):
+                    raise AssertionError("coordination timed out")
+                return original(path, limit=limit, cursor=cursor)
+
+            value.source.list_page = blocked
+            notices: list[str] = []
+            worker = MediaDiscoveryWorker(
+                value.discovery, clock=value.clock, worker_id="old-worker", notice=notices.append
+            )
+            results: list[object] = []
+            thread = threading.Thread(target=lambda: results.append(worker.run_next()))
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(10))
+                # The old Worker's lease expires and a successor takes over
+                # *between* the successful heartbeat and the publication.
+                value.clock.advance(600)
+                claimed = value.repository.claim_next_media_discovery(
+                    value.clock(),
+                    worker_id="successor-worker",
+                    claim_token="successor-claim",
+                    lease_seconds=300,
+                )
+                self.assertIsNotNone(claimed)
+                self.assertEqual(identifier, claimed.discovery_id)
+            finally:
+                release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            self.assertIsNone(results[0])
+            self.assertTrue(any("discovery_ownership_lost" in line for line in notices), notices)
+            # The successor's claim, status, controls and version are untouched.
+            claim = value.repository.media_discovery_claim(identifier)
+            self.assertEqual("successor-worker", claim["workerId"])
+            self.assertEqual("successor-claim", claim["claimToken"])
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("queued", readback["status"])
+            self.assertFalse(readback["pauseRequested"])
+            self.assertFalse(readback["cancelRequested"])
+            self.assertEqual(admitted["version"], readback["version"])
+            self.assertEqual([], value.source.mutations)
+            # The valid successor still advances the same durable scope safely.
+            advanced = value.discovery.run_claimed(
+                identifier, worker_id="successor-worker", claim_token="successor-claim"
+            )
+            self.assertIn(
+                advanced.status.value, {"completed", "waiting_stability", "partial_success"}
+            )
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_cancellation_and_takeover_are_durable_across_connections(self) -> None:
+        """AC1/AC2/AC3: real SQLite transactions, separate connections and restart."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            cancelled_id = admitted["discoveryId"]
+            status, cancelled = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{cancelled_id}/cancel",
+                "POST",
+                {"expectedVersion": admitted["version"]},
+            )
+            self.assertEqual(200, status, cancelled)
+
+            _, other = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertNotEqual(cancelled_id, other["discoveryId"])
+            value.repository.claim_next_media_discovery(
+                value.clock(), worker_id="old-worker", claim_token="old-claim", lease_seconds=300
+            )
+
+            # A second, independent connection to the same database observes the
+            # same durable outcomes: the cancellation is already terminal, and
+            # the takeover claim is real.
+            with SQLiteTaskRepository(self.database) as separate:
+                self.assertEqual(
+                    "cancelled", separate.get_media_discovery(cancelled_id).status.value
+                )
+                self.assertIsNone(separate.media_discovery_claim(cancelled_id)["claimToken"])
+                self.assertIsNone(
+                    separate.claim_next_media_discovery(
+                        value.clock(),
+                        worker_id="separate-worker",
+                        claim_token="separate-claim",
+                        lease_seconds=300,
+                    )
+                )
+                self.clock.advance(600)
+                taken = separate.claim_next_media_discovery(
+                    value.clock(),
+                    worker_id="successor-worker",
+                    claim_token="successor-claim",
+                    lease_seconds=300,
+                )
+                self.assertIsNotNone(taken)
+                self.assertEqual(other["discoveryId"], taken.discovery_id)
+                # Renewal and progress by the displaced owner are refused.
+                self.assertFalse(
+                    separate.heartbeat_media_discovery_claim(
+                        taken.discovery_id, "old-claim", value.clock(), 300
+                    )
+                )
+                with self.assertRaises(DiscoveryError) as lost:
+                    separate.record_media_discovery_progress(
+                        replace(
+                            taken,
+                            version=taken.version + 1,
+                            progress=replace(taken.progress, phase="running"),
+                        ),
+                        expected_version=taken.version,
+                        claim_token="old-claim",
+                    )
+                self.assertEqual("discovery_ownership_lost", lost.exception.code)
+                self.assertEqual(
+                    "successor-claim",
+                    separate.media_discovery_claim(taken.discovery_id)["claimToken"],
+                )
+                # Cancellation cannot be undone by resume or a Worker publication.
+                with self.assertRaises(DiscoveryError) as refused:
+                    value.discovery.resume(
+                        cancelled_id, actor="operator", expected_version=cancelled["version"]
+                    )
+                self.assertEqual("discovery_not_open", refused.exception.code)
+
+            # Reopening the database preserves both durable outcomes.
+            with SQLiteTaskRepository(self.database) as reopened:
+                self.assertEqual(
+                    "cancelled", reopened.get_media_discovery(cancelled_id).status.value
+                )
+                self.assertEqual(
+                    "successor-claim",
+                    reopened.media_discovery_claim(other["discoveryId"])["claimToken"],
+                )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
 
     def test_control_requires_the_exact_current_version(self) -> None:
         self.media("Movies/One.2001.mkv")

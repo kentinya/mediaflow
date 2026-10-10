@@ -123,6 +123,7 @@ from mediaflow.domain.manual_scan import (
 from mediaflow.domain.media_discovery import (
     DiscoveryConflict,
     DiscoveryObservation,
+    DiscoveryOwnershipLost,
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
@@ -8588,7 +8589,8 @@ class SQLiteTaskRepository:
         ``intent_id IS NULL`` guard before the intent is inserted, so only the
         request that actually wins the discovery transition ever creates an
         intent.  A losing or repeated request raises ``DiscoveryConflict`` with
-        no side effect.
+        no side effect.  The claim columns are never written here: an operator
+        freeze must not restore a claim field from its own earlier read snapshot.
         """
 
         if not isinstance(discovery, MediaDiscovery):
@@ -8614,7 +8616,7 @@ class SQLiteTaskRepository:
                 cursor = self._connection.execute(
                     "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                     "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
-                    "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
+                    "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL, attempts=?, "
                     "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
                     "WHERE discovery_id=? AND version=? AND intent_id IS NULL",
                     (
@@ -8631,13 +8633,6 @@ class SQLiteTaskRepository:
                         (
                             discovery.frozen_at.isoformat()
                             if discovery.frozen_at is not None
-                            else None
-                        ),
-                        discovery.claim_worker_id,
-                        discovery.claim_token,
-                        (
-                            discovery.claim_expires_at.isoformat()
-                            if discovery.claim_expires_at is not None
                             else None
                         ),
                         discovery.attempts,
@@ -10019,7 +10014,14 @@ class SQLiteTaskRepository:
         *,
         expected_version: int,
     ) -> MediaDiscovery:
-        """Persist one discovery progress/state transition with a version CAS."""
+        """Persist one operator-owned discovery transition with a version CAS.
+
+        The claim columns are deliberately *never* written here.  A control or
+        resume request read one snapshot of the record, so writing those columns
+        back could restore a stale claim over a Worker's fresh ownership; the
+        control flags and lifecycle state are the operator's to change, the
+        claim is not.
+        """
 
         if not isinstance(discovery, MediaDiscovery):
             raise ValueError("media discovery projection is required")
@@ -10032,8 +10034,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
-                "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
-                "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
+                "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
                 "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
                 "WHERE discovery_id=? AND version=?",
                 (
@@ -10044,13 +10045,6 @@ class SQLiteTaskRepository:
                     json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
                     discovery.intent_id,
                     discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None,
-                    discovery.claim_worker_id,
-                    discovery.claim_token,
-                    (
-                        discovery.claim_expires_at.isoformat()
-                        if discovery.claim_expires_at is not None
-                        else None
-                    ),
                     discovery.attempts,
                     1 if discovery.pause_requested else 0,
                     1 if discovery.cancel_requested else 0,
@@ -10071,6 +10065,32 @@ class SQLiteTaskRepository:
                 )
         return self.get_media_discovery(discovery.discovery_id)
 
+    def _raise_discovery_write_conflict(
+        self, current: MediaDiscovery | None, discovery: MediaDiscovery, claim_token: str | None
+    ) -> None:
+        """Raise the precise reason one fenced discovery write was refused.
+
+        A claim mismatch means another Worker owns the walk now: the caller must
+        stop without touching the successor's state.  Anything else is an
+        ordinary version conflict the caller may settle against the fresh record.
+        """
+
+        if claim_token is not None and (current is None or current.claim_token != claim_token):
+            raise DiscoveryOwnershipLost(
+                "this Worker no longer owns the discovery claim",
+                details={
+                    "discoveryId": discovery.discovery_id,
+                    "currentVersion": current.version if current is not None else None,
+                },
+            )
+        raise DiscoveryConflict(
+            "the discovery changed before this transition was published",
+            details={
+                "discoveryId": discovery.discovery_id,
+                "currentVersion": current.version if current is not None else None,
+            },
+        )
+
     def claim_next_media_discovery(
         self,
         now: datetime,
@@ -10085,6 +10105,11 @@ class SQLiteTaskRepository:
         resume: the whole stage is zero mutation, so a stale owner can never
         cause a media effect.  The claim is still exclusive so two Workers can
         never append duplicate findings or sources for one record.
+
+        A record carrying an unacknowledged ``cancel_requested`` is deliberately
+        still claimable: the Worker that picks it up settles the accepted
+        cancellation at its safe boundary instead of the request stranding an
+        open record that no Worker may ever touch again.
         """
 
         self._require_claim_values(worker_id, claim_token, lease_seconds)
@@ -10094,7 +10119,6 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             row = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?) "
-                "AND cancel_requested=0 "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
                 "ORDER BY created_at, discovery_id LIMIT 1",
                 (
@@ -10109,7 +10133,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
                 "claim_expires_at=?, attempts=attempts+1, updated_at=? "
-                "WHERE discovery_id=? AND status IN (?, ?, ?) AND cancel_requested=0 "
+                "WHERE discovery_id=? AND status IN (?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
                 (
                     worker_id,
@@ -10252,9 +10276,22 @@ class SQLiteTaskRepository:
         discovery: MediaDiscovery,
         *,
         expected_version: int,
+        claim_token: str | None = None,
         observations: tuple[DiscoveryObservation, ...] = (),
     ) -> MediaDiscovery:
-        """Publish progress, counters, findings and observations in one transaction."""
+        """Publish discovery progress, findings and observations atomically.
+
+        With a ``claim_token`` the write is fenced by the *exact current
+        persisted claim* in the same statement as the version CAS, so a Worker
+        whose lease was taken over cannot publish status, progress, findings,
+        counters, manifest or stability observations for a discovery it no
+        longer owns.  The operator-owned ``pause_requested``/``cancel_requested``
+        flags and the claim columns are deliberately not written on that path:
+        an accepted pause or cancel request can never be silently discarded by a
+        Worker publication, and a stale owner can never rewrite the successor's
+        ownership.  Without a ``claim_token`` this is the operator-owned path and
+        the control flags are written instead.
+        """
 
         if not isinstance(discovery, MediaDiscovery):
             raise ValueError("media discovery projection is required")
@@ -10264,57 +10301,44 @@ class SQLiteTaskRepository:
             or expected_version < 1
         ):
             raise ValueError("media discovery expected version is invalid")
+        if claim_token is not None and (
+            not isinstance(claim_token, str) or not claim_token.strip()
+        ):
+            raise ValueError("media discovery claim token is invalid")
         values = tuple(observations)
+        columns = (
+            "status=?, version=?, budgets_json=?, progress_json=?, sources_json=?, "
+            "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?"
+        )
+        parameters: list[object] = [
+            discovery.status.value,
+            discovery.version,
+            json.dumps(discovery.budgets.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(discovery.progress.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+            discovery.intent_id,
+            discovery.frozen_at.isoformat() if discovery.frozen_at is not None else None,
+            discovery.attempts,
+            discovery.error,
+            discovery.updated_at.isoformat(),
+        ]
+        if claim_token is None:
+            columns += ", pause_requested=?, cancel_requested=?"
+            parameters.extend(
+                (1 if discovery.pause_requested else 0, 1 if discovery.cancel_requested else 0)
+            )
+        parameters.extend((discovery.discovery_id, expected_version))
+        statement = f"UPDATE media_discoveries SET {columns} WHERE discovery_id=? AND version=?"
+        if claim_token is not None:
+            statement += " AND claim_token=?"
+            parameters.append(claim_token)
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                cursor = self._connection.execute(
-                    "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
-                    "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
-                    "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
-                    "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
-                    "WHERE discovery_id=? AND version=?",
-                    (
-                        discovery.status.value,
-                        discovery.version,
-                        json.dumps(
-                            discovery.budgets.document(), ensure_ascii=False, sort_keys=True
-                        ),
-                        json.dumps(
-                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
-                        ),
-                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
-                        discovery.intent_id,
-                        (
-                            discovery.frozen_at.isoformat()
-                            if discovery.frozen_at is not None
-                            else None
-                        ),
-                        discovery.claim_worker_id,
-                        discovery.claim_token,
-                        (
-                            discovery.claim_expires_at.isoformat()
-                            if discovery.claim_expires_at is not None
-                            else None
-                        ),
-                        discovery.attempts,
-                        1 if discovery.pause_requested else 0,
-                        1 if discovery.cancel_requested else 0,
-                        discovery.error,
-                        discovery.updated_at.isoformat(),
-                        discovery.discovery_id,
-                        expected_version,
-                    ),
-                )
+                cursor = self._connection.execute(statement, tuple(parameters))
                 if cursor.rowcount != 1:
                     current = self._load_media_discovery_locked(discovery.discovery_id)
-                    raise DiscoveryConflict(
-                        "the discovery changed before this progress was published",
-                        details={
-                            "discoveryId": discovery.discovery_id,
-                            "currentVersion": current.version if current is not None else None,
-                        },
-                    )
+                    self._raise_discovery_write_conflict(current, discovery, claim_token)
                 for observation in values:
                     self._connection.execute(
                         "INSERT INTO media_discovery_observations "
@@ -10342,6 +10366,64 @@ class SQLiteTaskRepository:
             except BaseException:
                 self._connection.rollback()
                 raise
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def settle_media_discovery_control(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        claim_token: str | None = None,
+    ) -> MediaDiscovery:
+        """Settle one discovery at a safe boundary and release its claim atomically.
+
+        Status, progress, counters, the operator control flags and the claim
+        release are one statement, so an accepted cancellation can never be left
+        as a non-terminal ``queued`` record that no Worker may ever pick up
+        again.  When ``claim_token`` is supplied the write is additionally fenced
+        by the exact current persisted claim, so a Worker that already lost its
+        lease cannot pause, fail or cancel the successor's work.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        if claim_token is not None and (
+            not isinstance(claim_token, str) or not claim_token.strip()
+        ):
+            raise ValueError("media discovery claim token is invalid")
+        statement = (
+            "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
+            "sources_json=?, attempts=?, pause_requested=?, cancel_requested=?, "
+            "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL, "
+            "error=?, updated_at=? WHERE discovery_id=? AND version=?"
+        )
+        parameters: list[object] = [
+            discovery.status.value,
+            discovery.version,
+            json.dumps(discovery.progress.document(), ensure_ascii=False, sort_keys=True),
+            json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+            discovery.attempts,
+            1 if discovery.pause_requested else 0,
+            1 if discovery.cancel_requested else 0,
+            discovery.error,
+            discovery.updated_at.isoformat(),
+            discovery.discovery_id,
+            expected_version,
+        ]
+        if claim_token is not None:
+            statement += " AND claim_token=?"
+            parameters.append(claim_token)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(statement, tuple(parameters))
+            if cursor.rowcount != 1:
+                current = self._load_media_discovery_locked(discovery.discovery_id)
+                self._raise_discovery_write_conflict(current, discovery, claim_token)
         return self.get_media_discovery(discovery.discovery_id)
 
     def _discovery_values(self, discovery: MediaDiscovery) -> tuple[object, ...]:

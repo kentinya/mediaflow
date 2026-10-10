@@ -535,6 +535,51 @@ def main() -> int:
             raise RuntimeError(f"continue did not clear the pause: {resumed}")
         settled_control = _settle(configuration_path, target_id)
 
+        # Cooperative cancellation of work that no Worker has picked up yet is
+        # acknowledged durably and immediately: it reaches its terminal state
+        # without stranding an open record, and repeated real Worker passes find
+        # nothing to advance.  Cancellation is never an executable subset.
+        _, cancel_target = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [SECOND_FOLDER]},
+            expect=202,
+        )
+        cancel_id = cancel_target["discoveryId"]
+        _, cancelled = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{cancel_id}/cancel",
+            {"expectedVersion": cancel_target["version"]},
+            expect=200,
+        )
+        if cancelled["status"] != "cancelled" or cancelled["cancelRequested"] is not True:
+            raise RuntimeError(f"the accepted cancellation was not durable: {cancelled}")
+        if cancelled["actions"]["finalize"]["available"] is not False:
+            raise RuntimeError(f"a cancelled discovery advertised finalize: {cancelled}")
+        if cancelled["execution"] != "not_available_from_discovery":
+            raise RuntimeError(f"a cancelled discovery granted execution authority: {cancelled}")
+        for _ in range(3):
+            _run_worker(configuration_path)
+            time.sleep(0.4)
+        _, cancelled_after = api(
+            "GET", f"/api/v1/operations/organize/discoveries/{cancel_id}", expect=200
+        )
+        if (
+            cancelled_after["status"] != "cancelled"
+            or cancelled_after["version"] != cancelled["version"]
+        ):
+            raise RuntimeError(f"the cancelled record was stranded or rewritten: {cancelled_after}")
+        if _discovery_row(database_path, cancel_id)["claim_token"] is not None:
+            raise RuntimeError("the cancelled record kept an unclaimable stale claim")
+        _, cancel_successor = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [SECOND_FOLDER]},
+            expect=202,
+        )
+        if cancel_successor["discoveryId"] == cancel_id:
+            raise RuntimeError("a cancelled discovery was reconciled as still open")
+
         # Explicit finalize freezes the list and links the existing intent.
         _, frozen = api(
             "POST",

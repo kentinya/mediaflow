@@ -12502,6 +12502,15 @@ class MediaFlowApi:
             return "inspect the recorded failure and start a new bounded discovery"
         if discovery.pause_requested:
             return "continue the paused discovery to finish the admitted scope"
+        if discovery.cancel_requested:
+            # An accepted cancellation that is not yet terminal is settled by the
+            # resident Worker at its next safe boundary.  The readback states the
+            # pending acknowledgement truthfully instead of promising more work.
+            return (
+                "the accepted cancellation is acknowledged by the resident Processing "
+                "Worker at its next safe boundary; known findings are preserved and no "
+                "execution authority is created"
+            )
         if terminal and discovery_material_refusal(discovery.progress) is not None:
             # A budget/safety-limited walk is never an executable subset: the
             # native next action is the honest narrowing action, not finalize.
