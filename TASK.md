@@ -7,7 +7,7 @@ This Task follows [the development workflow](docs/development-workflow.md), uses
 ```text
 Task ID: 44.8
 Parent Slice: 44
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c
 Difficulty: High
 Test Level: T4
@@ -401,11 +401,76 @@ Head SHA: 3bb45747b6e50f6bc44fb57e7b6384f429e247bb
 
 ## B Review Result
 
+Review date: 2026-10-10. Reviewed the actual submitted implementation
+`3bb45747b6e50f6bc44fb57e7b6384f429e247bb` and its report-only successors through
+`fe1e355e108520bd4fc169e131290050fe509e3f`. The latter range changes only TASK.md;
+runtime, tests, harnesses, dependencies and configuration are unchanged. The stale PLANNED header
+and SUBMITTED FOR REVIEW report do not establish acceptance; this is Task 44.8's first B review.
+
+Independent verification: focused discovery/provider tests PASS (68 tests, 13.986 seconds);
+manual intent/Preview/execution, Operations inventory/detail and migration regression PASS
+(137 tests, 17.257 seconds); governance, changed-file Ruff and diff checks PASS. Real authenticated
+API/managed-default Local/SQLite probes independently confirm terminal queued/in-flight cancellation,
+safe deliberate successor admission, and takeover immediately before the actual SQL publication:
+the old owner changes neither successor ownership nor state, and the successor completes.
+
+The pause/control probe below proves an in-scope P1. Under the workflow's early-blocker rule,
+B did not rerun the remaining expensive T4 gates or accept their completion-report labels.
+No candidate-bound Task 44.8 evidence index/raw archive was found at the prescribed retained
+location or linked in the report. The discovered temporary t4-gates/t4-gates2 Python logs contain
+2352 tests, not the reported 2381, and have no verified matching candidate identity; they are not
+reused. The corrected executable candidate still needs all assigned final gates with retained
+source/environment/artifact identity, original logs and required browser receipts/images.
+
+Global complexity reassessment: prior Slice corrections already span several rounds. This new
+failure comes from combining a whole Worker publication with the operator version CAS, then
+settling that conflict from the pre-publication durable snapshot. The existing discovery model,
+claim fence and SQLite transaction boundary are sufficient to reconcile controls and progress.
+Keep one coherent correction in this Task; no new queue, lifecycle, engine or Task per race is
+needed. No Contract impossibility is established; ID/Base/Goal/Scope and assigned tests are retained.
+
+Evidence (local, retained through A review):
+`.git/validation-evidence/fe1e355e108520bd4fc169e131290050fe509e3f/b-review44-8/`
+contains the index, original probe scripts/logs/receipts, first harness errors and corrected runs,
+focused/affected regression logs and scope/input identities. The first control-probe harness
+expected 200 instead of Finalize's successful 201; the first no-control harness used the wrong
+error-code spelling. Both original failures are retained, not counted as product failures.
+
 ```text
-Reviewed: NOT YET REVIEWED
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c..fe1e355e108520bd4fc169e131290050fe509e3f
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-NEXT ACTION: DEVELOPER IMPLEMENTS CURRENT TASK
+- P1 / B44-8-1 — AC3/AC5 and RO-6 acceptance 29/30: an accepted pause concurrent with
+  Worker publication discards the same owner's completed observations, consumed counters and
+  material refusal. **Current production reachability:** managed activation/loading, default
+  policy/budgets, real Local directory with 101 media files, real SQLite and actual
+  MediaDiscoveryWorker.run_next. Event coordination delays the real repository call immediately
+  before publication; adapter responses/capabilities, configuration and limits are unchanged.
+  **User impact:** Files/Operations Pause acknowledges a record with zero findings/progress and
+  hides the already encountered 101-item limit; Continue can bypass its required narrowing/successor
+  recovery. **Contract violation:** AC3 requires safe continuation without losing findings;
+  AC5 and Implementation Scope 2/3 require preserved observations, consumed budgets and material
+  refusals; A44-4/A44-5 explicitly require control reconciliation without resetting them.
+  **Repeatable evidence:** run `.venv/bin/python
+  .git/validation-evidence/fe1e355e108520bd4fc169e131290050fe509e3f/b-review44-8/control-probes.py`.
+  In `pauseDropsRefusal`, the attempted publication has status partial_success, 101 visited entries,
+  two page fetches, 100 retained sources and refusalReasons=[primary_limit]. Pause wins the version
+  CAS; application/media_discovery.py:549-556 calls _settle_after_conflict without that publication,
+  and :571-593 settles the fresh old progress through _publish_paused. Readback becomes paused
+  with zero visited entries/page fetches/sources/active time and no refusal. After a legal external
+  removal of the 101st synthetic file, Resume and actual Worker pickup on the same discovery ID/pin
+  report completed/100; Finalize returns 201 and creates the linked intent. The no-control companion
+  probe retains primary_limit and refuses Finalize with 409/discovery_budget_limited after the same
+  removal. Receipts record zero discovery mutation and zero execution Tasks. **Severity:** current
+  reachable P1, breaking the bounded-discovery/control/recovery Contract. **Required correction:**
+  reconcile a same-owner control/version change with the bounded in-flight progress, counters,
+  observations and monotonic refusal under the exact persisted claim, while preserving accepted
+  controls and refusing all stale-owner writes. Do not discard work and silently re-walk with reset
+  accounting. Retain the existing new cancellation/takeover behavior. Add deterministic regressions
+  for this pause/publication race and safe Continue/Finalize refusal; satisfy the unchanged T4 final
+  gates on the corrected candidate and retain its verifiable index/raw logs/receipts/images.
+
+NEXT ACTION: DEVELOPER FIXES CURRENT TASK
