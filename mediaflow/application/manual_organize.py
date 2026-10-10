@@ -191,7 +191,7 @@ class ManualOrganizeIntentService:
             self._repository.list_manual_intent_audit(intent_id),
         )
 
-    def create_from_sources(
+    def prepare_from_sources(
         self,
         sources: Iterable[ManualSourceIdentity],
         *,
@@ -199,21 +199,17 @@ class ManualOrganizeIntentService:
         snapshot_id: str | None = None,
         snapshot_digest: str | None = None,
         pinned_snapshot: bool = False,
-    ) -> ManualOrganizeIntent:
-        """Create a manual intent from server-built live Storage source identities.
+    ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
+        """Build one manual intent projection without persisting it.
 
-        This is the UI-V2 ResourceLibrary Files admission path.  The browser
-        supplies only ResourceLibrary-relative source selection; Preview builds
-        immutable SourceIdentity from Storage.stat and passes it here.  No
-        FileIndex row or fileId lookup is required on this path.
-
-        ``pinned_snapshot`` is the one explicit opt-in for a *historical*
-        published revision: the caller must supply both ``snapshot_id`` and
-        ``snapshot_digest``, and the revision is loaded through the same
-        managed authority (``ACTIVE`` or ``SUPERSEDED`` only, integrity
-        verified) that the Worker uses.  The ordinary Files path keeps the
-        strict current-Active rule, so a Preview can never be minted under a
-        stale or draft pin by accident.
+        This is the validation/construction half of ``create_from_sources``:
+        it resolves the exact pinned snapshot, verifies every server-built
+        source identity and default choice, and returns the intent projection
+        plus its creation audit.  The ordinary Files path persists the result
+        through ``create_from_sources``; the bounded discovery finalize path
+        persists this exact projection inside the same repository transaction
+        that links it to its discovery, so a concurrent or lost-response
+        finalize can never leave an orphan intent behind.
         """
 
         actor = self._actor(actor)
@@ -340,11 +336,45 @@ class ManualOrganizeIntentService:
             },
             now,
         )
+        return intent, audit
+
+    def create_from_sources(
+        self,
+        sources: Iterable[ManualSourceIdentity],
+        *,
+        actor: str,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+        pinned_snapshot: bool = False,
+    ) -> ManualOrganizeIntent:
+        """Create a manual intent from server-built live Storage source identities.
+
+        This is the UI-V2 ResourceLibrary Files admission path.  The browser
+        supplies only ResourceLibrary-relative source selection; Preview builds
+        immutable SourceIdentity from Storage.stat and passes it here.  No
+        FileIndex row or fileId lookup is required on this path.
+
+        ``pinned_snapshot`` is the one explicit opt-in for a *historical*
+        published revision: the caller must supply both ``snapshot_id`` and
+        ``snapshot_digest``, and the revision is loaded through the same
+        managed authority (``ACTIVE`` or ``SUPERSEDED`` only, integrity
+        verified) that the Worker uses.  The ordinary Files path keeps the
+        strict current-Active rule, so a Preview can never be minted under a
+        stale or draft pin by accident.
+        """
+
+        intent, audit = self.prepare_from_sources(
+            sources,
+            actor=actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            pinned_snapshot=pinned_snapshot,
+        )
         persisted = self._persist_create(intent, audit)
         return self._with_options(
             persisted if isinstance(persisted, ManualOrganizeIntent) else intent,
-            snapshot,
-            self._repository.list_manual_intent_audit(intent_id),
+            intent.options,
+            self._repository.list_manual_intent_audit(intent.intent_id),
         )
 
     # Explicit aliases make the application boundary easy to consume from

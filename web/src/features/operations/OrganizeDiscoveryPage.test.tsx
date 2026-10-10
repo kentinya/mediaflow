@@ -158,4 +158,61 @@ describe("bounded discovery refusal journey", () => {
     // Finalize is not advertised for the refused walk.
     expect(screen.queryByRole("button", { name: /冻结|完成发现/ })).toBeNull();
   });
+
+  it("explains the fenced concurrent finalize instead of a raw conflict code", async () => {
+    authStore.setToken(TOKEN);
+    // A completed, finalizable walk: the only finalize outcome is the durable
+    // 409 the backend returns when another request already linked the intent.
+    const completed = discoveryDocument({
+      activeSeconds: 1.5,
+      errorEntries: 0,
+      excludedEntries: 0,
+      findings: [],
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      message: "bounded discovery completed the whole admitted scope",
+      pageFetches: 3,
+      phase: "completed",
+      primarySources: 1,
+      reasons: [],
+      unstableEntries: 0,
+      visitedDirectories: 3,
+      visitedEntries: 20,
+    });
+    completed.actions.finalize = action("finalize", true);
+    completed.status = "completed";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/finalize")) {
+        return jsonResponse(
+          {
+            error: {
+              code: "discovery_conflict",
+              details: { nextAction: "reload the discovery and retry" },
+              message:
+                "the discovery changed before this transition was published",
+            },
+          },
+          409,
+        );
+      }
+      return jsonResponse(completed);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+
+    const button = await screen.findByRole("button", {
+      name: "冻结来源并继续整理",
+    });
+    button.click();
+    await waitFor(() => {
+      expect(
+        screen.getByText(/只存在一份已链接的来源清单/, { exact: false }),
+      ).toBeTruthy();
+    });
+    // The raw protocol code never reaches the operator.
+    expect(screen.queryByText(/discovery_conflict/)).toBeNull();
+  });
 });

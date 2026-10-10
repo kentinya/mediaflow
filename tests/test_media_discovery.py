@@ -13,11 +13,15 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -25,8 +29,10 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.library import FileStabilityPolicy
+from mediaflow.domain.manual_organize import ManualSourceIdentity
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
+    DiscoveryConflict,
     DiscoveryError,
     DiscoveryObservation,
 )
@@ -2017,6 +2023,261 @@ class DurableRefusalMonotonicityTests(_DiscoveryFixture):
             self.assertEqual(201, status, frozen)
             intent = value.repository.get_manual_intent(frozen["intentId"])
             self.assertEqual(["Movies/One.2001.mkv"], [item.source.path for item in intent.items])
+
+
+class FinalizeHandoffFencingTests(_DiscoveryFixture):
+    """AC4 / RO-6: one discovery freezes exactly one linked intent.
+
+    Concurrent, repeated and lost-response finalize requests must converge on
+    the one durable linked intent.  The discovery link and the intent are the
+    same transaction, so a losing request can never commit an orphan intent.
+    """
+
+    def _admit_and_settle(self, value, *, paths=("Movies",)):
+        status, admitted = self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/discoveries",
+            "POST",
+            {"paths": list(paths)},
+        )
+        self.assertEqual(202, status, admitted)
+        return admitted, self.run_discovery(value)
+
+    def test_concurrent_finalize_converges_on_one_linked_intent(self) -> None:
+        """Two legitimate simultaneous finalize requests create one intent.
+
+        The race is repeated on fresh discoveries so a scheduler that happens
+        to serialize one pair cannot hide a lost-fencing regression.  The
+        fixture reuses one runtime database across the loop, so each attempt
+        asserts the exact +1 delta rather than an absolute count.
+        """
+
+        for attempt in range(3):
+            self.media("Movies/A.2001.mkv")
+            with self.journey() as value:
+                admitted, settled = self._admit_and_settle(value)
+                before = len(value.repository.list_manual_intents())
+                barrier = threading.Barrier(2)
+
+                def finalize(_):
+                    barrier.wait()
+                    return self.request(
+                        value,
+                        "/api/v1/operations/organize/discoveries/"
+                        f"{admitted['discoveryId']}/finalize",
+                        "POST",
+                        {"expectedVersion": settled["version"]},
+                    )
+
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    replies = list(pool.map(finalize, range(2)))
+                statuses = sorted(status for status, _ in replies)
+                self.assertEqual([201, 409], statuses, (attempt, replies))
+                winner = next(document for status, document in replies if status == 201)
+                loser = next(document for status, document in replies if status == 409)
+                self.assertEqual("discovery_conflict", loser["error"]["code"], loser)
+                durable = value.repository.list_manual_intents()
+                # Exactly one new durable intent: the losing request minted no
+                # orphan work.
+                self.assertEqual(
+                    before + 1, len(durable), (attempt, [i.intent_id for i in durable])
+                )
+                created = next(item for item in durable if item.intent_id == winner["intentId"])
+                self.assertEqual(["Movies/A.2001.mkv"], [i.source.path for i in created.items])
+                # The authenticated listing exposes exactly the one linked
+                # intent, never a hidden duplicate.
+                status, listed = self.request(value, "/api/v1/manual-intents")
+                self.assertEqual(200, status, listed)
+                ids = [item["intentId"] for item in listed["items"]]
+                self.assertEqual(1, ids.count(winner["intentId"]), (attempt, ids))
+                # Discovery grants no execution authority and mutates no media.
+                self.assertEqual([], value.source.mutations)
+                self.assertEqual((), value.repository.list_tasks())
+                self.assertTrue((self.source_root / "Movies" / "A.2001.mkv").is_file())
+
+    def test_two_repository_linkers_race_to_one_intent(self) -> None:
+        """The durable one-shot link guard fences two simultaneous writers."""
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, _ = self._admit_and_settle(value)
+            discovery = value.repository.get_media_discovery(admitted["discoveryId"])
+            source = ManualSourceIdentity.from_document(discovery.sources[0])
+
+            def link(_):
+                intent, audit = value.intents.prepare_from_sources(
+                    (source,),
+                    actor=discovery.actor,
+                    snapshot_id=discovery.snapshot_id,
+                    snapshot_digest=discovery.snapshot_digest,
+                    pinned_snapshot=True,
+                )
+                linked = replace(
+                    discovery,
+                    version=discovery.version + 1,
+                    intent_id=intent.intent_id,
+                    frozen_at=self.clock.now,
+                )
+                try:
+                    value.repository.create_manual_intent_for_discovery(
+                        linked,
+                        expected_version=discovery.version,
+                        intent=intent,
+                        items=intent.items,
+                        audit=audit,
+                    )
+                    return "linked"
+                except DiscoveryConflict:
+                    return "conflict"
+
+            barrier = threading.Barrier(2)
+
+            def raced(_):
+                barrier.wait()
+                return link(_)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(raced, range(2)))
+            self.assertEqual(["conflict", "linked"], sorted(outcomes), outcomes)
+            self.assertEqual(1, len(value.repository.list_manual_intents()))
+
+    def test_finalize_fails_closed_without_atomic_linkage(self) -> None:
+        """A repository that cannot link atomically never commits an orphan intent."""
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            before = len(value.repository.list_manual_intents())
+            with mock.patch.object(value.repository, "create_manual_intent_for_discovery", None):
+                status, document = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                    "POST",
+                    {"expectedVersion": settled["version"]},
+                )
+            self.assertEqual(503, status, document)
+            self.assertEqual("discovery_unavailable", document["error"]["code"], document)
+            self.assertEqual(before, len(value.repository.list_manual_intents()))
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}"
+            )
+            self.assertIsNone(readback["intentId"], readback)
+            self.assertFalse(readback["frozen"], readback)
+
+    def test_lost_response_repeat_never_creates_an_orphan_intent(self) -> None:
+        """A repeated finalize on a stale version fails without orphan work."""
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            path = f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize"
+            first_status, first = self.request(
+                value, path, "POST", {"expectedVersion": settled["version"]}
+            )
+            self.assertEqual(201, first_status, first)
+            # The original response was lost and the operator retries with the
+            # version they already held: no second intent is committed.
+            repeat_status, repeat = self.request(
+                value, path, "POST", {"expectedVersion": settled["version"]}
+            )
+            self.assertEqual(409, repeat_status, repeat)
+            self.assertEqual("discovery_conflict", repeat["error"]["code"], repeat)
+            durable = value.repository.list_manual_intents()
+            self.assertEqual(1, len(durable), [item.intent_id for item in durable])
+            self.assertEqual(first["intentId"], durable[0].intent_id)
+
+    def test_finalize_of_an_already_frozen_discovery_is_idempotent(self) -> None:
+        """Re-finalizing the frozen record returns its one linked intent."""
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            path = f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize"
+            _, first = self.request(value, path, "POST", {"expectedVersion": settled["version"]})
+            _, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}"
+            )
+            second_status, second = self.request(
+                value, path, "POST", {"expectedVersion": readback["version"]}
+            )
+            self.assertEqual(201, second_status, second)
+            self.assertEqual(first["intentId"], second["intentId"])
+            self.assertEqual(1, len(value.repository.list_manual_intents()))
+
+    def test_a_frozen_link_survives_a_sqlite_reopen_without_duplication(self) -> None:
+        """A restart between the finalize commit and the response keeps one intent."""
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            path = f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize"
+            first_status, first = self.request(
+                value, path, "POST", {"expectedVersion": settled["version"]}
+            )
+            self.assertEqual(201, first_status, first)
+            discovery_id = admitted["discoveryId"]
+            linked = first["intentId"]
+        # The process restarts and reopens the same durable database.
+        with self.journey() as value:
+            status, readback = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{discovery_id}"
+            )
+            self.assertEqual(200, status, readback)
+            self.assertTrue(readback["frozen"], readback)
+            self.assertEqual(linked, readback["intentId"], readback)
+            # The restart does not reopen or duplicate the already frozen work.
+            self.assertEqual(1, len(value.repository.list_manual_intents()))
+            status, again = self.request(
+                value, path, "POST", {"expectedVersion": readback["version"]}
+            )
+            self.assertEqual(201, status, again)
+            self.assertEqual(linked, again["intentId"], again)
+            self.assertEqual(1, len(value.repository.list_manual_intents()))
+
+    def test_the_repository_link_is_a_one_shot_discovery_transition(self) -> None:
+        """The atomic repository boundary refuses a second link deterministically."""
+
+        from mediaflow.application.manual_organize import ManualOrganizeIntentService
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            discovery = value.repository.get_media_discovery(admitted["discoveryId"])
+            intents = value.intents
+            self.assertIsInstance(intents, ManualOrganizeIntentService)
+            source = ManualSourceIdentity.from_document(discovery.sources[0])
+            intent, audit = intents.prepare_from_sources(
+                (source,),
+                actor=discovery.actor,
+                snapshot_id=discovery.snapshot_id,
+                snapshot_digest=discovery.snapshot_digest,
+                pinned_snapshot=True,
+            )
+            linked = replace(
+                discovery,
+                version=discovery.version + 1,
+                intent_id=intent.intent_id,
+                frozen_at=self.clock.now,
+            )
+            value.repository.create_manual_intent_for_discovery(
+                linked,
+                expected_version=discovery.version,
+                intent=intent,
+                items=intent.items,
+                audit=audit,
+            )
+            # A second request that still holds the original version, or that
+            # replays the same winning transition, is refused without side
+            # effect: the intent is never duplicated.
+            with self.assertRaises(DiscoveryConflict):
+                value.repository.create_manual_intent_for_discovery(
+                    linked,
+                    expected_version=discovery.version,
+                    intent=intent,
+                    items=intent.items,
+                    audit=audit,
+                )
+            self.assertEqual(1, len(value.repository.list_manual_intents()))
 
 
 if __name__ == "__main__":  # pragma: no cover

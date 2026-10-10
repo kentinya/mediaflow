@@ -1380,11 +1380,16 @@ class MediaDiscoveryService:
             return self._cancel(discovery)
         if not sources:
             return self._fail(discovery, claim_token, "selection_empty")
-        creator = getattr(self._intent_service, "create_from_sources", None)
-        if not callable(creator):
+        # The intent projection is *built* here but never persisted on its own:
+        # it is inserted by the same repository transaction that links it to
+        # this discovery.  A concurrent, repeated or lost-response finalize
+        # therefore converges on one linked intent instead of committing an
+        # orphan intent before the discovery link wins its version CAS.
+        preparer = getattr(self._intent_service, "prepare_from_sources", None)
+        if not callable(preparer):
             return self._fail(discovery, claim_token, "intent_unavailable")
         try:
-            intent = creator(
+            intent, audit = preparer(
                 sources,
                 actor=discovery.actor,
                 snapshot_id=discovery.snapshot_id,
@@ -1418,7 +1423,38 @@ class MediaDiscoveryService:
                 ),
             ),
         )
-        return self._persist(updated, expected_version=discovery.version)
+        return self._persist_frozen(updated, intent, audit, expected_version=discovery.version)
+
+    def _persist_frozen(
+        self,
+        discovery: MediaDiscovery,
+        intent,
+        audit,
+        *,
+        expected_version: int,
+    ) -> MediaDiscovery:
+        """Publish the discovery link and its intent as one durable outcome.
+
+        The repository commits both in a single transaction with a version-CAS
+        plus one-shot ``intent_id IS NULL`` guard, so only the request that
+        wins the discovery transition ever creates an intent.  A losing,
+        repeated or lost-response concurrent finalize therefore converges on
+        the one linked intent instead of leaving orphan work.  A repository
+        that cannot offer that atomic linkage fails closed rather than
+        committing an orphan intent or a dangling link.
+        """
+
+        linker = getattr(self._repository, "create_manual_intent_for_discovery", None)
+        if not callable(linker):
+            raise DiscoveryUnavailable("durable media discovery intent linkage is unavailable")
+        linked, _ = linker(
+            discovery,
+            expected_version=expected_version,
+            intent=intent,
+            items=intent.items,
+            audit=audit,
+        )
+        return linked
 
     def _cancel(self, discovery: MediaDiscovery) -> MediaDiscovery:
         """Record a cooperative cancellation that preserves every known finding."""

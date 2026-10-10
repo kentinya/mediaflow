@@ -8522,43 +8522,151 @@ class SQLiteTaskRepository:
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                self._connection.execute(
-                    "INSERT INTO manual_intents "
-                    "(intent_id, actor, configuration_snapshot_id, configuration_snapshot_digest, "
-                    "status, version, created_at, updated_at, next_action, error, options_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        intent.intent_id,
-                        intent.actor,
-                        intent.snapshot_id,
-                        intent.snapshot_digest,
-                        intent.status.value,
-                        intent.version,
-                        intent.created_at.isoformat(),
-                        intent.updated_at.isoformat(),
-                        intent.next_action,
-                        intent.error,
-                        json.dumps(intent.options.document(), ensure_ascii=False, sort_keys=True),
-                    ),
-                )
-                for item in values:
-                    self._connection.execute(
-                        "INSERT INTO manual_intent_items "
-                        "(item_id, intent_id, position, file_id, storage_id, resource_library_id, "
-                        "source_path, filename, extension, source_size, source_modified_at, "
-                        "source_last_seen_at, source_updated_at, source_stable_since, "
-                        "source_scan_status, source_last_scan_id, source_identity_json, "
-                        "choice_json, status, error, "
-                        "version, created_at, updated_at) VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        self._manual_item_values(item),
-                    )
-                self._insert_manual_intent_audit(audit)
+                self._insert_manual_intent_locked(intent, values, audit)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
                 raise
         return self.get_manual_intent(intent.intent_id)
+
+    def _insert_manual_intent_locked(
+        self,
+        intent: ManualOrganizeIntent,
+        values: tuple[ManualIntentItem, ...],
+        audit: ManualIntentAudit,
+    ) -> None:
+        """Insert one intent, its items and its creation audit in the caller's transaction."""
+
+        self._connection.execute(
+            "INSERT INTO manual_intents "
+            "(intent_id, actor, configuration_snapshot_id, configuration_snapshot_digest, "
+            "status, version, created_at, updated_at, next_action, error, options_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                intent.intent_id,
+                intent.actor,
+                intent.snapshot_id,
+                intent.snapshot_digest,
+                intent.status.value,
+                intent.version,
+                intent.created_at.isoformat(),
+                intent.updated_at.isoformat(),
+                intent.next_action,
+                intent.error,
+                json.dumps(intent.options.document(), ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        for item in values:
+            self._connection.execute(
+                "INSERT INTO manual_intent_items "
+                "(item_id, intent_id, position, file_id, storage_id, resource_library_id, "
+                "source_path, filename, extension, source_size, source_modified_at, "
+                "source_last_seen_at, source_updated_at, source_stable_since, "
+                "source_scan_status, source_last_scan_id, source_identity_json, "
+                "choice_json, status, error, "
+                "version, created_at, updated_at) VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                self._manual_item_values(item),
+            )
+        self._insert_manual_intent_audit(audit)
+
+    def create_manual_intent_for_discovery(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        intent: ManualOrganizeIntent,
+        items: tuple[ManualIntentItem, ...] | list[ManualIntentItem],
+        audit: ManualIntentAudit,
+    ) -> tuple[MediaDiscovery, ManualOrganizeIntent]:
+        """Freeze one discovery and create its linked intent in one transaction.
+
+        The discovery link and the intent are the same durable outcome: a
+        concurrent, repeated or lost-response finalize must converge on one
+        linked intent instead of leaving an orphan intent behind.  The
+        discovery row is updated with its version CAS *and* a one-shot
+        ``intent_id IS NULL`` guard before the intent is inserted, so only the
+        request that actually wins the discovery transition ever creates an
+        intent.  A losing or repeated request raises ``DiscoveryConflict`` with
+        no side effect.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if not isinstance(intent, ManualOrganizeIntent) or intent.options is None:
+            raise ValueError("manual intent configuration option projection is required")
+        if discovery.intent_id != intent.intent_id:
+            raise ValueError("manual intent identity does not match the discovery link")
+        if intent.intent_id != audit.intent_id or audit.item_id is not None:
+            raise ValueError("manual intent creation audit identity is invalid")
+        values = tuple(items)
+        if values != intent.items:
+            raise ValueError("manual intent items do not match the intent projection")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
+                    "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, "
+                    "claim_worker_id=?, claim_token=?, claim_expires_at=?, attempts=?, "
+                    "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
+                    "WHERE discovery_id=? AND version=? AND intent_id IS NULL",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.budgets.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(
+                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                        discovery.intent_id,
+                        (
+                            discovery.frozen_at.isoformat()
+                            if discovery.frozen_at is not None
+                            else None
+                        ),
+                        discovery.claim_worker_id,
+                        discovery.claim_token,
+                        (
+                            discovery.claim_expires_at.isoformat()
+                            if discovery.claim_expires_at is not None
+                            else None
+                        ),
+                        discovery.attempts,
+                        1 if discovery.pause_requested else 0,
+                        1 if discovery.cancel_requested else 0,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        discovery.discovery_id,
+                        expected_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    raise DiscoveryConflict(
+                        "the discovery changed before this transition was published",
+                        details={
+                            "discoveryId": discovery.discovery_id,
+                            "currentVersion": current.version if current is not None else None,
+                        },
+                    )
+                self._insert_manual_intent_locked(intent, values, audit)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return (
+            self.get_media_discovery(discovery.discovery_id),
+            self.get_manual_intent(intent.intent_id),
+        )
 
     def create_manual_intent(
         self,

@@ -200,6 +200,16 @@ export function OrganizeDiscoveryPage() {
         );
         return;
       }
+      // A concurrent or repeated finalize is fenced by the backend: exactly one
+      // linked intent exists, so the honest recovery is to refresh and open it
+      // rather than to mint a second one.
+      if (error instanceof Error && error.message === "discovery_conflict") {
+        setControlError(
+          "这次发现已被另一次冻结操作完成,只存在一份已链接的来源清单;正在刷新以打开它。",
+        );
+        refresh();
+        return;
+      }
       setControlError(
         error instanceof Error
           ? `无法冻结发现结果（${error.message}），请刷新后重试。`
