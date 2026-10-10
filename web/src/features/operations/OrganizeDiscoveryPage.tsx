@@ -73,9 +73,33 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   waiting_stable_size: "等待稳定大小",
   source_changed_since_observation: "观察到文件发生变化",
   configured_depth_exceeded: "超出配置深度",
+  safety_depth_limit: "超出安全深度上限",
   unsafe_provider_entry: "存储返回了不安全的条目",
   repeated_provider_cursor: "存储返回了重复游标",
+  primary_limit: "来源数量达到上限",
+  entry_limit: "检查条目数达到上限",
+  directory_limit: "打开目录数达到上限",
+  page_limit: "分页次数达到上限",
+  depth_limit: "深度达到上限",
+  time_limit: "活跃时间达到上限",
+  read_failure: "读取失败",
+  cursor_repeated: "存储返回了重复游标",
+  cursor_invalid: "存储返回了无效游标",
 };
+
+/**
+ * The incomplete reasons that mean a durable budget/safety bound was
+ * exhausted, published by the backend through the finalize action's bounded
+ * refusal. Such a walk recorded a truncated prefix — never an executable
+ * subset — so the page offers the native narrowing action instead of finalize.
+ */
+function budgetLimited(model: OrganizeDiscoveryModel): boolean {
+  return (
+    model.progress.incomplete &&
+    model.progress.incompleteReason !== null &&
+    model.actions.finalize.refusal === "discovery_budget_limited"
+  );
+}
 
 function label(map: Readonly<Record<string, string>>, value: string): string {
   return map[value] ?? value;
@@ -156,6 +180,17 @@ export function OrganizeDiscoveryPage() {
       });
     },
     onError: (error) => {
+      // A budget/safety-limited walk is refused durably by the backend. The
+      // page explains the honest refusal instead of a generic transport note.
+      if (
+        error instanceof Error &&
+        error.message === "discovery_budget_limited"
+      ) {
+        setControlError(
+          "发现已达到预算或安全上限,已知来源只是不完整的子集,不能冻结执行;请缩小所选范围后重新开始一次有界发现。",
+        );
+        return;
+      }
       setControlError(
         error instanceof Error
           ? `无法冻结发现结果（${error.message}），请刷新后重试。`
@@ -213,6 +248,12 @@ export function OrganizeDiscoveryPage() {
                   <p role="status">
                     发现未完整遍历所选范围，已知来源只能作为明确复核的子集，
                     不会自动成为可执行的前 N 项。
+                  </p>
+                ) : null}
+                {budgetLimited(model) ? (
+                  <p role="status">
+                    本次发现已达到预算或安全上限,已记录的来源是一个被截断的前缀,
+                    不能冻结为可执行清单。请缩小所选范围后重新开始一次有界发现。
                   </p>
                 ) : null}
               </StatusBanner>

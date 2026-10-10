@@ -3614,6 +3614,79 @@ export type OrganizeDiscoveryReadResult =
       readonly nextAction: string | null;
     };
 
+export interface OrganizeDiscoveryListResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly code: string | null;
+  readonly items: readonly OrganizeDiscoveryModel[];
+}
+
+/**
+ * Read this principal's bounded recent discovery list.
+ *
+ * The unknown-admission reconciliation uses this read: when a discovery
+ * admission response was lost, the durable record is located here instead of
+ * being re-admitted, so no duplicate walk is created.
+ */
+export async function fetchOrganizeDiscoveries(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryListResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/operations/organize/discoveries", {
+      headers: { ...operationsHeaders(token) },
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable", items: [] };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      items: [],
+    };
+  }
+  if (!response.ok) {
+    const failure = discoveryErrorResult(response.status, payload);
+    return {
+      ok: false,
+      status: response.status,
+      code: failure.code,
+      items: [],
+    };
+  }
+  try {
+    const record = readRecord(payload, "discoveryList");
+    const items = record["items"];
+    if (!Array.isArray(items)) {
+      return {
+        ok: false,
+        status: response.status,
+        code: "malformed_response",
+        items: [],
+      };
+    }
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      items: items.map((item) => normalizeOrganizeDiscovery(item)),
+    };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      items: [],
+    };
+  }
+}
+
 /** Read one bounded discovery projection. */
 export async function fetchOrganizeDiscovery(
   token: string | null,

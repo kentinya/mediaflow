@@ -61,6 +61,10 @@ MIXED_FILE = "sample.mkv"
 SECOND_FOLDER = "SP"
 TEMPORARY = "下载中.mkv.part"
 UNSUPPORTED = "notes.txt"
+#: The budget-refusal scope (101 ordinary sources) and the safety-depth scope
+#: (eligible media below the Task's own 32-level bound).
+MASS_FOLDER = "mass"
+DEEP_FOLDER = "deep"
 
 BROWSER_PROOF = r"""
 import { chromium } from 'playwright';
@@ -174,6 +178,17 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     (source_root / SECOND_FOLDER).mkdir(parents=True, exist_ok=True)
     (source_root / SECOND_FOLDER / "Extra.2003.mkv").write_bytes(b"synthetic discovery media")
     (source_root / MIXED_FILE).write_bytes(b"synthetic discovery media")
+    mass = source_root / MASS_FOLDER
+    mass.mkdir(parents=True, exist_ok=True)
+    for index in range(101):
+        (mass / f"Bulk.{index:03d}.mkv").write_bytes(b"synthetic discovery media")
+    (source_root / DEEP_FOLDER).mkdir(parents=True, exist_ok=True)
+    (source_root / DEEP_FOLDER / "Direct.2001.mkv").write_bytes(b"synthetic discovery media")
+    deep = source_root / DEEP_FOLDER
+    for level in range(33):
+        deep = deep / f"Level{level:02d}"
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "Buried.2002.mkv").write_bytes(b"synthetic discovery media")
     (target_root / "Movies").mkdir(parents=True, exist_ok=True)
     # The container runs as the unprivileged MediaFlow UID/GID.
     source_root.chmod(0o755)
@@ -362,6 +377,107 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             if frozen.get("intentId") is None:
                 raise RuntimeError(f"finalize did not link the manual intent: {frozen}")
 
+            # Budget refusal (B blocker 1) and safety-depth truth (blocker 2)
+            # against the production image.
+            _, mass_admitted = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                {"paths": [MASS_FOLDER]},
+            )
+            if mass_admitted.get("discoveryId") is None:
+                raise RuntimeError(f"mass admission failed: {mass_admitted}")
+            mass_settled = settle(base, api_token, mass_admitted["discoveryId"])
+            if (
+                mass_settled["status"] != "partial_success"
+                or mass_settled["progress"]["incompleteReason"] != "primary_limit"
+                or mass_settled["primarySourceCount"] != 100
+            ):
+                raise RuntimeError(f"the 101-source case did not stop at the bound: {mass_settled}")
+            if mass_settled["actions"]["finalize"]["available"] is not False:
+                raise RuntimeError(
+                    "a budget-limited finalize was advertised: "
+                    f"{mass_settled['actions']['finalize']}"
+                )
+            _, mass_refused = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/discoveries/{mass_admitted['discoveryId']}/finalize",
+                {"expectedVersion": mass_settled["version"]},
+            )
+            if mass_refused.get("error", {}).get("code") != "discovery_budget_limited":
+                raise RuntimeError(f"a truncated prefix was frozen: {mass_refused}")
+            print("   budget refusal: primary_limit refused finalize")
+
+            _, deep_admitted = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                {"paths": [DEEP_FOLDER]},
+            )
+            deep_settled = settle(base, api_token, deep_admitted["discoveryId"])
+            if (
+                deep_settled["status"] != "partial_success"
+                or deep_settled["progress"]["incompleteReason"] != "safety_depth_limit"
+                or deep_settled["primarySourceCount"] != 1
+            ):
+                raise RuntimeError(f"the safety-depth case was not truthful: {deep_settled}")
+            _, deep_refused = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/discoveries/{deep_admitted['discoveryId']}/finalize",
+                {"expectedVersion": deep_settled["version"]},
+            )
+            if deep_refused.get("error", {}).get("code") != "discovery_budget_limited":
+                raise RuntimeError(f"a safety-truncated prefix was frozen: {deep_refused}")
+            print("   safety depth: incomplete outcome refused finalize")
+
+            # Actor/scope/pin reconciliation (B blocker 3): an identical open
+            # submission reconciles; a terminal record is never reopened.
+            _, reconciled_first = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                {"paths": [MASS_FOLDER]},
+            )
+            _, reconciled = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                {"paths": [MASS_FOLDER]},
+            )
+            if reconciled["discoveryId"] != reconciled_first["discoveryId"]:
+                raise RuntimeError(
+                    "an identical open scope admitted a duplicate discovery: "
+                    f"{reconciled['discoveryId']}"
+                )
+            print("   reconciliation: open scope reused the durable record")
+
+            # Operations readback (B blocker 3b): the unified run inventory
+            # carries the admitted discoveries.
+            _, runs = api(base, api_token, "GET", "/api/v1/operations/runs?limit=100")
+            run_ids = {run["run_id"] for run in runs["items"]}
+            needed = {
+                mass_admitted["discoveryId"],
+                deep_admitted["discoveryId"],
+                reconciled["discoveryId"],
+            }
+            if not needed.issubset(run_ids):
+                raise RuntimeError(
+                    "the run inventory lost admitted discoveries: "
+                    f"missing {sorted(needed - run_ids)}"
+                )
+            print(
+                "   operations readback: "
+                f"{len(runs['items'])} run rows include every admitted discovery"
+            )
+
             result = subprocess.run(
                 ["node", "--input-type=module", "-e", BROWSER_PROOF],
                 cwd=ROOT / "web",
@@ -398,6 +514,20 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 "activeDigest": active.get("digest"),
                 "cases": results,
                 "control": {"paused": True, "resumed": True},
+                "budgetRefusal": {
+                    "status": mass_settled["status"],
+                    "incompleteReason": mass_settled["progress"]["incompleteReason"],
+                    "refusalCode": mass_refused.get("error", {}).get("code"),
+                },
+                "safetyDepth": {
+                    "status": deep_settled["status"],
+                    "incompleteReason": deep_settled["progress"]["incompleteReason"],
+                    "refusalCode": deep_refused.get("error", {}).get("code"),
+                },
+                "reconciliation": {
+                    "openScopeId": reconciled["discoveryId"],
+                    "runInventoryRows": len(runs["items"]),
+                },
                 "frozenIntentId": frozen["intentId"],
                 "measured": evidence,
                 "safety": {

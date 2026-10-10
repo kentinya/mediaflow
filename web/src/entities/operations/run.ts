@@ -412,8 +412,11 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const command = optionalText(source, "command");
   const commandLabel = optionalText(source, "command_label");
   const recognizedCommand = flag(source, "recognized_command");
-  if (recognizedCommand && (command === null || commandLabel === null)) {
+  if (recognizedCommand && commandLabel === null) {
     // A run is only "recognized" when the backend supplied its bounded label.
+    // A null `command` with a label is a legal run kind whose label comes
+    // from its own durable record (the bounded discovery stage), not from a
+    // persisted Task command family.
     fail();
   }
   const totalItems = optionalCount(source, "total_items");

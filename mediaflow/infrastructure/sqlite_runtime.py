@@ -156,6 +156,7 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.operations_run import (
     ATTENTION_RUN_STATUSES,
     COMMAND_LABELS,
+    DISCOVERY_COMMAND_LABEL,
     RUN_RECORD_KINDS,
     OperationsRunItemWindow,
     OperationsRunOverview,
@@ -5349,6 +5350,16 @@ class SQLiteTaskRepository:
             SELECT 1 FROM automation_jobs linked_jobs
             WHERE linked_jobs.task_id = tasks.task_id
         )
+        UNION ALL
+        SELECT 'discovery' AS run_kind,
+               media_discoveries.discovery_id AS anchor_id,
+               media_discoveries.created_at AS sort_at,
+               media_discoveries.intent_id AS linked_task_id,
+               NULL AS transfer_task_id,
+               NULL AS schedule_id, NULL AS definition_id,
+               NULL AS source_scope, media_discoveries.resource_library_id,
+               media_discoveries.claim_worker_id, media_discoveries.status AS job_status
+        FROM media_discoveries media_discoveries
     """
 
     @staticmethod
@@ -5479,6 +5490,19 @@ class SQLiteTaskRepository:
                        WHEN task_status.status = 'paused' THEN 'paused'
                        WHEN task_status.status = 'pending' THEN 'pending'
                        WHEN task_status.status = 'running' THEN 'running'
+                       -- A bounded discovery carries no Task yet; its own
+                       -- durable status is the honest aggregate evidence.
+                       WHEN runs.run_kind = 'discovery' THEN
+                           CASE runs.job_status
+                               WHEN 'queued' THEN 'pending'
+                               WHEN 'running' THEN 'running'
+                               WHEN 'waiting_stability' THEN 'waiting'
+                               WHEN 'paused' THEN 'paused'
+                               WHEN 'completed' THEN 'completed'
+                               WHEN 'partial_success' THEN 'partial_success'
+                               WHEN 'failed' THEN 'failed'
+                               ELSE 'cancelled'
+                           END
                        WHEN runs.job_status = 'pending' THEN 'pending'
                        WHEN runs.job_status = 'running' THEN 'running'
                        WHEN task_status.status IN (
@@ -5510,7 +5534,12 @@ class SQLiteTaskRepository:
                        COALESCE(mf_run_search_text(projected.effective_scope), '') || ' ' ||
                        COALESCE(mf_run_search_text(projected.effective_target_scope), '') || ' ' ||
                        COALESCE(mf_run_search_text(projected.display_search), '') || ' ' ||
-                       COALESCE({label_sql}, '') AS run_search
+                       COALESCE(
+                           CASE WHEN projected.run_kind = 'discovery'
+                                THEN {_sql_string(DISCOVERY_COMMAND_LABEL)}
+                                ELSE {label_sql} END,
+                           ''
+                       ) AS run_search
             FROM ( {document} ) projected
         """
 
@@ -6295,6 +6324,11 @@ class SQLiteTaskRepository:
         job_id = anchor_id if run_kind == "job" else None
         derived_status = OperationsRunStatus(row["derived_status"])
         command = row["effective_command"] or row["anchor_command"]
+        if run_kind == "discovery":
+            # A bounded discovery carries no Task command; its business label
+            # is its own kind label and the intent link stays a Task link.
+            command = None
+            task_id = str(task_id_value) if task_id_value else None
         schedule_id = row["schedule_id"]
         definition_id = row["definition_id"]
         if definition_id or schedule_id:
@@ -6315,13 +6349,29 @@ class SQLiteTaskRepository:
         )
         target_scope_raw = row["effective_target_scope"]
         target_scope = str(target_scope_raw) if target_scope_raw not in {None, ""} else None
+        if run_kind == "discovery" and source_scope is None:
+            # The discovery's own durable scope lives in its progress JSON; the
+            # library identity is the bounded display evidence this row keeps.
+            source_scope = (
+                str(row["resource_library_id"])
+                if row["resource_library_id"] not in {None, ""}
+                else None
+            )
         total_items = row["total_items"]
+        if run_kind == "discovery":
+            # A discovery carries no Task-item population yet; an honest
+            # unknown aggregate, never a fabricated progress triple.
+            total_items = None
         return OperationsRunOverview(
             run_kind=run_kind,
             run_id=anchor_id,
             command=str(command) if command else None,
-            command_label=known_command_label(str(command) if command else None),
-            recognized_command=bool(command),
+            command_label=(
+                DISCOVERY_COMMAND_LABEL
+                if run_kind == "discovery"
+                else known_command_label(str(command) if command else None)
+            ),
+            recognized_command=bool(command) or run_kind == "discovery",
             status=derived_status,
             trigger=trigger,
             created_at=created_at,
@@ -6334,8 +6384,8 @@ class SQLiteTaskRepository:
             target_scope=target_scope,
             library_kind=library_kind,
             total_items=total_items,
-            completed_items=row["completed_items"],
-            failed_items=row["failed_items"],
+            completed_items=(None if run_kind == "discovery" else row["completed_items"]),
+            failed_items=(None if run_kind == "discovery" else row["failed_items"]),
             pause_requested=bool(row["pause_requested"]),
             configuration_snapshot_id=(
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None

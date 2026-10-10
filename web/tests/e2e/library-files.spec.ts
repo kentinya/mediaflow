@@ -577,6 +577,101 @@ test("the discovery page freezes the source list and continues into the intent",
   await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
 });
 
+test("a refreshed discovery page reconnects to the same durable discovery with its return context", async ({
+  page,
+}) => {
+  await resetFakeOrganize(page);
+  await openFiles(page);
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+
+  // A full browser reload clears memory-only auth and lands on the V2
+  // entry; the shared route/auth continuation model has recorded the exact
+  // durable discovery destination plus its bounded Files return context, so
+  // reconnecting continues the same discovery instead of the Dashboard.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+  await expect(page).toHaveURL(
+    /returnTo=files&returnResourceLibraryId=resources/,
+  );
+  await expect(page.getByRole("link", { name: "返回文件" })).toBeVisible();
+
+  // The Operations task center publishes the same admitted discovery, so a
+  // lost admission response is recoverable there without raw identifiers.
+  // Shell navigation (a link, not a full page load) keeps the in-memory
+  // principal; a fresh full load would re-enter through the entry page.
+  await page
+    .getByRole("navigation", { name: "Primary" })
+    .getByRole("link", { name: "Operations" })
+    .click();
+  await expect(page.getByRole("heading", { name: "操作与任务" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "整理发现", level: 3 }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /发现完成 · Movies/ }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+});
+
+test("re-submitting the same open selection reconciles to one durable discovery", async ({
+  page,
+}) => {
+  await resetFakeOrganize(page);
+  await openFiles(page);
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("table")).toBeVisible();
+  const moviesCheckbox = page.getByRole("checkbox", {
+    name: "选择 Movies",
+  });
+  if (!(await moviesCheckbox.isChecked())) {
+    await moviesCheckbox.check();
+  }
+  await page.getByRole("button", { name: "批量整理" }).click();
+
+  // The fake reconciles an identical open scope to the same durable record;
+  // the journey returns to the same discovery page, never a second one.
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/discovery\/organize-discovery-e2e-001/,
+  );
+});
+
+test("a budget-limited discovery refuses finalize and offers the narrowing recovery", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?discoveryLimit=1");
+  await resetFakeOrganize(page);
+  await openFiles(page);
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理发现" })).toBeVisible();
+
+  // The honest incomplete outcome: the truncated prefix is never offered as
+  // an executable subset, and the native narrowing action is present.
+  await expect(page.getByText(/部分完成/)).toBeVisible();
+  await expect(page.getByText(/不能冻结为可执行清单/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "冻结来源并继续整理" }),
+  ).toHaveCount(0);
+  // The truncation is explained distinctly from a configured exclusion.
+  await expect(page.getByText(/超出安全深度上限/)).toBeVisible();
+});
+
 test("the row Organize action admits the existing durable intent for one eligible file", async ({
   page,
 }) => {

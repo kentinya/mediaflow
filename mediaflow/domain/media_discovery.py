@@ -101,6 +101,54 @@ class DiscoveryIncompleteReason(StrEnum):
     CURSOR_REPEATED = "cursor_repeated"
     CURSOR_INVALID = "cursor_invalid"
     UNSAFE_ENTRY = "unsafe_entry"
+    SAFETY_DEPTH_LIMIT = "safety_depth_limit"
+
+
+#: The incomplete reasons that mean a durable budget or safety bound was
+#: exhausted, so the recorded sources are a truncated prefix of the admitted
+#: scope rather than a complete walk.  A discovery stopped by one of these
+#: can never be finalized into an executable source list: the operator must
+#: narrow the scope and start a new bounded discovery.  An ordinary read
+#: failure is deliberately absent from this set: a partially read scope whose
+#: known findings are explicitly reviewed remains a legal, separately
+#: confirmed subset.
+BUDGET_LIMITED_REASONS = frozenset(
+    {
+        DiscoveryIncompleteReason.PRIMARY_LIMIT,
+        DiscoveryIncompleteReason.ENTRY_LIMIT,
+        DiscoveryIncompleteReason.DIRECTORY_LIMIT,
+        DiscoveryIncompleteReason.PAGE_LIMIT,
+        DiscoveryIncompleteReason.DEPTH_LIMIT,
+        DiscoveryIncompleteReason.SAFETY_DEPTH_LIMIT,
+        DiscoveryIncompleteReason.TIME_LIMIT,
+        DiscoveryIncompleteReason.CURSOR_REPEATED,
+        DiscoveryIncompleteReason.CURSOR_INVALID,
+        DiscoveryIncompleteReason.UNSAFE_ENTRY,
+    }
+)
+
+
+def discovery_budget_limited(reason: DiscoveryIncompleteReason | str) -> bool:
+    """Whether one incomplete reason marks a budget/safety-exhausted walk."""
+
+    value = reason.value if isinstance(reason, DiscoveryIncompleteReason) else reason
+    return value in {item.value for item in BUDGET_LIMITED_REASONS}
+
+
+def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
+    """The canonical, order-stable signature of one deduplicated scope.
+
+    Admission reconciliation compares this exact signature, so an identical
+    actor/scope/pin resubmission can be matched to its already durable open
+    record without ever guessing from labels or creation times.
+    """
+
+    return json.dumps(
+        [entry.document() for entry in entries],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class DiscoveryError(ValueError):

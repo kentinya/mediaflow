@@ -158,6 +158,7 @@ from mediaflow.domain.manual_organize_preview import (
 )
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.media_discovery import (
+    BUDGET_LIMITED_REASONS,
     TERMINAL_DISCOVERY_STATUSES,
     DiscoveryError,
     DiscoveryIncompleteReason,
@@ -173,6 +174,7 @@ from mediaflow.domain.notification import (
 )
 from mediaflow.domain.operations_run import (
     ATTENTION_RUN_STATUSES,
+    DISCOVERY_COMMAND_LABEL,
     RUN_DISPOSITIONS,
     RUN_RECORD_KINDS,
     OperationsRunRecord,
@@ -12409,7 +12411,13 @@ class MediaFlowApi:
                     and not frozen
                     and bool(discovery.sources)
                     and discovery.status
-                    in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS},
+                    in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS}
+                    # A budget/safety/cursor-limited walk recorded a truncated
+                    # prefix, never a complete scope: the backend refuses to
+                    # freeze it, so the action is not advertised either.  An
+                    # ordinary read-failure subset keeps its explicit-review
+                    # path and stays available.
+                    and progress.incomplete_reason not in BUDGET_LIMITED_REASONS,
                     "method": "POST",
                     "path": (
                         f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/finalize"
@@ -12420,6 +12428,11 @@ class MediaFlowApi:
                         "one immutable deduplicated source list is linked to a durable manual "
                         "intent; a separate exact Preview and confirmed execution are still "
                         "required"
+                    ),
+                    "refusal": (
+                        "discovery_budget_limited"
+                        if progress.incomplete_reason in BUDGET_LIMITED_REASONS
+                        else None
                     ),
                 },
             },
@@ -12479,6 +12492,13 @@ class MediaFlowApi:
             return "inspect the recorded failure and start a new bounded discovery"
         if discovery.pause_requested:
             return "continue the paused discovery to finish the admitted scope"
+        if terminal and discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS:
+            # A budget/safety-limited walk is never an executable subset: the
+            # native next action is the honest narrowing action, not finalize.
+            return (
+                "the selected scope exceeded a discovery budget; narrow the scope and start "
+                "a new bounded discovery instead of freezing this incomplete subset"
+            )
         if terminal and not discovery.sources:
             return "narrow the selected scope or correct the configured filters, then retry"
         if terminal:
@@ -14262,6 +14282,11 @@ class MediaFlowApi:
 
         command = overview.command
         label = known_command_label(command) if command else None
+        if overview.run_kind == "discovery":
+            # A bounded discovery carries no Task command family; its bounded
+            # business label is the discovery kind label the inventory
+            # derives from its own durable record.
+            label = DISCOVERY_COMMAND_LABEL
         document: dict[str, object] = {
             "run_kind": overview.run_kind,
             "run_id": overview.run_id,

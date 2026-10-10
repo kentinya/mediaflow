@@ -20,6 +20,7 @@ function payload(overrides: Record<string, unknown> = {}) {
         path: "/api/v1/operations/organize/discoveries/d-1/finalize",
         requiresVersion: true,
         sideEffects: "none",
+        refusal: null,
       },
       pause: {
         available: true,
@@ -127,9 +128,77 @@ describe("normalizeOrganizeDiscovery", () => {
     expect(model.progress.findings).toHaveLength(1);
     expect(model.sources).toHaveLength(1);
     expect(model.actions.finalize.available).toBe(true);
+    expect(model.actions.finalize.refusal).toBeNull();
     expect(model.actions.resume.available).toBe(false);
     expect(model.zeroMutation).toBe(true);
     expect(model.execution).toBe("not_available_from_discovery");
+  });
+
+  it("publishes the backend refusal of a budget-limited finalize", () => {
+    const model = normalizeOrganizeDiscovery(
+      payload({
+        actions: {
+          cancel: {
+            available: true,
+            method: "POST",
+            path: "/api/v1/operations/organize/discoveries/d-1/cancel",
+            requiresVersion: true,
+            sideEffects: "none",
+          },
+          finalize: {
+            available: false,
+            method: "POST",
+            path: "/api/v1/operations/organize/discoveries/d-1/finalize",
+            requiresVersion: true,
+            sideEffects: "none",
+            refusal: "discovery_budget_limited",
+          },
+          pause: {
+            available: true,
+            method: "POST",
+            path: "/api/v1/operations/organize/discoveries/d-1/pause",
+            requiresVersion: true,
+            sideEffects: "none",
+          },
+          resume: {
+            available: false,
+            method: "POST",
+            path: "/api/v1/operations/organize/discoveries/d-1/resume",
+            requiresVersion: true,
+            sideEffects: "none",
+            refusal: null,
+          },
+        },
+        progress: {
+          activeSeconds: 1.5,
+          errorEntries: 0,
+          excludedEntries: 0,
+          findings: [
+            {
+              depth: 1,
+              kind: "truncated",
+              path: "Movies/Deep",
+              reason: "safety_depth_limit",
+            },
+          ],
+          incomplete: true,
+          incompleteReason: "safety_depth_limit",
+          message: "bounded discovery stopped at a limit: safety_depth_limit",
+          pageFetches: 1,
+          phase: "partial",
+          primarySources: 1,
+          reasons: [],
+          unstableEntries: 0,
+          visitedDirectories: 2,
+          visitedEntries: 40,
+        },
+        nextAction:
+          "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset",
+      }),
+    );
+    expect(model.actions.finalize.available).toBe(false);
+    expect(model.actions.finalize.refusal).toBe("discovery_budget_limited");
+    expect(model.progress.incompleteReason).toBe("safety_depth_limit");
   });
 
   it("keeps exact scope and source paths including boundary whitespace", () => {

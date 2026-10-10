@@ -199,6 +199,16 @@ const childDestinationData = [
     dynamicPrefix: "/operations/organize/intent/" as const,
   },
   {
+    id: "operations-organize-discovery",
+    label: "整理发现",
+    path: "/operations/organize/discovery/$discoveryId",
+    title: "整理发现 | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Durable bounded discovery of one selected folder/mixed scope, with progress and findings.",
+    dynamicPrefix: "/operations/organize/discovery/" as const,
+  },
+  {
     id: "operations-organize-preview",
     label: "Exact organize Preview",
     path: "/operations/organize/preview/$previewId",
@@ -896,12 +906,16 @@ export function allowlistedDestinationSearch(
   }
   if (
     path === "/operations/organize/intent/$intentId" ||
+    path === "/operations/organize/discovery/$discoveryId" ||
     path === "/operations/organize/preview/$previewId" ||
     path === "/operations/organize/execution/$executionId"
   ) {
-    // The intent, exact Preview and execution pages of one Organize journey
-    // carry only the bounded return contexts that let them offer their two
-    // explicit back actions; nothing else survives a reconnect here.
+    // The intent, durable discovery, exact Preview and execution pages of one
+    // Organize journey carry only the bounded return contexts that let them
+    // offer their two explicit back actions; nothing else survives a
+    // reconnect here. The discovery page keeps the exact admitted discovery
+    // identity in its path, so a refresh or reconnect continues the same
+    // durable record without admitting work.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setJourneyReturnContexts(allowed, current);

@@ -36,6 +36,7 @@ describe("destination model", () => {
       "Preview detail",
       "Manual organize",
       "Manual intent",
+      "整理发现",
       "Exact organize Preview",
       "Organize execution",
       "Automation",
@@ -385,6 +386,19 @@ describe("destination model", () => {
       ).toBe(
         "returnTo=files&returnResourceLibraryId=resources&returnPath=Movies" +
           "&returnOps=status%3Dfailed%26run%3Djob-001",
+      );
+      // The durable discovery page keeps the same bounded return contexts, so
+      // a refresh or reconnect continues the exact admitted discovery with
+      // its native back action.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/discovery/$discoveryId",
+          "returnTo=files&returnResourceLibraryId=source&returnPath=%E7%94%B5%E5%BD%B1" +
+            "&returnOps=run%3Djob-001&token=secret",
+        ),
+      ).toBe(
+        "returnTo=files&returnResourceLibraryId=source&returnPath=%E7%94%B5%E5%BD%B1" +
+          "&returnOps=run%3Djob-001",
       );
       // A hand-typed single-encoded context is replayed only through the
       // landing's own canonical serialization, so a reconnect cannot grow the

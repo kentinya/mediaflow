@@ -63,6 +63,10 @@ MIXED_FILE = "sample.mkv"
 SECOND_FOLDER = "SP"
 TEMPORARY = "下载中.mkv.part"
 UNSUPPORTED = "notes.txt"
+#: The controlled safety-depth scope: eligible media below the Task's own
+#: 32-level safety bound, with the configured library depth unset.
+MASS_FOLDER = "mass"
+DEEP_FOLDER = "deep"
 
 
 def render_configuration(root: Path) -> dict:
@@ -92,6 +96,21 @@ def seed_tree(root: Path) -> None:
     (source / SECOND_FOLDER).mkdir(parents=True, exist_ok=True)
     (source / SECOND_FOLDER / "Extra.2003.mkv").write_bytes(b"synthetic discovery media")
     (source / MIXED_FILE).write_bytes(b"synthetic discovery media")
+    # The 101-source budget case: exactly one source beyond the admitted
+    # primary bound, all ordinary legal media.
+    mass = source / MASS_FOLDER
+    mass.mkdir(parents=True, exist_ok=True)
+    for index in range(101):
+        (mass / f"Bulk.{index:03d}.mkv").write_bytes(b"synthetic discovery media")
+    # The safety-depth case: one direct source plus eligible media below the
+    # Task's own 32-level descendant bound, with the configured depth unset.
+    (source / DEEP_FOLDER).mkdir(parents=True, exist_ok=True)
+    (source / DEEP_FOLDER / "Direct.2001.mkv").write_bytes(b"synthetic discovery media")
+    deep = source / DEEP_FOLDER
+    for level in range(33):
+        deep = deep / f"Level{level:02d}"
+    deep.mkdir(parents=True, exist_ok=True)
+    (deep / "Buried.2002.mkv").write_bytes(b"synthetic discovery media")
 
 
 def wait_for_health(process: subprocess.Popen, timeout: float = 90.0) -> None:
@@ -322,6 +341,8 @@ def main() -> int:
                 "sources": [item["path"] for item in settled["sources"]],
                 "persistedStatus": row["status"],
                 "scopeEntries": json.loads(row["progress_json"])["scopeEntries"],
+                "discoveryId": discovery_id,
+                "settledStatus": settled["status"],
             }
             print(
                 f"   {name}: {settled['status']} "
@@ -390,6 +411,162 @@ def main() -> int:
         if frozen["intentId"] is None or frozen["frozen"] is not True:
             raise RuntimeError(f"finalize did not freeze the source list: {frozen}")
 
+        # Budget refusal (B blocker 1): 101 ordinary sources under one folder
+        # stop at the primary bound, the finalize action is not advertised and
+        # an explicit finalize attempt is refused durably — never a truncated
+        # executable prefix.
+        _, mass_admitted = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [MASS_FOLDER]},
+            expect=202,
+        )
+        mass_settled = _settle(configuration_path, mass_admitted["discoveryId"])
+        if (
+            mass_settled["status"] != "partial_success"
+            or mass_settled["progress"]["incompleteReason"] != "primary_limit"
+            or mass_settled["primarySourceCount"] != 100
+        ):
+            raise RuntimeError(f"the 101-source case did not stop at the bound: {mass_settled}")
+        if mass_settled["actions"]["finalize"]["available"] is not False:
+            raise RuntimeError(
+                f"a budget-limited finalize was advertised: {mass_settled['actions']['finalize']}"
+            )
+        if mass_settled["actions"]["finalize"].get("refusal") != "discovery_budget_limited":
+            raise RuntimeError(
+                f"the finalize refusal was not published: {mass_settled['actions']['finalize']}"
+            )
+        _, mass_refused = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{mass_admitted['discoveryId']}/finalize",
+            {"expectedVersion": mass_settled["version"]},
+        )
+        if mass_refused.get("error", {}).get("code") != "discovery_budget_limited":
+            raise RuntimeError(f"a truncated prefix was frozen: {mass_refused}")
+        # Nothing was frozen: no manual intent carries a mass-scope source.
+        with sqlite3.connect(database_path) as connection:
+            mass_intents = connection.execute(
+                "SELECT COUNT(*) FROM manual_intent_items WHERE source_path LIKE ?",
+                (f"{MASS_FOLDER}/Bulk.%",),
+            ).fetchone()[0]
+        if mass_intents != 0:
+            raise RuntimeError(f"a budget-limited discovery produced intent items: {mass_intents}")
+        print("   budget refusal: primary_limit refused finalize (discovery_budget_limited)")
+
+        # Safety-depth truth (B blocker 2): eligible media below the Task's
+        # own 32-level bound yields an honest incomplete outcome that cannot
+        # finalize, distinct from a configured depth exclusion.
+        _, deep_admitted = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [DEEP_FOLDER]},
+            expect=202,
+        )
+        deep_settled = _settle(configuration_path, deep_admitted["discoveryId"])
+        if (
+            deep_settled["status"] != "partial_success"
+            or deep_settled["progress"]["incompleteReason"] != "safety_depth_limit"
+        ):
+            raise RuntimeError(f"the safety-depth case was not truthful: {deep_settled}")
+        if deep_settled["primarySourceCount"] != 1:
+            raise RuntimeError(f"the direct source was lost: {deep_settled}")
+        truncated = [
+            item
+            for item in deep_settled["progress"]["findings"]
+            if item.get("kind") == "truncated" and item.get("reason") == "safety_depth_limit"
+        ]
+        if not truncated:
+            raise RuntimeError(
+                f"the safety-depth cutoff was not explained: {deep_settled['progress']}"
+            )
+        if deep_settled["actions"]["finalize"]["available"] is not False:
+            raise RuntimeError(
+                f"a truncated scope advertised finalize: {deep_settled['actions']['finalize']}"
+            )
+        _, deep_refused = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{deep_admitted['discoveryId']}/finalize",
+            {"expectedVersion": deep_settled["version"]},
+        )
+        if deep_refused.get("error", {}).get("code") != "discovery_budget_limited":
+            raise RuntimeError(f"a safety-truncated prefix was frozen: {deep_refused}")
+        print("   safety depth: incomplete outcome refused finalize (safety_depth_limit)")
+
+        # Actor/scope/pin reconciliation (B blocker 3): an identical open
+        # submission reconciles to the original durable record, so a lost
+        # admission response can never duplicate the walk.  A terminal
+        # record is never reopened: the same scope afterwards is deliberate
+        # successor work in a new record.
+        _, reconciliation_target = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [MASS_FOLDER]},
+            expect=202,
+        )
+        _, reconciled = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [MASS_FOLDER]},
+            expect=202,
+        )
+        if reconciled["discoveryId"] != reconciliation_target["discoveryId"]:
+            raise RuntimeError(
+                "an identical open scope admitted a duplicate discovery: "
+                f"{reconciled['discoveryId']}"
+            )
+        # Once the settled folder scope is terminal, the same scope is
+        # deliberate successor work: a fresh independent record.
+        _, successor = api(
+            "POST",
+            "/api/v1/resource-libraries/source/files/discoveries",
+            {"paths": [FOLDER]},
+            expect=202,
+        )
+        if successor["discoveryId"] == reconciliation_target["discoveryId"]:
+            raise RuntimeError("a terminal discovery was reopened by resubmission")
+        if successor["discoveryId"] == results["folder-only"]["discoveryId"]:
+            raise RuntimeError("a terminal discovery was reopened by resubmission")
+        print(
+            "   reconciliation: open scope reused "
+            f"{reconciled['discoveryId'][:8]}…; successor work admitted "
+            f"{successor['discoveryId'][:8]}…"
+        )
+
+        # Operations readback (B blocker 3b): the admitted discoveries are
+        # visible through the unified run inventory and the discovery list.
+        _, discovery_list = api("GET", "/api/v1/operations/organize/discoveries")
+        if discovery_list["total"] < 6:
+            raise RuntimeError(
+                f"the discovery readback lost admitted records: {discovery_list['total']}"
+            )
+        _, runs = api("GET", "/api/v1/operations/runs?limit=100")
+        run_ids = {run["run_id"] for run in runs["items"]}
+        needed = {
+            mass_admitted["discoveryId"],
+            deep_admitted["discoveryId"],
+            successor["discoveryId"],
+            reconciliation_target["discoveryId"],
+        }
+        if not needed.issubset(run_ids):
+            raise RuntimeError(
+                f"the run inventory lost admitted discoveries: missing {sorted(needed - run_ids)}"
+            )
+        mass_run = next(
+            run for run in runs["items"] if run["run_id"] == mass_admitted["discoveryId"]
+        )
+        if (
+            mass_run.get("status") != "partial_success"
+            or mass_run.get("command_label") != "整理发现"
+        ):
+            raise RuntimeError(f"the discovery run row was not truthful: {mass_run}")
+        _, mass_overview = api("GET", f"/api/v1/operations/runs/{mass_admitted['discoveryId']}")
+        if mass_overview.get("status") != "partial_success":
+            raise RuntimeError(f"the discovery run overview was not truthful: {mass_overview}")
+        print(
+            f"   operations readback: {discovery_list['total']} discoveries, "
+            "unified run inventory rows and overview agree"
+        )
+
         # Browser journey on the built artifact.
         browser = subprocess.run(
             ["node", "--input-type=module", "-e", BROWSER_PROOF],
@@ -438,6 +615,25 @@ def main() -> int:
                 "paused": paused["pauseRequested"],
                 "conflictRefused": True,
                 "resumed": resumed["pauseRequested"],
+            },
+            "budgetRefusal": {
+                "status": mass_settled["status"],
+                "incompleteReason": mass_settled["progress"]["incompleteReason"],
+                "finalizeAdvertised": False,
+                "refusalCode": mass_refused.get("error", {}).get("code"),
+                "intentItemsCreated": mass_intents,
+            },
+            "safetyDepth": {
+                "status": deep_settled["status"],
+                "incompleteReason": deep_settled["progress"]["incompleteReason"],
+                "truncatedFindings": len(truncated),
+                "refusalCode": deep_refused.get("error", {}).get("code"),
+            },
+            "reconciliation": {
+                "openScopeId": reconciled["discoveryId"],
+                "successorId": successor["discoveryId"],
+                "operationsDiscoveryTotal": discovery_list["total"],
+                "runInventoryRows": len(runs["items"]),
             },
             "frozen": {
                 "intentId": frozen["intentId"],
@@ -554,6 +750,65 @@ try {
   await page.getByRole('button', { name: '批量整理' }).click();
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
   evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
+
+  // -- lost-response refresh recovery (B blocker 3/4) --------------------
+  // A full reload clears memory-only auth; the shared route/auth
+  // continuation model has recorded the exact durable discovery destination
+  // plus its bounded Files return context, so reconnecting continues the
+  // same discovery instead of the Dashboard. The reconnection itself is a
+  // read-only continuation: no admission is replayed.
+  const discoveryUrl = page.url();
+  require_(
+    /\/operations\/organize\/discovery\//.test(discoveryUrl),
+    `the journey did not reach a discovery page: ${discoveryUrl}`,
+  );
+  await page.reload();
+  await page.getByRole('heading', { name: 'V2 entry' }).waitFor();
+  evidence.passes.push({
+    case: 'reload-not-connected',
+    screenshot: await shoot('reload-not-connected'),
+  });
+  await page.getByLabel('API token').fill(TOKEN);
+  await page.getByRole('button', { name: 'Connect' }).click();
+  await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  require_(
+    page.url() === discoveryUrl,
+    `reconnect lost the discovery context: ${page.url()} != ${discoveryUrl}`,
+  );
+  require_(
+    /returnTo=files&returnResourceLibraryId=/.test(page.url()),
+    `the reconnected discovery lost its Files return context: ${page.url()}`,
+  );
+  require_(
+    (await page.getByRole('link', { name: '返回文件' }).count()) === 1,
+    'the reconnected discovery did not offer the native Files return action',
+  );
+  evidence.passes.push({ case: 'reload-recovery', screenshot: await shoot('reload-recovery') });
+
+  // The Operations task center publishes the same admitted discovery, so a
+  // lost admission response is recoverable there without raw identifiers.
+  await page
+    .getByRole('navigation', { name: 'Primary' })
+    .getByRole('link', { name: 'Operations' })
+    .click();
+  await page.getByRole('heading', { name: '操作与任务', exact: true }).waitFor();
+  await page
+    .getByRole('heading', { name: '整理发现', level: 3 })
+    .waitFor({ timeout: 20000 })
+    .catch(async () => {
+      await shoot('operations-discovery-readback-failure');
+      throw new Error(
+        'the Operations task center did not publish the admitted discoveries: '
+        + JSON.stringify({
+          url: page.url(),
+          main: (await page.getByRole('main').innerText()).slice(0, 900),
+        }),
+      );
+    });
+  evidence.passes.push({
+    case: 'operations-discovery-readback',
+    screenshot: await shoot('operations-discovery-readback'),
+  });
 
   // Only the two bounded discovery admissions may be non-GET; every other
   // request in this journey is a read.  Nothing here mutates media.

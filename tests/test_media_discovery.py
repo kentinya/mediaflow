@@ -597,6 +597,60 @@ class DiscoveryWalkTests(_DiscoveryFixture):
             ]
             self.assertTrue(any(item["reason"] == "configured_depth_exceeded" for item in excluded))
 
+    def test_safety_depth_truncation_is_a_truthful_incomplete_outcome(self) -> None:
+        """The Task's own 32-level safety bound is never a configured exclusion.
+
+        With the configured library depth unset, a folder holding eligible
+        media below the Task's safety depth must produce an honest
+        safety-depth incomplete outcome that refuses finalization, rather
+        than claiming a completed scope and offering a truncated prefix.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        deep = self.source_root / "Movies" / "Deep"
+        for index in range(33):
+            deep = deep / f"Level{index:02d}"
+        deep.mkdir(parents=True)
+        (deep / "Two.2002.mkv").write_bytes(b"m" * 512)
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            # The deep subtree was never reached: the walk is honestly
+            # incomplete, never a completed scope.
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("safety_depth_limit", settled["progress"]["incompleteReason"])
+            self.assertTrue(settled["progress"]["incomplete"])
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            _, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            self.assertEqual("safety_depth_limit", detail["progress"]["incompleteReason"])
+            truncated = [
+                item for item in detail["progress"]["findings"] if item["kind"] == "truncated"
+            ]
+            self.assertTrue(
+                any(item["reason"] == "safety_depth_limit" for item in truncated),
+                detail["progress"]["findings"],
+            )
+            # The truncated prefix can never be finalized.
+            self.assertFalse(detail["actions"]["finalize"]["available"])
+            self.assertIn("narrow", detail["nextAction"])
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_budget_limited", refused["error"]["code"])
+            self.assertEqual((), value.repository.list_tasks())
+
     def test_real_stability_requires_an_elapsed_unchanged_observation(self) -> None:
         self.media("Movies/One.2001.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
         with self.journey(
@@ -749,8 +803,23 @@ class BudgetTests(_DiscoveryFixture):
             )
             self.assertTrue(detail["progress"]["incomplete"])
             self.assertEqual("primary_limit", detail["progress"]["incompleteReason"])
-            # A limit never becomes an executable silent prefix.
-            self.assertFalse(detail["actions"]["finalize"]["available"] is False and False)
+            # A budget-limited walk is never an executable prefix: the finalize
+            # action is not advertised, and an explicit finalize attempt is
+            # refused with a durable, actionable refusal.
+            self.assertFalse(detail["actions"]["finalize"]["available"])
+            self.assertEqual("discovery_budget_limited", detail["actions"]["finalize"]["refusal"])
+            self.assertIn("narrow", detail["nextAction"])
+            status, refused = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_budget_limited", refused["error"]["code"])
+            # Nothing was frozen and no intent exists.
+            self.assertIsNone(refused.get("intentId"))
+            self.assertEqual((), value.repository.list_tasks())
 
     def test_the_entry_budget_stops_the_walk_honestly(self) -> None:
         for index in range(20):
@@ -1079,7 +1148,16 @@ class ZeroMutationTests(_DiscoveryFixture):
             self.assertTrue(kinds.issubset({"stat", "list_page", "list", "exists"}), kinds)
             self.assertEqual((), value.repository.list_tasks())
 
-    def test_a_second_admission_of_the_same_scope_is_an_independent_record(self) -> None:
+    def test_a_reconciled_scope_returns_the_durable_record_once_terminal(self) -> None:
+        """Actor/scope/pin reconciliation and distinct successor work.
+
+        While the first record is still open, an identical actor/scope/pin
+        submission reconciles to the same durable discovery instead of
+        admitting a duplicate walk (the lost-response case).  After the
+        discovery settles terminal, resubmitting the same scope is deliberate
+        successor work and admits a new independent record.
+        """
+
         self.media("Movies/One.2001.mkv")
         with self.journey() as value:
             _, first = self.request(
@@ -1088,14 +1166,46 @@ class ZeroMutationTests(_DiscoveryFixture):
                 "POST",
                 {"paths": ["Movies"]},
             )
-            _, second = self.request(
+            # The first record is still open: the same submission reconciles.
+            status, second = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
                 "POST",
                 {"paths": ["Movies"]},
             )
-            self.assertNotEqual(first["discoveryId"], second["discoveryId"])
-            self.assertEqual(2, len(value.repository.list_media_discoveries()))
+            self.assertEqual(202, status, second)
+            self.assertEqual(first["discoveryId"], second["discoveryId"])
+            self.assertEqual(1, len(value.repository.list_media_discoveries()))
+            # A different scope is a genuinely different admission.
+            self.media("Shows/Ep.01.mkv")
+            status, other = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Shows"]},
+            )
+            self.assertEqual(202, status, other)
+            self.assertNotEqual(first["discoveryId"], other["discoveryId"])
+            # Once the first discovery settled terminal, the same scope is
+            # deliberate successor work: a new independent record.
+            settled = self.run_discovery(value)
+            if settled["discoveryId"] != first["discoveryId"]:
+                # The claim loop may settle the sibling scope first; keep
+                # driving the Worker until the first record is terminal.
+                for _ in range(8):
+                    stored = value.repository.get_media_discovery(first["discoveryId"])
+                    if stored is not None and stored.terminal:
+                        break
+                    settled = self.run_discovery(value)
+            status, successor = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, successor)
+            self.assertNotEqual(first["discoveryId"], successor["discoveryId"])
+            self.assertEqual(3, len(value.repository.list_media_discoveries()))
 
     def test_discovery_readback_is_scoped_to_the_admitting_principal(self) -> None:
         self.media("Movies/One.2001.mkv")

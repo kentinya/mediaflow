@@ -3328,6 +3328,7 @@ function organizeIntentItems(state) {
 function organizeDiscoveryDocument(discovery) {
   const directory = discovery.paths.some((path) => !path.includes("."));
   const completed = discovery.frozen;
+  const limited = discovery.limited === true;
   return {
     actions: {
       cancel: {
@@ -3336,15 +3337,18 @@ function organizeDiscoveryDocument(discovery) {
         path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/cancel`,
         requiresVersion: true,
         sideEffects: "none",
+        refusal: null,
       },
       finalize: {
-        available: completed === false && discovery.status === "completed",
+        available:
+          completed === false && discovery.status === "completed" && !limited,
         durableOutcome:
           "one immutable deduplicated source list is linked to a durable manual intent; a separate exact Preview and confirmed execution are still required",
         method: "POST",
         path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/finalize`,
         requiresVersion: true,
         sideEffects: "none",
+        refusal: limited ? "discovery_budget_limited" : null,
       },
       pause: {
         available: !completed && discovery.status !== "paused",
@@ -3352,6 +3356,7 @@ function organizeDiscoveryDocument(discovery) {
         path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/pause`,
         requiresVersion: true,
         sideEffects: "none",
+        refusal: null,
       },
       resume: {
         available: discovery.status === "paused",
@@ -3359,6 +3364,7 @@ function organizeDiscoveryDocument(discovery) {
         path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/resume`,
         requiresVersion: true,
         sideEffects: "none",
+        refusal: null,
       },
     },
     cancelRequested: discovery.status === "cancelled",
@@ -3372,26 +3378,47 @@ function organizeDiscoveryDocument(discovery) {
     journey: "discovery",
     nextAction: discovery.frozen
       ? "open the linked manual intent to review choices and create an exact Preview"
-      : "the resident Processing Worker continues this bounded discovery",
+      : discovery.limited === true
+        ? "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset"
+        : "the resident Processing Worker continues this bounded discovery",
     pauseRequested: discovery.status === "paused",
     primarySourceCount: discovery.paths.length,
     progress: {
       activeSeconds: 0.5,
       errorEntries: 0,
       excludedEntries: 0,
-      findings: discovery.paths.map((path) => ({
-        depth: 1,
-        kind: "primary",
-        path,
-        reason: "eligible_primary_source",
-      })),
-      incomplete: false,
-      incompleteReason: null,
+      findings: [
+        ...discovery.paths.map((path) => ({
+          depth: 1,
+          kind: "primary",
+          path,
+          reason: "eligible_primary_source",
+        })),
+        ...(discovery.limited === true
+          ? [
+              {
+                depth: 1,
+                kind: "truncated",
+                path: `${discovery.paths[0] ?? "scope"}/Deep`,
+                reason: "safety_depth_limit",
+              },
+            ]
+          : []),
+      ],
+      incomplete: discovery.limited === true,
+      incompleteReason:
+        discovery.limited === true ? "safety_depth_limit" : null,
       message: discovery.frozen
         ? "the discovered source list is frozen; a separate exact Preview and a confirmed execution are still required"
-        : "bounded discovery completed the whole admitted scope",
+        : discovery.limited === true
+          ? "bounded discovery stopped at a limit: safety_depth_limit"
+          : "bounded discovery completed the whole admitted scope",
       pageFetches: 1,
-      phase: discovery.frozen ? "frozen" : "completed",
+      phase: discovery.frozen
+        ? "frozen"
+        : discovery.limited === true
+          ? "partial"
+          : "completed",
       primarySources: discovery.paths.length,
       reasons: [],
       unstableEntries: 0,
@@ -8672,18 +8699,61 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/resource-libraries/:id/files/discoveries",
     });
     const state = resourceLibraryState(session);
+    // Actor/scope/pin reconciliation (mirrors the real backend): an
+    // identical open discovery for the same library and deduplicated scope
+    // reconciles to the same durable record instead of admitting a
+    // duplicate walk.
+    const scopeKey = [...paths].sort().join("\n");
+    if (
+      state.discovery &&
+      state.discovery.libraryId === libraryId &&
+      !state.discovery.frozen &&
+      state.discovery.status !== "cancelled" &&
+      state.discovery.status !== "failed" &&
+      [...state.discovery.paths].sort().join("\n") === scopeKey
+    ) {
+      sendJson(res, 202, organizeDiscoveryDocument(state.discovery));
+      return;
+    }
     state.discovery = {
       discoveryId: ORGANIZE_DISCOVERY_ID,
       libraryId,
       paths: [...paths],
       // The fake Worker completes the bounded walk immediately, exactly like
       // the real metadata-only stage; the operator still has to finalize.
-      status: "completed",
+      // A session-level `discoveryLimit` fixture presents the honest
+      // budget-limited outcome whose finalize the backend refuses.
+      limited: state.discoveryLimit !== null,
+      status: state.discoveryLimit !== null ? "partial_success" : "completed",
       version: 1,
       frozen: false,
       intentId: null,
     };
     sendJson(res, 202, organizeDiscoveryDocument(state.discovery));
+    return;
+  }
+  const discoveryListMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/organize\/discoveries$/,
+  );
+  if (discoveryListMatch && req.method === "GET") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    // The bounded principal-scoped discovery readback the Operations task
+    // center and the unknown-admission reconciliation read. Side-effect free.
+    const state = resourceLibraryState(session);
+    const discovery = state.discovery;
+    const items = discovery ? [organizeDiscoveryDocument(discovery)] : [];
+    sendJson(res, 200, {
+      journey: "discovery",
+      items,
+      total: items.length,
+      limit: 50,
+      sideEffects: "none",
+    });
     return;
   }
   const discoveryDetailMatch = url.pathname.match(
@@ -8760,6 +8830,25 @@ const server = createServer(async (req, res) => {
     if (action === "cancel") state.discovery.status = "cancelled";
     if (action === "resume") state.discovery.status = "running";
     if (action === "finalize") {
+      // Mirrors the real backend: a budget/safety-limited discovery carries a
+      // truncated prefix that can never be frozen into an executable list.
+      if (state.discovery.limited === true) {
+        sendJson(res, 409, {
+          error: {
+            code: "discovery_budget_limited",
+            message:
+              "this discovery stopped at a budget or safety limit, so its findings are an incomplete subset and cannot be frozen",
+            details: {
+              incompleteReason: "safety_depth_limit",
+              sideEffects: "none",
+              retrySafe: false,
+              nextAction:
+                "narrow the selected scope to fit the limit and start a new bounded discovery; the recorded findings are not an executable subset",
+            },
+          },
+        });
+        return;
+      }
       state.discovery.frozen = true;
       state.discovery.status = "completed";
       state.discovery.intentId = ORGANIZE_INTENT_ID;
@@ -16036,6 +16125,10 @@ const server = createServer(async (req, res) => {
       filesTransfers: new Map(),
       filesOrganizePaths: null,
       discovery: null,
+      // When set, the next admitted discovery presents a budget-limited
+      // outcome (truncated prefix) whose finalize the backend refuses, so a
+      // browser test can exercise the native narrowing recovery.
+      discoveryLimit: url.searchParams.get("discoveryLimit"),
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
       externallyRemovedDirectories: [],
       whitespaceDirectory: url.searchParams.get("whitespace") === "1",

@@ -209,6 +209,12 @@ _COMMAND_LABELS = {
     FILES_TRANSFER_TASK_COMMAND: "文件传输",
 }
 
+#: The command label of the bounded discovery stage itself.  It lives next to
+#: the family map (not inside it) because a discovery is not a Task command
+#: family: the run inventory unions it in as its own run kind, so its label is
+#: applied directly rather than derived from a persisted command string.
+DISCOVERY_COMMAND_LABEL = "整理发现"
+
 #: Public read-only view of the bounded business labels above.  The SQL run
 #: inventory projects the exact same family→label mapping (see
 #: :func:`mediaflow.infrastructure.sqlite_runtime.command_label_sql`), so a

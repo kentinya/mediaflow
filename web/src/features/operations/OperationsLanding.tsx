@@ -31,6 +31,7 @@ import {
   mutateLifecycle,
   submitRemainingScopePreview,
   type LifecycleMutationResult,
+  type OrganizeDiscoveryListResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -52,6 +53,7 @@ import {
   runOverviewQueryKey,
   runOverviewQueryOptions,
 } from "./run-query";
+import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
 import { RunDetailTabs } from "./RunDetailTabs";
 import {
   readRunDetailState,
@@ -382,6 +384,7 @@ export function OperationsLanding() {
 
   const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
   const readinessQuery = useQuery(workerReadinessQueryOptions(token));
+  const discoveriesQuery = useQuery(organizeDiscoveriesQueryOptions(token));
   const matrixQuery = useQuery(
     manualActionsQueryOptions(token, {
       scopeKind: chosenLibraryId ? "resourceLibrary" : null,
@@ -689,6 +692,7 @@ export function OperationsLanding() {
               )}
             </div>
             <WorkerReadinessSection query={readinessQuery} />
+            <DiscoveryReadbackSection query={discoveriesQuery} />
             <ManualOperationsSection
               matrixQuery={matrixQuery}
               chosenLibraryId={chosenLibraryId}
@@ -1320,6 +1324,75 @@ function WorkerReadinessSection({
       <ResidentServiceStatus />
     </section>
   );
+}
+
+/**
+ * The principal-scoped readback of admitted bounded discoveries.
+ *
+ * A discovery whose admission response was lost is durable and recoverable
+ * here through its native entry link — without raw identifiers and without
+ * re-admitting duplicate work. The read is side-effect-free and bounded.
+ */
+function DiscoveryReadbackSection({
+  query,
+}: {
+  readonly query: UseQueryResult<OrganizeDiscoveryListResult, Error>;
+}) {
+  const read = query.data;
+  const items = read?.ok === true ? read.items : [];
+  return (
+    <section className="mf-count-section" aria-label="整理发现记录">
+      <h3>整理发现</h3>
+      <p className="mf-dashboard-meta">
+        此主体近期的有界整理发现。发现只读取存储元数据,冻结清单后仍需单独的精确预览和确认执行。
+      </p>
+      {read === undefined ? (
+        <p className="mf-dashboard-meta">正在读取发现记录。</p>
+      ) : !read.ok ? (
+        <p className="mf-dashboard-meta">
+          发现记录暂不可读,稍后可重试;已有发现的持久状态不受影响。
+        </p>
+      ) : items.length === 0 ? (
+        <p className="mf-dashboard-meta">当前没有已受理的整理发现。</p>
+      ) : (
+        <ul className="mf-discovery-list">
+          {items.map((item) => (
+            <li key={item.discoveryId}>
+              <Link
+                to="/operations/organize/discovery/$discoveryId"
+                params={{ discoveryId: item.discoveryId }}
+              >
+                {labelDiscoveryStatus(item.status)} ·{" "}
+                {item.selection.scopes.map((scope) => scope.path).join(", ")}
+              </Link>
+              <span className="mf-dashboard-meta">
+                {" "}
+                可整理 {item.progress.primarySources} · 检查{" "}
+                {item.progress.visitedEntries}
+                {item.progress.incomplete
+                  ? ` · 未完整:${item.progress.incompleteReason ?? "未知原因"}`
+                  : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function labelDiscoveryStatus(status: string): string {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    running: "发现中",
+    paused: "已暂停",
+    waiting_stability: "等待稳定",
+    completed: "发现完成",
+    partial_success: "部分完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
 }
 
 function ManualOperationsSection({

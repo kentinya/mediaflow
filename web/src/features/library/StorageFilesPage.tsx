@@ -57,6 +57,7 @@ import {
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
+  fetchOrganizeDiscoveries,
   removeResourceLibrary,
   saveResourceLibrary,
   fetchResourceLibraryEdit,
@@ -81,6 +82,7 @@ import type {
   TransferImpactModel,
   TransferProjectionModel,
 } from "../../entities/library/direct-files";
+import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 
 type FilesView = "list" | "grid";
 
@@ -380,10 +382,19 @@ function discoveryAdmissionFailureMessage(code: string): string {
     case "storage_unavailable":
     case "transport_unavailable":
     case "service_unavailable":
-      return "存储或服务暂时不可用，请稍后重试；不会创建任何任务。";
+      // A lost/failed admission response is an unknown outcome, never a
+      // promise that no work was created: the admission may already be
+      // durable. The reconciliation read below locates the original record
+      // before any resubmission is allowed.
+      return "暂时无法确认发现申请结果;正在读取同一申请的持久状态,不会重复创建。";
     default:
       return "无法开始整理发现，请刷新后重试。";
   }
+}
+
+/** Whether one discovery readback is still open (reconcilable) work. */
+function discoveryIsOpen(model: OrganizeDiscoveryModel): boolean {
+  return !model.frozen && model.intentId === null;
 }
 
 function organizeAdmissionFailureMessage(code: string): string {
@@ -1930,7 +1941,46 @@ export function StorageFilesPage() {
           paths,
         });
         if (!admitted.ok) {
-          throw new Error(discoveryAdmissionFailureMessage(admitted.code));
+          const message = discoveryAdmissionFailureMessage(admitted.code);
+          if (
+            admitted.status === 0 ||
+            admitted.status >= 500 ||
+            admitted.code === "malformed_response"
+          ) {
+            // The response was lost, but the admission may already be
+            // durable. Reconcile first: locate the actor/scope/pin-bound
+            // durable record through the bounded readback instead of ever
+            // resubmitting a duplicate admission.
+            const readback = await fetchOrganizeDiscoveries(token);
+            if (readback.ok) {
+              const signature = [...paths].sort().join("\n");
+              const candidate = readback.items.find(
+                (item) =>
+                  item.resourceLibraryId === libraryId &&
+                  discoveryIsOpen(item) &&
+                  [...item.selection.scopes.map((scope) => scope.path)]
+                    .sort()
+                    .join("\n") === signature,
+              );
+              if (candidate !== undefined) {
+                setPreviewError(null);
+                return {
+                  kind: "discovery" as const,
+                  id: candidate.discoveryId,
+                };
+              }
+              // No durable record for this exact scope: the honest unknown
+              // state stands and the operator decides, without a promise
+              // that no work exists.
+              throw new Error(
+                "暂时无法确认发现申请结果,也未读到同一范围的持久记录;请稍后刷新后再试,不会自动重复提交。",
+              );
+            }
+            throw new Error(
+              "暂时无法确认发现申请结果,也无法读取发现记录;请稍后重试。不会自动重复提交。",
+            );
+          }
+          throw new Error(message);
         }
         return { kind: "discovery" as const, id: admitted.discoveryId };
       }

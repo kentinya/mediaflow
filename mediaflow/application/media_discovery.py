@@ -50,6 +50,7 @@ from mediaflow.domain.manual_organize import (
     ManualSourceIdentity,
 )
 from mediaflow.domain.media_discovery import (
+    BUDGET_LIMITED_REASONS,
     MAX_DISCOVERY_TEXT_LENGTH,
     DiscoveryBudgets,
     DiscoveryConflict,
@@ -68,6 +69,7 @@ from mediaflow.domain.media_discovery import (
     MediaDiscovery,
     bounded_path,
     deduplicate_scope,
+    discovery_scope_signature,
 )
 from mediaflow.domain.storage import (
     Storage,
@@ -93,6 +95,11 @@ _REASON_CHANGED = "source_changed_since_observation"
 _REASON_DEPTH = "configured_depth_exceeded"
 _REASON_UNSAFE_ENTRY = "unsafe_provider_entry"
 _REASON_CURSOR = "repeated_provider_cursor"
+#: The reason recorded when the Task's own safety depth bound — measured
+#: below each selected folder — truncates the walk.  It is kept separate from
+#: the configured library-root depth so an exhausted safety budget is never
+#: presented as a configured policy exclusion.
+_REASON_SAFETY_DEPTH = "safety_depth_limit"
 
 _TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
 
@@ -202,6 +209,17 @@ class MediaDiscoveryService:
                 code="selection_empty",
                 next_action="select one or more folders or files and retry",
             )
+        # Actor/scope/pin-bound admission identity: an identical open
+        # submission for the same principal, the same deduplicated scope and
+        # the same immutable Active pin is reconciled to its durable record
+        # instead of admitting a second duplicate walk.  A *terminal* record
+        # is never reopened by resubmission — deliberate successor work is
+        # always a new discovery.
+        reconciliation = self._reconcile_admission(
+            actor, deduplicated, snapshot_id, snapshot_digest
+        )
+        if reconciliation is not None:
+            return reconciliation
         now = self._clock()
         discovery_id = str(uuid4())
         progress = DiscoveryProgress(
@@ -251,6 +269,45 @@ class MediaDiscoveryService:
         if not callable(creator):
             raise DiscoveryUnavailable("durable media discovery storage is unavailable")
         return creator(discovery)
+
+    def _reconcile_admission(
+        self,
+        actor: str,
+        scope: tuple[DiscoveryScopeEntry, ...],
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> MediaDiscovery | None:
+        """Find one already durable open discovery for this exact admission.
+
+        The match is bound to the actor, the canonical deduplicated scope
+        signature and the admitted configuration pin.  A lost admission
+        response therefore reconciles to the original durable record instead
+        of admitting a duplicate walk, while a different scope, a different
+        principal or a repinned Active configuration is always a new
+        admission.
+        """
+
+        lister = getattr(self._repository, "list_media_discoveries", None)
+        if not callable(lister):
+            return None
+        signature = discovery_scope_signature(scope)
+        # The reconciliation window is bounded: it reads only the recent
+        # durable records of this actor, so the cost stays bounded even for a
+        # principal with a long discovery history.
+        for candidate in lister(actor=actor, limit=50):
+            if candidate.terminal or candidate.frozen:
+                continue
+            if candidate.snapshot_id != snapshot_id or candidate.snapshot_digest != snapshot_digest:
+                continue
+            if candidate.status is DiscoveryStatus.PAUSED:
+                # A paused discovery stays open but it is an explicit
+                # operator-controlled state: resubmitting its scope is still
+                # the same work, so it reconciles rather than duplicating.
+                pass
+            if discovery_scope_signature(candidate.progress.scope_entries) != signature:
+                continue
+            return candidate
+        return None
 
     # ------------------------------------------------------------------
     # Readback
@@ -361,6 +418,25 @@ class MediaDiscoveryService:
                 code="selection_empty",
                 status=409,
                 next_action="narrow the selected scope or correct the configured filters",
+            )
+        if discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS:
+            # A budget/safety/cursor-limited walk recorded a truncated prefix,
+            # never a complete scope: freezing it would silently admit a
+            # first-N subset as ordinary executable work.  The honest
+            # recovery is a narrowed scope and a new bounded discovery; an
+            # ordinary read-failure subset is unaffected and keeps its own
+            # explicit-review path.
+            reason = discovery.progress.incomplete_reason.value
+            raise DiscoveryError(
+                "this discovery stopped at a budget or safety limit, so its findings are "
+                "an incomplete subset and cannot be frozen",
+                code="discovery_budget_limited",
+                status=409,
+                next_action=(
+                    "narrow the selected scope to fit the limit and start a new bounded "
+                    "discovery; the recorded findings are not an executable subset"
+                ),
+                details={"incompleteReason": reason},
             )
         return self._finalize(discovery, discovery.claim_token or "", cancelled=False)
 
@@ -703,10 +779,27 @@ class MediaDiscoveryService:
                         counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                         continue
                     if depth + 1 > self._budgets.max_depth:
-                        bump(_REASON_DEPTH, relative)
-                        note(DiscoveryFindingKind.EXCLUDED, relative, _REASON_DEPTH, raw, depth)
+                        # This is the Task's own safety budget, measured below
+                        # each selected folder, not the configured library
+                        # depth.  A subtree the safety bound cuts off was
+                        # never reached, so the walk is honestly incomplete:
+                        # it must never be published as a completed scope or
+                        # finalize into a truncated prefix.  The configured
+                        # library-root depth stays a separate, explainable
+                        # exclusion above.
+                        bump(_REASON_SAFETY_DEPTH, relative)
+                        note(
+                            DiscoveryFindingKind.TRUNCATED,
+                            relative,
+                            _REASON_SAFETY_DEPTH,
+                            raw,
+                            depth,
+                        )
                         counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
-                        continue
+                        incomplete = DiscoveryIncompleteReason.SAFETY_DEPTH_LIMIT
+                        status = DiscoveryStatus.PARTIAL_SUCCESS
+                        stop = True
+                        break
                     pending_directories.append(relative)
                     continue
                 observe(relative, depth, raw)

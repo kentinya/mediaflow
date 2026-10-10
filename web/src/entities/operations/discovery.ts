@@ -76,6 +76,10 @@ export interface OrganizeDiscoveryAction {
   readonly path: string | null;
   readonly requiresVersion: boolean;
   readonly sideEffects: string;
+  /** The bounded durable refusal reason for an unavailable mutating action,
+   * published by the backend so the page can explain the refusal without
+   * inventing one. `null` when the action is available. */
+  readonly refusal: string | null;
 }
 
 export interface OrganizeDiscoveryModel {
@@ -163,6 +167,10 @@ function normalizeAction(
     requiresVersion: record.requiresVersion === true,
     sideEffects:
       typeof record.sideEffects === "string" ? record.sideEffects : "none",
+    refusal:
+      typeof record.refusal === "string" && record.refusal.length > 0
+        ? record.refusal
+        : null,
   };
 }
 
@@ -200,8 +208,13 @@ export function normalizeOrganizeDiscovery(
     fail("progress.findings");
   const rawReasons = progressRecord["reasons"];
   if (!Array.isArray(rawReasons)) fail("progress.reasons");
+  // The bounded list projection legitimately omits the exact source rows
+  // (`include_sources=false`); only a present non-array is malformed.
   const rawSources = record["sources"];
-  if (!Array.isArray(rawSources) || rawSources.length > MAX_DISCOVERY_SOURCES)
+  if (
+    rawSources !== undefined &&
+    (!Array.isArray(rawSources) || rawSources.length > MAX_DISCOVERY_SOURCES)
+  )
     fail("sources");
   const worker = readRecord(record["worker"], "worker");
   const actions = readRecord(record["actions"], "actions");
@@ -292,7 +305,7 @@ export function normalizeOrganizeDiscovery(
       cancel: normalizeAction(actions, "cancel"),
       finalize: normalizeAction(actions, "finalize"),
     },
-    sources: (rawSources as unknown[]).map((item, index) => {
+    sources: ((rawSources ?? []) as unknown[]).map((item, index) => {
       const source = readRecord(item, `sources[${index}]`);
       return {
         path: normalizeIdentityText(
