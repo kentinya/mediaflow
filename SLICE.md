@@ -19,7 +19,7 @@ Contract Revision: 2026-10-11 — User-approved RO-6 discovery architecture simp
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: USER-AUTHORIZED CORRECTION TASK PLANNING, THEN DEVELOPER IMPLEMENTATION AND B REVIEW
+Next Action: DEVELOPER IMPLEMENTS TASK 44.9; B REVIEWS THE IMPLEMENTATION
 ```
 
 ## Authority and sequencing
@@ -125,6 +125,11 @@ previous Closure Packet/Task 44.8 PASS remain historical. No outcome is removed 
 business rescope/new Slice is needed, and no CURRENT delivery or closure is declared. Checkpoint
 this A amendment before planning the replacement correction Task. A's authorized planning must
 explicitly reassess the current no-active-Task state against this amended Contract.
+
+That reassessment is now recorded in `TASK.md`: Task 44.8 remains historically PASS and no old
+implementation Task was active; user-authorized A planning selects one new focused correction,
+Task 44.9, High / T4, inside the checkpointed amendment. Its PLANNED handoff supersedes the older
+review's planning next action only. All eight blockers remain unresolved and no B PASS is issued.
 
 ## Frozen Slice 43 preservation and resumption
 
