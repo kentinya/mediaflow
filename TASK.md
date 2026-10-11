@@ -101,6 +101,27 @@ bounded work remains durable. Reusing a whole failed control projection as trave
 establish that rule. Keep existing SQLite/claims and the coherent Task; no new engine, schema,
 race-by-race Task ladder or Contract change is required by this finding.
 
+### User-directed simplification — acknowledge Pause before offering Continue
+
+On 2026-10-11 the user proposed waiting for the Worker to confirm Pause before offering Continue.
+B confirms that RO-6/AC3/AC4 require safe, truthful pause/continuation, not withdrawal of a pending
+pause request. Use the existing pending request and acknowledged paused state: show "pausing / waiting
+for background acknowledgement" while pending; offer and accept Continue after the durable pause
+acknowledgement has preserved bounded work and released ownership at the safe boundary.
+Backend action availability and application/API validation must enforce the same rule; hiding a
+button alone is insufficient. A direct or stale-client Continue during pending Pause must refuse
+actionably without claiming success or changing work. Keep missing/stale-Worker information and
+existing cancellation/recovery useful; do not leave an unexplained disabled action indefinitely.
+
+This clarifies a permitted implementation within existing Scope 1–4 and AC3/AC4, not a Contract
+change or a new Task. B's prior direction was too narrow in requiring reconciliation of an accepted
+pending-stage Continue; the backend may instead decline it until acknowledgement. Preserve the
+actual historical B44-8-2 evidence: the reviewed candidate advertised and accepted that action,
+then stranded it. Update affected tests to prove pending-stage refusal with unchanged durable work,
+followed by successful Continue after acknowledgement; retain assertions for counters/refusals,
+ownership, cancellation and eventual native recovery. Do not merely delete the racing test or its
+assertions. The Task ID/Base/Goal/Scope/Acceptance Criteria and assigned T4 plan remain unchanged.
+
 Initial governance fails with the recorded FIX REQUIRED + NO ACTIVE IMPLEMENTATION TASK mismatch.
 The user/workflow authorize this correction Task. Recheck with the legitimate Task, without changing
 Slice status/Base or repairing unrelated tooling.
@@ -511,11 +532,13 @@ Next: SAME TASK FIX LOOP
   return None; repeated Resume is a 200 no-op; Finalize returns 409/discovery_not_complete; the same
   selection reconciles the same ID. Receipts retain one discovered source, zero content-read/mutation
   calls and zero execution Tasks. **Severity:** P1, the current supported continuation journey
-  stalls; this evidence does not establish media loss or mutation. **Required correction:** reconcile
-  completed bounded work with the latest accepted control without replaying a failed control's stale
-  lifecycle as traversal outcome. An accepted Continue must leave work continuable or truthfully
-  completed, preserving counters/observations/refusals and existing exact-claim fencing. Keep the
-  same Task ID/Base/Goal/Scope; add a deterministic regression for this reproduced sequence within
-  the existing control tests, then satisfy the unchanged candidate T4 plan with retained evidence.
+  stalls; this evidence does not establish media loss or mutation. **Required correction:** use the
+  user's acknowledge-before-Continue direction: while Pause is pending, show the waiting state and
+  refuse premature Continue consistently in backend availability/application/API; offer and accept
+  it after durable safe-boundary pause acknowledgement. Preserve bounded work/refusals and exact
+  claim fencing, and ensure accepted Continue actually continues the same scope. Prove premature
+  refusal does not alter work, then acknowledged native Continue succeeds; retain the original
+  negative probe and update affected regressions to assert these semantics. Keep the same Task
+  ID/Base/Goal/Scope and satisfy the unchanged candidate T4 plan with retained evidence.
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK
