@@ -471,6 +471,14 @@ already-reviewed Implementation Head and does not silently extend the Base..Head
 If reconciliation would change product scope, architecture contracts or safety rather than record
 facts, A must not hide that change in closure; the decision returns to `PARTIAL / RESCOPE`.
 
+Each Slice closure includes a brief review of the experience documents for
+[A](agent-experience/slice-owner-architect-final-reviewer.md),
+[B](agent-experience/task-planner-reviewer.md) and
+[Developer](agent-experience/developer-implementation-role.md) in the same closure checkpoint.
+Keep only reusable lessons: add 1–3 new points per role when warranted, each as problem → approach →
+applicability, and merge duplicates rather than append Slice history. No new lesson means no forced
+entry; the Developer document stays blank until concrete implementation lessons exist.
+
 ## 11. Document responsibilities
 
 | Document | Responsibility |
