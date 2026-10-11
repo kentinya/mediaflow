@@ -7,7 +7,7 @@ This Task follows [the development workflow](docs/development-workflow.md), uses
 ```text
 Task ID: 44.8
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c
 Difficulty: High
 Test Level: T4
@@ -91,6 +91,15 @@ the synthetic directory shrinks from 101 to 100 files. It does not establish exe
 unauthorized media mutation or data loss. Do not inflate its impact or require an old Worker to
 publish private in-memory findings after ownership loss. The fix remains the current live-owner
 control/publication boundary, with the same RO-6 outcomes and safety invariants.
+
+The 2026-10-11 review of correction `917baf6` confirms that the original lost-work case is fixed,
+but a failed pause acknowledgement is now carried as if its lifecycle were completed traversal
+work. A later accepted Continue is overwritten by that stale `paused` status. This is the same
+write/transition boundary, counted across capability corrections rather than reset by Task ID.
+Simplify that boundary so the latest accepted control determines lifecycle while the live owner's
+bounded work remains durable. Reusing a whole failed control projection as traversal work does not
+establish that rule. Keep existing SQLite/claims and the coherent Task; no new engine, schema,
+race-by-race Task ladder or Contract change is required by this finding.
 
 Initial governance fails with the recorded FIX REQUIRED + NO ACTIVE IMPLEMENTATION TASK mismatch.
 The user/workflow authorize this correction Task. Recheck with the legitimate Task, without changing
@@ -441,78 +450,72 @@ Status: READY FOR B REVIEW
 Head SHA: 917baf6377c332b0a0cbd15e529d841016e64f69
 ```
 
+## B Independent Verification — correction round 2
+
+Review date: 2026-10-11. Inspected immutable Task Base through submitted/report Head
+`fe5e4d14f07d5465bd9e0e2a5355959fd5e5bea7`, including correction implementation
+`917baf6377c332b0a0cbd15e529d841016e64f69`. Implementation-to-Head changes only TASK.md;
+all five Developer-indexed executable hashes match the current files. No Task Base/Goal/Scope/
+acceptance/test-plan or Slice Contract change is authorized by this review.
+
+B independently ran the focused discovery/provider regression: PASS, 70 tests, 14.637 seconds.
+The original four production-path control probes now PASS: queued/in-flight cancellation,
+heartbeat-to-write successor takeover, and preserved 101-item refusal after concurrent Pause,
+Continue and legal external directory shrink. B44-8-1 is resolved on this candidate. The prior
+review remains in committed `fe5e4d14:TASK.md` and the retained submitted-task snapshot.
+
+The additional current supported Pause/Continue publication sequence below reproduces one P1.
+Developer's retained index and original final logs were opened; Python records 2383 tests/7 skips,
+Web E2E records 246/21/10, and the five changed-file hashes match. B has not fully accepted those
+remaining gate/artifact identities or rerun expensive full/Web/browser/Docker/wheel/migration
+checks after the proven blocker. They are not substituted for acceptance. No Slice Final or
+handoff is performed; the corrected executable candidate still needs the unchanged T4 gates.
+
+Evidence (local/not pushed, retained through A review):
+`.git/validation-evidence/fe5e4d14f07d5465bd9e0e2a5355959fd5e5bea7/b-review44-8-round2/`.
+It retains input/image hashes, submitted Task snapshot, original/corrected control probe,
+focused log, and the new probe/receipts. Initial and extended user-impact probe runs are retained;
+both reproduce 3/3, with no harness error or changed production source. Required governance,
+changed-file Ruff and complete reviewed-range/working-tree diff checks are recorded in its index.
+
 ## B Review Result
 
-Review date: 2026-10-10. Reviewed the actual submitted implementation
-`3bb45747b6e50f6bc44fb57e7b6384f429e247bb` and its report-only successors through
-`fe1e355e108520bd4fc169e131290050fe509e3f`. The latter range changes only TASK.md;
-runtime, tests, harnesses, dependencies and configuration are unchanged. The stale PLANNED header
-and SUBMITTED FOR REVIEW report do not establish acceptance; this is Task 44.8's first B review.
-
-Independent verification: focused discovery/provider tests PASS (68 tests, 13.986 seconds);
-manual intent/Preview/execution, Operations inventory/detail and migration regression PASS
-(137 tests, 17.257 seconds); governance, changed-file Ruff and diff checks PASS. Real authenticated
-API/managed-default Local/SQLite probes independently confirm terminal queued/in-flight cancellation,
-safe deliberate successor admission, and takeover immediately before the actual SQL publication:
-the old owner changes neither successor ownership nor state, and the successor completes.
-
-The pause/control probe below proves an in-scope P1. Under the workflow's early-blocker rule,
-B did not rerun the remaining expensive T4 gates or accept their completion-report labels.
-No candidate-bound Task 44.8 evidence index/raw archive was found at the prescribed retained
-location or linked in the report. The discovered temporary t4-gates/t4-gates2 Python logs contain
-2352 tests, not the reported 2381, and have no verified matching candidate identity; they are not
-reused. The corrected executable candidate still needs all assigned final gates with retained
-source/environment/artifact identity, original logs and required browser receipts/images.
-
-Global complexity reassessment: prior Slice corrections already span several rounds. This new
-failure comes from combining a whole Worker publication with the operator version CAS, then
-settling that conflict from the pre-publication durable snapshot. The existing discovery model,
-claim fence and SQLite transaction boundary are sufficient to reconcile controls and progress.
-Keep one coherent correction in this Task; no new queue, lifecycle, engine or Task per race is
-needed. No Contract impossibility is established; ID/Base/Goal/Scope and assigned tests are retained.
-
-Evidence (local, retained through A review):
-`.git/validation-evidence/fe1e355e108520bd4fc169e131290050fe509e3f/b-review44-8/`
-contains the index, original probe scripts/logs/receipts, first harness errors and corrected runs,
-focused/affected regression logs and scope/input identities. The first control-probe harness
-expected 200 instead of Finalize's successful 201; the first no-control harness used the wrong
-error-code spelling. Both original failures are retained, not counted as product failures.
-
 ```text
-Reviewed: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c..fe1e355e108520bd4fc169e131290050fe509e3f
+Reviewed: 4bb21dc5bb8b4861478ef07ffecac47143b1ae6c..fe5e4d14f07d5465bd9e0e2a5355959fd5e5bea7
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- P1 / B44-8-1 — AC3/AC5 and RO-6 acceptance 29/30: an accepted pause concurrent with
-  Worker publication discards the same owner's completed observations, consumed counters and
-  material refusal. **Current production reachability:** managed activation/loading, default
-  policy/budgets, real Local directory with 101 media files, real SQLite and actual
-  MediaDiscoveryWorker.run_next. Event coordination delays the real repository call immediately
-  before publication; adapter responses/capabilities, configuration and limits are unchanged.
-  **User impact:** Files/Operations Pause acknowledges a record with zero findings/progress and
-  hides the already encountered 101-item limit; Continue can bypass its required narrowing/successor
-  recovery. **Contract violation:** AC3 requires safe continuation without losing findings;
-  AC5 and Implementation Scope 2/3 require preserved observations, consumed budgets and material
-  refusals; A44-4/A44-5 explicitly require control reconciliation without resetting them.
+- P1 / B44-8-2 — AC3/AC4, Implementation Scope 3 and RO-6 acceptance 30: a later accepted
+  Continue is overwritten by the returning Worker's stale pause acknowledgement.
+  **Current production reachability:** authenticated API, managed default Local configuration,
+  one real media file, actual MediaDiscoveryWorker.run_next and actual SQLite transactions.
+  Coordination delays the real progress publication, then the real pause settlement; both call
+  their original implementations with unchanged arguments. No weakened adapter, unsupported
+  configuration, injected error or manual SQL edit is used. **Current user impact:** ResourceLibrary
+  Files → discovery/Operations advertises Continue after Pause; Continue returns 200 and clears
+  pauseRequested, but readback subsequently says paused with Continue and Finalize unavailable.
+  Worker pickup cannot advance it, and repeating the Files selection returns the same open work.
+  Users need an extra Pause-before-Continue workaround or cancellation/recreation to proceed.
+  **Contract violation:** AC3 requires concurrent controls not to strand work and native Continue
+  to resume the same scope; AC4/Scope 3 require consistent usable native recovery without that
+  unexplained workaround; RO-6 acceptance 30 requires truthful cooperative pause/continue.
   **Repeatable evidence:** run `.venv/bin/python
-  .git/validation-evidence/fe1e355e108520bd4fc169e131290050fe509e3f/b-review44-8/control-probes.py`.
-  In `pauseDropsRefusal`, the attempted publication has status partial_success, 101 visited entries,
-  two page fetches, 100 retained sources and refusalReasons=[primary_limit]. Pause wins the version
-  CAS; application/media_discovery.py:549-556 calls _settle_after_conflict without that publication,
-  and :571-593 settles the fresh old progress through _publish_paused. Readback becomes paused
-  with zero visited entries/page fetches/sources/active time and no refusal. After a legal external
-  removal of the 101st synthetic file, Resume and actual Worker pickup on the same discovery ID/pin
-  report completed/100; Finalize returns 201 and creates the linked intent. The no-control companion
-  probe retains primary_limit and refuses Finalize with 409/discovery_budget_limited after the same
-  removal. Receipts record zero discovery mutation and zero execution Tasks. **Severity:** current
-  reachable P1, breaking the bounded-discovery/control/recovery Contract. **Required correction:**
-  reconcile a same-owner control/version change with the bounded in-flight progress, counters,
-  observations and monotonic refusal under the exact persisted claim, while preserving accepted
-  controls and refusing all stale-owner writes. Do not discard work and silently re-walk with reset
-  accounting. Retain the existing new cancellation/takeover behavior. Add deterministic regressions
-  for this pause/publication race and safe Continue/Finalize refusal; satisfy the unchanged T4 final
-  gates on the corrected candidate and retain its verifiable index/raw logs/receipts/images.
+  .git/validation-evidence/fe5e4d14f07d5465bd9e0e2a5355959fd5e5bea7/b-review44-8-round2/resume-during-pause-settlement.py`.
+  All three runs: Pause accepts version 2; Continue accepts queued/version 3/pauseRequested=false
+  while pause acknowledgement is pending. Its real version CAS fails; application/media_discovery.py
+  lines 644–650 replace attempted traversal work with the failed paused projection, lines 694–698
+  copy its status into the freshly resumed record, and lines 632–643 settle paused/version 4 with
+  pauseRequested=false and no claim. Three actual pickups after successive 600-second clock advances
+  return None; repeated Resume is a 200 no-op; Finalize returns 409/discovery_not_complete; the same
+  selection reconciles the same ID. Receipts retain one discovered source, zero content-read/mutation
+  calls and zero execution Tasks. **Severity:** P1, the current supported continuation journey
+  stalls; this evidence does not establish media loss or mutation. **Required correction:** reconcile
+  completed bounded work with the latest accepted control without replaying a failed control's stale
+  lifecycle as traversal outcome. An accepted Continue must leave work continuable or truthfully
+  completed, preserving counters/observations/refusals and existing exact-claim fencing. Keep the
+  same Task ID/Base/Goal/Scope; add a deterministic regression for this reproduced sequence within
+  the existing control tests, then satisfy the unchanged candidate T4 plan with retained evidence.
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK
