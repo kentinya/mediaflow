@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and
 ```text
 Task ID: 44.9
 Parent Slice: 44
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
 Difficulty: High
 Test Level: T4
@@ -424,6 +424,9 @@ Commit: fix(slice44): correct ordinary folder discovery defects A44-6..A44-13
 Evidence: .git/validation-evidence/d9a9af4b665a5c524a1b5291438e7590ac4b2854/task44-9/run-1/
 Local commit only; not pushed.
 ```
+
+The executable candidate is `d9a9af4`; the report-only `TASK.md` commit sits on top of it and changes
+no runtime, test, harness, dependency or configuration input.
 
 ## B Review Result
 
