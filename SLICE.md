@@ -1504,7 +1504,7 @@ B owns one focused correction Task and its normal review loop.
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
 
-## A Final Review
+## Prior A Final Review — 2026-10-11 / initial review of 7e2ab801eaef
 
 ```text
 Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..7e2ab801eaef25b083640813375a49f536ae202f
@@ -1610,5 +1610,141 @@ normal implementation/review loop; A changes no implementation and creates no Ta
   failure honestly; A does not fabricate B's Task, revert to ACTIVE, move Base or change guard
   implementation to hide this known tooling mismatch. B must account for it in planning preflight.
   Roadmap, Progress and other CURRENT documents receive no closure update.
+
+NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
+
+## A Final Review
+
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..7e2ab801eaef25b083640813375a49f536ae202f
+Decision: FIX REQUIRED
+Review Date: 2026-10-11
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+Review Scope: complete RO-6 folder/mixed-selection journey sweep, not a Task review
+P0/P1 Blockers:
+- P1 / A44-6 — RO-6 durable admission/recovery, acceptance 30/31:
+  retain the original confirmed concurrent duplicate admission. Further actual
+  API probes create duplicate open work when the same two scopes change order
+  or the original record falls outside the last-50 reconciliation window.
+  Actual production-built Web unknown-response recovery selects another pin's
+  discovery after a new activation changes the ResourceLibrary root; real
+  SQLite proves the original and selected admissions have different pins.
+  Minimum correction: atomically reconcile the exact durable admission identity,
+  canonicalize scope-set identity, and correlate unknown responses to the actual
+  request while preserving actor/library/Storage/scope/pin isolation and explicit
+  terminal successors. A path-only match or recent-record search is insufficient.
+- P1 / A44-7 — RO-6 pinned filtering/stability/depth, acceptance 28/30:
+  retain the original production configuration/runtime omission. Actual managed
+  maxDepth=1 excludes Movies/Sub/Two.mkv when selecting Movies, but direct
+  selection of Movies/Sub accepts it. A supported domain DIRECTORY exclusion
+  also applies only while walking the parent, not when selecting that directory.
+  Minimum correction: complete bounded Web/API configuration through the shared
+  managed validation/publication authority and consume the exact pin; enforce
+  the same root-relative filters/depth at all selection/observation entrances.
+  Preserve legacy defaults, focused edits, invalid-input recovery and pin isolation.
+- P1 / A44-8 — RO-6 genuine stability and safe background progress,
+  acceptance 28/29/30 and independent-work recovery:
+  waiting_stability is immediately reclaimable as the oldest record. Twelve
+  actual Worker calls pick the same waiting item while the next stays queued;
+  the resident short-circuit leaves later manual/transfer runners uncalled.
+  In a nonzero 60-second policy probe, with clock deliberately before due time,
+  100 quick passes over 100 files exhaust 10000 entries and become a permanent
+  entry_limit refusal instead of waiting. This probe transparently injects the
+  domain policy because A44-7 currently blocks production configuration.
+  Minimum correction: persist and honour meaningful observation timing and let
+  independent work advance without busy polling, fabricated elapsed stability,
+  resetting cumulative bounds, weakening fences or freezing a truncated prefix.
+- P1 / A44-9 — RO-6 exact names, required native Web/API, acceptance 27/29/30:
+  a real legal 1222-character Local path returns API 200/completed but the actual
+  built Web refuses its 1024-limited discovery model and cannot read/recover the
+  record. A legal 179-character Local filename reaches the 128-character manual
+  identity limit; two real Worker pickups separated by lease expiry both return
+  None and leave the entire batch queued/failure=null, attempts=2.
+  Minimum correction: align supported identity/name/path bounds across admission,
+  discovery, manual handoff and Web, preserve exact names, and persist/isolate
+  actionable item failures instead of swallowing exceptions and re-leasing forever.
+- P1 / A44-10 — RO-6 truthful partial findings and recovery, acceptance 29/31:
+  one explicit file disappears or stat returns permission denied after admission
+  in a mixed file/folder selection. API reports completed, errorEntries=1,
+  incomplete=false and whole-scope completion; Finalize 201 silently holds only
+  the readable source without the partial-discovery gate/message used for directory
+  failures. Minimum correction: consistently represent per-file unknown/read
+  failure and per-subtree failure, retain independent known sources/errors and
+  permit only an explicitly reviewed bounded subset rather than false completeness.
+- P1 / A44-11 — RO-6 bounded Storage paging, acceptance 29:
+  production managed OpenList HTTP/Worker accesses one distinct directory, but
+  every page increments visitedDirectories. A legal 1001-page repeated-basename
+  walk with one deduplicated primary stops at page 1000 for directory_limit while
+  page/entry/time bounds remain available. Minimum correction: count directories,
+  pages and entries by their actual durable units and enforce the correct bounds,
+  without raising limits or permitting an executable truncated prefix.
+- P1 / A44-12 — RO-6 main/attachment semantics and primary bound,
+  acceptance 27/28/29/31:
+  under actually published enabled attachment policy, One.2001-trailer.mp4 is
+  both a Trailer recognised by existing AttachmentDiscovery and an independent
+  frozen intent primary item. 51 main videos plus 51 matching Trailer sidecars
+  consequently stop at primary_limit despite only 51 main media.
+  Minimum correction: preserve existing main/attachment association through
+  discovery-to-intent, count primary media once and prevent duplicate primary
+  authority for a sidecar. Reuse the existing matcher/policy semantics; do not
+  build a new general Extras engine or broaden deferred functionality.
+- P1 / A44-13 — RO-6 truthful Worker readiness/recovery, acceptance 30
+  and required unsupported-command validation:
+  actual current-schema live Worker registration with commands=(scan,) yields
+  discovery.worker.ready=true, while that same service's command-readiness for
+  media_discovery correctly says unsupported. Minimum correction: project the
+  actual discovery command capability/compatibility and its meaningful recovery
+  instead of borrowing a live/schema-only manual readiness result; retain the
+  separate existing execution/transfer readiness behavior.
+```
+
+The consolidated [full folder-journey audit](docs/reviews/slice-44-folder-organize-audit.md)
+contains each reproduction, source locations, minimal correction direction, severity, coverage
+and actual evidence. A44-6/A44-7 retain and extend the earlier confirmed findings; A44-8 through
+A44-13 are six additional groups. All are inside the unchanged RO-6 Contract. There is no Contract
+impossibility, Material Contract Change or PARTIAL/RESCOPE: Base, Implementation Head, RO/Surfaces,
+Safety Invariants, acceptance, 100-primary bound and Deferred remain unchanged. Prior Task 44.8
+PASS and B's Closure Packet remain historical, not A acceptance. No closure reconciliation occurs.
+
+### Validation and evidence
+
+- Fresh focused Python: PASS, 127 tests, 22.215 seconds, zero failures/errors/skips;
+  focused Web: PASS, 3 files / 53 tests, 35.03 seconds. Fresh actual built-Web/native proof:
+  PASS, 11 browser cases, four selection kinds, acknowledged pause/Continue, limits/readback,
+  exact separately confirmed temporary Local Move and non-replay.
+- Twenty additional negative scenarios reproduce the grouped P1s and independent P2s; their
+  REPRODUCED receipts certify defects, not product PASS. Two actual native negative journeys
+  prove wrong-pin/root unknown-response recovery and the long-path read failure. Screenshots
+  were inspected. The 179-character filename and per-file denial cases use actual Worker
+  pickup/API/SQLite, with bounded fault injection explicitly identified where used.
+- Mixed/stable manifest dedup, confinement/cursor refusal, atomic Finalize, earlier cancellation,
+  same-owner controls, stale-owner fencing, original path/C identity, source change and normal
+  exact-execution gates remain passing in the current regressions. No missing evidence was
+  converted into acceptance; the green suites miss the cross-boundary cases above.
+- Revalidated all 625 B-indexed candidate inputs except the documented review/handoff files,
+  and all 178 B-indexed artifacts: no mismatch. Same-candidate independent full Python from
+  a-final-review3 stays PASS, 2384 tests, 7 skipped, 420.213 seconds. Source/tests/dependencies/
+  configuration/built Web did not change; a duplicate full run is unnecessary for this audit.
+  Existing B Web/E2E/Docker/wheel/upgrade/security evidence is reused with provenance; additional
+  independent reruns of those full gates are NOT RUN this sweep. Seven external/endurance
+  profiles retain actual SKIP/UNAVAILABLE. No production-service acceptance is inferred.
+- P2 exact equality budget cases, safety-depth explanation/anchor mismatch, queued/paused progress
+  wording, concurrent-Save optional assertion and Move-summary copy do not independently block PASS.
+  B must use the complete grouped list rather than treat a green direct-object test as delivery
+  of a required real Web/API/configuration/Worker journey.
+- Durable local evidence is in
+  .git/validation-evidence/7e2ab801eaef25b083640813375a49f536ae202f/a-folder-sweep/;
+  original prior probes remain in a-final-review3/ and all earlier A/B evidence stays retained.
+  Probe setup failures are preserved separately; corrected probe harnesses changed no product
+  implementation or assertions. New negative probes performed zero Storage content/mutation
+  and created zero execution Tasks. The positive native proof's only media effect was an
+  expressly confirmed exact Move in its temporary root. No live deployment/media/services or
+  frozen Slice 43 implementation changed. config/alist.json remains ignored/untracked/unstaged;
+  all four pre-existing user PNGs remain untouched outside this checkpoint.
+- The existing governance guard still rejects workflow-required FIX REQUIRED plus NO ACTIVE
+  IMPLEMENTATION TASK. Its actual failure is recorded separately and is not a product blocker;
+  A does not fabricate B's Task, alter Base/status to hide it or implement a guard change.
+  This checkpoint contains only A review/handoff documentation; Roadmap, Progress and other
+  CURRENT documents receive no closure update. No next Slice is selected and no push occurs.
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
