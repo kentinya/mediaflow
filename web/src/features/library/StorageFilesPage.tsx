@@ -2100,11 +2100,22 @@ export function StorageFilesPage() {
     mutationFn: async ({
       libraryId,
       paths,
+      storageId,
+      configurationSnapshotId,
       discovery,
     }: {
       readonly libraryId: string;
       readonly paths: readonly string[];
       readonly returnPath: string;
+      /** The exact Storage binding the request was submitted under, taken from
+       * the same Active system status the page rendered.  It is the proof a
+       * lost-response readback must match; a library id alone cannot tell two
+       * activations of the same relative folder apart. */
+      readonly storageId: string;
+      /** The exact immutable Active configuration pin the request was submitted
+       * under.  A successor activation legitimately re-admits the same relative
+       * scope under a new pin; that is different work, never this request. */
+      readonly configurationSnapshotId: string | null;
       readonly discovery: boolean;
     }) => {
       if (paths.length === 0) {
@@ -2131,15 +2142,21 @@ export function StorageFilesPage() {
             // resubmitting a duplicate admission.
             const readback = await fetchOrganizeDiscoveries(token);
             if (readback.ok) {
-              // Reconcile on the backend-published admission identity — the
-              // exact library/Storage binding, the exact immutable pin and the
-              // exact scope set — never on a path-string guess. The scope is
-              // compared as a *set*, exactly like the backend's own canonical
-              // signature, so submission order cannot create a second walk.
+              // Recover only with *proof of the original binding*: the exact
+              // library, the exact Storage/root binding and the exact immutable
+              // pin this request was submitted under, plus the exact scope set.
+              // A successor activation that reuses the same library id and the
+              // same relative folder name is different work; navigating to it
+              // would present another live source context as the recovered
+              // request.  When that proof is absent the honest unresolved state
+              // stands and the operator inspects it natively in Operations.
               const requested = new Set(paths);
               const candidate = readback.items.find(
                 (item) =>
                   item.resourceLibraryId === libraryId &&
+                  item.storageId === storageId &&
+                  configurationSnapshotId !== null &&
+                  item.configurationSnapshotId === configurationSnapshotId &&
                   discoveryIsOpen(item) &&
                   item.selection.scopes.length === requested.size &&
                   item.selection.scopes.every((scope) =>
@@ -2153,11 +2170,12 @@ export function StorageFilesPage() {
                   id: candidate.discoveryId,
                 };
               }
-              // No durable record for this exact scope: the honest unknown
-              // state stands and the operator decides, without a promise
-              // that no work exists.
+              // No durable record for this exact original binding: the honest
+              // unknown state stands and the operator decides, without a
+              // promise that no work exists and without a guessed navigation.
               throw new Error(
-                "暂时无法确认发现申请结果,也未读到同一范围的持久记录;请稍后刷新后再试,不会自动重复提交。",
+                "暂时无法确认发现申请结果,也未读到同一范围、同一存储绑定和同一配置版本的持久记录;" +
+                  "请在任务中心查看未决的整理发现并自行处理,不会自动重复提交或进入其他来源。",
               );
             }
             throw new Error(
@@ -3428,6 +3446,9 @@ export function StorageFilesPage() {
                             libraryId: currentLibrary.id,
                             paths: [entryPath],
                             returnPath: model.path,
+                            storageId: currentLibrary.storageId,
+                            configurationSnapshotId:
+                              currentStatus.configurationSnapshotId,
                             discovery,
                           })
                         }
@@ -3441,6 +3462,9 @@ export function StorageFilesPage() {
                             libraryId: currentLibrary.id,
                             paths: admitted.map((entry) => entry.path),
                             returnPath: model.path,
+                            storageId: currentLibrary.storageId,
+                            configurationSnapshotId:
+                              currentStatus.configurationSnapshotId,
                             // Any admitted folder makes the whole selection a
                             // bounded discovery; a file-only selection keeps
                             // the existing direct intent admission.

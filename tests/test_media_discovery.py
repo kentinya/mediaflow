@@ -3599,3 +3599,313 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             self.assertIn("discovery", admitted["worker"]["nextAction"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual((), value.repository.list_tasks())
+
+
+class A44BReviewCorrections(_DiscoveryFixture):
+    """The three P1 defect groups B proved against candidate ``d9a9af4``.
+
+    Each case reproduces B's actual production-runtime probe (real managed
+    publication/loading, real Local Storage/SQLite and the authenticated API,
+    with no injected or removed runtime policy) and asserts the corrected
+    ordinary behaviour: root-relative ancestor policy at every direct-selection
+    entrance, real attachment association instead of a filename shortcut, and
+    lost-response recovery that requires proof of the original binding.
+    """
+
+    # -- P1: direct selection cannot bypass a pruned ancestor -------------
+
+    def _excluded_ancestor_document(self, *, max_depth: int | None = None) -> dict:
+        document = self.document(max_depth=max_depth)
+        document["resourceLibraries"][0]["excludeRules"] = [
+            {"kind": "directory", "pattern": "Blocked"}
+        ]
+        return document
+
+    def _production_journey(self, document: dict):
+        """Publish one document through the real loader, exactly like B's probe."""
+
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        revision = _activate(
+            ManagedConfigurationService(
+                SQLiteConfigurationRepository(self.database),
+                bootstrap_database_path=str(self.database),
+            ),
+            document,
+        )
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=revision.revision_id,
+            digest=revision.digest,
+        )
+        return revision, runtime
+
+    def test_a_directly_selected_file_cannot_bypass_an_excluded_ancestor(self) -> None:
+        """B-P1/AC2: a nested file under an excluded directory is refused.
+
+        B proved that selecting ``Blocked`` returns 409 while selecting its
+        descendant file was admitted and completed as a primary.  A direct
+        selection must share the same root-relative exclude policy as a parent
+        walk, so the descendant is refused with a bounded, actionable error and
+        no durable record.
+        """
+
+        self.media("Blocked/Sub/Film.2001.mkv")
+        self.media("Keep/Good.2001.mkv")
+        document = self._excluded_ancestor_document()
+        with self.journey() as value:
+            revision, runtime = self._production_journey(document)
+            self.assertEqual(
+                ("Blocked",),
+                tuple(rule.pattern for rule in runtime.resource_libraries[0].exclude_rules),
+            )
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Blocked/Sub/Film.2001.mkv"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual("configured_exclude", refused["error"]["details"]["reason"], refused)
+            self.assertEqual("Blocked", refused["error"]["details"]["prunedAncestor"], refused)
+            self.assertEqual("none", refused["error"]["details"]["sideEffects"], refused)
+            # No durable record was created for the refused selection.
+            self.assertEqual((), value.repository.list_media_discoveries())
+            # The same file reached through an admitted parent is still pruned
+            # by the walk, so the policy has one meaning regardless of entrance.
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Keep"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(["Keep/Good.2001.mkv"], [i["path"] for i in settled["sources"]])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_directly_selected_nested_folder_cannot_bypass_a_pruned_ancestor(self) -> None:
+        """B-P1/AC2: a nested folder below an excluded ancestor is refused."""
+
+        self.media("Blocked/Sub/Film.2001.mkv")
+        document = self._excluded_ancestor_document()
+        with self.journey() as value:
+            revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Blocked/Sub"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual("Blocked", refused["error"]["details"]["prunedAncestor"], refused)
+            self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_directly_selected_file_below_a_depth_pruned_ancestor_is_refused(self) -> None:
+        """B-P1/AC2: configured depth applies root-relative to a direct file.
+
+        A parent walk prunes a child directory of a depth-``maxDepth`` folder, so
+        a file under that child is unreachable.  Selecting it directly must not
+        admit it merely because the leaf itself looks shallow.
+        """
+
+        self.media("Movies/Sub/Deep/Film.2001.mkv")
+        document = self.document(max_depth=1)
+        with self.journey() as value:
+            revision, runtime = self._production_journey(document)
+            self.assertEqual(1, runtime.resource_libraries[0].max_depth)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/Sub/Deep/Film.2001.mkv"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual(
+                "configured_depth_exceeded", refused["error"]["details"]["reason"], refused
+            )
+            self.assertEqual("Movies/Sub", refused["error"]["details"]["prunedAncestor"], refused)
+            self.assertEqual((), value.repository.list_media_discoveries())
+
+    # -- P1: real attachment association, not a filename shortcut ---------
+
+    def test_an_orphan_trailer_is_a_truthful_primary(self) -> None:
+        """B-P1/AC4/AC5: a trailer with no associated main file is not dropped.
+
+        B proved an orphan-only folder reported ``completed`` with no sources
+        and no finding.  A video the production matcher cannot associate keeps
+        its ordinary primary identity and is reported truthfully.
+        """
+
+        self.media("Movies/Orphan.2001-trailer.mp4")
+        with self.journey(attachments=True) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Orphan.2001-trailer.mp4"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_disabled_trailer_policy_keeps_both_videos_as_primaries(self) -> None:
+        """B-P1/AC4/AC5: a policy that does not classify a trailer admits both.
+
+        B proved that with the published policy's ``trailers`` disabled the walk
+        returned only the main mkv.  A suffix that the applicable pinned policy
+        does not classify as an attachment must keep ordinary primary
+        processing.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001-trailer.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["trailers"] = False
+            policy["attachments"]["otherSameStem"] = False
+        with self.journey() as value:
+            revision, runtime = self._production_journey(document)
+            self.assertTrue(
+                all(
+                    not policy.organize_policy.attachments.trailers
+                    and not policy.organize_policy.attachments.other_same_stem
+                    for policy in runtime.strategy.recognition_type_policies
+                ),
+                runtime.strategy.recognition_type_policies,
+            )
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001-trailer.mp4", "Movies/Film.2001.mkv"],
+                sorted(item["path"] for item in settled["sources"]),
+                settled,
+            )
+            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_matching_trailer_is_still_demoted_across_pages(self) -> None:
+        """B-P1/AC5: association governs even when main and trailer split pages.
+
+        The demotion must be evaluated over the real observed same-directory
+        entries, so a trailer that appears before its main file on an earlier
+        page is still an attachment once the directory is fully walked.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001-trailer.mp4")
+        with self.journey(attachments=True) as value:
+            raw = value.source._storage
+            state = {"page": 0}
+
+            def paged(path, *, limit, cursor=None):
+                if path != "Movies":
+                    return raw.list_page(path, limit=limit, cursor=cursor)
+                state["page"] += 1
+                if cursor is None:
+                    # The trailer is served first, before its main file exists
+                    # in this walk's view of the directory.
+                    return StoragePage([raw.stat("Movies/Film.2001-trailer.mp4")], "page-2")
+                return StoragePage([raw.stat("Movies/Film.2001.mkv")], None)
+
+            value.source.list_page = paged
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual(2, settled["progress"]["pageFetches"], settled)
+
+    def test_one_hundred_and_one_true_primaries_still_refuse_a_prefix(self) -> None:
+        """B-P1/AC5: the bound counts true primaries, not demoted candidates.
+
+        100 main files plus 100 associated trailers is 100 primaries; 101 true
+        primaries still refuses an executable prefix.  This keeps the existing
+        100/101 semantics while the bound is now evaluated after association.
+        """
+
+        for index in range(101):
+            self.media(f"Movies/Film{index:03d}.2001.mkv")
+        with self.journey(attachments=True) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("primary_limit", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual(100, settled["progress"]["primarySources"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_trailer_of_an_unadmitted_main_file_keeps_ordinary_processing(self) -> None:
+        """B-P1/AC5: a trailer whose main file is policy-excluded is a primary.
+
+        The association is only against *admitted* main files, so a trailer
+        whose apparent owner is excluded by policy is not silently absorbed.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001-trailer.mp4")
+        self.media("Movies/Drop.2001.mkv")
+        self.media("Movies/Drop.2001-trailer.mp4")
+        document = self.document(attachments=True)
+        document["resourceLibraries"][0]["excludeRules"] = [
+            {"kind": "filename", "pattern": "Drop.2001.mkv"}
+        ]
+        with self.journey() as value:
+            revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            # The excluded main file is not admitted, so its trailer is not an
+            # attachment of anything and keeps its own primary identity.
+            self.assertEqual(
+                ["Movies/Drop.2001-trailer.mp4", "Movies/Film.2001.mkv"],
+                sorted(item["path"] for item in settled["sources"]),
+                settled,
+            )
+            self.assertEqual([], value.source.mutations)

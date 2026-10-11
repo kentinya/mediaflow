@@ -83,6 +83,47 @@ def excluded_directory(
     return excluded(library.exclude_rules, relative_path, entry.name, "", True)
 
 
+class PrunedAncestorReason(StrEnum):
+    """Why a library-root walk could never reach a directly selected entry."""
+
+    EXCLUDED_RULE = "excluded_rule"
+    NOT_INCLUDED = "not_included"
+    DEPTH = "depth"
+
+
+def pruned_ancestor(
+    library: ResourceLibrary,
+    relative_path: str,
+) -> tuple[str, PrunedAncestorReason] | None:
+    """The shallowest ancestor directory a library-root walk would prune.
+
+    A directly selected file or folder must obey exactly the same root-relative
+    exclude/include/depth policy as a walk that starts at the ResourceLibrary
+    root.  If an ancestor directory would be pruned there, the walk could never
+    reach the selection, so clicking the descendant directly must not turn it
+    into a source either.  This is the one depth/rule meaning shared with the
+    Scanner and the bounded walk: the caller maps the returned reason onto its
+    own bounded finding vocabulary.
+    """
+
+    parts = [part for part in (relative_path or "").strip("/").split("/") if part]
+    for index in range(1, len(parts)):
+        ancestor = "/".join(parts[:index])
+        name = parts[index - 1]
+        if excluded(library.exclude_rules, ancestor, name, "", True):
+            return ancestor, PrunedAncestorReason.EXCLUDED_RULE
+        if not _directory_may_match(library.include_rules, ancestor):
+            return ancestor, PrunedAncestorReason.NOT_INCLUDED
+        # The walk prunes a child directory of ``parent`` when the parent's own
+        # depth already reached the configured maximum, so a selection below
+        # that child is unreachable exactly then.
+        parent = "/".join(parts[: index - 1])
+        depth = parent.count("/") + 1 if parent else 0
+        if library.max_depth is not None and depth >= library.max_depth:
+            return ancestor, PrunedAncestorReason.DEPTH
+    return None
+
+
 def directory_may_match(rules: tuple[ScanRule | str, ...], path: str) -> bool:
     """Whether a directory could still contain an included descendant."""
 

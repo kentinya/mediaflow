@@ -11,7 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { type ReactElement, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderWithProviders } from "../../../tests/utils";
+import { renderApp, renderWithProviders } from "../../../tests/utils";
 import type { SystemStorage } from "../../entities/library/system-status";
 import { authStore } from "../../shared/api/auth-store";
 import type { SaveResourceLibraryOptions } from "../../shared/api/api-client";
@@ -528,6 +528,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onRenameEvidence?: () => Response;
     onDeleteStatus?: (taskId: string) => Response | undefined;
     dropDeleteResponse?: boolean;
+    /** The folder/mixed discovery admission POST. */
+    onDiscovery?: (body: Record<string, unknown>) => Response;
+    /** The bounded discovery readback used for lost-response reconciliation. */
+    onDiscoveries?: () => Response;
+    /** The discovery detail read for the recovered navigation target. */
+    onDiscoveryDetail?: (discoveryId: string) => Response;
     onTransferImpact?:
       | ((query: URLSearchParams) => Response)
       | ((query: URLSearchParams) => Promise<Response>);
@@ -543,6 +549,44 @@ describe("Files entry state and ResourceLibrary strip", () => {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(options.status);
+      if (url === "/api/v1/operations/organize/discoveries") {
+        return options.onDiscoveries
+          ? options.onDiscoveries()
+          : jsonResponse({
+              journey: "discovery",
+              items: [],
+              total: 0,
+              limit: 50,
+            });
+      }
+      if (
+        /\/operations\/organize\/discoveries\/[^/?]+$/.test(url) &&
+        init?.method === undefined
+      ) {
+        const discoveryId = decodeURIComponent(url.split("/").pop() ?? "");
+        if (options.onDiscoveryDetail) {
+          return options.onDiscoveryDetail(discoveryId);
+        }
+      }
+      if (/\/files\/discoveries$/.test(url) && init?.method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        if (options.onDiscovery) return options.onDiscovery(body);
+        return jsonResponse(
+          {
+            discoveryId: "discovery-1",
+            journey: "discovery",
+            selection: {
+              scopeCount: (body.paths as string[]).length,
+              scopes: [],
+            },
+            status: "queued",
+          },
+          202,
+        );
+      }
       if (/\/resource-libraries\/[^/]+\/files(\?|$)/.test(url)) {
         if (options.onFiles) return options.onFiles();
         const libraryId = new URL(url, "http://x").pathname.split("/")[4];
@@ -3178,5 +3222,221 @@ describe("Files entry state and ResourceLibrary strip", () => {
       expect(within(progressDialog).getByText(/正在执行/)).toBeVisible(),
     );
     expect(transferBodies).toHaveLength(1);
+  });
+
+  it("does not recover a lost discovery admission onto another Storage/pin binding", async () => {
+    // B's P1: two valid managed activations retained the same library id and
+    // relative folder while changing its Storage root.  Both admissions are
+    // legal, so a readback that matches only the library id and the path set
+    // silently presents the *other* source context as the recovered request.
+    // Recovery requires proof of the original binding; otherwise the honest
+    // unresolved state stands and no guessed navigation happens.
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => {
+          const payload = filesPayload("lib-a", "Recover");
+          return jsonResponse(payload);
+        },
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          // The admission committed durably but its response was lost.
+          throw new TypeError("simulated lost discovery admission response");
+        },
+        onDiscoveries: () =>
+          jsonResponse({
+            items: [
+              {
+                actions: {
+                  cancel: { available: true, method: "POST", path: "/x" },
+                  finalize: { available: false, method: "POST", path: "/x" },
+                  pause: { available: true, method: "POST", path: "/x" },
+                  resume: { available: false, method: "POST", path: "/x" },
+                },
+                budgets: {},
+                cancelRequested: false,
+                createdAt: "2026-01-01T00:00:00+00:00",
+                discoveryId: "other-binding",
+                execution: "not_available_from_discovery",
+                failure: null,
+                frozen: false,
+                frozenAt: null,
+                intentId: null,
+                journey: "discovery",
+                nextAction: "continue",
+                nextObservationAt: null,
+                pauseRequested: false,
+                primarySourceCount: 1,
+                progress: {
+                  activeSeconds: 0,
+                  errorEntries: 0,
+                  excludedEntries: 0,
+                  findings: [],
+                  incomplete: false,
+                  incompleteReason: null,
+                  materialRefusal: null,
+                  message:
+                    "bounded discovery completed the whole admitted scope",
+                  pageFetches: 0,
+                  phase: "completed",
+                  primarySources: 1,
+                  reasons: [],
+                  refusalReasons: [],
+                  unstableEntries: 0,
+                  visitedDirectories: 1,
+                  visitedEntries: 1,
+                },
+                // The same relative folder name under a *different* Storage
+                // binding and a *different* immutable pin.
+                resourceLibraryId: "lib-a",
+                storageId: "local-2",
+                configurationSnapshotId: "active-2",
+                selection: {
+                  scopeCount: 1,
+                  scopes: [{ kind: "directory", path: "Recover" }],
+                },
+                sideEffects: "none",
+                sources: [],
+                status: "completed",
+                updatedAt: "2026-01-01T00:00:00+00:00",
+                version: 1,
+                worker: {
+                  condition: "ready",
+                  durableState: "ready",
+                  nextAction: "continue",
+                  ready: true,
+                },
+                zeroMutation: true,
+              },
+            ],
+            journey: "discovery",
+            limit: 50,
+            total: 1,
+          }),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("Recover");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 Recover/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    // The admission is never replayed, and the page never navigates to the
+    // other binding's discovery. Instead it explains the unresolved state.
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /不会自动重复提交或进入其他来源/,
+      ),
+    );
+    expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
+  });
+
+  it("recovers a lost discovery admission only for the proved original binding", async () => {
+    // The same readback with the *original* Storage binding and pin is the
+    // proved request: it is recovered and navigated to, exactly as before.
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
+        onDiscovery: () => {
+          throw new TypeError("simulated lost discovery admission response");
+        },
+        onDiscoveries: () =>
+          jsonResponse({
+            items: [
+              {
+                actions: {
+                  cancel: { available: true, method: "POST", path: "/x" },
+                  finalize: { available: false, method: "POST", path: "/x" },
+                  pause: { available: true, method: "POST", path: "/x" },
+                  resume: { available: false, method: "POST", path: "/x" },
+                },
+                budgets: {},
+                cancelRequested: false,
+                createdAt: "2026-01-01T00:00:00+00:00",
+                discoveryId: "proved-original",
+                execution: "not_available_from_discovery",
+                failure: null,
+                frozen: false,
+                frozenAt: null,
+                intentId: null,
+                journey: "discovery",
+                nextAction: "continue",
+                nextObservationAt: null,
+                pauseRequested: false,
+                primarySourceCount: 1,
+                progress: {
+                  activeSeconds: 0,
+                  errorEntries: 0,
+                  excludedEntries: 0,
+                  findings: [],
+                  incomplete: false,
+                  incompleteReason: null,
+                  materialRefusal: null,
+                  message:
+                    "bounded discovery completed the whole admitted scope",
+                  pageFetches: 0,
+                  phase: "completed",
+                  primarySources: 1,
+                  reasons: [],
+                  refusalReasons: [],
+                  unstableEntries: 0,
+                  visitedDirectories: 1,
+                  visitedEntries: 1,
+                },
+                resourceLibraryId: "lib-a",
+                // The exact Storage binding and pin the page rendered and
+                // submitted under.
+                storageId: "local-1",
+                configurationSnapshotId: "active-1",
+                selection: {
+                  scopeCount: 1,
+                  scopes: [{ kind: "directory", path: "Recover" }],
+                },
+                sideEffects: "none",
+                sources: [],
+                status: "completed",
+                updatedAt: "2026-01-01T00:00:00+00:00",
+                version: 1,
+                worker: {
+                  condition: "ready",
+                  durableState: "ready",
+                  nextAction: "continue",
+                  ready: true,
+                },
+                zeroMutation: true,
+              },
+            ],
+            journey: "discovery",
+            limit: 50,
+            total: 1,
+          }),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderApp("/ui-v2/resourcelib/files");
+
+    await screen.findAllByText("Recover");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 Recover/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "整理发现" })).toBeVisible(),
+    );
   });
 });

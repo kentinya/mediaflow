@@ -33,12 +33,14 @@ from uuid import uuid4
 from mediaflow.application.attachments import AttachmentDiscovery
 from mediaflow.application.scan_filters import (
     ObservedSource,
+    PrunedAncestorReason,
     ScanEntryVerdict,
     StabilityVerdict,
     classify_entry,
     directory_may_match,
     entry_extension,
     excluded_directory,
+    pruned_ancestor,
     stability_verdict,
     stability_wait_seconds,
 )
@@ -881,12 +883,6 @@ class MediaDiscoveryService:
         # a matching sidecar can never inflate the primary count mid-walk.
         directory_entries: list[tuple[str, int, StorageEntry]] = []
         observed_file_entries: list[tuple[str, int, StorageEntry]] = []
-        # The pinned attachment policy, if any.  When it is enabled, a matching
-        # Trailer sidecar is an attachment of its main file rather than an
-        # independent primary: the exact Preview re-discovers it from live
-        # Storage, so admitting it here would give it a second, duplicate
-        # primary identity and inflate the primary count.
-        attachment_policies = self._attachment_policies(runtime)
 
         def bump(reason_value: str, path: str) -> None:
             existing = reasons.get(reason_value)
@@ -1105,6 +1101,21 @@ class MediaDiscoveryService:
                     break
                 continue
             if active_directory is None:
+                # The previous directory is fully walked (or was abandoned):
+                # apply the production attachment association over its real
+                # observed entries, so a *proven* sidecar is never counted as an
+                # independent primary.  The primary bound is then evaluated
+                # against the true primary set, never against candidates that
+                # the existing association is about to demote.
+                if directory_entries:
+                    self._demote_attachments(runtime, library, directory_entries, sources)
+                    directory_entries = []
+                    if self._over_primary_limit(sources, bump, note):
+                        incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
+                        refuse(incomplete)
+                        status = DiscoveryStatus.PARTIAL_SUCCESS
+                        stop = True
+                        break
                 if not pending_directories:
                     if not degraded:
                         status = DiscoveryStatus.COMPLETED
@@ -1122,8 +1133,6 @@ class MediaDiscoveryService:
                 # The previous directory is fully walked: apply the production
                 # attachment association, so a sidecar matching an admitted main
                 # file is never counted as an independent primary.
-                self._demote_attachments(runtime, library, directory_entries, sources)
-                directory_entries = []
                 active_directory = pending_directories.pop(0)
                 active_cursor = None
                 seen_cursors = []
@@ -1238,19 +1247,16 @@ class MediaDiscoveryService:
                     continue
                 directory_entries.append((relative, depth, raw))
                 observed_file_entries.append((relative, depth, raw))
-                if attachment_policies and self._trailer_candidate(raw.name):
-                    # The pinned configuration associates this video with a main
-                    # file, so it is not an independent primary.  The existing
-                    # association still governs the later Preview; discovery
-                    # simply never gives it a second primary identity.
-                    continue
+                # Every ordinary file is observed first.  A sidecar is only
+                # *demoted* afterwards, and only when the production attachment
+                # matcher proves it belongs to an admitted main file: a suffix
+                # match with no admitted owner (an orphan trailer) or a policy
+                # that does not classify it must keep its ordinary primary
+                # identity instead of being silently dropped.  The primary bound
+                # is therefore evaluated per completed directory, against the
+                # true primary set, never against candidates the existing
+                # association is about to demote.
                 observe(relative, depth, raw)
-                if self._over_primary_limit(sources, bump, note):
-                    incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
-                    refuse(incomplete)
-                    status = DiscoveryStatus.PARTIAL_SUCCESS
-                    stop = True
-                    break
             if stop:
                 break
             next_cursor = getattr(page, "next_cursor", None)
@@ -1276,6 +1282,14 @@ class MediaDiscoveryService:
 
         self._demote_attachments(runtime, library, directory_entries, sources)
         self._demote_attachments(runtime, library, observed_file_entries, sources)
+        # A directory abandoned mid-page by an unrelated safety break may have
+        # left the manifest over the primary bound; the durable manifest is
+        # always trimmed to the exact bound and reported as a material refusal,
+        # so no code path can freeze an over-limit or first-N prefix.
+        if self._over_primary_limit(sources, bump, note):
+            incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
+            refuse(incomplete)
+            status = DiscoveryStatus.PARTIAL_SUCCESS
         counters = replace(counters, primary_sources=len(sources))
 
         if status is DiscoveryStatus.COMPLETED and not pending_files and not pending_directories:
@@ -1388,12 +1402,21 @@ class MediaDiscoveryService:
                 pass
 
     def _over_primary_limit(self, sources, bump, note) -> bool:
+        """Trim the manifest to the primary bound, reporting whether it was hit.
+
+        The bound is evaluated against the *true* primary set (after the
+        production attachment association has demoted proven sidecars), so a
+        directory that overshoots in one page is trimmed back to exactly the
+        configured maximum instead of leaving an over-limit manifest behind.
+        """
+
         if len(sources) <= self._budgets.max_primary_sources:
             return False
-        path = next(reversed(sources))
-        sources.pop(path, None)
-        bump(_REASON_UNSAFE_ENTRY, path)
-        note(DiscoveryFindingKind.TRUNCATED, path, "primary_source_limit_exceeded", None, 0)
+        while len(sources) > self._budgets.max_primary_sources:
+            path = next(reversed(sources))
+            sources.pop(path, None)
+            bump(_REASON_UNSAFE_ENTRY, path)
+            note(DiscoveryFindingKind.TRUNCATED, path, "primary_source_limit_exceeded", None, 0)
         return True
 
     @staticmethod
@@ -1421,23 +1444,28 @@ class MediaDiscoveryService:
         return tuple(seen)
 
     @staticmethod
-    def _trailer_candidate(name: str) -> bool:
-        """Whether a name uses the existing Trailer sidecar suffix rule.
+    def _stem_related(name: str, owner_name: str) -> bool:
+        """A *necessary* stem relation of the production attachment matcher.
 
-        The suffix rule is exactly the one the production ``AttachmentDiscovery``
-        already applies to classify a Trailer, so this introduces no second
-        matching language.  It is applied only when the pinned configuration
-        actually enables attachments; a configuration that does not enable them
-        keeps treating such a video as an ordinary primary.
+        ``AttachmentDiscovery._classify`` only relates a sidecar to a primary
+        when the sidecar stem equals, or extends, the primary stem across a
+        ``.``/``-`` boundary (case-insensitively).  This cheap predicate only
+        narrows which entries the real matcher is asked about; it never decides
+        the association itself, so it cannot become a second matching language.
         """
 
         stem, dot, _extension = name.rpartition(".")
-        if not dot:
+        owner_stem, owner_dot, _owner_extension = owner_name.rpartition(".")
+        if not dot or not owner_dot:
             return False
         folded = stem.casefold()
-        return any(
-            folded.endswith(suffix) and len(stem) > len(suffix)
-            for suffix in (".trailer", "-trailer")
+        owner_folded = owner_stem.casefold()
+        if folded == owner_folded:
+            return True
+        return (
+            folded.startswith(owner_folded)
+            and len(stem) > len(owner_stem)
+            and stem[len(owner_stem)] in ".-"
         )
 
     def _attachment_owner(
@@ -1484,6 +1512,11 @@ class MediaDiscoveryService:
                 None,
             )
             if owner_entry is None:
+                continue
+            if not self._stem_related(entry.name, owner_entry.name):
+                # The production matcher can only relate same-stem sidecars, so
+                # this cheap necessary condition skips the expensive real
+                # association for every unrelated pair without deciding it.
                 continue
             primary = StorageLocation(library.storage_id, owner_entry.path)
             for policy in policies:
@@ -1852,6 +1885,43 @@ class MediaDiscoveryService:
             details={"relativePath": entry.path},
         )
 
+    def _refuse_pruned_ancestor(self, library, relative: str) -> None:
+        """Refuse a directly selected entry no root walk could ever reach.
+
+        A direct selection shares the *root-relative* meaning of the configured
+        exclude/include/depth policy: if an ancestor directory would be pruned
+        by a walk that starts at the ResourceLibrary root, then the operator
+        browsing into that subtree and clicking the descendant cannot make it
+        admissible.  This closes the leaf-only gap without introducing a second
+        filter language: ``pruned_ancestor`` is the same pure predicate the walk
+        applies to every directory it visits.
+        """
+
+        pruned = pruned_ancestor(library, relative)
+        if pruned is None:
+            return
+        ancestor, reason = pruned
+        code = {
+            PrunedAncestorReason.EXCLUDED_RULE: "source_excluded",
+            PrunedAncestorReason.NOT_INCLUDED: "source_not_included",
+            PrunedAncestorReason.DEPTH: "source_excluded",
+        }[reason]
+        why = {
+            PrunedAncestorReason.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
+            PrunedAncestorReason.NOT_INCLUDED: _REASON_NOT_INCLUDED,
+            PrunedAncestorReason.DEPTH: _REASON_DEPTH,
+        }[reason]
+        raise DiscoveryError(
+            "the selected source is inside a folder the pinned ResourceLibrary policy excludes",
+            code=code,
+            status=409,
+            next_action=(
+                "select a source the configured policy admits, or update the ResourceLibrary "
+                "policy and publish it"
+            ),
+            details={"relativePath": relative, "reason": why, "prunedAncestor": ancestor},
+        )
+
     def _refuse_unselectable_directory(
         self, library, relative: str, observed: StorageEntry
     ) -> None:
@@ -1865,6 +1935,7 @@ class MediaDiscoveryService:
         bounded, actionable and creates no durable record.
         """
 
+        self._refuse_pruned_ancestor(library, relative)
         if excluded_directory(library, relative, observed):
             raise DiscoveryError(
                 "the selected folder is excluded by the pinned ResourceLibrary policy",
@@ -1909,6 +1980,7 @@ class MediaDiscoveryService:
         directly.
         """
 
+        self._refuse_pruned_ancestor(library, relative)
         verdict = classify_entry(library, relative, observed)
         if verdict is not ScanEntryVerdict.CANDIDATE:
             reason = {
