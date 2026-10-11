@@ -3229,8 +3229,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // relative folder while changing its Storage root.  Both admissions are
     // legal, so a readback that matches only the library id and the path set
     // silently presents the *other* source context as the recovered request.
-    // Recovery requires proof of the original binding; otherwise the honest
-    // unresolved state stands and no guessed navigation happens.
+    // Recovery requires proof of the original admission -- the request identity
+    // the backend echoed -- so a record admitted under another pin never
+    // answers for this request and no guessed navigation happens.
     const user = userEvent.setup();
     const discoveryPosts: Record<string, unknown>[] = [];
     vi.stubGlobal(
@@ -3294,6 +3295,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
                 resourceLibraryId: "lib-a",
                 storageId: "local-2",
                 configurationSnapshotId: "active-2",
+                // Another request created this record: it is not this
+                // request's admission, so it is not proof of recovery.
+                admissionRequestId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
                 selection: {
                   scopeCount: 1,
                   scopes: [{ kind: "directory", path: "Recover" }],
@@ -3340,16 +3344,131 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
   });
 
-  it("recovers a lost discovery admission only for the proved original binding", async () => {
-    // The same readback with the *original* Storage binding and pin is the
-    // proved request: it is recovered and navigated to, exactly as before.
+  it("does not recover onto an equivalent open admission under the rendered pin", async () => {
+    // B's P1, exactly: the page renders an old valid Active root/pin and an
+    // equivalent open admission from an earlier click exists under *that*
+    // rendered pin.  A successor activation changes the root before the POST
+    // reaches the API, so the API legally admits this POST under the new pin.
+    // Matching the rendered Storage/pin/scope would navigate to the earlier
+    // request's discovery; only the echoed request identity proves this one.
     const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
     vi.stubGlobal(
       "fetch",
       stripFetchMock({
         status: activeStatus([libraryItem("lib-a", "local-1")]),
         onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
-        onDiscovery: () => {
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
+          throw new TypeError("simulated lost discovery admission response");
+        },
+        onDiscoveries: () =>
+          jsonResponse({
+            items: [
+              {
+                actions: {
+                  cancel: { available: true, method: "POST", path: "/x" },
+                  finalize: { available: false, method: "POST", path: "/x" },
+                  pause: { available: true, method: "POST", path: "/x" },
+                  resume: { available: false, method: "POST", path: "/x" },
+                },
+                budgets: {},
+                cancelRequested: false,
+                createdAt: "2026-01-01T00:00:00+00:00",
+                discoveryId: "earlier-request",
+                execution: "not_available_from_discovery",
+                failure: null,
+                frozen: false,
+                frozenAt: null,
+                intentId: null,
+                journey: "discovery",
+                nextAction: "continue",
+                nextObservationAt: null,
+                pauseRequested: false,
+                primarySourceCount: 1,
+                progress: {
+                  activeSeconds: 0,
+                  errorEntries: 0,
+                  excludedEntries: 0,
+                  findings: [],
+                  incomplete: false,
+                  incompleteReason: null,
+                  materialRefusal: null,
+                  message:
+                    "bounded discovery completed the whole admitted scope",
+                  pageFetches: 0,
+                  phase: "completed",
+                  primarySources: 1,
+                  reasons: [],
+                  refusalReasons: [],
+                  unstableEntries: 0,
+                  visitedDirectories: 1,
+                  visitedEntries: 1,
+                },
+                // Identical library, Storage binding, pin *and* scope to what
+                // the page rendered -- but a different request created it.
+                resourceLibraryId: "lib-a",
+                storageId: "local-1",
+                configurationSnapshotId: "active-1",
+                admissionRequestId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                selection: {
+                  scopeCount: 1,
+                  scopes: [{ kind: "directory", path: "Recover" }],
+                },
+                sideEffects: "none",
+                sources: [],
+                status: "completed",
+                updatedAt: "2026-01-01T00:00:00+00:00",
+                version: 1,
+                worker: {
+                  condition: "ready",
+                  durableState: "ready",
+                  nextAction: "continue",
+                  ready: true,
+                },
+                zeroMutation: true,
+              },
+            ],
+            journey: "discovery",
+            limit: 50,
+            total: 1,
+          }),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findAllByText("Recover");
+    await user.click(
+      within(screen.getByRole("row", { name: /文件条目 Recover/ })).getByRole(
+        "checkbox",
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "批量整理" }));
+
+    await waitFor(() => expect(discoveryPosts).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /不会自动重复提交或进入其他来源/,
+      ),
+    );
+    expect(screen.queryByRole("heading", { name: "整理发现" })).toBeNull();
+  });
+
+  it("recovers a lost discovery admission only for its own proved request", async () => {
+    // The readback record that echoes *this* request's identity is the proved
+    // admission: it is recovered and navigated to.  The identity is created by
+    // the page before the POST, so it proves the actual admission however the
+    // Active pin changed while the response was in flight.
+    const user = userEvent.setup();
+    const discoveryPosts: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => jsonResponse(filesPayload("lib-a", "Recover")),
+        onDiscovery: (body) => {
+          discoveryPosts.push(body);
           throw new TypeError("simulated lost discovery admission response");
         },
         onDiscoveries: () =>
@@ -3396,10 +3515,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
                   visitedEntries: 1,
                 },
                 resourceLibraryId: "lib-a",
-                // The exact Storage binding and pin the page rendered and
-                // submitted under.
                 storageId: "local-1",
                 configurationSnapshotId: "active-1",
+                // The exact identity the page generated and submitted.  It is
+                // read back from the observed POST so the assertion proves the
+                // *echoed* identity is what drives recovery.
+                admissionRequestId: String(discoveryPosts[0]?.requestId ?? ""),
                 selection: {
                   scopeCount: 1,
                   scopes: [{ kind: "directory", path: "Recover" }],
@@ -3437,6 +3558,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "整理发现" })).toBeVisible(),
+    );
+    // The page really did submit its own generated identity.
+    expect(discoveryPosts).toHaveLength(1);
+    expect(String(discoveryPosts[0]?.requestId)).toMatch(
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
     );
   });
 });

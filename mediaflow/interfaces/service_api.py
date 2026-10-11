@@ -6150,7 +6150,16 @@ class MediaFlowApi:
                     },
                 )
             document = self._document(environ)
-            if not isinstance(document, dict) or set(document) != {"paths"}:
+            # ``requestId`` is the caller's own identity for this exact
+            # admission request.  The backend resolves the immutable Active pin
+            # here, at admission time, so a browser that rendered an older pin
+            # cannot prove which admission its POST became; the caller's own
+            # identifier can, and it is echoed durably for a lost-response
+            # readback.  It is optional so an existing client keeps working.
+            if not isinstance(document, dict) or set(document) not in (
+                {"paths"},
+                {"paths", "requestId"},
+            ):
                 raise ValueError("Files discovery admission accepts only bounded relative paths")
             if not isinstance(document["paths"], list):
                 raise ValueError("Files discovery admission paths must be an array")
@@ -6159,6 +6168,7 @@ class MediaFlowApi:
                     resource_library_id=parts[3],
                     relative_paths=document["paths"],
                     actor=principal.principal_id,
+                    admission_request_id=document.get("requestId"),
                 )
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
@@ -12418,6 +12428,11 @@ class MediaFlowApi:
                 "message": progress.message,
             },
             "primarySourceCount": len(discovery.sources),
+            # The caller's own admission request identity, echoed so a client
+            # that lost the admission response can prove which durable record
+            # its request actually became.  It is the client's own value and
+            # reveals nothing about the server, the pin or the Storage path.
+            "admissionRequestId": discovery.admission_request_id,
             "intentId": discovery.intent_id,
             "frozen": frozen,
             "frozenAt": (

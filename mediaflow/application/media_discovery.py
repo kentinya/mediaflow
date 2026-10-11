@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery
 from mediaflow.application.scan_filters import (
@@ -180,6 +180,7 @@ class MediaDiscoveryService:
         resource_library_id: str,
         relative_paths: Sequence[str] | None,
         actor: str,
+        admission_request_id: str | None = None,
     ) -> MediaDiscovery:
         """Validate the whole submitted scope and durably admit one discovery.
 
@@ -187,9 +188,17 @@ class MediaDiscoveryService:
         real entry type (folder vs ordinary file) is backend authority rather
         than a browser claim.  It never recurses, never enumerates a directory
         and never calls a Provider, so admission stays prompt.
+
+        ``admission_request_id`` is the caller's own identity for this exact
+        request.  The immutable Active pin is resolved *here*, at admission
+        time, so a browser that rendered an older pin cannot prove which
+        admission its POST became.  A caller-supplied identifier can: it is
+        durable, it is echoed back and it lets a lost response reconcile
+        against the actual admission instead of a guessed binding.
         """
 
         actor = self._actor(actor)
+        admission_request_id = self._admission_request_id(admission_request_id)
         if not self._valid_scope_id(resource_library_id):
             raise DiscoveryError(
                 "folder and mixed-selection discovery requires one enabled ResourceLibrary",
@@ -234,6 +243,16 @@ class MediaDiscoveryService:
         # the durable record (and therefore the frozen manifest) is identical
         # whichever equivalent request won.  Names are never trimmed.
         deduplicated = canonical_scope(deduplicated)
+        # Exact client request identity, when the caller supplied one.  The
+        # Active pin was resolved above, at admission time, so a caller that
+        # rendered an older pin cannot prove which admission its POST became;
+        # its own identifier can.  A retry of the *same* request is therefore
+        # reconciled to the record it actually created -- even under a
+        # successor pin -- while any other request stays a new admission.
+        if admission_request_id is not None:
+            requested = self._reconcile_admission_request(actor, admission_request_id)
+            if requested is not None:
+                return requested
         # Actor/scope/pin-bound admission identity: an identical open
         # submission for the same principal, the same enabled
         # ResourceLibrary/Storage binding, the same deduplicated scope and
@@ -295,6 +314,7 @@ class MediaDiscoveryService:
             False,
             False,
             None,
+            admission_request_id=admission_request_id,
         )
         creator = getattr(self._repository, "create_media_discovery", None)
         if not callable(creator):
@@ -307,6 +327,10 @@ class MediaDiscoveryService:
             # duplicate walk: re-read the exact admission identity and return
             # it.  When the winner is not readable as this exact open
             # admission, the conflict is reported rather than guessed away.
+            if admission_request_id is not None:
+                requested = self._reconcile_admission_request(actor, admission_request_id)
+                if requested is not None:
+                    return requested
             winner = self._reconcile_admission(
                 actor,
                 deduplicated,
@@ -318,6 +342,23 @@ class MediaDiscoveryService:
             if winner is not None:
                 return winner
             raise
+
+    def _reconcile_admission_request(
+        self, actor: str, admission_request_id: str
+    ) -> MediaDiscovery | None:
+        """The durable admission this exact client request identity created.
+
+        This is proof of the *actual* admission rather than of a rendered
+        binding, so a retried request reconciles to its own record even when the
+        Active pin or Storage root changed while the response was lost.  A
+        repository without the durable lookup (an in-memory test double) simply
+        has no proof and reports the honest unknown outcome.
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_by_request_id", None)
+        if not callable(finder):
+            return None
+        return finder(actor=actor, admission_request_id=admission_request_id)
 
     def _reconcile_admission(
         self,
@@ -1468,7 +1509,7 @@ class MediaDiscoveryService:
             and stem[len(owner_stem)] in ".-"
         )
 
-    def _attachment_owner(
+    def _attachment_owners(
         self,
         runtime,
         library,
@@ -1476,8 +1517,8 @@ class MediaDiscoveryService:
         entry: StorageEntry,
         entries: list[tuple[str, int, StorageEntry]],
         admitted: dict[str, dict[str, object]],
-    ) -> str | None:
-        """The exact relative path of the admitted main file this entry attaches to.
+    ) -> tuple[str, ...]:
+        """Every admitted main file this entry attaches to, in stable order.
 
         The authoritative association is the production ``AttachmentDiscovery``
         itself, invoked with the *same* policy the exact Preview will consume and
@@ -1486,13 +1527,19 @@ class MediaDiscoveryService:
         primary, so it never becomes an independent primary of its own.  Nothing
         is fabricated: a video with no admitted main file is not an attachment
         and keeps its ordinary primary identity.
+
+        The *whole* association set is returned, not just its first member: the
+        demotion below re-evaluates which association still applies as other
+        members are demoted, and the relation itself never changes because the
+        matcher always sees the real directory.  Computing it once keeps the
+        resolution bounded instead of re-running the matcher per round.
         """
 
         if entry is None or not admitted:
-            return None
+            return ()
         policies = self._attachment_policies(runtime)
         if not policies:
-            return None
+            return ()
         directory = relative.rsplit("/", 1)[0] if "/" in relative else ""
         same_directory = [
             candidate_entry
@@ -1500,7 +1547,12 @@ class MediaDiscoveryService:
             if (candidate_relative.rsplit("/", 1)[0] if "/" in candidate_relative else "")
             == directory
         ]
-        for owner_relative, owner in admitted.items():
+        # Candidates are visited in a stable order so the *same* directory
+        # content always yields the same association however the provider paged
+        # or ordered it.  Without that, a mutual same-stem group could resolve to
+        # a different retained primary on a different page order.
+        owners: list[str] = []
+        for owner_relative in sorted(admitted):
             if (owner_relative.rsplit("/", 1)[0] if "/" in owner_relative else "") != directory:
                 continue
             owner_entry = next(
@@ -1528,8 +1580,9 @@ class MediaDiscoveryService:
                 if any(
                     attachment.source.path == entry.path for attachment in discovered.attachments
                 ):
-                    return owner_relative
-        return None
+                    owners.append(owner_relative)
+                    break
+        return tuple(owners)
 
     def _demote_attachments(
         self,
@@ -1538,7 +1591,7 @@ class MediaDiscoveryService:
         entries: list[tuple[str, int, StorageEntry]],
         sources: dict[str, dict[str, object]],
     ) -> None:
-        """Drop every observed video that is an attachment of an admitted primary.
+        """Drop every observed video that is an attachment of a *retained* primary.
 
         This runs after the walk has established the real primary set, so the
         association is evaluated once per distinct policy against the actual
@@ -1546,17 +1599,74 @@ class MediaDiscoveryService:
         Preview's own attachment step, not a second matcher: a classified
         attachment is not an independent primary and therefore cannot inflate the
         primary count or trip the 100-primary gate.
+
+        An attachment is only demoted while the admitted primary it attaches to
+        *remains* admitted.  The production matcher is symmetric for a same-stem
+        video group (``otherSameStem`` classifies ``Film.2001.mkv`` and
+        ``Film.2001.mp4`` as each other's attachment), so demoting against the
+        pre-demotion source set removed every mutual owner and published a
+        completed discovery with an empty manifest.
+
+        The resolution therefore iterates to a fixpoint over the *currently*
+        admitted set, and is deterministic and page-order independent:
+
+        * a source the matcher cannot attach to any admitted primary is retained
+          unconditionally -- it is nobody's sidecar;
+        * every other source is demoted only when its association target is
+          itself retained, so a mutual group keeps exactly one admitted primary
+          and no eligible media silently disappears;
+        * a source whose association target is demoted is re-evaluated against
+          the reduced set in the next round, so a sidecar of a demoted member
+          (for example a Trailer beside a mutual same-stem group, or a longer
+          stem chain) is demoted too instead of being promoted to an independent
+          primary.
+
+        Each round demotes at least one source or stops, so this terminates in at
+        most one round per admitted source, and the expensive association is
+        computed only once.
         """
 
         if not entries or not sources:
             return
-        owners = {
-            relative: self._attachment_owner(runtime, library, relative, entry, entries, sources)
+        # The association relation is a property of the real directory and the
+        # real policies, not of which sources currently survive demotion, so it
+        # is computed exactly once and then only intersected with the surviving
+        # set below.
+        candidates = {
+            relative: self._attachment_owners(runtime, library, relative, entry, entries, sources)
             for relative, _depth, entry in entries
             if relative in sources
         }
-        for relative, owner in owners.items():
-            if owner is not None and owner != relative:
+        admitted = set(sources)
+        while True:
+            # The owner of a source is its first *still admitted* association,
+            # in the same stable order the matcher reports.
+            owner_of = {
+                relative: next(
+                    (owner for owner in candidates.get(relative, ()) if owner in admitted),
+                    None,
+                )
+                for relative in admitted
+            }
+            # A source nobody admits as an attachment is retained unconditionally.
+            retained = {relative for relative in admitted if owner_of[relative] is None}
+            demoted: list[str] = []
+            for relative in sorted(admitted):
+                owner = owner_of[relative]
+                if owner is None:
+                    continue
+                if owner in retained:
+                    demoted.append(relative)
+                    continue
+                # The only primary this entry attaches to is itself being
+                # demoted, so demoting this entry too would leave the group with
+                # no admitted source at all.  Keep it as the group's retained
+                # primary; the next round re-evaluates it against the reduced set.
+                retained.add(relative)
+            if not demoted:
+                return
+            for relative in demoted:
+                admitted.discard(relative)
                 sources.pop(relative, None)
 
     def _admit_provider_entry(self, raw, directory: str, library) -> str | None:
@@ -2395,6 +2505,36 @@ class MediaDiscoveryService:
         return isinstance(value, str) and bool(
             re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}", value)
         )
+
+    @staticmethod
+    def _admission_request_id(value: object) -> str | None:
+        """Validate one optional caller-generated admission request identity.
+
+        It is a canonical lowercase UUID, exactly like the existing Delete
+        request identity: a caller-supplied value is durable reconciliation
+        proof, so a malformed one is refused rather than stored.  ``None`` is
+        legal and means the caller offered no such proof.
+        """
+
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise DiscoveryError(
+                "the discovery admission request identity is invalid",
+                code="invalid_request",
+                next_action="refresh the Files page and start the discovery again",
+            )
+        try:
+            parsed = UUID(value)
+        except (TypeError, ValueError, AttributeError):
+            parsed = None
+        if parsed is None or str(parsed) != value:
+            raise DiscoveryError(
+                "the discovery admission request identity is invalid",
+                code="invalid_request",
+                next_action="refresh the Files page and start the discovery again",
+            )
+        return str(parsed)
 
     @staticmethod
     def _join(root: str, relative: str) -> str:

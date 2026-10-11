@@ -13,6 +13,7 @@ import {
   normalizeIdentityText,
   readRecord,
 } from "../shared/normalize";
+import { isRequestId } from "../../shared/api/request-id";
 
 export const MAX_DISCOVERY_TEXT = 1024;
 /**
@@ -123,6 +124,12 @@ export interface OrganizeDiscoveryModel {
   readonly cancelRequested: boolean;
   /** The durable instant waiting work may be re-observed, or `null`. */
   readonly nextObservationAt: string | null;
+  /**
+   * The caller's own admission request identity the backend durably recorded
+   * and echoed.  It is the proof of the *actual* admission a lost response
+   * reconciles against, instead of a rendered Storage/pin binding.
+   */
+  readonly admissionRequestId: string | null;
   readonly worker: {
     readonly ready: boolean;
     readonly condition: string;
@@ -350,6 +357,15 @@ export function normalizeOrganizeDiscovery(
     pauseRequested: record["pauseRequested"] === true,
     cancelRequested: record["cancelRequested"] === true,
     nextObservationAt: optionalText(record, "nextObservationAt"),
+    // The caller's own admission request identity, echoed by the backend.  It
+    // is the proof a lost response reconciles against, so it is normalized
+    // strictly: only the canonical UUID shape is accepted, never an arbitrary
+    // string that could be mistaken for proof.
+    admissionRequestId: (() => {
+      const value = record["admissionRequestId"];
+      if (value === null || value === undefined) return null;
+      return isRequestId(value) ? value : fail("admissionRequestId");
+    })(),
     worker: {
       ready: worker["ready"] === true,
       condition: optionalText(worker, "condition") ?? "unknown",

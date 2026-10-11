@@ -3909,3 +3909,359 @@ class A44BReviewCorrections(_DiscoveryFixture):
                 settled,
             )
             self.assertEqual([], value.source.mutations)
+
+    def test_reciprocal_same_stem_videos_keep_one_admitted_primary(self) -> None:
+        """B-P1/AC4/AC5: a mutual same-stem group never empties its own manifest.
+
+        B proved that with the existing ``otherSameStem`` setting enabled,
+        ``Film.2001.mkv`` and ``Film.2001.mp4`` each classify as the *other's*
+        attachment through the real production matcher.  The naive demotion then
+        removed both owners and the walk published ``completed`` with an empty
+        manifest, so neither eligible video reached Preview.  An attachment may
+        only be demoted while the primary it attaches to stays admitted, so a
+        mutual group keeps one deterministic admitted primary.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            self.assertTrue(
+                all(
+                    policy.organize_policy.attachments.other_same_stem
+                    for policy in runtime.strategy.recognition_type_policies
+                ),
+                runtime.strategy.recognition_type_policies,
+            )
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_three_member_same_stem_group_keeps_exactly_one_primary(self) -> None:
+        """B-P1/AC4/AC5: a wider mutual group is resolved deterministically.
+
+        Three videos share one stem and the policy classifies every one of them
+        as an attachment of each other.  The resolution must retain exactly one
+        admitted primary and demote the others, independent of directory page
+        order, so the durable manifest is stable and never empty.
+        """
+
+        for extension in ("mkv", "mp4", "avi"):
+            self.media(f"Movies/Film.2001.{extension}")
+        document = self.document(attachments=True, extensions=("mkv", "mp4", "avi"))
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey(extensions=("mkv", "mp4", "avi")) as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001.avi"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_mutual_group_is_resolved_the_same_across_pages(self) -> None:
+        """B-P1/AC5: the resolution does not depend on directory page order.
+
+        The mutual same-stem group is served across two pages, with the
+        lexicographically *later* member first.  The retained primary is the same
+        one the single-page walk chooses, so a paginated directory and an
+        unpaginated one agree and neither can publish an empty manifest.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            raw = value.source._storage
+
+            def paged(path, *, limit, cursor=None):
+                if path != "Movies":
+                    return raw.list_page(path, limit=limit, cursor=cursor)
+                if cursor is None:
+                    return StoragePage([raw.stat("Movies/Film.2001.mp4")], "page-2")
+                return StoragePage([raw.stat("Movies/Film.2001.mkv")], None)
+
+            value.source.list_page = paged
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual(2, settled["progress"]["pageFetches"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    # -- P1: genuine original-admission proof for a lost response ---------
+
+    def test_a_retried_request_reconciles_to_its_own_admission_under_a_new_pin(self) -> None:
+        """B-P1/AC6: the caller's own request identity proves the admission.
+
+        B proved the remaining hole: the page renders an older pin, a successor
+        activation changes the Storage root before the POST is consumed, and the
+        readback then mistakes an equivalent older open admission for this
+        request.  The immutable pin is resolved by the backend at admission
+        time, so a rendered pin can never prove which admission the POST became.
+        The caller's own ``requestId`` can: resubmitting it returns the record it
+        actually created, even though the Active pin has since changed.
+        """
+
+        import uuid
+
+        self.media("Recover/Original.mkv")
+        self.media("new-root/Recover/Different.mkv")
+        request_id = str(uuid.uuid4())
+        with self.journey() as value:
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Recover"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, first)
+            self.assertEqual(request_id, first["admissionRequestId"], first)
+            original_pin = first["configurationSnapshotId"]
+            # A successor activation changes the ResourceLibrary Storage root
+            # and admits the same relative folder name as *different* work.
+            successor = self.document(second_library=True)
+            successor["resourceLibraries"][0]["storagePath"] = "new-root"
+            _revision, runtime = self._production_journey(successor)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            _, other = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Recover"]},
+            )
+            self.assertNotEqual(first["discoveryId"], other["discoveryId"], other)
+            # Retrying the *original* request identity returns its own durable
+            # record, never the successor's equivalent-scope admission.
+            status, retried = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Recover"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, retried)
+            self.assertEqual(first["discoveryId"], retried["discoveryId"], retried)
+            self.assertEqual(original_pin, retried["configurationSnapshotId"], retried)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_an_admission_without_a_request_identity_reports_none(self) -> None:
+        """The identity is optional, so an existing client keeps working."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertIsNone(admitted["admissionRequestId"], admitted)
+
+    def test_a_malformed_request_identity_is_refused_without_admission(self) -> None:
+        """A malformed identity is never stored as a reconciliation key."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            for invalid in ("not-a-uuid", 42, "", "  "):
+                status, refused = self.request(
+                    value,
+                    "/api/v1/resource-libraries/library/files/discoveries",
+                    "POST",
+                    {"paths": ["Movies"], "requestId": invalid},
+                )
+                self.assertEqual(400, status, (invalid, refused))
+                self.assertEqual("invalid_request", refused["error"]["code"], refused)
+            self.assertEqual((), value.repository.list_media_discoveries())
+            self.assertEqual([], value.source.mutations)
+
+    def test_an_unknown_request_identity_still_admits_normally(self) -> None:
+        """A fresh identity is a new admission, not a failed lookup."""
+
+        import uuid
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"], "requestId": str(uuid.uuid4())},
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertEqual("queued", admitted["status"], admitted)
+
+    def test_a_request_identity_cannot_recover_another_principal_admission(self) -> None:
+        """The identity lookup is bound to the admitting principal."""
+
+        import uuid
+
+        self.media("Movies/One.2001.mkv")
+        request_id = str(uuid.uuid4())
+        with self.journey() as value:
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"], "requestId": request_id},
+            )
+            stored = value.repository.find_media_discovery_by_request_id(
+                actor="someone-else", admission_request_id=request_id
+            )
+            self.assertIsNone(stored)
+            own = value.repository.find_media_discovery_by_request_id(
+                actor="operator", admission_request_id=request_id
+            )
+            self.assertIsNotNone(own)
+
+    def test_a_trailer_beside_a_mutual_group_is_not_retained_as_a_primary(self) -> None:
+        """B-P1/AC4: the resolution must not promote a Trailer to a primary.
+
+        With ``otherSameStem`` enabled, ``Film.2001.mkv`` and ``Film.2001.mp4``
+        are each other's attachment, and ``Film.2001-trailer.mp4`` is a Trailer
+        of that same group.  The group keeps exactly one admitted primary, and
+        the Trailer must still be demoted -- retaining it because its immediate
+        owner happens to be the demoted member would count an attachment as
+        independent media.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.mp4")
+        self.media("Movies/Film.2001-trailer.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.2001.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_chain_of_related_stems_never_keeps_an_attachment_as_a_primary(self) -> None:
+        """B-P1/AC4: the retained set must be a true fixpoint.
+
+        ``Film.2001.1080p.mkv`` attaches to ``Film.2001.mkv``, which attaches to
+        ``Film.mkv``.  Every admitted source must stop being an attachment of an
+        admitted source, so only the chain's root may remain; a single greedy
+        pass can leave a shorter stem admitted while its longer-stem attachment
+        is retained too.
+        """
+
+        self.media("Movies/Film.mkv")
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001.1080p.mkv")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_four_member_stem_chain_converges_to_its_root(self) -> None:
+        """B-P1/AC4: a longer chain must not leave intermediate primaries.
+
+        Each member attaches to the next shorter stem, so exactly the root may
+        remain admitted; a resolution that stops after one greedy pass would
+        leave an attachment counted as an independent primary.
+        """
+
+        for name in (
+            "Film.mkv",
+            "Film.2001.mkv",
+            "Film.2001.1080p.mkv",
+            "Film.2001.1080p.remux.mkv",
+        ):
+            self.media(f"Movies/{name}")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["otherSameStem"] = True
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(
+                ["Movies/Film.mkv"],
+                [item["path"] for item in settled["sources"]],
+                settled,
+            )
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual([], value.source.mutations)

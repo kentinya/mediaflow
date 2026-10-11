@@ -1190,12 +1190,15 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 }
                 self.assertIn("next_observation_at", columns)
                 self.assertIn("admission_signature", columns)
-                # Simulate the real prior schema by dropping the two additive
-                # columns, exactly as a schema-45 database created before this
-                # correction would have looked.
+                self.assertIn("admission_request_id", columns)
+                # Simulate the real prior schema by dropping the three additive
+                # columns, exactly as a schema-45 database created before these
+                # corrections would have looked.
                 connection.execute("DROP INDEX IF EXISTS media_discoveries_admission")
+                connection.execute("DROP INDEX IF EXISTS media_discoveries_request")
                 connection.execute("ALTER TABLE media_discoveries DROP COLUMN next_observation_at")
                 connection.execute("ALTER TABLE media_discoveries DROP COLUMN admission_signature")
+                connection.execute("ALTER TABLE media_discoveries DROP COLUMN admission_request_id")
                 connection.execute(
                     "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)", (45,)
                 )
@@ -1213,6 +1216,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 }
             self.assertNotIn("next_observation_at", prior_columns)
             self.assertNotIn("admission_signature", prior_columns)
+            self.assertNotIn("admission_request_id", prior_columns)
 
             with SQLiteTaskRepository(database) as repository:
                 # The additive upgrade did not need a version bump: the marker
@@ -1226,6 +1230,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 }
                 self.assertIn("next_observation_at", columns)
                 self.assertIn("admission_signature", columns)
+                self.assertIn("admission_request_id", columns)
                 indexes = {
                     row["name"]
                     for row in repository._connection.execute(
@@ -1234,6 +1239,16 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                     ).fetchall()
                 }
                 self.assertIn("media_discoveries_admission", indexes)
+                self.assertIn("media_discoveries_request", indexes)
+                # A prior-schema admission stays readable and is simply not
+                # reconcilable by client request identity: the honest unknown
+                # outcome stands instead of a guessed navigation.
+                self.assertIsNone(
+                    repository.find_media_discovery_by_request_id(
+                        actor="operator",
+                        admission_request_id="00000000-0000-4000-8000-000000000000",
+                    )
+                )
                 # The durable identity lookup is usable after the upgrade.
                 self.assertIsNone(
                     repository.find_open_media_discovery(
@@ -1280,6 +1295,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
             ),
             now,
             now,
+            admission_request_id="11111111-1111-4111-8111-111111111111",
         )
         repository.create_media_discovery(discovery)
         stored = repository.get_media_discovery("discovery-round-trip")
@@ -1287,6 +1303,22 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
         assert stored.resource_library_id == "library-base"
         assert stored.storage_id == "storage-base"
         assert stored.progress.scope_entries[0].path == "Movies"
+        # The client request identity survives the durable round trip and is
+        # readable by the actor-bound proof lookup a lost response needs.
+        assert stored.admission_request_id == "11111111-1111-4111-8111-111111111111"
+        found = repository.find_media_discovery_by_request_id(
+            actor="operator",
+            admission_request_id="11111111-1111-4111-8111-111111111111",
+        )
+        assert found is not None and found.discovery_id == "discovery-round-trip"
+        # A different actor can never recover another principal's admission.
+        assert (
+            repository.find_media_discovery_by_request_id(
+                actor="intruder",
+                admission_request_id="11111111-1111-4111-8111-111111111111",
+            )
+            is None
+        )
 
 
 def _manual_intent(intent_id: str):

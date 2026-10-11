@@ -3566,6 +3566,13 @@ function directFilesReadHeaders(token: string | null): HeadersInit {
 export interface FilesOrganizeAdmissionOptions {
   readonly resourceLibraryId: string;
   readonly paths: readonly string[];
+  /**
+   * The caller's own identity for this exact admission request.  The backend
+   * resolves the immutable Active pin at admission time, so this value — not a
+   * rendered pin — is the proof a lost response reconciles against.  Omitted
+   * when the runtime has no cryptographic random source.
+   */
+  readonly requestId?: string;
 }
 
 export type FilesDiscoveryAdmissionResult =
@@ -3573,6 +3580,8 @@ export type FilesDiscoveryAdmissionResult =
       readonly ok: true;
       readonly discoveryId: string;
       readonly scopeCount: number;
+      /** The admission request identity the backend durably recorded. */
+      readonly admissionRequestId: string | null;
     }
   | {
       readonly ok: false;
@@ -3613,7 +3622,12 @@ export async function submitFilesDiscovery(
         headers: {
           ...operationsMutationHeaders(token),
         },
-        body: JSON.stringify({ paths: [...options.paths] }),
+        body: JSON.stringify({
+          paths: [...options.paths],
+          ...(options.requestId === undefined
+            ? {}
+            : { requestId: options.requestId }),
+        }),
       },
     );
   } catch {
@@ -3660,11 +3674,13 @@ export async function submitFilesDiscovery(
     };
   }
   const selection = readRecord(record["selection"], "discovery.selection");
+  const echoed = record["admissionRequestId"];
   return {
     ok: true,
     discoveryId,
     scopeCount:
       typeof selection["scopeCount"] === "number" ? selection["scopeCount"] : 0,
+    admissionRequestId: typeof echoed === "string" ? echoed : null,
   };
 }
 

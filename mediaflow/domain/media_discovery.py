@@ -669,10 +669,23 @@ class MediaDiscovery:
     #: traversal budget or starving other resident commands, while never
     #: fabricating the interval itself.
     next_observation_at: datetime | None = None
+    #: The client-generated identity of the exact admission request that
+    #: created this record, or ``None`` for a record admitted without one.
+    #: The backend resolves the immutable Active pin *at admission time*, so a
+    #: browser that rendered an older pin cannot prove which admission its POST
+    #: became.  This identifier is created by the caller, echoed by the backend
+    #: and durable, so a lost response can be reconciled against the *actual*
+    #: admission instead of being guessed from a rendered binding.
+    admission_request_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
             raise ValueError("discovery ID is invalid")
+        if self.admission_request_id is not None and (
+            not isinstance(self.admission_request_id, str)
+            or not _SAFE_ID.fullmatch(self.admission_request_id)
+        ):
+            raise ValueError("discovery admission request identity is invalid")
         if not isinstance(self.actor, str) or not self.actor.strip() or len(self.actor) > 200:
             raise ValueError("discovery actor is invalid")
         for name, value in (
@@ -721,6 +734,7 @@ class MediaDiscovery:
             "error": self.error,
             "primarySourceCount": len(self.sources),
             "sideEffects": "none",
+            "admissionRequestId": self.admission_request_id,
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
                 if self.next_observation_at is not None
@@ -771,6 +785,11 @@ class MediaDiscovery:
             (
                 datetime.fromisoformat(str(next_observation))
                 if isinstance(next_observation, str)
+                else None
+            ),
+            (
+                str(value["admissionRequestId"])
+                if isinstance(value.get("admissionRequestId"), str)
                 else None
             ),
         )

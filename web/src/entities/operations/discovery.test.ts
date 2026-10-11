@@ -50,6 +50,7 @@ function payload(overrides: Record<string, unknown> = {}) {
     nextAction:
       "the resident Processing Worker continues this bounded discovery",
     nextObservationAt: null,
+    admissionRequestId: "11111111-1111-4111-8111-111111111111",
     pauseRequested: false,
     primarySourceCount: 2,
     progress: {
@@ -338,6 +339,33 @@ describe("normalizeOrganizeDiscovery", () => {
     expect(model.storageId).toBe("source");
     expect(model.configurationSnapshotId).toBe("active-1");
     expect(model.nextObservationAt).toBe("2026-01-01T00:01:00+00:00");
+    expect(model.admissionRequestId).toBe(
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("publishes no admission request identity when the backend recorded none", () => {
+    expect(
+      normalizeOrganizeDiscovery(payload({ admissionRequestId: null }))
+        .admissionRequestId,
+    ).toBeNull();
+    expect(
+      normalizeOrganizeDiscovery(payload({ admissionRequestId: undefined }))
+        .admissionRequestId,
+    ).toBeNull();
+  });
+
+  it("refuses a malformed admission request identity instead of guessing", () => {
+    // The identity is reconciliation proof, so an arbitrary string must never
+    // be accepted as if it proved which admission a lost response created.
+    expect(() =>
+      normalizeOrganizeDiscovery(payload({ admissionRequestId: "not-a-uuid" })),
+    ).toThrow(/admissionRequestId/);
+    expect(() =>
+      normalizeOrganizeDiscovery(
+        payload({ admissionRequestId: "11111111-1111-4111-8111-11111111111Z" }),
+      ),
+    ).toThrow(/admissionRequestId/);
   });
 
   it("fails closed for an unknown status or malformed scope kind", () => {

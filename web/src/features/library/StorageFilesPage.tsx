@@ -79,12 +79,12 @@ import {
   saveDeleteAdmission,
   type SavedDeleteAdmission,
 } from "./delete-admission-session";
+import { newRequestId } from "../../shared/api/request-id";
 import type {
   TransferConflictMode,
   TransferImpactModel,
   TransferProjectionModel,
 } from "../../entities/library/direct-files";
-import type { OrganizeDiscoveryModel } from "../../entities/operations/discovery";
 
 type FilesView = "list" | "grid";
 
@@ -392,11 +392,6 @@ function discoveryAdmissionFailureMessage(code: string): string {
     default:
       return "无法开始整理发现，请刷新后重试。";
   }
-}
-
-/** Whether one discovery readback is still open (reconcilable) work. */
-function discoveryIsOpen(model: OrganizeDiscoveryModel): boolean {
-  return !model.frozen && model.intentId === null;
 }
 
 function organizeAdmissionFailureMessage(code: string): string {
@@ -2100,22 +2095,11 @@ export function StorageFilesPage() {
     mutationFn: async ({
       libraryId,
       paths,
-      storageId,
-      configurationSnapshotId,
       discovery,
     }: {
       readonly libraryId: string;
       readonly paths: readonly string[];
       readonly returnPath: string;
-      /** The exact Storage binding the request was submitted under, taken from
-       * the same Active system status the page rendered.  It is the proof a
-       * lost-response readback must match; a library id alone cannot tell two
-       * activations of the same relative folder apart. */
-      readonly storageId: string;
-      /** The exact immutable Active configuration pin the request was submitted
-       * under.  A successor activation legitimately re-admits the same relative
-       * scope under a new pin; that is different work, never this request. */
-      readonly configurationSnapshotId: string | null;
       readonly discovery: boolean;
     }) => {
       if (paths.length === 0) {
@@ -2125,9 +2109,20 @@ export function StorageFilesPage() {
         // A folder or mixed selection enters the bounded discovery stage: the
         // backend admits one durable discovery and the resident Worker performs
         // the metadata-only walk before the existing intent/Preview/execution.
+        //
+        // The caller generates its own identity for this exact request *before*
+        // submitting.  The backend resolves the immutable Active pin at
+        // admission time, so a pin this page rendered earlier cannot prove
+        // which admission the POST became: a successor activation legally
+        // admits the same relative scope under a new pin, and an equivalent
+        // older open admission can exist under the rendered pin.  The echoed
+        // request identity is the genuine proof a lost response reconciles
+        // against.
+        const requestId = newRequestId();
         const admitted = await submitFilesDiscovery(token, {
           resourceLibraryId: libraryId,
           paths,
+          ...(requestId === null ? {} : { requestId }),
         });
         if (!admitted.ok) {
           const message = discoveryAdmissionFailureMessage(admitted.code);
@@ -2137,31 +2132,26 @@ export function StorageFilesPage() {
             admitted.code === "malformed_response"
           ) {
             // The response was lost, but the admission may already be
-            // durable. Reconcile first: locate the actor/scope/pin-bound
-            // durable record through the bounded readback instead of ever
-            // resubmitting a duplicate admission.
-            const readback = await fetchOrganizeDiscoveries(token);
-            if (readback.ok) {
-              // Recover only with *proof of the original binding*: the exact
-              // library, the exact Storage/root binding and the exact immutable
-              // pin this request was submitted under, plus the exact scope set.
-              // A successor activation that reuses the same library id and the
-              // same relative folder name is different work; navigating to it
-              // would present another live source context as the recovered
-              // request.  When that proof is absent the honest unresolved state
-              // stands and the operator inspects it natively in Operations.
-              const requested = new Set(paths);
+            // durable. Reconcile first: locate the durable record this exact
+            // request created instead of ever resubmitting a duplicate
+            // admission.  Without a client identity there is no proof at all,
+            // so the honest unresolved state stands rather than a guess.
+            const readback =
+              requestId === null ? null : await fetchOrganizeDiscoveries(token);
+            if (readback !== null && readback.ok) {
+              // Recover only with *proof of the original admission*: the
+              // backend echoed the identity this caller created for this exact
+              // request.  The rendered Storage/pin binding is deliberately not
+              // used as proof -- a successor activation legitimately re-admits
+              // the same relative scope under a different pin, so navigating
+              // there would present another live source context as the
+              // recovered request.  When that proof is absent the honest
+              // unresolved state stands and the operator inspects it natively
+              // in Operations.
               const candidate = readback.items.find(
                 (item) =>
-                  item.resourceLibraryId === libraryId &&
-                  item.storageId === storageId &&
-                  configurationSnapshotId !== null &&
-                  item.configurationSnapshotId === configurationSnapshotId &&
-                  discoveryIsOpen(item) &&
-                  item.selection.scopes.length === requested.size &&
-                  item.selection.scopes.every((scope) =>
-                    requested.has(scope.path),
-                  ),
+                  item.admissionRequestId !== null &&
+                  item.admissionRequestId === requestId,
               );
               if (candidate !== undefined) {
                 setPreviewError(null);
@@ -2170,11 +2160,11 @@ export function StorageFilesPage() {
                   id: candidate.discoveryId,
                 };
               }
-              // No durable record for this exact original binding: the honest
+              // No durable record for this exact original admission: the honest
               // unknown state stands and the operator decides, without a
               // promise that no work exists and without a guessed navigation.
               throw new Error(
-                "暂时无法确认发现申请结果,也未读到同一范围、同一存储绑定和同一配置版本的持久记录;" +
+                "暂时无法确认发现申请结果,也未读到本次申请创建的持久记录;" +
                   "请在任务中心查看未决的整理发现并自行处理,不会自动重复提交或进入其他来源。",
               );
             }
@@ -3446,9 +3436,6 @@ export function StorageFilesPage() {
                             libraryId: currentLibrary.id,
                             paths: [entryPath],
                             returnPath: model.path,
-                            storageId: currentLibrary.storageId,
-                            configurationSnapshotId:
-                              currentStatus.configurationSnapshotId,
                             discovery,
                           })
                         }
@@ -3462,9 +3449,6 @@ export function StorageFilesPage() {
                             libraryId: currentLibrary.id,
                             paths: admitted.map((entry) => entry.path),
                             returnPath: model.path,
-                            storageId: currentLibrary.storageId,
-                            configurationSnapshotId:
-                              currentStatus.configurationSnapshotId,
                             // Any admitted folder makes the whole selection a
                             // bounded discovery; a file-only selection keeps
                             // the existing direct intent admission.
