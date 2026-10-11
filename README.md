@@ -45,124 +45,31 @@ export MEDIAFLOW_WEBHOOK_SECRET="<independent-random-webhook-secret>"
 
 ## V1 self-hosted release status
 
-V1 release version: `1.0.0`.
+V1 `1.0.0` is released at `v1.0.0` and maintained on `release/v1`. Production self-hosting uses
+one Docker image, four Compose services and Waitress-backed `api serve-production`; the standard-
+library listener remains for trusted-loopback development. Fresh setup supports a management-only
+bootstrap and Web-created managed configuration.
 
-Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted release is delivered:
-
-```text
-Slice 29 — Docker Production Self-hosted Release
-```
-
-The repository provides the Python/CLI development and trusted-loopback WSGI boundary plus the
-validated Dockerfile/Compose production boundary. `mediaflow api serve-production` uses the Waitress
-WSGI adapter; the `wsgiref.simple_server` listener remains development-only. A fresh instance can
-start from the minimal management-only bootstrap and create its first managed Draft through the
-authenticated Web/API. The compatibility JSON bootstrap remains available for legacy, migration and
-compatibility operation.
-
-The supported V1 identity boundary is an environment-owned API-principal Bearer token with RBAC.
-This is not a built-in username/password login or OIDC integration. V1 Metadata remains TMDB-backed
-through the Provider abstraction; Provider switching and additional production Providers are V1.x/post-
-V1 scope. Environment-variable references and deployment-owned secret injection are the V1 secret
-boundary.
+See [release boundaries and validation](docs/release.md) and [deployment](docs/deployment.md).
 
 ## V2 development status
 
-The `main` branch is now the active V2 development trunk. The released V1 line remains maintenance-only:
+`main` is the V2 development trunk (`2.0.0.dev0`) for Operator Web Architecture & UX Modernization.
+V2 is not yet a released product line. The Python `/api/v1/*` authority and V1 `/ui` remain available.
 
-```text
-MediaFlow V1
-Status: RELEASED / MAINTENANCE
-Version line: 1.x
-Maintenance branch: release/v1
-Release tag: v1.0.0
-
-MediaFlow V2
-Status: ACTIVE DEVELOPMENT
-Primary program: Operator Web Architecture & UX Modernization
-Package version on main: 2.0.0.dev0
-```
-
-V2 is organized as independently reviewable large Slices. Slices 30, 31, 32 and 33 are `PASS / CLOSED`
-under their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only
-Dashboard
-proving route, Python `/ui-v2/` static coexistence and production Docker artifact. Slice 31 delivered
-the centralized product-area information architecture, responsive shell, safe memory-only deep-link
-continuation and actionable route/authentication recovery described below. Slice 32 delivered the
-read-only Library journey across bounded Active Storage browsing, FileIndex catalog/detail and safe
-physical/indexed context. Slice 33 delivered the Operations command center across actionable
-Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
-scheduled Automation and Notification delivery operation, including the accepted Worker
-pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-23
-post-reactivation Final Review at Base
-`b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`aa54854c442d117c7eb23ae9800045c423db1368`. It delivered the replacement light shell in the
-canonical Files reference, bounded ResourceLibrary activation, complete Files
-Create Folder/Text File, Rename/Copy/Move/Delete/text Edit and Organize continuation, plus formal
-`library/path` destination parity, truthful refresh/presentation and exact Storage path identity.
-The page does not render recognition-result or organize-status feedback. Direct browser
-Upload/Download was removed from the current surface; generic Storage/provider transfer primitives
-remain available.
-Non-Files business journeys remain unchanged inside the replacement shell. The previously planned
-Slice 34–36 boundaries are retired from the current Roadmap. Slice 37's correction is closed;
-Slices 38–42 are also closed. Slice 44 is ACTIVE and Slice 43 remains user-frozen. Current
-implementation/review state and next actions live in [SLICE.md](SLICE.md) and [TASK.md](TASK.md).
-The V1 API, authentication and Storage authority remain
-available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
+[Roadmap](docs/roadmap.md) owns large-Slice priority/status; [Progress](docs/progress.md) records
+accepted closures and their Base/Head. [SLICE.md](SLICE.md) and [TASK.md](TASK.md) own current
+scope, implementation/review state and next actions.
 
 ## V2 frontend (web/)
 
-Task 30.1 introduced the first V2 frontend boundary: a project-owned React + TypeScript + Vite SPA
-in `web/`, using TanStack Router for client-side route ownership and TanStack Query as the single
-server-state/query-cache boundary. Node is a build/development tool only — the Python application
-serves the deterministic built artifact at the `/ui-v2/` migration prefix, and no Node runtime,
-second HTTP service, SSR or CDN is involved in production.
+`web/` is a React + TypeScript + Vite SPA using TanStack Router and TanStack Query. Python serves
+the built artifact at `/ui-v2/`; Node is build/development tooling only. The browser holds the API
+principal token in memory and uses shared backend permissions and application behavior.
 
-- **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix), and
-  `/ui-v2/dashboard` is the implemented read-only Overview/Dashboard route. The same typed
-  destination model owns the implemented `/ui-v2/library`, `/ui-v2/library/files`,
-  `/ui-v2/library/file-index` and FileIndex detail routes, plus the implemented Operations route
-  family and truthful migration landings for Review & Recovery and Configuration. Unknown client
-  routes retain shell context and
-  recovery after Python serves the V2 entry document. The V1 `/ui` remains available and unchanged
-  during migration.
-- **Library.** The Library landing separates a bounded live read of configured Active Storage from
-  durable FileIndex discovery records. It provides Storage-relative browsing and membership,
-  catalog search/filter/stable paging, bounded detail/history/evidence and uniquely confirmed
-  physical/indexed navigation. All requests use the central authenticated GET boundary; malformed,
-  unavailable, ambiguous, stale and permission states remain explicit and start no work.
-- **Operations.** The Operations landing and refresh-safe detail routes expose Worker readiness,
-  actionable Dashboard links, filterable Tasks/Jobs with valid lifecycle controls, bounded manual
-  Scan and zero-mutation Preview, Web-native exact Organize execution, Automation definitions,
-  schedules, grants and occurrences, plus Webhook definitions, exact tests and delivery recovery.
-  Mutations use the existing Python application/RBAC authority; the browser never handles a raw
-  execution token, and only OrganizerExecutor mutates Storage.
-- **Authentication continuity.** Opening a supported `/ui-v2/` deep route without a token presents
-  the existing memory-only connection boundary in shell context and continues to that exact
-  allowlisted route after valid connection. Root entry remains deterministic and connects to
-  Overview/Dashboard. Continuation is derived from the router's known route model — no Bearer
-  material enters a URL, route state, DOM, persistent store, log or test artifact, and no arbitrary
-  external return target is accepted.
-- **Token model.** The existing API-principal Bearer token is entered once at the V2 entry and held
-  in browser memory only. It is never written to localStorage, sessionStorage, IndexedDB, cookies,
-  URLs or logs; the input is cleared after connect and Disconnect clears the token, the
-  authenticated TanStack Query cache and any preserved intended route, returning the operator to
-  the entry boundary.
-- **Static serving.** Python serves the built artifact from `web/dist` (resolved from the checkout),
-  or from the directory named by `MEDIAFLOW_UI_V2_ASSET_ROOT` for deployment-owned layouts. In the
-  production Docker image the artifact is built by the image build itself and placed at
-  `/opt/mediaflow/web/dist` with the same variable bound by image configuration. The artifact is
-  GET-only, carries the same safe headers/CSP/cache policy as the V1 static surface, and never
-  accesses repositories, Storage, Providers or execution services. If the artifact has not been
-  built, `/ui-v2/*` fails closed with 404.
-- **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, Dashboard, Library, Operations and migration landings),
-  `web/src/entities` (typed Dashboard/Library/Operations models and normalization),
-  `web/src/shared/api` (central typed client,
-  memory-only auth store and intended-route continuation), `web/src/shared/auth` (route/connection
-  boundary, auth-state banners and the shared authorized-read lifecycle),
-  `web/src/shared/navigation` (typed
-  destination model), and `web/src/shared/ui` (primitives and styles).
+See [frontend architecture and ownership](docs/architecture.md#v2-program-architecture),
+[current operator journeys](docs/product-experience.md) and
+[production artifact serving](docs/deployment.md#v2-frontend-artifact-and-serving).
 
 Development and verification commands (run after the repository Setup):
 
@@ -180,16 +87,8 @@ npm --prefix web run test:e2e  # minimal Playwright path against web/dist + a lo
 (`npx --prefix web playwright install chromium` plus system dependencies when needed); it uses
 local fake tokens and a local fake API only.
 
-Production packaging (Task 30.2): `docker compose build` runs a bounded multi-stage build — a Node
-build stage runs `npm ci` from the committed `web/package-lock.json` and `npm run build`, and only
-the resulting built static files are copied into the final Python runtime image at
-`/opt/mediaflow/web/dist`, bound to the running process through
-`MEDIAFLOW_UI_V2_ASSET_ROOT`. The runtime image contains no Node executable, npm, `node_modules`,
-frontend source, development server, SSR process, CDN dependency or second HTTP service; the four
-Compose services keep serving the V1 `/ui` beside `/ui-v2/` from the same Python process. A missing
-or failed frontend build input fails the image build explicitly instead of shipping stale or
-partial assets. See [docs/deployment.md](docs/deployment.md) for the deployment journey.
-
+`docker compose build` builds the frontend from the pinned lockfile and ships only its static
+artifact in the Python runtime image. See [deployment](docs/deployment.md) for packaging and startup.
 
 ## CLI
 
@@ -309,47 +208,11 @@ Cross-storage MOVE streams Copy, verifies the destination, and only then deletes
 
 The developer strategy inspector remains available as `strategy-test`.
 
-`config draft-import` stages the current JSON as Draft; the general managed lifecycle is Draft →
-Validate/Test → explicit Activate. Before the first activation, `config status` reports
-`JSON_BOOTSTRAP`. After activation, the managed revision ID/digest is the workflow runtime authority.
-New Tasks/Jobs and resident Scheduler emissions pin that identity, and a
-missing/corrupt/runtime-invalid Active revision
-fails closed for media work with structured last-known identity, side-effect, retry-safety, and recovery
-details. The resident API captures one immutable Active binding per request, so queue and protected
-execute admission, schedules/status, and Job pins cannot mix revisions. A queued Job whose saved
-published revision is unavailable fails before workflow construction and exposes actionable,
-secret-free recovery evidence in API/Web detail.
-
-The Files page has a focused `+ 添加资源库` flow. Its final Save submits one complete ResourceLibrary
-candidate; the backend uses the current Active configuration as its base, performs the existing
-validation and checked-activation flow internally, and publishes a new immutable Active runtime only
-on success. Any field, dependency, Storage-check, activation or runtime-load error rejects the Save
-and preserves the previous Active runtime. The general Configuration page still exposes the
-explicit lifecycle for broader configuration work.
-
-The Configuration tab in the authenticated Operator UI is forms-first. Editing Active explicitly
-creates a successor Draft from the exact immutable snapshot; typed cards and forms provide the
-applicable create, copy, edit, enable, disable and delete actions for the managed object graph,
-including Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible Storage, libraries,
-Recognition, MetadataPolicy, Naming, Classification, Organize, Automation Task Definitions and
-Webhooks. It shows reference impact and blocks referenced deletion. Advanced JSON and versioned
-secret-free configuration package import/export plus bounded result package export remain
-compatibility and support paths.
-Remote Storage and Webhook secret references remain editable while actual secret values are never
-persisted or exposed. Exact-revision recognition, metadata, naming, classification,
-organize-authority, destination-preview, Storage Browser/path selection, per-Storage read-only checks
-and provider-neutral destination-precheck actions remain available.
-Checked activation consumes current evidence for the exact revision and atomically publishes an
-immutable runtime snapshot; queued and in-flight work retains its pinned revision identity even after
-a later activation.
-
-Configuration validation, preview, precheck, and activation grant no media execution authority and
-perform no media mutation. Real execution uses a separate explicit authority boundary, and only
-`OrganizerExecutor` may invoke mutating Storage operations. Storage setup checks, Storage Browser and
-destination precheck remain read-only setup evidence and do not grant execution authority. Provider
-switching is explicitly V1.x/post-V1. The bounded Files/Media manual-organize
-journey and scheduled unattended organization are current capabilities under their separate explicit
-authority boundaries.
+`config draft-import` stages the bootstrap JSON as a managed Draft. After checked activation,
+the immutable managed revision is runtime authority; new work pins it and failures remain fail-closed.
+See the [configuration guide](docs/configuration.md) for forms-first management, page-local library
+Save, exact-revision tests/previews, secret-free exchange and activation/recovery. Configuration
+changes and analysis grant no media execution authority.
 
 ## Development workflow
 
@@ -374,9 +237,8 @@ checkpoint. No new lesson requires no entry; the Developer document stays blank 
 - [Slice closure ledger](docs/progress.md)
 
 Operation history is appended as JSON Lines at the configured `historyPath`.
-All runtime strategy content is loaded from `MEDIAFLOW_CONFIG`; use
-`config/strategy.example.json` as the canonical A/B/C example and run `mediaflow config validate`
-before processing a library.
+`MEDIAFLOW_CONFIG` supplies the compatibility bootstrap; activated managed snapshots own runtime
+strategy. Use `config/strategy.example.json` for the A/B/C example and validate before processing.
 
 For OpenList, install the optional dependency and keep its token outside JSON:
 
@@ -584,32 +446,15 @@ constructs no Storage/provider and never creates or resumes a Task or Job automa
 
 ### Operator Web UI
 
-Start the existing loopback API process and open `http://127.0.0.1:8787/ui/`. The dependency-free
-operator page shows the Dashboard and the conflict, metadata, and classification review queues.
-It also provides Task, Automation Job and Scheduler views, plus managed Webhook definitions/tests and
-Notification delivery detail/recovery.
-Schedule occurrence audit and notification delivery pages are bounded to 1–100 rows, support stable
-Previous/Next navigation, and expose no
-webhook URL, body, signature, header, or secret. Task detail shows bounded TaskItems and
-ResultRecords; Job detail can navigate to its linked Task. Paged lists expose explicit Previous/Next
-controls backed by stable keyset cursors, while selecting the navigation tab again returns to the
-first page.
-Enter a configured API principal token in the password field. The token exists only in page memory
-and is cleared from the input immediately; reloading or closing the page requires entering it again.
+Start the loopback API and open `http://127.0.0.1:8787/ui/` for V1 or `/ui-v2/` for V2 after
+building the frontend. Enter a configured API principal token; it stays in page memory and the
+input is cleared after connection. Reloading requires reconnecting.
 
-Viewer/auditor tokens can inspect queues. Operator/executor/admin tokens may request cancellation of
-pending/running Automation Jobs through an explicit two-step Job-detail control. Pending work stops
-immediately; running cancellation is cooperative between items, so an in-flight operation may finish
-and completed work is not rolled back. Operator/executor/admin tokens may also record the same
-restricted decisions already supported by the API: conflict Skip/Rename, a persisted metadata
-candidate rank, or a persisted classification choice rank. The general Jobs submission view can queue
-`scan`, `preview` or `organize` after a separate review step, with an optional 1–10000 item limit.
-Scan and Preview are visibly marked DRY_RUN and contain no execute authority; Organize requires the
-separate one-shot execution token and explicit confirmation. Separately, Files/FileIndex offers the
-bounded manual Preview/Organize journey. Real mutation requires explicit confirmation and an exact
-one-shot authority, and only `OrganizerExecutor` can invoke mutating Storage operations. Decisions never resume work
-automatically. The standard-library server has no TLS or production identity provider; keep it on
-trusted loopback or place it behind a correctly configured HTTPS reverse proxy.
+The [product experience](docs/product-experience.md) describes current pages, per-role actions,
+explicit decisions, cooperative controls and recovery. Web and API share application permissions
+and execution rules; Preview is zero-mutation and only OrganizerExecutor mutates Storage.
+Keep the development listener on trusted loopback; production serving and HTTPS/proxy boundaries
+follow the [deployment guide](docs/deployment.md).
 
 Generate and inspect API credentials without storing secret values in configuration:
 
@@ -635,59 +480,26 @@ age and row-count retention and never touches media, Tasks, Results, history, or
 The authenticated operator UI exposes the same safe fields with level-scoped Previous/Next cursors;
 it cannot write or prune logs.
 
-Runtime database backup uses SQLite's online backup API, validates the snapshot, and atomically
-publishes a new non-existing local file. It never overwrites. Verification opens the candidate
-read-only and checks SQLite integrity plus the supported MediaFlow schema marker.
+Backup creates a verified non-existing SQLite snapshot and never overwrites. Restore requires all
+MediaFlow processes stopped, a verified backup, and a manually preserved old database/sidecars;
+the destination and sidecars must be absent. Follow the [offline restore procedure](docs/release.md#offline-restore-procedure).
 
-Restore is deliberately non-overwriting. Stop every MediaFlow process, verify the backup, manually
-preserve/move the existing runtime database and any `-wal`, `-shm`, or `-journal` sidecars, then run
-the explicitly confirmed restore command. The configured `persistence.databasePath` and all sidecars
-must be absent. MediaFlow never moves, replaces, or deletes the old database for you.
+On POSIX, cooperating runtime commands hold a shared advisory lease and restore needs the exclusive
+lease. The owner-only `.mediaflow.lock` contains no identifiers and must not be deleted while
+processes may run; it does not detect unrelated programs or direct library consumers.
 
-On POSIX systems, runtime commands hold a shared advisory lease derived from `databasePath`; restore
-must acquire the exclusive form before it validates or stages data. A running cooperating MediaFlow
-CLI/API/Worker/Scheduler therefore makes restore fail immediately. The empty owner-only `.mediaflow.lock`
-file is intentionally retained, contains no identifiers, and must not be deleted while processes may
-run. This does not detect unrelated programs or MediaFlow code that bypasses the production CLI.
-
-Before installing a new MediaFlow artifact, run `upgrade check` against the configured runtime
-database and a fresh explicit backup. The read-only report checks Python support, application/schema
-versions, backup integrity, schema agreement, and a 24-hour freshness limit. Override that bounded
-operational limit explicitly when required:
-
-```bash
-mediaflow upgrade check \
-  --backup /safe/backups/mediaflow.sqlite3 \
-  --max-backup-age-hours 48
-```
-
-Preflight does not migrate, stop services, restore, replace, or prove live Storage connectivity.
-
-Before allowing a newer artifact to open production Runtime state, rehearse its real forward migration
-against a disposable copy:
-
-```bash
-mediaflow upgrade rehearse --backup /safe/backups/mediaflow.sqlite3
-```
-
-The command verifies and copies the backup, opens only the private copy through the production
-migration repository, validates the current Schema and representative record counts, then removes the
-copy and its sidecars. Runtime and backup are never migrated or replaced.
+Before installing a new artifact, run `upgrade check` and `upgrade rehearse` against a verified
+backup. Preflight checks Python/schema compatibility, integrity and a default 24-hour backup age
+(explicit override: `--max-backup-age-hours 48`); rehearsal migrates only a disposable copy and
+verifies representative counts. Neither changes live runtime or the backup. See
+[upgrade and migration recovery](docs/deployment.md#backup-upgrade-and-migration-recovery).
 
 ## Release validation
 
-GitHub Actions runs the offline suite and quality checks on Python 3.11, 3.12, and 3.13, then builds
-and installs the wheel into a fresh isolated environment. Run the same artifact smoke test locally:
-
-```bash
-release_dir=$(mktemp -d /tmp/mediaflow-release.XXXXXX)
-python -m pip wheel . --no-deps --no-build-isolation -w "$release_dir"
-python scripts/wheel_smoke_test.py "$release_dir"/mediaflow-*.whl
-```
-
-The workflow has read-only repository permission and does not use production secrets or live media
-services. See [docs/release.md](docs/release.md) for the complete explicit release checklist. No
-artifact is automatically published or deployed.
+GitHub Actions runs offline tests and quality checks on Python 3.11–3.13, then builds and installs
+the wheel in isolation. See the [release checklist](docs/release.md#quality-gate) for exact commands
+and artifact smoke validation. CI uses no production secrets or live media and publishes/deploys no
+artifact automatically.
 
 Credential check prints only principal ID, roles, environment-variable name, enabled state, and
 SET/UNSET. For rotation, temporarily configure old and new principals with different IDs and
@@ -716,57 +528,16 @@ operation history remains compatible.
 
 ## Current capabilities
 
-V2 `整理规则` at `/ui-v2/rules` provides native typed management for RecognitionTypes, nested
-RecognitionRules, type-policy bindings and Metadata/Naming/Classification/Organize policies. Each
-family opens as a full-width Active inventory; explicit Add/Copy opens a candidate drawer and Edit
-opens a refresh-safe page with immutable ID. One `保存` composes an exact-Active successor, validates
-it, runs applicable checks and atomically activates it. Failed Save retains the previous Active and
-correctable input; unknown outcomes require state verification before another explicit attempt.
+Current user-visible behavior and recovery are defined in the [product experience](docs/product-experience.md);
+reviewed delivery and deferrals are recorded once in [Progress](docs/progress.md). Detailed guides:
 
-Explicit Strategy/Metadata tests and Naming/Classification/Organize previews use exact non-Active
-candidates, explain results and become stale after editing. Offline tests make no Provider call;
-live Metadata access requires explicit intent. Reads, Save and analysis start no media work, and
-analysis never mutates Storage or grants execution authority. Settings links readiness gaps to the
-corresponding rule family. V1 and Advanced JSON remain support/compatibility paths; Provider
-switching, Review/Recovery migration and media execution from Rules remain deferred.
-
-The managed Configuration view/API supports guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic
-S3-compatible Storage setup, Storage Browser/path selection, read-only Storage checks, Recognition Strategy Test,
-MetadataPolicy offline/live tests and candidate confirmation, plus same-Provider Metadata correction
-testing against the exact current revision. A correction can use a bounded query/year/Movie-TV input
-or a direct Provider ID and returns persisted, secret-free identity, candidate, failure, and recovery
-evidence without activating a revision, starting media work, or mutating Storage. One resolved File
-correction can be submitted as a separately auditable, one-item DryRun continuation pinned to the
-source work's immutable configuration; it does not replay siblings or inherit execute authority.
-Stage-aware per-item checkpoint recovery, the bounded Files/Media manual-organize journey and
-scheduled unattended organization are current capabilities. Provider switching and additional
-production Providers are explicitly V1.x/post-V1, not current V1 release work.
-
-For the current non-container Local guided setup, Storage `rootPath` is host-absolute while ResourceLibrary `storagePath` and
-MediaLibrary `rootPath` are Storage-relative. The Web action never creates roots or calls a Storage
-mutation. Whole-document JSON remains under Advanced JSON as an import-export, compatibility and
-support path. In the final Docker contract, Local `rootPath` is an absolute path visible inside the
-container, not an arbitrary host path.
-
-The authenticated operator console now includes read-only **System** status and typed **Settings**
-management. System Settings are edited through the managed configuration authority, expose exact
-Active consumption evidence, preserve bootstrap/restart boundaries, and fail closed instead of
-claiming consumed state when runtime is using another snapshot. Root paths, display paths, scan-rule
-values, naming templates, classification paths, endpoints, environment-variable names, arbitrary
-adapter options, and secrets remain excluded from public status evidence.
-
-The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
-persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, Slice 27 daily
-manual-operations journey, and Slice 28 Webhook definition/test/delivery-recovery journey are
-complete. The existing delivery engine is managed through Web/API without being reimplemented. The
-current Files tab browses configured Storage through bounded ResourceLibrary-relative live Storage
-views and does not render recognition/business-status feedback. It does not
-use FileIndex to enumerate physical files, validate paths or authorize Preview/Organize. Files-
-originated organize Preview submits the ResourceLibrary ID and relative path, and the server derives
-SourceIdentity from live Storage before entering the existing zero-mutation Preview path. After a
-terminal Organize result, the backend synchronizes the known outcome to FileIndex; no other Files
-feature introduces a FileIndex dependency. FileIndex remains the indexed discovery,
-processing-disposition and compatibility surface.
+| Area | Reference |
+|---|---|
+| Settings, Storage/library setup, organizing rules and exact Active publication | [Configuration](docs/configuration.md) |
+| Files, live Storage authority, manual Organize and Task recovery | [Product experience](docs/product-experience.md) |
+| Pipeline, source pins, Worker fences and execution authority | [Architecture](docs/architecture.md) |
+| Runtime services, health, restart, backup and upgrades | [Deployment](docs/deployment.md) |
+| Real Storage evidence and provider-specific limits | [Storage acceptance](docs/storage-acceptance.md) |
 
 **Concurrent Local directory Delete caution.** Files Delete shows and confirms a bounded impact,
 then re-reads the selected scope before `OrganizerExecutor` mutates Storage. Do not let a downloader,
@@ -777,34 +548,6 @@ same-name replacement, so MediaFlow may be unable to distinguish that replacemen
 confirmed directory. Before deleting an actively managed directory, pause other writers, refresh
 Files, review the current impact and confirm again. If the path changed or another process may still
 recreate it, stop the Delete workflow and retry only after the directory is quiescent.
-
-One-time protected remote execute is available only behind its disabled-by-default feature gate.
-Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
-The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
-Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
-Classification review actions through the same application and permission boundaries as the API.
-General Jobs submit bounded Scan/Preview/Organize work within their respective authority. The
-ResourceLibrary Files entry point uses live Storage for display and Files-originated Preview/Organize;
-the FileIndex entry point remains a separate indexed discovery and compatibility path.
-Scan and Preview remain zero-mutation; Organize requires the existing separate one-shot execution
-authority and confirmation. Current-source Organize execution uses the Preview-pinned Storage ID,
-source path and Storage-derived fingerprint directly, so Worker validation is `Storage.stat(path)`
-plus fingerprint comparison rather than a FileIndex relookup. Legacy FileIndex-backed operation
-routes remain available for compatibility but are not used by the ResourceLibrary Files path. Legacy
-preview may create formal
-review/conflict state; the newer manual and Automation Definition Previews are analysis-only.
-Processing Worker readiness and ownership are visible through the read-only Operator Web/API
-projections without widening execution authority.
-Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
-recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 delivered day-2
-configuration and operations administration; Slice 29 delivered the Docker production release and
-the Jobs/Preview/Organize execution-boundary completion.
-
-The Automation view also manages the bounded scheduled unattended journey: operators can define a
-ResourceLibrary scope and schedule, validate and Preview the exact definition, explicitly grant or
-revoke persistent unattended authority, and inspect linked occurrences, Tasks, per-item Results and
-recovery. Scheduled work reuses the normal RecognitionType policy chain and remains fail-closed at
-every OrganizerExecutor mutation boundary.
 
 Organizer rollback is an explicit per-policy option and remains disabled by default:
 

@@ -8,52 +8,15 @@ product and authority boundaries.
 
 ## Current program boundary
 
-```text
-V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
-V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
-Current Contract: Slice 44 — Existing V2 Pages Functional Improvements — ACTIVE
-Working branch: slice/44-page-improvements
-Suspended Slice: 43 — V2 Automation Workspace and Engine Settings — PLANNED / USER FROZEN
-Slice 42 Base: ffee77348cebcb05e356c8111c5861ed64ca0388
-Slice 42 Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
-Slice 42 A Final Review: PASS / CLOSED — 2026-10-06
-Implementation Task and next action: see root TASK.md and SLICE.md
-```
+[Release](release.md) owns V1/V2 release-line facts; [Roadmap](roadmap.md) owns Slice priority and
+status; [Progress](progress.md) records accepted closures. Current scope and work state live in
+[SLICE.md](../SLICE.md) and [TASK.md](../TASK.md). CURRENT journeys and implementation boundaries
+are described by [Product Experience](product-experience.md) and [Architecture](architecture.md).
 
-The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32, 33 and 37–42 are closed. Slice 37
-replaced the prior V2 shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
-are retired from the current Roadmap; their historical references remain historical and do not change
-the stable requirements layer. The stable common-file-management target retains its broader future
-capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
-Upload/Download and does not claim those surfaces as delivered.
-Slice 38 has implemented the MediaLibrary workspace, route-separation baseline and focused
-page-local editing requirements through its reviewed implementation head. Slice 39 has implemented
-the Storage management workspace, provider-root/setup recovery and admitted-transfer Worker
-continuity/readiness through its reviewed implementation head. Slice 40 has implemented native V2
-Settings, legal empty-business activation, conditional configuration applicability, command-specific
-readiness and resident-service adoption without mandatory media mounts or restart. Slice 41 has
-implemented the native V2 organizing-rules workspace, typed graph/object editing, exact-candidate
-analysis, checked one-Save publication and actionable recovery. Its six supplied page images describe
-business relationship and visual style, not actual production data or pixel-identical fixtures. The
-stable requirements below describe delivered boundaries and explicitly identified targets; Slice
-contracts own implementation scope and acceptance. Slice 42 has delivered the Operations/task-center
-requirements below, including task-scoped native recovery and safe Web continuation. Its reference
-is `docs/pics/操作与任务.png`; example data is not authority. Global Review, cross-task bulk review
-and arbitrary historical Reprocess remain deferred under the unchanged Slice boundary.
-
-Object-scoped Rules testing under `V2-RULES-009` is a selected Slice 44 TARGET, not delivered
-Slice 41 behavior. Each editor analyzes its exact candidate independently of unrelated downstream
-configuration, while complete-flow analysis and checked publication retain their own prerequisites
-and evidence purposes. Slice 44 is ACTIVE; root `SLICE.md` and `TASK.md` own its current
-implementation/review state. Frozen Slice 43 is not an implementation dependency or accepted capability.
-
-The setup, empty-business configuration and resident-service requirements below are delivered Slice
-40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
-for business pages to save first-setup Drafts without Active. The V1 setup handoff remains available
-during migration; earlier closed Slice scope is unchanged.
-`V2-STO-001` makes existing provider-valid root semantics explicit across Web surfaces.
+The requirements below retain their delivered-baseline or explicit TARGET labels. In particular,
+`V2-RULES-009` remains a selected TARGET until reviewed delivery; local tests do not replace whole-
+graph publication or execution checks. Suspended work is not accepted delivery or an implicit
+dependency. Reference images define business/style, never actual data or runtime authority.
 
 ## Stable V2 requirements
 

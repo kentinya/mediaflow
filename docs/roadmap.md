@@ -28,159 +28,26 @@ only in [the development workflow](development-workflow.md).
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
-
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | ACTIVE | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 
 ## Current boundary
 
-The released V1 line is version `1.0.0`, maintained on `release/v1` at tag `v1.0.0`. `main` is now
-the active V2 development trunk with package version `2.0.0.dev0`.
+Slice 44 is ACTIVE under [SLICE.md](../SLICE.md); its current Task/review state and next action
+live in [TASK.md](../TASK.md). Its reduced discovery-recovery Contract remains TARGET acceptance,
+not delivered fixes or closure. The original Slice Base and all safety invariants are retained.
 
-Slices 26, 27, 28 and 29 are PASS / CLOSED. Slice 28 closed at Base
-`957a4ebcb0fde03e64be9c406fbcdfed9a12501d` and Implementation Head
-`8546ff8fe15386dfbbb5fefb29a66b936ed4613f`, delivering day-2 Web/API configuration
-administration, consumed System Settings, versioned secret-free configuration/result exchange, and
-managed Webhook definition/test/delivery recovery. Slice 29 then delivered the Docker production
-self-hosted release: one immutable image, four independent services, production WSGI serving,
-durable `/data`, explicit media mounts, health/readiness, restart/fencing, upgrade/recovery and
-release-security validation. Together with the closed Slice 26/27 foundations, the current V1
-product covers fresh setup, real Storage/FileIndex operations, manual organization, scheduled
-unattended organization, exact Active runtime authority, day-2 administration and self-hosted
-deployment without redesigning the processing engine.
+Slice 43 is PLANNED / USER FROZEN on `frozen/slice-43-2026-10-07`. Its original scope, Base,
+Task review and unresolved blockers remain recoverable in Git; resumption requires explicit A
+activation. The `slice/44-page-improvements` branch starts from accepted Slice 42 without the
+unaccepted Slice 43 implementation. Retired Slice 34–36 boundaries remain historical only.
 
-V1 retains
-environment-owned API-principal bearer authentication, deployment-owned secret injection and the TMDB
-production Provider. Built-in user/session identity, OIDC, Metadata Provider switching, full Secret
-Store integration, mutation-based Storage capability probes, distributed workers and uncertain media-
-mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidden Docker Tasks.
-
-## V2 program boundary
-
-V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
-37–42 are closed capabilities. Slice 41 is PASS / CLOSED after A's 2026-09-30 final review of the
-native V2 organizing-rules workspace selected from six user-supplied business/style references. Those
-images define relationship, composition and visual language rather than actual production data or
-pixel-identical fixtures. Slice 39 delivered the V2 Storage management
-workspace, reusing the existing managed-configuration and Storage foundations, together with
-resident transfer continuity and health/waiting recovery authorized on 2026-09-26. Slice 38 remains
-closed; no separate Worker project was created. The previously
-planned Slice 34, Slice 35 and Slice 36 boundaries
-were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
-are not current work commitments. Slice 37's post-reactivation closure, finalized by A on 2026-09-23,
-delivered the replacement
-shared V2 shell presentation and the current Files workspace defined by
-[`file-page-visual-spec.md`](file-page-visual-spec.md), including truthful refresh/presentation and
-exact Storage path identity. The final 2026-09-23 correction review also confirms that the manual
-Organize Web editor derives and locks NamingPolicy, ClassificationPolicy and OrganizePolicy from
-the selected RecognitionType under the pinned snapshot. Both post-closure correction loops remained
-within the original Slice boundary and preserved the existing live Storage authority and non-Files
-business boundaries. Slice 38 is PASS / CLOSED for MediaLibrary file management and the necessary
-route separation. Its canonical image is `docs/pics/媒体库页.png`, with card statistics and file
-thumbnails explicitly excluded. It moved Files to `/ui-v2/resourcelib/files`, added MediaLibrary at
-`/ui-v2/medialib/files` and retires both old Library routes while retaining Files/Organize behavior.
-The reviewed Slice Head includes selected-card editing for both ResourceLibrary and MediaLibrary:
-immutable ID, focused field editing, exact-Active optimistic concurrency, checked activation and
-zero Storage-content migration. A's Final Review is PASS / CLOSED on 2026-09-25.
-User experience remains the primary product-design and acceptance criterion, while correctness,
-RBAC, audit, data integrity, ResourceLibrary confinement and OrganizerExecutor-only mutation remain
-mandatory. Slice 30 is `PASS / CLOSED` at Base
-`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
-`6953b87afa09e61ff62ffea5eb2a9a7d96c55492`, having delivered the typed V2 Dashboard proving path,
-frontend/test boundary and Python-only production artifact while retaining V1 `/ui`. Slice 31 is
-`PASS / CLOSED` at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and Implementation Head
-`45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`, having delivered the shared responsive Operator Shell,
-centralized information architecture, memory-only deep-link continuation and actionable route/auth
-recovery. Slice 32 is `PASS / CLOSED` at Base
-`76de3f60e223131a8b7db97a566d0ceaadd9b2a0` and Implementation Head
-`ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`, having delivered the V2 read-oriented Library journey
-across bounded Active Storage browsing, FileIndex discovery/detail and truthful physical/indexed
-context without pulling operational mutation or recovery work forward. Slice 33 — Operations
-Workspace is PASS / CLOSED on 2026-09-13 at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
-Implementation Head `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`, delivering the coherent V2
-daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded Scan/Preview,
-Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
-includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
-projection and separate destructive confirmations; the second restores Worker reconstruction of the
-exact pinned source authority and fail-closed pre-mutation revalidation. Slice 40 closed at Base
-`d814b7c1c6819e79271245a1126f53aca6aeaf69` and Implementation
-Head `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7`. It delivered native V2 Settings, a legal empty
-business Active, conditional publication checks, command-specific readiness and resident service
-adoption without mandatory media mounts or process restart. Mandatory media-business onboarding,
-wholesale policy-page migration and V1 retirement remained deferred at that closure. Slice 41 is
-closed at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and
-Implementation Head `8433319168272ecf7ccde017afc36525e8c62ea0`. It delivered `/ui-v2/rules`, the
-complete RecognitionType
-policy graph, typed policy forms, reference-safe lifecycle, exact-candidate tests/previews,
-one-Save checked activation and Settings readiness/recovery using existing Python authority.
-Metadata Provider switching, Review/Recovery migration, actual media execution from Rules, V1
-retirement and unrelated configuration redesign remained deferred at the Slice 41 closure.
-This Roadmap does not retain the retired Slice 34–36 program rows.
-
-## Current closed Slice boundary
-
-Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice: PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
-Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. It uses `docs/pics/操作与任务.png`
-as a business/style reference, not fixed data. It delivered the task-center journey from live
-selected-file organization and queue visibility to
-truthful detail, cooperative control and task-linked native recovery. Necessary durable safe Web
-continuation extends the existing Worker/admission/checkpoint boundary; no second task engine is
-introduced. These accepted capabilities are CURRENT.
-
-Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded failed-analysis
-recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
-unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
-redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. Slice 44 is ACTIVE for its six selected file-operation,
-Rules and browsing outcomes; current implementation and review state is authoritative in root
-`SLICE.md` and `TASK.md`. This Roadmap does not pre-split Tasks.
-
-## Current active and suspended boundary
-
-At the user's explicit request on 2026-10-07, Slice 43 is suspended and preserved on
-`frozen/slice-43-2026-10-07`. Its status is PLANNED with a development hold, not accepted or
-cancelled; its original scope, Base and unresolved review state remain recoverable in Git.
-Slice 44 is ACTIVE under root `SLICE.md` for improvements across implemented pages. The user has
-authorized A to include ordinary file-operation consistency on ResourceLibrary and MediaLibrary
-Files, reference-aligned Rules presentation and classification destinations using MediaLibrary plus
-`path`, including explicit legacy conversion and pinned-work/authority protection, and object-scoped
-Rules offline tests with a separately labelled complete-flow check. Local conclusions and downstream
-readiness are distinct; full publication/execution checks remain required. Both library pages also
-include usable long-name breadcrumbs/toolbars while preserving exact paths and normal browsing.
-ResourceLibrary Files also includes bounded recursive folder/mixed-selection discovery with
-deduplication, pinned filtering/stability, durable progress/recovery and the existing exact manual
-Preview/confirmed execution journey. MediaLibrary remains outside organizing-source scope.
-On 2026-10-11 the user approved a smaller discovery-recovery boundary (PARTIAL / RESCOPE):
-normal cooperative controls and safe stopping with explicit new discovery replace guaranteed
-seamless continuation through every exceptional crash/control/activation/legacy combination.
-Unknown admission requires proved original readback or native unresolved-state inspection, never
-wrong-root/pin guessing or automatic submission. Ordinary correctness, genuine non-busy stability,
-required surfaces, the 100-primary bound and all Safety Invariants remain; advanced automatic
-recovery is explicitly deferred in root `SLICE.md`. Slice 44 remains ACTIVE on its original Base.
-This is a changed TARGET acceptance boundary, not delivered fixes or closure.
-The user explicitly requested A activation of this complete six-outcome boundary on 2026-10-07.
-Other page contents are deferred. These remain TARGET outcomes, not new CURRENT delivery or
-retroactive changes to Slice 37/41 closure. The current working branch is
-`slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code;
-the immutable Base is unchanged. Once the ACTIVE Contract and Roadmap are checkpointed, B may
-plan one coherent Task. Slice 43 still requires separate explicit A activation before resumption;
-no automatic integration is authorized.
+[Release](release.md) owns release-line facts, [Progress](progress.md) owns closure Base/Head,
+dates, delivered outcomes and deferrals, and [Architecture](architecture.md) and
+[Product Experience](product-experience.md) own CURRENT behavior. This file does not repeat them.
 
 ## Roadmap rules
 
-- A alone creates or materially changes large Slice boundaries and ordering.
-- B plans Tasks only after a Slice becomes ACTIVE; Roadmap never pre-splits future Slices into Tasks.
-- Closed Slice 37 delivered the shared V2 shell's visual replacement, the Files page, drawer and common
-  bounded file-management commands. Its authorized post-closure correction also delivered
-  formal `library/path` destination parity with the local CLI. Its historical non-Files boundary
-  remains part of that closure. Closed Slice 38 delivered the MediaLibrary journey and required
-  route/navigation integration. Closed Slice 39 delivered Storage management and its necessary
-  shared shell integration. Closed Slice 40 delivered Settings/empty-baseline startup and resident
-  service configuration adoption; existing Files, MediaLibrary and other journeys remain protected.
-- Closed Slice 41 delivered the V2 organizing-rules workspace; actual media execution from Rules,
-  Provider switching, Review/Recovery migration, V1 cutover and unrelated page redesign remain
-  outside its accepted boundary. Closed Slice 42 delivered task-linked recovery separately without
-  expanding that historical closure or authorizing a global Review workspace.
-- Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
-- Safety, product and architecture requirements remain authoritative even when omitted from this
-  compact prioritization view.
+A owns large-Slice boundaries and priority; Tasks follow the [development workflow](development-workflow.md).
+Task/fix/test/review history belongs to Git. Omission from this compact view never weakens product,
+architecture, safety or the active Contract.
