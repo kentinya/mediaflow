@@ -122,6 +122,7 @@ from mediaflow.domain.manual_scan import (
 )
 from mediaflow.domain.media_discovery import (
     DiscoveryConflict,
+    DiscoveryError,
     DiscoveryObservation,
     DiscoveryOwnershipLost,
     DiscoveryStatus,
@@ -9975,19 +9976,62 @@ class SQLiteTaskRepository:
 
         if not isinstance(discovery, MediaDiscovery):
             raise ValueError("media discovery projection is required")
-        with self._lock, self._connection:
+        with self._lock:
             try:
+                # Serialize the identity check with the insert across separate
+                # SQLite connections. Application-level readback remains the
+                # normal fast path; this transaction closes the race where two
+                # requests both read "not found" before either one commits.
+                self._connection.execute("BEGIN IMMEDIATE")
+                if discovery.admission_request_id is not None:
+                    request_match = self._connection.execute(
+                        "SELECT discovery_id FROM media_discoveries "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (discovery.actor, discovery.admission_request_id),
+                    ).fetchone()
+                    if request_match is not None:
+                        raise DiscoveryConflict(
+                            "this discovery admission request identity already exists",
+                            details={"discoveryId": request_match["discovery_id"]},
+                        )
+                admission_signature = self._admission_signature(discovery)
+                open_match = self._connection.execute(
+                    "SELECT discovery_id FROM media_discoveries "
+                    "WHERE admission_signature=? AND intent_id IS NULL AND frozen_at IS NULL "
+                    "AND status NOT IN (?, ?, ?, ?) "
+                    "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                    (
+                        admission_signature,
+                        DiscoveryStatus.COMPLETED.value,
+                        DiscoveryStatus.PARTIAL_SUCCESS.value,
+                        DiscoveryStatus.FAILED.value,
+                        DiscoveryStatus.CANCELLED.value,
+                    ),
+                ).fetchone()
+                if open_match is not None:
+                    raise DiscoveryConflict(
+                        "this discovery admission identity already exists",
+                        details={"discoveryId": open_match["discovery_id"]},
+                    )
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                     "?, ?, ?)",
                     self._discovery_values(discovery),
                 )
+                self._connection.commit()
+            except DiscoveryConflict:
+                self._connection.rollback()
+                raise
             except sqlite3.IntegrityError as error:
+                self._connection.rollback()
                 raise DiscoveryConflict(
                     "this discovery admission identity already exists",
                     details={"discoveryId": discovery.discovery_id},
                 ) from error
+            except BaseException:
+                self._connection.rollback()
+                raise
         return self.get_media_discovery(discovery.discovery_id)
 
     def find_open_media_discovery(
@@ -10062,15 +10106,27 @@ class SQLiteTaskRepository:
         if not _valid_admission_request_id(admission_request_id):
             raise ValueError("media discovery admission request identity is invalid")
         with self._lock:
-            row = self._connection.execute(
+            rows = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries "
                 "WHERE actor=? AND admission_request_id=? "
-                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 2",
                 (actor, admission_request_id),
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            if not rows:
                 return None
-            return self._load_media_discovery_locked(row["discovery_id"])
+            if len(rows) > 1:
+                raise DiscoveryError(
+                    "this request identity matches more than one discovery, so its original "
+                    "admission cannot be proved",
+                    code="admission_request_unresolved",
+                    status=409,
+                    next_action=(
+                        "inspect the existing discoveries in Operations; start any new "
+                        "selection with a new request ID"
+                    ),
+                    details={"requestIdAmbiguous": True},
+                )
+            return self._load_media_discovery_locked(rows[0]["discovery_id"])
 
     def get_media_discovery(self, discovery_id: str) -> MediaDiscovery | None:
         if not isinstance(discovery_id, str) or not discovery_id.strip():

@@ -31,6 +31,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery
+from mediaflow.application.media_parser import MediaParserService
+from mediaflow.application.recognition import RecognitionRuleEngine
 from mediaflow.application.scan_filters import (
     ObservedSource,
     PrunedAncestorReason,
@@ -83,6 +85,14 @@ from mediaflow.domain.media_discovery import (
     is_settlement_status,
 )
 from mediaflow.domain.organizer import StorageLocation
+from mediaflow.domain.parser import FileContext
+from mediaflow.domain.recognition import (
+    AtomicCondition,
+    ConditionField,
+    LogicalCondition,
+    RecognitionContext,
+    RecognitionStatus,
+)
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
@@ -224,6 +234,20 @@ class MediaDiscoveryService:
         for value in relative_paths:
             path = bounded_path(value, allow_empty=False)
             submitted.append(DiscoveryScopeEntry(path, DiscoveryEntryKind.FILE))
+        submitted_paths = tuple(sorted({entry.path for entry in submitted}))
+        # A caller-generated request identity proves only this immutable
+        # ResourceLibrary selection. Resolve it before consulting the current
+        # Active pin or Storage root so a genuine retry can still read back its
+        # original admission after configuration changes.
+        if admission_request_id is not None:
+            requested = self._reconcile_admission_request(
+                actor,
+                admission_request_id,
+                resource_library_id=resource_library_id,
+                submitted_paths=submitted_paths,
+            )
+            if requested is not None:
+                return requested
         snapshot_id, snapshot_digest = self._active_pin()
         runtime = self._load_runtime(snapshot_id, snapshot_digest)
         library = self._runtime_library(runtime, resource_library_id)
@@ -243,16 +267,6 @@ class MediaDiscoveryService:
         # the durable record (and therefore the frozen manifest) is identical
         # whichever equivalent request won.  Names are never trimmed.
         deduplicated = canonical_scope(deduplicated)
-        # Exact client request identity, when the caller supplied one.  The
-        # Active pin was resolved above, at admission time, so a caller that
-        # rendered an older pin cannot prove which admission its POST became;
-        # its own identifier can.  A retry of the *same* request is therefore
-        # reconciled to the record it actually created -- even under a
-        # successor pin -- while any other request stays a new admission.
-        if admission_request_id is not None:
-            requested = self._reconcile_admission_request(actor, admission_request_id)
-            if requested is not None:
-                return requested
         # Actor/scope/pin-bound admission identity: an identical open
         # submission for the same principal, the same enabled
         # ResourceLibrary/Storage binding, the same deduplicated scope and
@@ -328,7 +342,12 @@ class MediaDiscoveryService:
             # it.  When the winner is not readable as this exact open
             # admission, the conflict is reported rather than guessed away.
             if admission_request_id is not None:
-                requested = self._reconcile_admission_request(actor, admission_request_id)
+                requested = self._reconcile_admission_request(
+                    actor,
+                    admission_request_id,
+                    resource_library_id=resource_library_id,
+                    submitted_paths=submitted_paths,
+                )
                 if requested is not None:
                     return requested
             winner = self._reconcile_admission(
@@ -344,7 +363,12 @@ class MediaDiscoveryService:
             raise
 
     def _reconcile_admission_request(
-        self, actor: str, admission_request_id: str
+        self,
+        actor: str,
+        admission_request_id: str,
+        *,
+        resource_library_id: str,
+        submitted_paths: tuple[str, ...],
     ) -> MediaDiscovery | None:
         """The durable admission this exact client request identity created.
 
@@ -358,7 +382,41 @@ class MediaDiscoveryService:
         finder = getattr(self._repository, "find_media_discovery_by_request_id", None)
         if not callable(finder):
             return None
-        return finder(actor=actor, admission_request_id=admission_request_id)
+        requested = finder(actor=actor, admission_request_id=admission_request_id)
+        if requested is None:
+            return None
+        stored_paths = {entry.path for entry in requested.progress.scope_entries}
+        selected_paths = set(submitted_paths)
+        # A selected directory canonically subsumes any explicitly selected
+        # descendants. Use the old persisted entry kinds for that comparison:
+        # the current root may have changed or disappeared, and is not proof of
+        # what the original request selected.
+        stored_directories = tuple(
+            entry.path
+            for entry in requested.progress.scope_entries
+            if entry.kind is DiscoveryEntryKind.DIRECTORY
+        )
+        selected_paths = {
+            path
+            for path in selected_paths
+            if not any(
+                path != directory and path.startswith(directory.rstrip("/") + "/")
+                for directory in stored_directories
+            )
+        }
+        if requested.resource_library_id != resource_library_id or selected_paths != stored_paths:
+            raise DiscoveryError(
+                "this discovery request ID is already bound to a different "
+                "ResourceLibrary selection",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request ID for its original selection, or start this selection "
+                    "with a new request ID"
+                ),
+                details={"requestIdReuse": True},
+            )
+        return requested
 
     def _reconcile_admission(
         self,
@@ -1461,28 +1519,88 @@ class MediaDiscoveryService:
         return True
 
     @staticmethod
-    def _attachment_policies(runtime) -> tuple:
-        """Every distinct enabled attachment policy in the pinned configuration.
+    def _stable_attachment_rule(condition) -> bool:
+        """Whether recognition uses only pinned path and entry metadata.
 
-        Discovery reuses the exact ``AttachmentPolicy`` objects the production
-        Preview consumes rather than inventing a second matcher, so folder
-        discovery and the later exact Preview agree on whether a sidecar video
-        is an attachment.  Duplicate objects are collapsed so a many-policy
-        configuration is still evaluated once per distinct policy.
+        Discovery does not read NFO or other file content. It may select an
+        owner's attachment policy only when the configured recognition rules
+        depend on facts discovery already observed. If any enabled rule uses
+        parsed metadata or tags, Preview may choose a different type after its
+        normal parser stages, so discovery leaves the source as a primary.
+        """
+
+        if isinstance(condition, AtomicCondition):
+            return condition.field in {
+                ConditionField.FILENAME,
+                ConditionField.PATH,
+                ConditionField.DIRECTORY,
+                ConditionField.EXTENSION,
+                ConditionField.RESOURCE_LIBRARY_ID,
+            }
+        if isinstance(condition, LogicalCondition):
+            return all(
+                MediaDiscoveryService._stable_attachment_rule(child) for child in condition.children
+            )
+        return False
+
+    def _attachment_policies_by_source(
+        self,
+        runtime,
+        library,
+        entries: list[tuple[str, int, StorageEntry]],
+        sources: Mapping[str, dict[str, object]],
+    ) -> dict[str, object]:
+        """Resolve each admitted primary's exact pinned attachment policy.
+
+        The owner RecognitionType is obtained from the production rule engine
+        over exact ResourceLibrary-relative paths. Unrecognized, ambiguous or
+        content-sensitive cases have no proven applicable policy and are kept
+        as primary sources.
         """
 
         strategy = getattr(runtime, "strategy", None)
-        seen: list[object] = []
-        for policy in getattr(strategy, "recognition_type_policies", ()) or ():
-            if not getattr(policy, "enabled", False):
+        if strategy is None:
+            return {}
+        rules = tuple(rule for rule in strategy.recognition_rules if rule.enabled)
+        if not rules or any(not self._stable_attachment_rule(rule.condition) for rule in rules):
+            return {}
+        engine = RecognitionRuleEngine(strategy.recognition_types, strategy.recognition_rules)
+        parser = MediaParserService()
+        type_policies = {
+            policy.recognition_type_id: policy
+            for policy in strategy.recognition_type_policies
+            if policy.enabled and policy.recognition_type.enabled
+        }
+        entry_by_path = {relative: entry for relative, _depth, entry in entries}
+        resolved: dict[str, object] = {}
+        for relative in sorted(sources):
+            entry = entry_by_path.get(relative)
+            if entry is None:
                 continue
-            organize = getattr(policy, "organize_policy", None)
-            attachments = getattr(organize, "attachments", None)
+            parts = relative.split("/")
+            parent_path = "/".join(parts[:-1])
+            context = FileContext(
+                library.storage_id,
+                library.library_id,
+                relative,
+                entry.name,
+                tuple(parts[:-1]),
+                entry_extension(entry),
+                parent_path,
+                entry.size,
+                entry.modified_at,
+            )
+            recognition = engine.recognize(RecognitionContext(context, parser.parse(context)))
+            if recognition.status is not RecognitionStatus.MATCHED:
+                continue
+            type_policy = type_policies.get(recognition.recognition_type_id)
+            if type_policy is None:
+                continue
+            attachments = getattr(type_policy.organize_policy, "attachments", None)
             if attachments is None or not getattr(attachments, "enabled", False):
                 continue
-            if attachments not in seen:
-                seen.append(attachments)
-        return tuple(seen)
+            resolved[relative] = attachments
+        return resolved
 
     @staticmethod
     def _stem_related(name: str, owner_name: str) -> bool:
@@ -1511,12 +1629,12 @@ class MediaDiscoveryService:
 
     def _attachment_owners(
         self,
-        runtime,
         library,
         relative: str,
         entry: StorageEntry,
         entries: list[tuple[str, int, StorageEntry]],
         admitted: dict[str, dict[str, object]],
+        attachment_policies: Mapping[str, object],
     ) -> tuple[str, ...]:
         """Every admitted main file this entry attaches to, in stable order.
 
@@ -1536,9 +1654,6 @@ class MediaDiscoveryService:
         """
 
         if entry is None or not admitted:
-            return ()
-        policies = self._attachment_policies(runtime)
-        if not policies:
             return ()
         directory = relative.rsplit("/", 1)[0] if "/" in relative else ""
         same_directory = [
@@ -1565,23 +1680,24 @@ class MediaDiscoveryService:
             )
             if owner_entry is None:
                 continue
+            # Attachment rules belong to the retained primary's RecognitionType.
+            # Another type's settings can never absorb this source.
+            policy = attachment_policies.get(owner_relative)
+            if policy is None:
+                continue
             if not self._stem_related(entry.name, owner_entry.name):
                 # The production matcher can only relate same-stem sidecars, so
                 # this cheap necessary condition skips the expensive real
                 # association for every unrelated pair without deciding it.
                 continue
             primary = StorageLocation(library.storage_id, owner_entry.path)
-            for policy in policies:
-                discovered = AttachmentDiscovery().discover(
-                    _ObservedDirectoryStorage(library.storage_id, tuple(same_directory)),
-                    primary,
-                    policy,
-                )
-                if any(
-                    attachment.source.path == entry.path for attachment in discovered.attachments
-                ):
-                    owners.append(owner_relative)
-                    break
+            discovered = AttachmentDiscovery().discover(
+                _ObservedDirectoryStorage(library.storage_id, tuple(same_directory)),
+                primary,
+                policy,
+            )
+            if any(attachment.source.path == entry.path for attachment in discovered.attachments):
+                owners.append(owner_relative)
         return tuple(owners)
 
     def _demote_attachments(
@@ -1628,12 +1744,16 @@ class MediaDiscoveryService:
 
         if not entries or not sources:
             return
-        # The association relation is a property of the real directory and the
-        # real policies, not of which sources currently survive demotion, so it
-        # is computed exactly once and then only intersected with the surviving
-        # set below.
+        # Resolve each potential owner's policy once from the exact pinned
+        # RecognitionType. The association relation is then a property of the
+        # real directory and that policy, not of which sources survive demotion.
+        attachment_policies = self._attachment_policies_by_source(
+            runtime, library, entries, sources
+        )
         candidates = {
-            relative: self._attachment_owners(runtime, library, relative, entry, entries, sources)
+            relative: self._attachment_owners(
+                library, relative, entry, entries, sources, attachment_policies
+            )
             for relative, _depth, entry in entries
             if relative in sources
         }

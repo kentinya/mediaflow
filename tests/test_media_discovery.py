@@ -263,9 +263,26 @@ class _DiscoveryFixture(unittest.TestCase):
         ]
         if attachments:
             # The real managed attachment policy, published and production-
-            # loaded exactly like the Web/API Save surface would.
+            # loaded exactly like the Web/API Save surface would. Movie test
+            # paths are pinned to RecognitionType A so discovery must use the
+            # same owner policy as the later manual Preview.
             for policy in document.get("organizePolicies", []):
                 policy["attachments"]["enabled"] = True
+            document["recognitionRules"].append(
+                {
+                    "id": "discovery-movie-fixture",
+                    "name": "Discovery movie fixture",
+                    "priority": 200,
+                    "score": 100,
+                    "stopOnMatch": True,
+                    "condition": {
+                        "field": "path",
+                        "operator": "contains",
+                        "value": "Movies/",
+                    },
+                    "outputRecognitionType": "A",
+                }
+            )
         return document
 
     @contextmanager
@@ -3069,6 +3086,55 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual((), value.repository.list_tasks())
 
+    def test_concurrent_equivalent_admissions_serialize_across_sqlite_connections(self) -> None:
+        """A44-6: concurrent reads cannot both create the same open admission."""
+
+        self.media("Movies/One.mkv")
+        with self.journey() as value:
+            second_repository = SQLiteTaskRepository(self.database)
+            barrier = threading.Barrier(2)
+
+            def synchronize_first_lookup(repository):
+                original = repository.find_open_media_discovery
+                first = True
+
+                def find_open(**kwargs):
+                    nonlocal first
+                    result = original(**kwargs)
+                    if first:
+                        first = False
+                        barrier.wait(timeout=5)
+                    return result
+
+                repository.find_open_media_discovery = find_open
+
+            synchronize_first_lookup(value.repository)
+            synchronize_first_lookup(second_repository)
+            second_discovery = MediaDiscoveryService(
+                second_repository,
+                value.intents,
+                configuration=value.configuration,
+                runtime_resolver=lambda _snapshot_id, _snapshot_digest: value.configuration,
+                storages=value.storages,
+                clock=self.clock,
+            )
+
+            def admit(service):
+                return service.admit(
+                    resource_library_id="library",
+                    relative_paths=["Movies"],
+                    actor="operator",
+                )
+
+            try:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    records = list(pool.map(admit, (value.discovery, second_discovery)))
+            finally:
+                second_repository.close()
+            self.assertEqual(records[0].discovery_id, records[1].discovery_id)
+            self.assertEqual(1, len(value.repository.list_media_discoveries()))
+            self.assertEqual([], value.source.mutations)
+
     def test_an_open_admission_beyond_the_recent_window_still_reconciles(self) -> None:
         """A44-6: an existing admission beyond the recent-list window.
 
@@ -4031,6 +4097,71 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(2, settled["progress"]["pageFetches"], settled)
             self.assertEqual([], value.source.mutations)
 
+    def test_mixed_type_attachment_settings_use_the_retained_owners_policy(self) -> None:
+        """A trailer stays selectable when only another type treats it as an attachment."""
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001-trailer.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["enabled"] = policy["id"] == "B"
+        document["recognitionRules"] = [
+            {
+                "id": "movie-folder",
+                "name": "Movie folder",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {
+                    "field": "path",
+                    "operator": "contains",
+                    "value": "Movies/",
+                },
+                "outputRecognitionType": "A",
+            }
+        ]
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            policies = {
+                policy.recognition_type_id: policy.organize_policy.attachments
+                for policy in runtime.strategy.recognition_type_policies
+            }
+            self.assertFalse(policies["A"].enabled)
+            self.assertTrue(policies["B"].enabled)
+            value.discovery._runtime_resolver = lambda _sid, _digest: runtime
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            expected = {"Movies/Film.2001.mkv", "Movies/Film.2001-trailer.mp4"}
+            self.assertEqual(expected, {item["path"] for item in settled["sources"]})
+            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(expected, {item.source.path for item in intent.items})
+            status, preview = self.request(
+                value,
+                f"/api/v1/manual-intents/{intent.intent_id}/preview",
+                "POST",
+                {"expectedVersion": intent.version},
+            )
+            self.assertEqual(201, status, preview)
+            self.assertEqual(intent.intent_id, preview["intentId"], preview)
+            self.assertEqual(expected, {item["source"]["path"] for item in preview["items"]})
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
     # -- P1: genuine original-admission proof for a lost response ---------
 
     def test_a_retried_request_reconciles_to_its_own_admission_under_a_new_pin(self) -> None:
@@ -4086,6 +4217,143 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual(original_pin, retried["configurationSnapshotId"], retried)
             self.assertEqual([], value.source.mutations)
             self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_retried_request_reconciles_before_statting_a_changed_root(self) -> None:
+        """A proved retry survives even when its old relative path is gone."""
+
+        import uuid
+
+        self.media("Recover/Original.mkv")
+        self.media("new-root/Elsewhere/Different.mkv")
+        request_id = str(uuid.uuid4())
+        with self.journey() as value:
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Recover"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, first)
+            successor = self.document()
+            successor["resourceLibraries"][0]["storagePath"] = "new-root"
+            _revision, runtime = self._production_journey(successor)
+            value.discovery._runtime_resolver = lambda _sid, _digest: runtime
+            status, retried = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Recover"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, retried)
+            self.assertEqual(first["discoveryId"], retried["discoveryId"], retried)
+            self.assertEqual(first["configurationSnapshotId"], retried["configurationSnapshotId"])
+            self.assertEqual(1, len(value.repository.list_media_discoveries()))
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_request_identity_cannot_be_reused_for_a_different_scope(self) -> None:
+        """A request ID cannot certify a different submitted path set."""
+
+        import uuid
+
+        self.media("First/Film.2001.mkv")
+        self.media("Second/Film.2002.mkv")
+        request_id = str(uuid.uuid4())
+        with self.journey() as value:
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["First"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, first)
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Second"], "requestId": request_id},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("admission_request_conflict", refused["error"]["code"], refused)
+            self.assertIn("new request ID", refused["error"]["details"]["nextAction"])
+            self.assertEqual(
+                [first["discoveryId"]],
+                [item.discovery_id for item in value.repository.list_media_discoveries()],
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_request_identity_cannot_be_reused_for_a_different_library(self) -> None:
+        """A request ID is bound to the immutable ResourceLibrary identity."""
+
+        import uuid
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2002.mkv", second=True)
+        request_id = str(uuid.uuid4())
+        with self.journey(second_library=True) as value:
+            status, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"], "requestId": request_id},
+            )
+            self.assertEqual(202, status, first)
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library2/files/discoveries",
+                "POST",
+                {"paths": ["Movies"], "requestId": request_id},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("admission_request_conflict", refused["error"]["code"], refused)
+            self.assertIn("new request ID", refused["error"]["details"]["nextAction"])
+            self.assertEqual(
+                [first["discoveryId"]],
+                [item.discovery_id for item in value.repository.list_media_discoveries()],
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_ambiguous_legacy_request_identity_remains_unresolved(self) -> None:
+        """Legacy duplicate IDs cannot make readback guess between discoveries."""
+
+        import uuid
+
+        self.media("First/Film.2001.mkv")
+        self.media("Second/Film.2002.mkv")
+        request_id = str(uuid.uuid4())
+        with self.journey() as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["First"], "requestId": request_id},
+            )
+            _, second = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Second"]},
+            )
+            with value.repository._connection:
+                value.repository._connection.execute(
+                    "UPDATE media_discoveries SET admission_request_id=? WHERE discovery_id=?",
+                    (request_id, second["discoveryId"]),
+                )
+            status, unresolved = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["First"], "requestId": request_id},
+            )
+            self.assertEqual(409, status, unresolved)
+            self.assertEqual(
+                "admission_request_unresolved", unresolved["error"]["code"], unresolved
+            )
+            self.assertIn("Operations", unresolved["error"]["details"]["nextAction"])
+            self.assertEqual(
+                {first["discoveryId"], second["discoveryId"]},
+                {item.discovery_id for item in value.repository.list_media_discoveries()},
+            )
+            self.assertEqual([], value.source.mutations)
 
     def test_an_admission_without_a_request_identity_reports_none(self) -> None:
         """The identity is optional, so an existing client keeps working."""
