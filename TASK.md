@@ -244,37 +244,186 @@ receipts are historical evidence, not acceptance of new implementation or deferr
 
 ## Developer Completion Report
 
-Pending implementation. This planning revision fixes no product defect and claims no runtime PASS.
+Implemented the eight ordinary defect groups A44-6…A44-13 from
+[the folder audit](docs/reviews/slice-44-folder-organize-audit.md) inside the amended RO-6 and Slice
+acceptance 27–32. No Slice boundary, Safety Invariant, Base or deferral was changed. The
+user-approved reduction of exceptional lost-response recovery is untouched: this checkpoint corrects
+ordinary correctness and offers explicit safe new discovery instead.
+
+```text
+Candidate: d9a9af4b665a5c524a1b5291438e7590ac4b2854
+Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79 (verified ancestor of HEAD)
+Branch: slice/44-page-improvements
+Evidence: .git/validation-evidence/d9a9af4b665a5c524a1b5291438e7590ac4b2854/task44-9/run-1/
+```
 
 ### Changed Files
 
-Pending.
+| File | Change |
+| --- | --- |
+| `mediaflow/domain/media_discovery.py` | Set-canonical `discovery_scope_signature`, new `canonical_scope`, durable `next_observation_at` on the entity |
+| `mediaflow/application/media_discovery.py` | Canonical admission + create-race reconciliation; direct-selection policy refusal; real stability wait deadline; directory-once accounting; per-file observation degradation; production `AttachmentDiscovery` sidecar association |
+| `mediaflow/application/scan_filters.py` | New pure `stability_wait_seconds` |
+| `mediaflow/infrastructure/runtime_configuration.py` | Consume `includeRules`/`excludeRules`/`stability` into `ResourceLibrary`; refuse unknown ResourceLibrary fields; retain the `rootPath` legacy alias |
+| `mediaflow/application/configuration_objects.py` | Validate and project the same policy through the native Save/edit surface |
+| `mediaflow/interfaces/service_api.py` | Accept the optional policy keys on Save/edit; publish `storageId`/`configurationSnapshotId`/`nextObservationAt`; project command-specific Worker readiness |
+| `mediaflow/application/automation.py` | Command-specific unsupported-command next action |
+| `mediaflow/domain/manual_organize.py` | Separate 255-character real filename bound from the 128-character identity bound |
+| `mediaflow/infrastructure/sqlite_runtime.py` | Additive `next_observation_at` + `admission_signature` columns and index; durable `find_open_media_discovery`; due-time-gated claim |
+| `web/src/entities/operations/discovery.ts` | Real 4096/255 bounds; publish admission identity and observation deadline |
+| `web/src/features/library/StorageFilesPage.tsx` | Reconcile on the backend admission identity; optional policy fields in the drawer |
+| `web/src/shared/api/api-client.ts` | Optional policy fields on Save/edit; round-trip them through the edit projection |
+| `web/tests/fake-server.mjs` | Publish the new projection fields |
+| `tests/test_media_discovery.py`, `tests/test_resource_library_activation.py`, `tests/test_task_persistence.py`, `web/src/**/*.test.ts(x)` | Regression tests per group |
 
 ### Implemented
 
-Pending.
+1. **A44-6 — Atomic equivalent-scope admission and unknown-response recovery.**
+   `discovery_scope_signature` is now set-canonical and `canonical_scope` persists the sorted scope,
+   so `[A,B]` and `[B,A]` are one admitted selection with an identical durable record. A new additive
+   nullable `admission_signature` column stores the actor/library/Storage/pin/scope identity, and
+   `find_open_media_discovery` resolves an equivalent **open** admission by that durable identity
+   rather than by scanning a recent-list window — so it reconciles even after 50+ unrelated
+   admissions. A `DiscoveryConflict` from a lost create race now re-reads the winner instead of
+   raising, and terminal/frozen successors stay distinct. The Web response-loss path reconciles on
+   the backend-published identity (exact library + scope set) instead of a sorted path-string guess.
+2. **A44-7 — Real, consumed, consistent policy.**
+   The production loader now maps `includeRules`/`excludeRules`/`stability` into the domain
+   `ResourceLibrary` (absent keys keep the legacy defaults: no include rules, shared
+   `DEFAULT_EXCLUDE_RULES`, zero-duration stability) and **refuses** an unknown ResourceLibrary field
+   instead of silently ignoring a policy the operator believes is active. The native Save/edit
+   surfaces and the Files drawer validate, publish and project the same shape, so a policy saved in
+   the UI is the exact policy the runtime consumes. Directly selected files and folders now pass
+   through the same exclude/include/configured-depth policy as a parent walk, so selection method
+   cannot bypass it; a refused direct selection returns a bounded `409` with no durable record.
+3. **A44-8 — Real stability waiting without busy pickup.**
+   New pure `stability_wait_seconds` returns the genuine remaining interval for the exact reason a
+   source is still waiting. The shortest such interval becomes a durable `next_observation_at`, and
+   `claim_next_media_discovery` gates pickup on it, so a waiting discovery is re-observed only when
+   a later observation could change the verdict. It no longer spins, burns the traversal budget
+   while traversing nothing, or starves other resident commands.
+4. **A44-9 — Legal long names and isolated per-item failure.**
+   A real Storage filename now has its own 255-character bound, separate from the 128-character
+   identity bound, so a legal 179-character filename no longer strands its whole batch. The Web
+   normalizer uses the real 4096-byte path and 255-character name bounds, so one legal long path no
+   longer rejects an entire readback. A missing or unreadable file is isolated to its own finding.
+5. **A44-10 — Truthful partial outcome for an unobservable file.**
+   A file the admitted scope names but that cannot be observed (missing, or permission denied) marks
+   the observation degraded: the walk reports `partial_success` / `read_failure` rather than claiming
+   the whole scope was discovered, and the known subset keeps its legal explicit-subset Finalize
+   path. It is deliberately not a material refusal.
+6. **A44-11 — Directory and page accounting.**
+   `visited_directories` is now incremented exactly once when the walk first enters a directory, and
+   the directory bound is evaluated only when about to enter a genuinely new directory. A single
+   large directory paged 1000 times is one directory, not a thousand.
+7. **A44-12 — Existing attachment association governs primaries.**
+   Folder discovery now consults the production `AttachmentDiscovery` under the pinned
+   `AttachmentPolicy` (via a read-only view of the already-observed same-directory entries), so a
+   matching Trailer sidecar is never admitted as a second independent primary. 51 main files plus 51
+   matching Trailers is 51 primaries and completes, instead of 102 candidates hitting the
+   100-primary bound. The exact Preview still re-discovers the attachment itself, so the association
+   has one implementation, not two.
+8. **A44-13 — Discovery-command readiness.**
+   The discovery projection now reports `evaluate_command_readiness(("media_discovery",))` instead of
+   manual-organize readiness, so a live, schema-compatible Worker that does not advertise the
+   discovery command family is truthfully reported not ready with its own meaningful next action.
+
+Both new discovery columns are additive and nullable; prior-schema rows stay readable and finishable
+and simply become immediately claimable / non-reconcilable by signature, which is the documented
+safe-stop behaviour. `SCHEMA_VERSION` stays **45** (no bump was needed or made).
 
 ### Tests and Results
 
-Pending actual candidate results/provenance, including PASS/FAIL/SKIP/UNAVAILABLE.
+Every row below is a real command run against candidate `d9a9af4`; the full log and hashes are in the
+evidence directory.
+
+| Gate | Result |
+| --- | --- |
+| `python scripts/check_governance.py` | PASS |
+| `ruff format --check .` / `ruff check .` | PASS (361 files) |
+| `python -m compileall -q mediaflow tests scripts` | PASS |
+| `python -m pip check` | PASS |
+| Both `config validate` examples | PASS |
+| `python -m unittest discover -s tests -t .` | **2403 run, 7 skipped, 1 FAIL / PRE-EXISTING / UNRELATED** |
+| `cd web && npm run test -- --run` | **1091 passed** (73 files) |
+| `cd web && npm run format:check` / `lint` / `typecheck` | PASS |
+| `cd web && npm run build` | PASS (index `fc2e9476292e`) |
+| `cd web && npm run test:e2e` | **246 passed** |
+| Real-Python e2e `operations-inventory.python.spec.ts` | **21 passed** |
+| Real-Python e2e `direct-files.python.spec.ts` | **10 passed** |
+| `pip wheel . --no-deps` + `scripts/wheel_smoke_test.py` | PASS (schema 45) |
+| `scripts/docker_release_security_smoke_test.py` | PASS |
+| `scripts/docker_upgrade_recovery_smoke_test.py` | PASS |
+| `scripts/files_organize_discovery_browser_proof.py` | PASS — `{"ok":true,"passes":11}` |
+| `scripts/docker_files_organize_discovery_browser_proof.py` | PASS — `{"ok":true,"passes":7}` |
+| `scripts/files_toolbar_browser_proof.py` | PASS — `{"ok":true,"passes":22}` |
+| `git diff --check` | clean |
+
+**FAIL / PRE-EXISTING / UNRELATED:**
+`tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+fails intermittently with `AssertionError: False is not true : ['rules_destination_check_failed']`.
+Reproduced on the **parent** commit `d774001` in a clean worktree (2 failures in 12 isolated runs)
+with the identical value, and on the candidate (2 in 12). The test races two writer threads by
+construction and touches no discovery, policy, admission or migration code this Task changed.
+
+**Environment note (not a SKIP):** this environment's Docker daemon cannot bind-mount `/tmp`. Both
+Docker harnesses place their Compose context and deployment files under `TMPDIR`, so the default run
+failed with `bind source path does not exist`; re-running with `TMPDIR=/root/mediaflow/.mf-tmp` (a
+daemon-visible path) let both complete and pass. No harness or product code was modified.
 
 ### Decisions
 
-Pending implementation choices inside the smaller Contract and this Task.
+- **Additive columns, no schema bump.** `next_observation_at` and `admission_signature` are added by
+  the existing `PRAGMA table_info` + `ALTER TABLE` pattern. Bumping `SCHEMA_VERSION` would have
+  refused the current Worker against every existing database for no data-model reason; a
+  prior-schema row simply has no due time (immediately claimable) and no signature (not
+  reconcilable), both safe stops. Covered by a new additive-upgrade test.
+- **Reuse the production attachment matcher rather than add a second one.** A44-12 is corrected by
+  calling `AttachmentDiscovery` with the pinned policy, over a read-only view of the entries the walk
+  already observed. This adds no Storage read and no mutation capability, and keeps exactly one
+  definition of "this sidecar belongs to that main file".
+- **Refuse, do not silently ignore, an unknown ResourceLibrary field.** The audit's own framing was
+  that the missing piece is a *supported* configuration path, not licence to accept arbitrary JSON.
+  A silently dropped filter is the difference between "excluded by policy" and "organized although
+  policy excluded it", so the loader fails closed and the Save surface validates the same shape.
+- **Keep the `rootPath` legacy alias.** The stricter unknown-field refusal initially broke three
+  existing suites that still use the legacy alias; it is retained explicitly so no existing document
+  changes behaviour.
+- **Reconcile the Web response-loss path on backend identity.** The previous sorted-path-string guess
+  could not distinguish a changed root or a different pin. The page now matches the exact library and
+  scope set the backend published.
+- **Discovery readiness is command-specific.** The projection asks the same `WorkerService` the
+  discovery Worker registers with, so process health alone can no longer imply discovery can run.
 
 ### Remaining In-Slice Work
 
-Current-contract audit corrections remain pending; exceptional recovery promises are explicitly
-deferred, not delivered or counted as fixed. B must reevaluate all RO after implementation.
+The eight audit defect groups are corrected. The user-approved deferrals remain deferred and are
+**not** claimed as delivered: guaranteed cross-activation lost-response recovery, precise
+cursor/unpublished-work continuation through every race or crash, and automatic repair/resumption of
+every legacy duplicate or interrupted discovery. Interrupted unfrozen work that cannot continue
+still resolves through the native explicit new-discovery action. B must reevaluate all Slice Required
+Outcomes; this report claims no Task PASS and no Slice state.
 
 ### Risks / Deviations
 
-High: managed publication, admission/ownership, shared source identity and necessary migration.
-User-authorized A substitutes for planning; B retains independent implementation review.
+- High: managed configuration publication, admission/ownership fencing, shared source identity and a
+  persistence change are all in scope. Mitigated by the additive-only migration, the full T4 gate set
+  above, and the real Docker upgrade/recovery harness.
+- The one Python failure is pre-existing and unrelated, demonstrated on the parent commit. It is
+  reported as `FAIL / PRE-EXISTING / UNRELATED`; whether it affects acceptance is B's call, not mine.
+- Docker gates required `TMPDIR` to point at a daemon-visible path in this environment. The scripts
+  themselves are unchanged.
 
 ### Checkpoint
 
-No implementation checkpoint yet; Developer reports actual candidate and assigned gates.
+```text
+Status: READY FOR B REVIEW
+Head SHA: d9a9af4b665a5c524a1b5291438e7590ac4b2854
+Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
+Commit: fix(slice44): correct ordinary folder discovery defects A44-6..A44-13
+Evidence: .git/validation-evidence/d9a9af4b665a5c524a1b5291438e7590ac4b2854/task44-9/run-1/
+Local commit only; not pushed.
+```
 
 ## B Review Result
 
