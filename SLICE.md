@@ -19,7 +19,7 @@ Contract Revision: 2026-10-11 — PARTIAL / RESCOPE: user-approved discovery rec
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: B REASSESSES TASK 44.9 UNDER THE CHECKPOINTED RESCOPE; A MAY PLAN UNDER USER AUTHORIZATION
+Next Action: DEVELOPER IMPLEMENTS REVISED TASK 44.9; B REVIEWS THE IMPLEMENTATION
 ```
 
 ## Authority and sequencing
@@ -161,6 +161,12 @@ Packets without declaring PASS. Checkpoint this amendment before Task planning. 
 PLANNED with no implementation checkpoint; return it for explicit reassessment rather than letting
 Developer continue its superseded plan. The user's authorization for A to substitute for B planning
 remains in force; B independently reviews implementation and A later reviews the full Slice.
+
+Reassessment after A Contract checkpoint `7e96ebf314e4eab22a72d98028a775f248118138`: governance
+passed with ACTIVE Slice and no active Task, then again with the legally adjusted PLANNED Task
+44.9. Authorized A planning retains its ID/original Task Base and High/T4 gates, replaces its
+exceptional-recovery obligations with this smaller Contract, and hands it to Developer. The prior
+plan is preserved in Git; B review is PENDING. No implementation or product PASS is claimed.
 
 ## Frozen Slice 43 preservation and resumption
 
@@ -1903,8 +1909,9 @@ New Contract: current RO-6, required native recovery surfaces, acceptance 27–3
   recovery deferral above. Ordinary correctness and all Safety Invariants still apply.
 Base Decision: retain Slice 44 and 853973dbbf8289fa2ad40657033e94e870a690e4; it is still the true
   start of this folder-organizing capability within the six-outcome Slice. Status is ACTIVE.
-Task Reassessment: Task 44.9 was PLANNED without implementation. Its earlier plan is superseded;
-  A's user-authorized substitution for B planning must consume the committed amended Contract.
+Task Reassessment: Task 44.9 was PLANNED without implementation. After committed amendment
+  7e96ebf314e4eab22a72d98028a775f248118138, authorized A planning legally adjusted the same
+  Task ID/original Base to this Contract; it remains PLANNED and B implementation review PENDING.
 Closure: none; this is neither PASS nor acceptance of the remaining defects.
 ```
 
