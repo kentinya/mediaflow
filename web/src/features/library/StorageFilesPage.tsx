@@ -68,6 +68,8 @@ import {
   submitTransfer,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
+  type ResourceLibraryScanRule,
+  type ResourceLibraryStabilityPolicy,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
 import {
@@ -1526,6 +1528,40 @@ export function AddResourceLibraryDrawer({
     initial?.storagePath ?? "media/incoming",
   );
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  // The optional include/exclude/stability policy. It is edited as exact text
+  // and published only when the operator supplies it, so a legacy edit that
+  // leaves these fields untouched keeps the exact admitted policy.
+  const [includeRulesText, setIncludeRulesText] = useState(
+    initial?.includeRules === undefined
+      ? ""
+      : initial.includeRules
+          .map((rule) =>
+            typeof rule === "string"
+              ? rule
+              : `${rule.kind ?? "glob"}:${rule.pattern}`,
+          )
+          .join("\n"),
+  );
+  const [excludeRulesText, setExcludeRulesText] = useState(
+    initial?.excludeRules === undefined
+      ? ""
+      : initial.excludeRules
+          .map((rule) =>
+            typeof rule === "string"
+              ? rule
+              : `${rule.kind ?? "glob"}:${rule.pattern}`,
+          )
+          .join("\n"),
+  );
+  const [minimumAgeSeconds, setMinimumAgeSeconds] = useState(
+    String(initial?.stability?.minimumAgeSeconds ?? 0),
+  );
+  const [modifiedThresholdSeconds, setModifiedThresholdSeconds] = useState(
+    String(initial?.stability?.modifiedThresholdSeconds ?? 0),
+  );
+  const [stableSizeDurationSeconds, setStableSizeDurationSeconds] = useState(
+    String(initial?.stability?.stableSizeDurationSeconds ?? 0),
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const selectedStorageId = storages.some((storage) => storage.id === storageId)
     ? storageId
@@ -1586,15 +1622,93 @@ export function AddResourceLibraryDrawer({
     goNext();
   };
 
+  /**
+   * Parse the operator's rule text into the exact backend rule shape.
+   *
+   * Each non-empty line is either a bare glob/path string or an explicit
+   * `kind:pattern` object, matching the managed document vocabulary. Invalid
+   * input is refused here rather than published as a weaker policy.
+   */
+  const parseRules = (
+    text: string,
+  ): readonly (string | ResourceLibraryScanRule)[] | null => {
+    const rules: (string | ResourceLibraryScanRule)[] = [];
+    for (const line of text.split("\n")) {
+      const value = line.trim();
+      if (value === "") continue;
+      const separator = value.indexOf(":");
+      const kind = separator > 0 ? value.slice(0, separator) : "";
+      const pattern = separator > 0 ? value.slice(separator + 1) : value;
+      if (pattern === "") return null;
+      rules.push(kind === "" ? pattern : { kind, pattern });
+    }
+    return rules;
+  };
+
+  const parseSeconds = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (trimmed === "") return 0;
+    if (!/^\d+$/.test(trimmed)) return null;
+    return Number(trimmed);
+  };
+
   const save = () => {
     if (!validateBasics() || !validateStorage()) return;
-    onSave({
+    const includeRules = parseRules(includeRulesText);
+    const excludeRules = parseRules(excludeRulesText);
+    const minimumAge = parseSeconds(minimumAgeSeconds);
+    const modifiedThreshold = parseSeconds(modifiedThresholdSeconds);
+    const stableSize = parseSeconds(stableSizeDurationSeconds);
+    if (
+      includeRules === null ||
+      excludeRules === null ||
+      minimumAge === null ||
+      modifiedThreshold === null ||
+      stableSize === null
+    ) {
+      setValidationError(
+        "整理规则或稳定性设置格式无效：规则每行一条（可用 kind:pattern），稳定性必须是非负整数秒。",
+      );
+      return;
+    }
+    setValidationError(null);
+    const candidate: {
+      resourceLibraryId: string;
+      name: string;
+      enabled: boolean;
+      storageId: string;
+      storagePath: string;
+      includeRules?: readonly (string | ResourceLibraryScanRule)[];
+      excludeRules?: readonly (string | ResourceLibraryScanRule)[];
+      stability?: ResourceLibraryStabilityPolicy;
+    } = {
       resourceLibraryId: resourceId.trim(),
       name: name.trim(),
       enabled,
       storageId: selectedStorageId,
       storagePath: rootPath.trim(),
-    });
+    };
+    // Only publish policy the operator actually supplied or edited, so an
+    // untouched field preserves the exact admitted value.
+    const policyEdited =
+      includeRules.length > 0 ||
+      excludeRules.length > 0 ||
+      minimumAge > 0 ||
+      modifiedThreshold > 0 ||
+      stableSize > 0 ||
+      initial?.includeRules !== undefined ||
+      initial?.excludeRules !== undefined ||
+      initial?.stability !== undefined;
+    if (policyEdited) {
+      if (includeRules.length > 0) candidate.includeRules = includeRules;
+      if (excludeRules.length > 0) candidate.excludeRules = excludeRules;
+      candidate.stability = {
+        minimumAgeSeconds: minimumAge,
+        modifiedThresholdSeconds: modifiedThreshold,
+        stableSizeDurationSeconds: stableSize,
+      };
+    }
+    onSave(candidate);
   };
 
   const selectedStorage = storages.find(
@@ -1728,6 +1842,70 @@ export function AddResourceLibraryDrawer({
               }}
             />
             <small>仅填写 Storage 内的相对路径，不会访问任意主机路径</small>
+            <label htmlFor="mf-library-include-rules">包含规则</label>
+            <textarea
+              id="mf-library-include-rules"
+              rows={3}
+              value={includeRulesText}
+              onChange={(event) => {
+                setValidationError(null);
+                setIncludeRulesText(event.target.value);
+              }}
+            />
+            <small>
+              每行一条规则；可写 glob 或 path/filename/extension/directory/regex
+              规则， 也可写成 kind:pattern。留空表示不限制。
+            </small>
+            <label htmlFor="mf-library-exclude-rules">排除规则</label>
+            <textarea
+              id="mf-library-exclude-rules"
+              rows={3}
+              value={excludeRulesText}
+              onChange={(event) => {
+                setValidationError(null);
+                setExcludeRulesText(event.target.value);
+              }}
+            />
+            <small>
+              每行一条规则；留空保留系统默认排除规则（临时文件、回收站等）。
+            </small>
+            <label htmlFor="mf-library-min-age">最小文件年龄（秒）</label>
+            <input
+              id="mf-library-min-age"
+              inputMode="numeric"
+              value={minimumAgeSeconds}
+              onChange={(event) => {
+                setValidationError(null);
+                setMinimumAgeSeconds(event.target.value);
+              }}
+            />
+            <label htmlFor="mf-library-modified-threshold">
+              最后修改阈值（秒）
+            </label>
+            <input
+              id="mf-library-modified-threshold"
+              inputMode="numeric"
+              value={modifiedThresholdSeconds}
+              onChange={(event) => {
+                setValidationError(null);
+                setModifiedThresholdSeconds(event.target.value);
+              }}
+            />
+            <label htmlFor="mf-library-stable-size">
+              稳定大小持续时间（秒）
+            </label>
+            <input
+              id="mf-library-stable-size"
+              inputMode="numeric"
+              value={stableSizeDurationSeconds}
+              onChange={(event) => {
+                setValidationError(null);
+                setStableSizeDurationSeconds(event.target.value);
+              }}
+            />
+            <small>
+              0 表示不等待；大于 0 时发现阶段会按真实间隔重新观察文件。
+            </small>
           </div>
         )}
         {step === 3 && (
@@ -1953,14 +2131,20 @@ export function StorageFilesPage() {
             // resubmitting a duplicate admission.
             const readback = await fetchOrganizeDiscoveries(token);
             if (readback.ok) {
-              const signature = [...paths].sort().join("\n");
+              // Reconcile on the backend-published admission identity — the
+              // exact library/Storage binding, the exact immutable pin and the
+              // exact scope set — never on a path-string guess. The scope is
+              // compared as a *set*, exactly like the backend's own canonical
+              // signature, so submission order cannot create a second walk.
+              const requested = new Set(paths);
               const candidate = readback.items.find(
                 (item) =>
                   item.resourceLibraryId === libraryId &&
                   discoveryIsOpen(item) &&
-                  [...item.selection.scopes.map((scope) => scope.path)]
-                    .sort()
-                    .join("\n") === signature,
+                  item.selection.scopes.length === requested.size &&
+                  item.selection.scopes.every((scope) =>
+                    requested.has(scope.path),
+                  ),
               );
               if (candidate !== undefined) {
                 setPreviewError(null);

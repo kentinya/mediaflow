@@ -127,6 +127,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
+    discovery_scope_signature,
 )
 from mediaflow.domain.media_evidence import (
     PipelineEvidence,
@@ -9947,7 +9948,8 @@ class SQLiteTaskRepository:
         "configuration_snapshot_id, configuration_snapshot_digest, status, version, "
         "budgets_json, progress_json, sources_json, intent_id, frozen_at, "
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
-        "pause_requested, cancel_requested, error, created_at, updated_at"
+        "pause_requested, cancel_requested, error, created_at, updated_at, "
+        "next_observation_at, admission_signature"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -9959,7 +9961,8 @@ class SQLiteTaskRepository:
             try:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?)",
                     self._discovery_values(discovery),
                 )
             except sqlite3.IntegrityError as error:
@@ -9968,6 +9971,59 @@ class SQLiteTaskRepository:
                     details={"discoveryId": discovery.discovery_id},
                 ) from error
         return self.get_media_discovery(discovery.discovery_id)
+
+    def find_open_media_discovery(
+        self,
+        *,
+        actor: str,
+        resource_library_id: str,
+        storage_id: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+        scope_signature: str,
+    ) -> MediaDiscovery | None:
+        """One already durable *open* discovery for this exact admission.
+
+        This is a durable identity lookup, not a recent-list scan: an equivalent
+        open admission is reconciled even after it has long left every bounded
+        list window.  Terminal and frozen records are excluded, so deliberate
+        successor work is always a new discovery, and the lookup is bound to the
+        actor, the exact library/Storage binding and the immutable pin, so two
+        libraries with the same relative path can never answer for each other.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        signature = json.dumps(
+            {
+                "actor": actor,
+                "resourceLibraryId": resource_library_id,
+                "storageId": storage_id,
+                "snapshotId": snapshot_id,
+                "snapshotDigest": snapshot_digest,
+                "scope": scope_signature,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries WHERE admission_signature=? "
+                "AND intent_id IS NULL AND frozen_at IS NULL "
+                "AND status NOT IN (?, ?, ?, ?) "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                (
+                    signature,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                    DiscoveryStatus.FAILED.value,
+                    DiscoveryStatus.CANCELLED.value,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._load_media_discovery_locked(row["discovery_id"])
 
     def get_media_discovery(self, discovery_id: str) -> MediaDiscovery | None:
         if not isinstance(discovery_id, str) or not discovery_id.strip():
@@ -10035,7 +10091,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                 "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
-                "pause_requested=?, cancel_requested=?, error=?, updated_at=? "
+                "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
+                "next_observation_at=? "
                 "WHERE discovery_id=? AND version=?",
                 (
                     discovery.status.value,
@@ -10050,6 +10107,11 @@ class SQLiteTaskRepository:
                     1 if discovery.cancel_requested else 0,
                     discovery.error,
                     discovery.updated_at.isoformat(),
+                    (
+                        discovery.next_observation_at.isoformat()
+                        if discovery.next_observation_at is not None
+                        else None
+                    ),
                     discovery.discovery_id,
                     expected_version,
                 ),
@@ -10134,11 +10196,19 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                # A waiting discovery is claimable only once a later observation
+                # could actually change its stability verdict.  Reclaiming it
+                # immediately would spin, burn the durable traversal budget
+                # while traversing nothing and starve every other resident
+                # command, so the durable due time gates the pickup instead of
+                # being re-derived from the lease.
+                "AND (next_observation_at IS NULL OR next_observation_at <= ?) "
                 "ORDER BY created_at, discovery_id LIMIT 1",
                 (
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    now.isoformat(),
                     now.isoformat(),
                 ),
             ).fetchone()
@@ -10148,7 +10218,8 @@ class SQLiteTaskRepository:
                 "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
                 "claim_expires_at=?, attempts=attempts+1, updated_at=? "
                 "WHERE discovery_id=? AND status IN (?, ?, ?) "
-                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "AND (next_observation_at IS NULL OR next_observation_at <= ?)",
                 (
                     worker_id,
                     claim_token,
@@ -10158,6 +10229,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    now.isoformat(),
                     now.isoformat(),
                 ),
             )
@@ -10322,7 +10394,8 @@ class SQLiteTaskRepository:
         values = tuple(observations)
         columns = (
             "status=?, version=?, budgets_json=?, progress_json=?, sources_json=?, "
-            "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?"
+            "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?, "
+            "next_observation_at=?"
         )
         parameters: list[object] = [
             discovery.status.value,
@@ -10335,6 +10408,11 @@ class SQLiteTaskRepository:
             discovery.attempts,
             discovery.error,
             discovery.updated_at.isoformat(),
+            (
+                discovery.next_observation_at.isoformat()
+                if discovery.next_observation_at is not None
+                else None
+            ),
         ]
         if claim_token is None:
             columns += ", pause_requested=?, cancel_requested=?"
@@ -10506,6 +10584,38 @@ class SQLiteTaskRepository:
             discovery.error,
             discovery.created_at.isoformat(),
             discovery.updated_at.isoformat(),
+            (
+                discovery.next_observation_at.isoformat()
+                if discovery.next_observation_at is not None
+                else None
+            ),
+            self._admission_signature(discovery),
+        )
+
+    @staticmethod
+    def _admission_signature(discovery: MediaDiscovery) -> str:
+        """The durable actor/binding/pin/scope identity of one admission.
+
+        The signature is stored as a generated column value rather than
+        recomputed by scanning a recent-list window, so an equivalent open
+        admission is reconciled however long ago it was created and however many
+        unrelated discoveries were admitted since.  It contains no secret and no
+        physical Storage path: the actor, the enabled library/Storage binding,
+        the immutable configuration pin and the exact canonical scope.
+        """
+
+        return json.dumps(
+            {
+                "actor": discovery.actor,
+                "resourceLibraryId": discovery.resource_library_id,
+                "storageId": discovery.storage_id,
+                "snapshotId": discovery.snapshot_id,
+                "snapshotDigest": discovery.snapshot_digest,
+                "scope": discovery_scope_signature(discovery.progress.scope_entries),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
 
     def _load_media_discovery_locked(self, discovery_id: str) -> MediaDiscovery | None:
@@ -10542,6 +10652,7 @@ class SQLiteTaskRepository:
                     "error": row["error"],
                     "createdAt": row["created_at"],
                     "updatedAt": row["updated_at"],
+                    "nextObservationAt": row["next_observation_at"],
                 }
             )
         except Exception as error:
@@ -12924,7 +13035,9 @@ class SQLiteTaskRepository:
                     pause_requested INTEGER NOT NULL DEFAULT 0,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    next_observation_at TEXT,
+                    admission_signature TEXT
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -13470,6 +13583,31 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         "ALTER TABLE media_discovery_observations ADD COLUMN stable_since TEXT"
                     )
+            discovery_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(media_discoveries)"
+                ).fetchall()
+            }
+            if "next_observation_at" not in discovery_columns:
+                # Additive: a prior-schema discovery keeps every existing column
+                # and simply becomes immediately claimable, exactly as before.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN next_observation_at TEXT"
+                )
+            if "admission_signature" not in discovery_columns:
+                # Additive: a prior-schema row keeps its identity and is simply
+                # not reconcilable by signature.  Existing open work stays
+                # readable and finishable; the operator can still stop it and
+                # start a deliberate new discovery, which is the documented
+                # safe-stop behavior for unsupported legacy discovery.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN admission_signature TEXT"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS media_discoveries_admission "
+                "ON media_discoveries(admission_signature, status)"
+            )
             manual_item_columns = {
                 row["name"]
                 for row in self._connection.execute(

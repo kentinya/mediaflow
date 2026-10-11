@@ -3368,6 +3368,7 @@ function organizeDiscoveryDocument(discovery) {
       },
     },
     cancelRequested: discovery.status === "cancelled",
+    configurationSnapshotId: "active-e2e-1",
     createdAt: MANUAL_RECORDED_AT,
     discoveryId: ORGANIZE_DISCOVERY_ID,
     execution: "not_available_from_discovery",
@@ -3381,6 +3382,7 @@ function organizeDiscoveryDocument(discovery) {
       : discovery.limited === true
         ? "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset"
         : "the resident Processing Worker continues this bounded discovery",
+    nextObservationAt: null,
     pauseRequested: discovery.status === "paused",
     primarySourceCount: discovery.paths.length,
     progress: {
@@ -3426,6 +3428,7 @@ function organizeDiscoveryDocument(discovery) {
       visitedEntries: discovery.paths.length,
     },
     resourceLibraryId: discovery.libraryId,
+    storageId: "storage-1",
     selection: {
       scopeCount: discovery.paths.length,
       scopes: discovery.paths.map((path) => ({

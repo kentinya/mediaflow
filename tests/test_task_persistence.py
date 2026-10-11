@@ -1167,6 +1167,85 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
                 # pre-existing admitted manual intent still reads back.
                 self._assert_discovery_round_trip(repository)
 
+    def test_schema45_upgrades_additively_with_durable_wait_and_admission_identity(
+        self,
+    ) -> None:
+        """A schema-45 database gains the two additive discovery columns.
+
+        The real prior implementation (schema 45) had neither the durable
+        stability re-observation deadline nor the persisted admission identity.
+        Reopening must add both without changing the schema marker, without
+        touching an existing row's identity, and without making legacy open work
+        unreadable: a legacy row simply keeps no due time (immediately
+        claimable) and no admission signature (not reconcilable by signature).
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-45.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                connection = repository._connection
+                columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(media_discoveries)").fetchall()
+                }
+                self.assertIn("next_observation_at", columns)
+                self.assertIn("admission_signature", columns)
+                # Simulate the real prior schema by dropping the two additive
+                # columns, exactly as a schema-45 database created before this
+                # correction would have looked.
+                connection.execute("DROP INDEX IF EXISTS media_discoveries_admission")
+                connection.execute("ALTER TABLE media_discoveries DROP COLUMN next_observation_at")
+                connection.execute("ALTER TABLE media_discoveries DROP COLUMN admission_signature")
+                connection.execute(
+                    "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)", (45,)
+                )
+                connection.commit()
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    45,
+                    connection.execute(
+                        "SELECT version FROM schema_version WHERE component='runtime'"
+                    ).fetchone()[0],
+                )
+                prior_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(media_discoveries)").fetchall()
+                }
+            self.assertNotIn("next_observation_at", prior_columns)
+            self.assertNotIn("admission_signature", prior_columns)
+
+            with SQLiteTaskRepository(database) as repository:
+                # The additive upgrade did not need a version bump: the marker
+                # stays exactly where the prior implementation left it.
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                columns = {
+                    row[1]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(media_discoveries)"
+                    ).fetchall()
+                }
+                self.assertIn("next_observation_at", columns)
+                self.assertIn("admission_signature", columns)
+                indexes = {
+                    row["name"]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' "
+                        "AND name LIKE 'media_discoveries%'"
+                    ).fetchall()
+                }
+                self.assertIn("media_discoveries_admission", indexes)
+                # The durable identity lookup is usable after the upgrade.
+                self.assertIsNone(
+                    repository.find_open_media_discovery(
+                        actor="operator",
+                        resource_library_id="library",
+                        storage_id="storage",
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                        scope_signature="[]",
+                    )
+                )
+
     @staticmethod
     def _assert_discovery_round_trip(repository) -> None:
         from mediaflow.domain.media_discovery import (

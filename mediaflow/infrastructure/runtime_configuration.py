@@ -17,7 +17,15 @@ from mediaflow.domain.automation import (
     IntervalSchedule,
     ScheduleDefinition,
 )
-from mediaflow.domain.library import DEFAULT_MEDIA_EXTENSIONS, MediaLibrary, ResourceLibrary
+from mediaflow.domain.library import (
+    DEFAULT_EXCLUDE_RULES,
+    DEFAULT_MEDIA_EXTENSIONS,
+    FileStabilityPolicy,
+    MediaLibrary,
+    ResourceLibrary,
+    ScanRule,
+    ScanRuleKind,
+)
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.notification import WebhookDefinition
 from mediaflow.domain.security import (
@@ -313,6 +321,13 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
     resources = []
     display_roots = []
     for item in _objects(document, "resourceLibraries"):
+        unknown = set(item).difference(_RESOURCE_LIBRARY_FIELDS)
+        if unknown:
+            # A silently ignored ResourceLibrary field could hide an
+            # include/exclude/depth/stability policy the operator believes is
+            # active.  The loader therefore refuses an unsupported field
+            # instead of publishing a runtime that does not consume it.
+            raise ValueError(f"resourceLibraries contains unsupported field {sorted(unknown)[0]!r}")
         storage_id = _required(item, "storageId")
         _reference(storage_id, storage_ids, "ResourceLibrary Storage")
         display_root = item.get("displayRootPath", item.get("rootPath"))
@@ -338,6 +353,11 @@ def load_runtime_configuration(document: Any) -> RuntimeConfiguration:
                 enabled=bool(item.get("enabled", True)),
                 file_extensions=tuple(item.get("extensions", ())) or DEFAULT_MEDIA_EXTENSIONS,
                 max_depth=item.get("maxDepth"),
+                include_rules=_resource_scan_rules(item, "includeRules"),
+                exclude_rules=_resource_scan_rules(
+                    item, "excludeRules", default=DEFAULT_EXCLUDE_RULES
+                ),
+                stability_policy=_resource_stability_policy(item),
             )
         )
         if display_root is not None:
@@ -944,6 +964,123 @@ def _objects(document: dict, key: str) -> list[dict]:
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ValueError(f"runtime configuration {key!r} must be an array of objects")
     return value
+
+
+#: The ResourceLibrary keys the production loader understands.  A managed
+#: document that carries an unknown ResourceLibrary field is refused rather
+#: than silently ignored, exactly like the strict ``automation``/
+#: ``workflowRetry``/``operationalLogging`` sections: an operator who saved an
+#: include/exclude/depth/stability policy must be able to trust that the
+#: runtime either consumes it or reports it as unsupported.  A silently dropped
+#: filter is the difference between "this file was excluded by policy" and
+#: "this file was organized although policy excluded it".
+_RESOURCE_LIBRARY_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "storageId",
+        "storagePath",
+        "displayRootPath",
+        # A retained legacy alias for ``displayRootPath``: an existing document
+        # that still carries it keeps loading exactly as before.
+        "rootPath",
+        "enabled",
+        "extensions",
+        "maxDepth",
+        "includeRules",
+        "excludeRules",
+        "stability",
+    }
+)
+
+_STABILITY_FIELDS = frozenset(
+    {
+        "minimumAgeSeconds",
+        "modifiedThresholdSeconds",
+        "stableSizeDurationSeconds",
+    }
+)
+
+
+def _resource_scan_rules(
+    item: dict, key: str, *, default: tuple[str, ...] = ()
+) -> tuple[ScanRule | str, ...]:
+    """The configured include/exclude rules of one ResourceLibrary.
+
+    A rule is either a bounded glob/path string or an explicit
+    ``{"kind": ..., "pattern": ...}`` object, so the existing ``ScanRuleKind``
+    vocabulary (path/filename/extension/directory/glob/regex) is preserved
+    without inventing a second rule language.  An absent key keeps the legacy
+    default: no include rules and the shared default exclude rules.
+    """
+
+    raw = item.get(key)
+    if raw is None:
+        return tuple(default)
+    if not isinstance(raw, list):
+        raise ValueError(f"ResourceLibrary {key} must be an array of rules")
+    rules: list[ScanRule | str] = []
+    for value in raw:
+        if isinstance(value, str):
+            if not value or "\x00" in value:
+                raise ValueError(f"ResourceLibrary {key} rule must be a non-empty string")
+            rules.append(value)
+            continue
+        if isinstance(value, dict):
+            allowed = {"kind", "pattern"}
+            unknown = set(value).difference(allowed)
+            if unknown:
+                raise ValueError(
+                    f"ResourceLibrary {key} rule contains unsupported field {sorted(unknown)[0]!r}"
+                )
+            pattern = value.get("pattern")
+            if not isinstance(pattern, str) or not pattern or "\x00" in pattern:
+                raise ValueError(f"ResourceLibrary {key} rule pattern must be a non-empty string")
+            try:
+                kind = ScanRuleKind(str(value.get("kind", ScanRuleKind.GLOB.value)))
+            except ValueError as error:
+                raise ValueError(
+                    f"ResourceLibrary {key} rule kind is not a supported scan rule kind"
+                ) from error
+            try:
+                rules.append(ScanRule(kind, pattern))
+            except (ValueError, re.error) as error:
+                raise ValueError(f"ResourceLibrary {key} rule is invalid") from error
+            continue
+        raise ValueError(f"ResourceLibrary {key} rule must be a string or an object")
+    return tuple(rules)
+
+
+def _resource_stability_policy(item: dict) -> FileStabilityPolicy:
+    """The configured file-stability policy of one ResourceLibrary.
+
+    An absent ``stability`` object keeps the legacy zero-duration default, so
+    every existing document behaves exactly as before.  A present object is
+    strict: unknown keys, non-integers and negative durations are refused
+    instead of being silently coerced into a weaker policy.
+    """
+
+    raw = item.get("stability")
+    if raw is None:
+        return FileStabilityPolicy()
+    if not isinstance(raw, dict):
+        raise ValueError("ResourceLibrary stability must be an object")
+    unknown = set(raw).difference(_STABILITY_FIELDS)
+    if unknown:
+        raise ValueError(
+            f"ResourceLibrary stability contains unsupported field {sorted(unknown)[0]!r}"
+        )
+    values: dict[str, int] = {}
+    for key in _STABILITY_FIELDS:
+        value = raw.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"ResourceLibrary stability {key} must be a non-negative integer")
+        values[key] = value
+    return FileStabilityPolicy(
+        minimum_age_seconds=values["minimumAgeSeconds"],
+        modified_threshold_seconds=values["modifiedThresholdSeconds"],
+        stable_size_duration_seconds=values["stableSizeDurationSeconds"],
+    )
 
 
 def _required(document: dict, key: str) -> str:

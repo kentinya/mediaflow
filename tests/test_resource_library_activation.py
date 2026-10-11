@@ -250,6 +250,148 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 service.active().document["resourceLibraries"][0]["name"], "Edited Source"
             )
 
+    def test_save_publishes_and_production_loads_the_policy_fields(self) -> None:
+        """A44-7: the native Save surface publishes a real, consumed policy.
+
+        The Save request carries the supported include/exclude/stability policy;
+        the successor Active document must contain exactly that policy, and the
+        production runtime loader must consume it into the domain
+        ResourceLibrary rather than silently ignoring it.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, objects, _active, _runtime, api = self._active_api(root)
+            body = self._save_body(
+                resourceLibraryId="policy-library",
+                includeRules=["Movies/**"],
+                excludeRules=[
+                    {"kind": "directory", "pattern": "Movies/Excluded"},
+                    "*.tmp",
+                ],
+                stability={
+                    "minimumAgeSeconds": 5,
+                    "modifiedThresholdSeconds": 10,
+                    "stableSizeDurationSeconds": 60,
+                },
+            )
+            status, saved = request(api, "/api/v1/resource-libraries", method="POST", body=body)
+            self.assertEqual(200, status, saved)
+            self.assertEqual(["Movies/**"], saved["resourceLibrary"]["includeRules"], saved)
+            self.assertEqual(60, saved["resourceLibrary"]["stability"]["stableSizeDurationSeconds"])
+            stored = next(
+                item
+                for item in service.active().document["resourceLibraries"]
+                if item["id"] == "policy-library"
+            )
+            self.assertEqual(["Movies/**"], stored["includeRules"])
+            self.assertEqual(10, stored["stability"]["modifiedThresholdSeconds"])
+            from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+
+            runtime = load_runtime_configuration(service.active().document)
+            library = next(
+                item for item in runtime.resource_libraries if item.library_id == "policy-library"
+            )
+            self.assertEqual(("Movies/**",), tuple(rule.pattern for rule in library.include_rules))
+            self.assertEqual(
+                ("Movies/Excluded", "*.tmp"),
+                tuple(rule.pattern for rule in library.exclude_rules),
+            )
+            self.assertEqual(60, library.stability_policy.stable_size_duration_seconds)
+            # The default exclude rules are preserved when the field is omitted.
+            legacy_status, legacy = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(resourceLibraryId="legacy-library"),
+            )
+            self.assertEqual(200, legacy_status, legacy)
+            legacy_runtime = load_runtime_configuration(service.active().document)
+            legacy_library = next(
+                item
+                for item in legacy_runtime.resource_libraries
+                if item.library_id == "legacy-library"
+            )
+            from mediaflow.domain.library import DEFAULT_EXCLUDE_RULES
+
+            self.assertEqual(
+                tuple(DEFAULT_EXCLUDE_RULES),
+                tuple(rule.pattern for rule in legacy_library.exclude_rules),
+            )
+
+    def test_edit_projection_surfaces_and_preserves_the_policy_fields(self) -> None:
+        """A44-7: the edit surface shows the exact admitted policy."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            status, saved = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(
+                    resourceLibraryId="policy-library",
+                    includeRules=["Movies/**"],
+                    stability={"stableSizeDurationSeconds": 30},
+                ),
+            )
+            self.assertEqual(200, status, saved)
+            status, projection = request(api, "/api/v1/resource-libraries/policy-library/edit")
+            self.assertEqual(200, status, projection)
+            self.assertEqual(["Movies/**"], projection["resourceLibrary"]["includeRules"])
+            self.assertEqual(
+                30, projection["resourceLibrary"]["stability"]["stableSizeDurationSeconds"]
+            )
+            # A focused edit that omits the policy preserves the exact admitted
+            # values rather than silently dropping them.
+            active = projection["active"]
+            status, edited = request(
+                api,
+                "/api/v1/resource-libraries/policy-library",
+                method="PUT",
+                body={
+                    "resourceLibraryId": "policy-library",
+                    "name": "Renamed policy library",
+                    "enabled": True,
+                    "storageId": "source-storage",
+                    "storagePath": "incoming/new",
+                    "expectedRevisionId": active["revisionId"],
+                    "expectedVersion": active["version"],
+                    "expectedDigest": active["digest"],
+                },
+            )
+            self.assertEqual(200, status, edited)
+            stored = next(
+                item
+                for item in service.active().document["resourceLibraries"]
+                if item["id"] == "policy-library"
+            )
+            self.assertEqual(["Movies/**"], stored["includeRules"])
+            self.assertEqual(30, stored["stability"]["stableSizeDurationSeconds"])
+
+    def test_an_unsupported_policy_shape_is_refused_without_publication(self) -> None:
+        """A44-7: a malformed policy is refused before any Active change."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            before = service.active().revision_id
+            for overrides in (
+                {"stability": {"stableSizeDurationSeconds": -1}},
+                {"stability": {"unknownSeconds": 1}},
+                {"excludeRules": [{"kind": "not-a-kind", "pattern": "x"}]},
+                {"excludeRules": [{"pattern": ""}]},
+                {"includeRules": "Movies/**"},
+            ):
+                status, refused = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="bad-library", **overrides),
+                )
+                self.assertEqual(400, status, (overrides, refused))
+            self.assertEqual(before, service.active().revision_id)
+
     def test_edit_projection_uses_revision_sequence_after_multiple_activations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

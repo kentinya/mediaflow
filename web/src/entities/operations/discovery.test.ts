@@ -38,6 +38,7 @@ function payload(overrides: Record<string, unknown> = {}) {
       },
     },
     cancelRequested: false,
+    configurationSnapshotId: "active-1",
     createdAt: "2026-01-01T00:00:00+00:00",
     discoveryId: "d-1",
     execution: "not_available_from_discovery",
@@ -48,6 +49,7 @@ function payload(overrides: Record<string, unknown> = {}) {
     journey: "discovery",
     nextAction:
       "the resident Processing Worker continues this bounded discovery",
+    nextObservationAt: null,
     pauseRequested: false,
     primarySourceCount: 2,
     progress: {
@@ -80,6 +82,7 @@ function payload(overrides: Record<string, unknown> = {}) {
       visitedEntries: 12,
     },
     resourceLibraryId: "library",
+    storageId: "source",
     selection: {
       scopeCount: 2,
       scopes: [
@@ -251,6 +254,90 @@ describe("normalizeOrganizeDiscovery", () => {
     );
     expect(model.selection.scopes[0]?.path).toBe("电影/SSH ");
     expect(model.sources[0]?.path).toBe("电影/SSH /Movie.mkv");
+  });
+
+  it("accepts a legal long path and long filename at their real bounds", () => {
+    // A44-9: the backend admits a legal Local path up to 4096 characters and a
+    // name up to 255 characters. Normalizing those as 1024-character display
+    // copy rejected a whole legal readback because of one long path.
+    const longPath = `Movies/${"d".repeat(1500)}/Film.2001.mkv`;
+    const longName = `${"L".repeat(250)}.mkv`;
+    const model = normalizeOrganizeDiscovery(
+      payload({
+        selection: {
+          scopeCount: 1,
+          scopes: [{ kind: "directory", path: "Movies" }],
+        },
+        progress: {
+          ...payload()["progress"],
+          findings: [
+            {
+              depth: 1,
+              kind: "primary",
+              path: longPath,
+              reason: "eligible_primary_source",
+            },
+          ],
+        },
+        sources: [
+          {
+            extension: "mkv",
+            filename: longName,
+            modifiedAt: "2026-01-01T00:00:00+00:00",
+            path: longPath,
+            size: 1,
+          },
+        ],
+      }),
+    );
+    expect(model.sources[0]?.path).toBe(longPath);
+    expect(model.sources[0]?.filename).toBe(longName);
+    expect(model.progress.findings[0]?.path).toBe(longPath);
+  });
+
+  it("still fails closed beyond the real path and name bounds", () => {
+    // Identity fields fail closed through the shared strict normalizer, which
+    // raises rather than truncating an over-long path or name.
+    expect(() =>
+      normalizeOrganizeDiscovery(
+        payload({
+          sources: [
+            {
+              extension: "mkv",
+              filename: "Movie.mkv",
+              modifiedAt: "2026-01-01T00:00:00+00:00",
+              path: "M".repeat(4097),
+              size: 1,
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/sources\[0\]\.path/);
+    expect(() =>
+      normalizeOrganizeDiscovery(
+        payload({
+          sources: [
+            {
+              extension: "mkv",
+              filename: `${"L".repeat(256)}.mkv`,
+              modifiedAt: "2026-01-01T00:00:00+00:00",
+              path: "Movies/Movie.mkv",
+              size: 1,
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/sources\[0\]\.filename/);
+  });
+
+  it("publishes the exact admission identity and the durable wait deadline", () => {
+    const model = normalizeOrganizeDiscovery(
+      payload({ nextObservationAt: "2026-01-01T00:01:00+00:00" }),
+    );
+    expect(model.resourceLibraryId).toBe("library");
+    expect(model.storageId).toBe("source");
+    expect(model.configurationSnapshotId).toBe("active-1");
+    expect(model.nextObservationAt).toBe("2026-01-01T00:01:00+00:00");
   });
 
   it("fails closed for an unknown status or malformed scope kind", () => {

@@ -10,6 +10,12 @@ from enum import StrEnum
 MAX_MANUAL_INTENT_ITEMS = 100
 MAX_MANUAL_ID_LENGTH = 128
 MAX_MANUAL_TEXT_LENGTH = 512
+#: A real Local filename is bounded by the filesystem's 255-byte name limit,
+#: not by the 128-character identity bound that server-generated IDs share.
+#: Reusing the ID bound for a filename silently refused a legal long name and
+#: stranded its whole discovery batch, so the two bounds are separate: the
+#: exact filename is preserved up to the real Storage limit.
+MAX_MANUAL_FILENAME_LENGTH = 255
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
 _MANUAL_OPERATIONS = {
     "create_directory",
@@ -266,13 +272,15 @@ class ManualSourceIdentity:
     occurrence_state: str = "legacy"
 
     def __post_init__(self) -> None:
-        for name, value in (
-            ("file ID", self.file_id),
-            ("Storage ID", self.storage_id),
-            ("ResourceLibrary ID", self.resource_library_id),
-            ("filename", self.filename),
+        for name, value, bound in (
+            ("file ID", self.file_id, MAX_MANUAL_ID_LENGTH),
+            ("Storage ID", self.storage_id, MAX_MANUAL_ID_LENGTH),
+            ("ResourceLibrary ID", self.resource_library_id, MAX_MANUAL_ID_LENGTH),
+            # A real Storage filename uses its own filesystem bound; the exact
+            # name is preserved, never truncated or trimmed to fit an ID limit.
+            ("filename", self.filename, MAX_MANUAL_FILENAME_LENGTH),
         ):
-            if not isinstance(value, str) or not value.strip() or len(value) > MAX_MANUAL_ID_LENGTH:
+            if not isinstance(value, str) or not value.strip() or len(value) > bound:
                 raise ValueError(f"manual source {name} is invalid")
         if (
             not isinstance(self.path, str)

@@ -15,6 +15,15 @@ import {
 } from "../shared/normalize";
 
 export const MAX_DISCOVERY_TEXT = 1024;
+/**
+ * A ResourceLibrary-relative path and an exact entry name are identity, not
+ * display copy: the backend admits a legal Local path up to 4096 bytes and a
+ * name up to 255 characters, and the page must render those exact values.
+ * Normalizing them at the 1024 display bound rejected a whole legal readback
+ * because of one long path, so paths and names carry their own bound.
+ */
+export const MAX_DISCOVERY_PATH = 4096;
+export const MAX_DISCOVERY_NAME = 255;
 export const MAX_DISCOVERY_FINDINGS = 100;
 export const MAX_DISCOVERY_SOURCES = 100;
 export const MAX_DISCOVERY_SCOPES = 100;
@@ -96,6 +105,10 @@ export interface OrganizeDiscoveryAction {
 export interface OrganizeDiscoveryModel {
   readonly discoveryId: string;
   readonly resourceLibraryId: string;
+  /** The exact Storage binding of the admission. */
+  readonly storageId: string;
+  /** The exact immutable Active configuration pin the admission froze. */
+  readonly configurationSnapshotId: string;
   readonly status: OrganizeDiscoveryStatus;
   readonly version: number;
   readonly selection: {
@@ -108,6 +121,8 @@ export interface OrganizeDiscoveryModel {
   readonly frozen: boolean;
   readonly pauseRequested: boolean;
   readonly cancelRequested: boolean;
+  /** The durable instant waiting work may be re-observed, or `null`. */
+  readonly nextObservationAt: string | null;
   readonly worker: {
     readonly ready: boolean;
     readonly condition: string;
@@ -165,6 +180,16 @@ function optionalText(
   return normalizeBoundedText(value, field, MAX_DISCOVERY_TEXT);
 }
 
+/** An optional exact ResourceLibrary-relative path, bounded as identity. */
+function optionalPath(
+  source: Record<string, unknown>,
+  field: string,
+): string | null {
+  const value = source[field];
+  if (value === null || value === undefined) return null;
+  return normalizeIdentityText(value, field, MAX_DISCOVERY_PATH);
+}
+
 function normalizeAction(
   source: Record<string, unknown>,
   field: string,
@@ -210,7 +235,7 @@ export function normalizeOrganizeDiscovery(
       path: normalizeIdentityText(
         scope["path"],
         `selection.scopes[${index}].path`,
-        MAX_DISCOVERY_TEXT,
+        MAX_DISCOVERY_PATH,
       ),
       kind,
     } as OrganizeDiscoveryScope;
@@ -295,7 +320,7 @@ export function normalizeOrganizeDiscovery(
           path: normalizeIdentityText(
             finding["path"],
             `progress.findings[${index}].path`,
-            MAX_DISCOVERY_TEXT,
+            MAX_DISCOVERY_PATH,
           ),
           reason: boundedText(finding, "reason"),
           depth: typeof finding["depth"] === "number" ? finding["depth"] : 0,
@@ -309,11 +334,13 @@ export function normalizeOrganizeDiscovery(
             reason["count"],
             `progress.reasons[${index}].count`,
           ),
-          examplePath: optionalText(reason, "examplePath"),
+          examplePath: optionalPath(reason, "examplePath"),
         };
       }),
       message: optionalText(progressRecord, "message") ?? "",
     },
+    storageId: boundedText(record, "storageId"),
+    configurationSnapshotId: boundedText(record, "configurationSnapshotId"),
     primarySourceCount: normalizeBoundedCount(
       record["primarySourceCount"],
       "primarySourceCount",
@@ -322,6 +349,7 @@ export function normalizeOrganizeDiscovery(
     frozen: record["frozen"] === true,
     pauseRequested: record["pauseRequested"] === true,
     cancelRequested: record["cancelRequested"] === true,
+    nextObservationAt: optionalText(record, "nextObservationAt"),
     worker: {
       ready: worker["ready"] === true,
       condition: optionalText(worker, "condition") ?? "unknown",
@@ -340,12 +368,12 @@ export function normalizeOrganizeDiscovery(
         path: normalizeIdentityText(
           source["path"],
           `sources[${index}].path`,
-          MAX_DISCOVERY_TEXT,
+          MAX_DISCOVERY_PATH,
         ),
         filename: normalizeIdentityText(
           source["filename"],
           `sources[${index}].filename`,
-          MAX_DISCOVERY_TEXT,
+          MAX_DISCOVERY_NAME,
         ),
         extension: normalizeBoundedText(
           source["extension"],

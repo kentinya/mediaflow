@@ -532,7 +532,11 @@ class ProcessingWorkerService:
         else:
             condition = WorkerReadiness.UNSUPPORTED_COMMAND.value
             durable_state = "live workers do not advertise the requested command"
-            next_action = "start or upgrade a resident worker that supports this transfer command"
+            next_action = (
+                "start or upgrade a resident worker that supports bounded discovery"
+                if "media_discovery" in commands
+                else "start or upgrade a resident worker that supports this transfer command"
+            )
         return {
             "ready": bool(eligible),
             "condition": condition,

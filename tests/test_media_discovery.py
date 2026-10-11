@@ -190,6 +190,7 @@ class _DiscoveryFixture(unittest.TestCase):
         extensions: tuple[str, ...] = ("mkv", "mp4"),
         exclude_rules: tuple[str, ...] = (),
         second_library: bool = False,
+        attachments: bool = False,
     ) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"]["databasePath"] = str(self.database)
@@ -260,10 +261,11 @@ class _DiscoveryFixture(unittest.TestCase):
                 "enabled": True,
             },
         ]
-        # The configured include/exclude/stability policy is not part of the
-        # managed document schema (the runtime loads only extensions and
-        # maxDepth).  The test injects it on the loaded runtime object so the
-        # shared pure filter/stability semantics can be exercised directly.
+        if attachments:
+            # The real managed attachment policy, published and production-
+            # loaded exactly like the Web/API Save surface would.
+            for policy in document.get("organizePolicies", []):
+                policy["attachments"]["enabled"] = True
         return document
 
     @contextmanager
@@ -276,6 +278,7 @@ class _DiscoveryFixture(unittest.TestCase):
         exclude_rules: tuple[str, ...] = (),
         budgets: DiscoveryBudgets | None = None,
         second_library: bool = False,
+        attachments: bool = False,
     ):
 
         document = self.document(
@@ -283,6 +286,7 @@ class _DiscoveryFixture(unittest.TestCase):
             max_depth=max_depth,
             extensions=extensions,
             second_library=second_library,
+            attachments=attachments,
         )
         source = _RecordingStorage(LocalStorage("source", self.source_root))
         target = _RecordingStorage(LocalStorage("target", self.target_root))
@@ -3020,3 +3024,578 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class A44BlockingDefectRegressions(_DiscoveryFixture):
+    """The eight proven P1 defect groups from A's folder-journey audit.
+
+    Each case reproduces the *observable* failure A established (its probe
+    receipts are the reference) and asserts the corrected ordinary behaviour:
+    atomic equivalent-scope admission, actual configured policy, real
+    non-busy stability waiting, legal long names, truthful partial discovery,
+    correct traversal accounting, Trailer association and command-specific
+    Worker readiness.  No assertion is weakened and no capability is faked.
+    """
+
+    # -- A44-6: atomic admission of equivalent scopes ---------------------
+
+    def test_reordered_equivalent_scope_converges_on_one_open_admission(self) -> None:
+        """A44-6: ``[A, B]`` and ``[B, A]`` are one admitted scope."""
+
+        self.media("A/One.mkv")
+        self.media("B/Two.mkv")
+        with self.journey() as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["A", "B"]},
+            )
+            status, second = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["B", "A"]},
+            )
+            self.assertEqual(202, status, second)
+            self.assertEqual(first["discoveryId"], second["discoveryId"], second)
+            self.assertEqual(1, len(value.repository.list_media_discoveries()))
+            # The durable scope is canonical, so the two equivalent requests
+            # cannot persist two different orders of the same selection.
+            self.assertEqual(
+                [{"path": "A", "kind": "directory"}, {"path": "B", "kind": "directory"}],
+                second["selection"]["scopes"],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_an_open_admission_beyond_the_recent_window_still_reconciles(self) -> None:
+        """A44-6: an existing admission beyond the recent-list window.
+
+        The original request is still open and queued while 50 other scopes are
+        admitted.  Resubmitting the original scope must reconcile to that same
+        durable record: persistent identity, not a bounded recent-list scan.
+        """
+
+        for index in range(51):
+            self.media(f"Folder{index:02}/One.mkv")
+        with self.journey() as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Folder00"]},
+            )
+            for index in range(1, 51):
+                self.clock.advance(1)
+                self.request(
+                    value,
+                    "/api/v1/resource-libraries/library/files/discoveries",
+                    "POST",
+                    {"paths": [f"Folder{index:02}"]},
+                )
+            status, repeated = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Folder00"]},
+            )
+            self.assertEqual(202, status, repeated)
+            self.assertEqual(first["discoveryId"], repeated["discoveryId"], repeated)
+            self.assertEqual("queued", repeated["status"], repeated)
+            self.assertEqual(51, len(value.repository.list_media_discoveries(limit=100)))
+
+    def test_a_terminal_equivalent_scope_is_deliberate_successor_work(self) -> None:
+        """A44-6: reconciliation never reopens finished or frozen work."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            _, first = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(first["discoveryId"], settled["discoveryId"])
+            status, successor = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, successor)
+            self.assertNotEqual(first["discoveryId"], successor["discoveryId"])
+
+    # -- A44-7: actual configured policy ---------------------------------
+
+    def _managed_policy_journey(self, *, library_policy: dict):
+        """Publish and production-load one real include/exclude/stability policy."""
+
+        document = self.document()
+        document["resourceLibraries"][0].update(library_policy)
+        return document
+
+    def test_published_depth_policy_governs_direct_selection(self) -> None:
+        """A44-7: a directly selected subtree cannot bypass configured depth."""
+
+        self.media("Movies/One.mkv")
+        self.media("Movies/Sub/Two.mkv")
+        with self.journey() as value:
+            # Publish the real managed policy through the production loader.
+            from mediaflow.infrastructure.runtime_configuration import (
+                load_managed_runtime_configuration,
+                with_managed_snapshot,
+            )
+
+            document = json.loads(json.dumps(value.revision.document))
+            document["resourceLibraries"][0]["maxDepth"] = 1
+            from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+
+            with SQLiteConfigurationRepository(self.database) as configuration_repository:
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(self.database),
+                )
+                revision = _activate(managed, document)
+                runtime = with_managed_snapshot(
+                    load_managed_runtime_configuration(
+                        revision.document, bootstrap_database_path=str(self.database)
+                    ),
+                    snapshot_id=revision.revision_id,
+                    digest=revision.digest,
+                )
+            self.assertEqual(1, runtime.resource_libraries[0].max_depth)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/Sub"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            self.assertEqual(
+                "configured_depth_exceeded",
+                refused["error"]["details"]["reason"],
+                refused,
+            )
+            # The parent selection under the same policy still works and the
+            # configured depth still prunes the deeper file.
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(["Movies/One.mkv"], [i["path"] for i in settled["sources"]], settled)
+            self.assertEqual([], value.source.mutations)
+
+    def test_published_exclude_and_stability_policy_reach_the_worker(self) -> None:
+        """A44-7: the real loader consumes published exclude/stability policy."""
+
+        old = datetime(2025, 12, 31, tzinfo=UTC)
+        self.media("Movies/Keep.mkv", modified_at=old)
+        self.media("Movies/Excluded/Drop.mkv", modified_at=old)
+        document = self._managed_policy_journey(
+            library_policy={
+                "excludeRules": [{"kind": "directory", "pattern": "Movies/Excluded"}],
+                "stability": {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 60,
+                },
+            }
+        )
+        with self.journey() as value:
+            from mediaflow.infrastructure.runtime_configuration import (
+                load_managed_runtime_configuration,
+                with_managed_snapshot,
+            )
+
+            revision = _activate(
+                ManagedConfigurationService(
+                    SQLiteConfigurationRepository(self.database),
+                    bootstrap_database_path=str(self.database),
+                ),
+                document,
+            )
+            runtime = with_managed_snapshot(
+                load_managed_runtime_configuration(
+                    revision.document, bootstrap_database_path=str(self.database)
+                ),
+                snapshot_id=revision.revision_id,
+                digest=revision.digest,
+            )
+            library = runtime.resource_libraries[0]
+            self.assertEqual(
+                ("Movies/Excluded",),
+                tuple(rule.pattern for rule in library.exclude_rules),
+            )
+            self.assertEqual(60, library.stability_policy.stable_size_duration_seconds)
+            value.discovery._runtime_resolver = lambda sid, digest: runtime
+            # A directly selected excluded directory is refused by the same
+            # policy that prunes it during a parent walk.
+            status, refused = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies/Excluded"]},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("source_excluded", refused["error"]["code"], refused)
+            # The published nonzero stability policy is genuinely consumed: the
+            # first observation cannot fabricate the interval.
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            first = self.advance_once(value)
+            self.assertEqual("waiting_stability", first["status"], first)
+            self.assertEqual(0, first["progress"]["primarySources"], first)
+            self.assertEqual([], value.source.mutations)
+
+    def test_an_unsupported_resource_library_field_is_refused_not_ignored(self) -> None:
+        """A44-7: an unconsumed policy field is never silently published."""
+
+        from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+
+        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+        document["resourceLibraries"][0]["excludeRulesTypo"] = ["Movies"]
+        with self.assertRaises(ValueError) as raised:
+            load_runtime_configuration(document)
+        self.assertIn("unsupported field", str(raised.exception))
+
+    # -- A44-8: genuine, non-busy stability waiting ----------------------
+
+    def test_waiting_work_is_not_immediately_reclaimed(self) -> None:
+        """A44-8: a waiting discovery is due only after its real interval.
+
+        Reclaiming it in a tight loop would spin, consume the traversal budget
+        while traversing nothing and starve other resident commands.  The
+        durable due time gates the pickup, and other queued work proceeds.
+        """
+
+        self.media("Old/One.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
+        self.media("Next/Two.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
+        with self.journey(stability=FileStabilityPolicy(stable_size_duration_seconds=60)) as value:
+            _, old = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Old"]},
+            )
+            first = self.advance_once(value)
+            self.assertEqual("waiting_stability", first["status"], first)
+            self.assertIsNotNone(first["nextObservationAt"], first)
+            observed_entries = first["progress"]["visitedEntries"]
+            self.clock.advance(1)
+            _, sibling = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Next"]},
+            )
+            # The waiting record is not due, so the sibling gets the Worker.
+            picked = [
+                value.discovery.claim_and_run(worker_id=f"w{index}", claim_token=f"t{index}")
+                for index in range(4)
+            ]
+            ids = {item.discovery_id for item in picked if item is not None}
+            self.assertNotIn(old["discoveryId"], ids, ids)
+            self.assertIn(sibling["discoveryId"], ids, ids)
+            # Idle waiting consumed no further traversal budget: the durable
+            # counters are exactly the ones the one real walk established.
+            stored = value.repository.get_media_discovery(old["discoveryId"])
+            self.assertEqual(observed_entries, stored.progress.counters.visited_entries)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_due_waiting_discovery_is_re_observed_and_proves_stability(self) -> None:
+        """A44-8: once due, a later real observation proves the interval."""
+
+        self.media("Movies/One.2001.mkv", modified_at=datetime(2025, 12, 31, tzinfo=UTC))
+        with self.journey(stability=FileStabilityPolicy(stable_size_duration_seconds=60)) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            first = self.advance_once(value)
+            self.assertEqual("waiting_stability", first["status"], first)
+            # Still not due: the claim finds no work rather than spinning.
+            self.assertIsNone(value.discovery.claim_and_run(worker_id="early", claim_token="early"))
+            self.clock.advance(120)
+            settled = self.run_discovery(value)
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertIsNone(settled["nextObservationAt"], settled)
+            self.assertEqual(["Movies/One.2001.mkv"], [item["path"] for item in settled["sources"]])
+            self.assertEqual(admitted["discoveryId"], settled["discoveryId"])
+
+    # -- A44-9: legal long names and per-item error isolation ------------
+
+    def test_a_legal_long_filename_does_not_strand_its_batch(self) -> None:
+        """A44-9: a 179-character ordinary Local filename is preserved exactly."""
+
+        long_name = "L" * 175 + ".mkv"
+        self.assertEqual(179, len(long_name))
+        self.media(f"Movies/{long_name}")
+        self.media("Movies/Short.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+            self.assertIsNone(settled["failure"], settled)
+            paths = {item["path"] for item in settled["sources"]}
+            self.assertIn(f"Movies/{long_name}", paths)
+            # The exact name survives the freeze into the linked intent.
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertIn(long_name, [item.source.filename for item in intent.items])
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_legal_long_relative_path_is_readable_end_to_end(self) -> None:
+        """A44-9: a >1024-character legal path does not break list or detail."""
+
+        path = (
+            "Long/" + "/".join(("d" + str(index) + "x" * 197) for index in range(6)) + "/Film.mkv"
+        )
+        self.media(path)
+        self.assertGreater(len(path), 1024)
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Long"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertGreater(len(settled["sources"][0]["path"]), 1024)
+            # The bounded list projection stays readable for the same exact
+            # long path, and the detail readback publishes the exact bytes.
+            status, listing = self.request(value, "/api/v1/operations/organize/discoveries")
+            self.assertEqual(200, status, listing)
+            found = next(
+                item for item in listing["items"] if item["discoveryId"] == admitted["discoveryId"]
+            )
+            self.assertEqual(1, found["primarySourceCount"], found)
+            status, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual(settled["sources"][0]["path"], detail["sources"][0]["path"])
+
+    # -- A44-10: truthful partial discovery ------------------------------
+
+    def test_a_missing_selected_file_is_an_incomplete_scope(self) -> None:
+        """A44-10: a gone explicit file is never reported as complete."""
+
+        gone = self.media("Gone.mkv")
+        self.media("Good/Keep.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Gone.mkv", "Good"]},
+            )
+            gone.unlink()
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertTrue(settled["progress"]["incomplete"], settled)
+            self.assertEqual("read_failure", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual(1, settled["progress"]["errorEntries"], settled)
+            self.assertEqual(
+                ["Good/Keep.mkv"], [item["path"] for item in settled["sources"]], settled
+            )
+            # A known eligible subset keeps its explicit reviewed path.
+            self.assertTrue(settled["actions"]["finalize"]["available"], settled)
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(["Good/Keep.mkv"], [item.source.path for item in intent.items])
+
+    def test_a_permission_denied_selected_file_is_an_incomplete_scope(self) -> None:
+        """A44-10: a denied explicit file is equally a real partial discovery."""
+
+        self.media("Denied.mkv")
+        self.media("Good/Keep.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Denied.mkv", "Good"]},
+            )
+            original = value.source.stat
+
+            def denied(path):
+                if path == "Denied.mkv":
+                    raise StorageError(
+                        StorageErrorCode.PERMISSION_DENIED,
+                        "stat",
+                        path,
+                        "synthetic permission denial",
+                    )
+                return original(path)
+
+            value.source.stat = denied
+            settled = self.run_discovery(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertTrue(settled["progress"]["incomplete"], settled)
+            self.assertEqual("read_failure", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual(1, settled["progress"]["errorEntries"], settled)
+            self.assertEqual(
+                ["Good/Keep.mkv"], [item["path"] for item in settled["sources"]], settled
+            )
+
+    # -- A44-11: correct traversal accounting ----------------------------
+
+    def test_many_pages_of_one_directory_do_not_exhaust_the_directory_budget(self) -> None:
+        """A44-11: pages are not new directories.
+
+        One real directory served over many pages is still one opened
+        directory; the directory budget must not be consumed by paging.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(budgets=DiscoveryBudgets(max_visited_directories=1)) as value:
+            raw = value.source._storage
+            pages = {"count": 0}
+
+            def paged(path, *, limit, cursor=None):
+                if path != "Movies":
+                    return raw.list_page(path, limit=limit, cursor=cursor)
+                pages["count"] += 1
+                if cursor is None:
+                    # The same legal media basename repeats on the next page,
+                    # exactly like the provider's non-atomic listing.
+                    return StoragePage([raw.stat("Movies/One.2001.mkv")], "page-2")
+                return StoragePage([raw.stat("Movies/One.2001.mkv")], None)
+
+            value.source.list_page = paged
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual(1, settled["progress"]["visitedDirectories"], settled)
+            self.assertEqual(2, settled["progress"]["pageFetches"], settled)
+            self.assertEqual(1, settled["progress"]["primarySources"], settled)
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertIsNone(settled["progress"]["materialRefusal"], settled)
+
+    # -- A44-12: Trailer association -------------------------------------
+
+    def test_a_matching_trailer_is_not_an_independent_primary(self) -> None:
+        """A44-12: the existing attachment association governs primaries.
+
+        With the *published and production-loaded* attachment policy enabled, a
+        matching Trailer video is an attachment of its main file.  It must not
+        also become a second independent primary, and 51 main files plus 51
+        matching Trailers must stay inside the 100-primary bound instead of
+        being refused as a 102-candidate truncation.
+        """
+
+        for index in range(51):
+            self.media(f"Movies/Film{index:03d}.2001.mkv")
+            self.media(f"Movies/Film{index:03d}.2001-trailer.mp4")
+        with self.journey(attachments=True) as value:
+            self.assertTrue(
+                all(
+                    policy.organize_policy.attachments.enabled
+                    for policy in value.configuration.strategy.recognition_type_policies
+                ),
+                value.configuration.strategy.recognition_type_policies,
+            )
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            settled = self.run_discovery(value, steps=8)
+            # 51 main files plus their 51 associated Trailers is 51 primaries,
+            # never 102 candidates hitting the primary bound.
+            self.assertEqual("completed", settled["status"], settled)
+            self.assertEqual(51, settled["progress"]["primarySources"], settled)
+            self.assertIsNone(settled["progress"]["materialRefusal"], settled)
+            paths = [item["path"] for item in settled["sources"]]
+            self.assertIn("Movies/Film000.2001.mkv", paths)
+            # A classified Trailer is an attachment of its main file, not a
+            # second independent primary: the exact Preview re-discovers it
+            # from live Storage under the same policy.
+            self.assertNotIn("Movies/Film000.2001-trailer.mp4", paths)
+            self.assertEqual(
+                sorted(f"Movies/Film{index:03d}.2001.mkv" for index in range(51)), sorted(paths)
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+            # The frozen manifest still hands the existing attachment semantics
+            # to the ordinary intent/Preview boundary.
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(51, len(intent.items))
+
+    # -- A44-13: command-specific Worker readiness -----------------------
+
+    def test_readiness_reflects_the_real_discovery_command(self) -> None:
+        """A44-13: process health alone never implies discovery can run."""
+
+        from mediaflow.application.automation import ProcessingWorkerService
+        from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            service = ProcessingWorkerService(
+                value.repository, runtime_schema_version=SCHEMA_VERSION
+            )
+            service.register_worker(
+                "scan-only",
+                "scan-only worker",
+                5.0,
+                ("scan",),
+                runtime_schema_version=SCHEMA_VERSION,
+            )
+            value.api._worker_service = service
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertFalse(admitted["worker"]["ready"], admitted["worker"])
+            self.assertEqual("unsupported_command", admitted["worker"]["condition"], admitted)
+            self.assertIn("discovery", admitted["worker"]["nextAction"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual((), value.repository.list_tasks())

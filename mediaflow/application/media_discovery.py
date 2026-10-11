@@ -27,9 +27,10 @@ import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from mediaflow.application.attachments import AttachmentDiscovery
 from mediaflow.application.scan_filters import (
     ObservedSource,
     ScanEntryVerdict,
@@ -39,6 +40,7 @@ from mediaflow.application.scan_filters import (
     entry_extension,
     excluded_directory,
     stability_verdict,
+    stability_wait_seconds,
 )
 from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
@@ -70,6 +72,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryUnavailable,
     MediaDiscovery,
     bounded_path,
+    canonical_scope,
     deduplicate_scope,
     deduplicate_sources,
     discovery_budget_limited,
@@ -77,6 +80,7 @@ from mediaflow.domain.media_discovery import (
     discovery_scope_signature,
     is_settlement_status,
 )
+from mediaflow.domain.organizer import StorageLocation
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
@@ -223,6 +227,11 @@ class MediaDiscoveryService:
                 code="selection_empty",
                 next_action="select one or more folders or files and retry",
             )
+        # The persisted scope is *set-canonical*: submitting the same set of
+        # exact paths in a different order is the same admitted selection, so
+        # the durable record (and therefore the frozen manifest) is identical
+        # whichever equivalent request won.  Names are never trimmed.
+        deduplicated = canonical_scope(deduplicated)
         # Actor/scope/pin-bound admission identity: an identical open
         # submission for the same principal, the same enabled
         # ResourceLibrary/Storage binding, the same deduplicated scope and
@@ -288,7 +297,25 @@ class MediaDiscoveryService:
         creator = getattr(self._repository, "create_media_discovery", None)
         if not callable(creator):
             raise DiscoveryUnavailable("durable media discovery storage is unavailable")
-        return creator(discovery)
+        try:
+            return creator(discovery)
+        except DiscoveryConflict:
+            # A concurrent equivalent admission won the durable identity race.
+            # The correct outcome is the one already durable record, not a
+            # duplicate walk: re-read the exact admission identity and return
+            # it.  When the winner is not readable as this exact open
+            # admission, the conflict is reported rather than guessed away.
+            winner = self._reconcile_admission(
+                actor,
+                deduplicated,
+                snapshot_id,
+                snapshot_digest,
+                resource_library_id,
+                library.storage_id,
+            )
+            if winner is not None:
+                return winner
+            raise
 
     def _reconcile_admission(
         self,
@@ -313,12 +340,24 @@ class MediaDiscoveryService:
         """
 
         lister = getattr(self._repository, "list_media_discoveries", None)
+        signature = discovery_scope_signature(scope)
+        # The durable identity lookup is the authority: an equivalent open
+        # admission reconciles even after it left every bounded recent-list
+        # window, which a window scan can never guarantee.
+        finder = getattr(self._repository, "find_open_media_discovery", None)
+        if callable(finder):
+            return finder(
+                actor=actor,
+                resource_library_id=resource_library_id,
+                storage_id=storage_id,
+                snapshot_id=snapshot_id,
+                snapshot_digest=snapshot_digest,
+                scope_signature=signature,
+            )
         if not callable(lister):
             return None
-        signature = discovery_scope_signature(scope)
-        # The reconciliation window is bounded: it reads only the recent
-        # durable records of this actor, so the cost stays bounded even for a
-        # principal with a long discovery history.
+        # A repository without the durable lookup (an in-memory test double)
+        # falls back to the bounded recent window with the same exact match.
         for candidate in lister(actor=actor, limit=50):
             if candidate.terminal or candidate.frozen:
                 continue
@@ -580,7 +619,7 @@ class MediaDiscoveryService:
         except DiscoveryError as error:
             return self._fail(discovery, claim_token, error.code)
         try:
-            return self._advance(discovery, claim_token, storage, library, heartbeat)
+            return self._advance(discovery, claim_token, storage, library, runtime, heartbeat)
         except (DiscoveryConflict, DiscoveryOwnershipLost) as error:
             # Either an operator control (pause/cancel/resume) changed the record
             # while this Worker was walking, or its lease was taken over.  React
@@ -770,6 +809,7 @@ class MediaDiscoveryService:
         claim_token: str,
         storage: Storage,
         library,
+        runtime,
         heartbeat: Callable[[], bool] | None,
     ) -> MediaDiscovery:
         progress = discovery.progress
@@ -821,10 +861,32 @@ class MediaDiscoveryService:
         status = DiscoveryStatus.RUNNING
         stop = False
         degraded = False
+        # A file the admitted scope names but that cannot be observed is a real
+        # incomplete scope, exactly like an unreadable directory: the operator
+        # must explicitly review the known subset instead of being told the
+        # whole selection was discovered.  It is deliberately *not* a material
+        # refusal, so the reviewed subset keeps its legal Finalize path.
+        observation_degraded = False
         # The unstable count describes the *current* observation pass (what is
         # still waiting for stability), not a cumulative tally of every earlier
         # pass; excluded/error counters stay cumulative totals.
         pass_unstable: set[str] = set()
+        # The remaining real interval each still-waiting source needs.  The
+        # shortest one becomes the durable re-observation deadline.
+        wait_seconds: list[float] = []
+        # The file entries observed in the directory currently being walked and
+        # in the whole pass.  The authoritative attachment association is
+        # evaluated over the real same-directory entry set exactly as the exact
+        # Preview does, and it is applied as soon as a directory is finished so
+        # a matching sidecar can never inflate the primary count mid-walk.
+        directory_entries: list[tuple[str, int, StorageEntry]] = []
+        observed_file_entries: list[tuple[str, int, StorageEntry]] = []
+        # The pinned attachment policy, if any.  When it is enabled, a matching
+        # Trailer sidecar is an attachment of its main file rather than an
+        # independent primary: the exact Preview re-discovers it from live
+        # Storage, so admitting it here would give it a second, duplicate
+        # primary identity and inflate the primary count.
+        attachment_policies = self._attachment_policies(runtime)
 
         def bump(reason_value: str, path: str) -> None:
             existing = reasons.get(reason_value)
@@ -861,7 +923,7 @@ class MediaDiscoveryService:
         def observe(relative: str, depth: int, entry: StorageEntry | None):
             """Classify and observe one candidate; returns the updated counters."""
 
-            nonlocal counters
+            nonlocal counters, observation_degraded
             observed_candidates.add(relative)
             if entry is None:
                 try:
@@ -874,6 +936,11 @@ class MediaDiscoveryService:
                     # must not survive in the manifest merely because it was
                     # observed before.
                     sources.pop(relative, None)
+                    # A source the admitted scope names but that cannot be
+                    # observed makes the walk incomplete: the operator must
+                    # explicitly review the known subset, never be told the
+                    # whole admitted scope was discovered.
+                    observation_degraded = True
                     return
                 if self._admit_stat_entry(entry, relative, library) is None:
                     # A provider ``stat`` that answers for a different path than
@@ -984,6 +1051,20 @@ class MediaDiscoveryService:
                 bump(why, relative)
                 note(DiscoveryFindingKind.UNSTABLE, relative, why, entry, depth)
                 pass_unstable.add(relative)
+                # The real interval still required before a later observation
+                # could prove this source stable.  The shortest one is the
+                # durable re-observation deadline, so waiting work is never
+                # reclaimed in a busy loop.
+                wait_seconds.append(
+                    stability_wait_seconds(
+                        library,
+                        entry,
+                        now=now,
+                        unchanged_previous=prior is not None
+                        and prior.matches(entry, observed.value),
+                        observed_since=resolved_since,
+                    )
+                )
                 # A previously eligible source that is no longer proven stable
                 # cannot survive merely because its path was seen before.
                 sources.pop(relative, None)
@@ -1010,11 +1091,6 @@ class MediaDiscoveryService:
                 refuse(incomplete)
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
-            if counters.visited_directories >= self._budgets.max_visited_directories:
-                incomplete = DiscoveryIncompleteReason.DIRECTORY_LIMIT
-                refuse(incomplete)
-                status = DiscoveryStatus.PARTIAL_SUCCESS
-                break
             if counters.page_fetches >= self._budgets.max_page_fetches:
                 incomplete = DiscoveryIncompleteReason.PAGE_LIMIT
                 refuse(incomplete)
@@ -1033,9 +1109,30 @@ class MediaDiscoveryService:
                     if not degraded:
                         status = DiscoveryStatus.COMPLETED
                     break
+                if counters.visited_directories >= self._budgets.max_visited_directories:
+                    # A *directory* budget counts distinct directories entered,
+                    # not provider pages: a directory already being paged
+                    # through is one opened directory and never exhausts this
+                    # bound.  The bound is evaluated only when the walk is about
+                    # to enter a genuinely new directory.
+                    incomplete = DiscoveryIncompleteReason.DIRECTORY_LIMIT
+                    refuse(incomplete)
+                    status = DiscoveryStatus.PARTIAL_SUCCESS
+                    break
+                # The previous directory is fully walked: apply the production
+                # attachment association, so a sidecar matching an admitted main
+                # file is never counted as an independent primary.
+                self._demote_attachments(runtime, library, directory_entries, sources)
+                directory_entries = []
                 active_directory = pending_directories.pop(0)
                 active_cursor = None
                 seen_cursors = []
+                # One *directory* is counted exactly once, when the walk first
+                # enters it.  Every further page of that same directory is a
+                # page fetch, not a new directory: counting pages here made a
+                # single large directory look like a thousand directories and
+                # stopped the walk at the directory bound.
+                counters = replace(counters, visited_directories=counters.visited_directories + 1)
             directory = active_directory
             page, failure, cursor_problem = self._list_page(
                 storage, library, directory, active_cursor
@@ -1060,7 +1157,6 @@ class MediaDiscoveryService:
                 active_cursor = None
                 seen_cursors = []
                 continue
-            counters = replace(counters, visited_directories=counters.visited_directories + 1)
             depth = directory.count("/") + 1 if directory else 0
             for raw in tuple(getattr(page, "entries", ())):
                 counters = replace(counters, visited_entries=counters.visited_entries + 1)
@@ -1140,6 +1236,14 @@ class MediaDiscoveryService:
                         break
                     pending_directories.append(relative)
                     continue
+                directory_entries.append((relative, depth, raw))
+                observed_file_entries.append((relative, depth, raw))
+                if attachment_policies and self._trailer_candidate(raw.name):
+                    # The pinned configuration associates this video with a main
+                    # file, so it is not an independent primary.  The existing
+                    # association still governs the later Preview; discovery
+                    # simply never gives it a second primary identity.
+                    continue
                 observe(relative, depth, raw)
                 if self._over_primary_limit(sources, bump, note):
                     incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
@@ -1170,6 +1274,10 @@ class MediaDiscoveryService:
             active_cursor = None
             seen_cursors = []
 
+        self._demote_attachments(runtime, library, directory_entries, sources)
+        self._demote_attachments(runtime, library, observed_file_entries, sources)
+        counters = replace(counters, primary_sources=len(sources))
+
         if status is DiscoveryStatus.COMPLETED and not pending_files and not pending_directories:
             # A fully completed walk observed the whole admitted scope, so a
             # source that no longer appears (removed, renamed out of the media
@@ -1199,6 +1307,17 @@ class MediaDiscoveryService:
             and incomplete is DiscoveryIncompleteReason.NONE
         ):
             incomplete = DiscoveryIncompleteReason.READ_FAILURE
+        if (
+            status is DiscoveryStatus.COMPLETED
+            and observation_degraded
+            and incomplete is DiscoveryIncompleteReason.NONE
+        ):
+            # A file the admitted scope named could not be observed.  That is a
+            # real incomplete scope even though the traversal itself finished,
+            # so the operator is never told the whole selection was discovered;
+            # the known sources keep their legal explicit-subset Finalize path.
+            incomplete = DiscoveryIncompleteReason.READ_FAILURE
+            status = DiscoveryStatus.PARTIAL_SUCCESS
         if status is DiscoveryStatus.COMPLETED and not sources:
             # An empty and an all-excluded scope are different truthful outcomes;
             # neither is an incomplete traversal.
@@ -1210,6 +1329,13 @@ class MediaDiscoveryService:
                 DiscoveryStatus.COMPLETED: "completed",
                 DiscoveryStatus.PARTIAL_SUCCESS: "partial",
             }.get(status, "running")
+        # A waiting discovery becomes claimable again only when a later
+        # observation could actually change the verdict.  The deadline is the
+        # shortest real interval any still-waiting source needs, so waiting work
+        # neither spins nor consumes the traversal budget while idle.
+        next_observation_at: datetime | None = None
+        if status is DiscoveryStatus.WAITING_STABILITY and wait_seconds:
+            next_observation_at = self._clock() + timedelta(seconds=max(0.0, min(wait_seconds)))
         updated = replace(
             discovery,
             status=status,
@@ -1217,6 +1343,7 @@ class MediaDiscoveryService:
             sources=tuple(sources.values()),
             updated_at=self._clock(),
             error=None,
+            next_observation_at=next_observation_at,
             progress=DiscoveryProgress(
                 phase,
                 progress.scope_entries,
@@ -1268,6 +1395,136 @@ class MediaDiscoveryService:
         bump(_REASON_UNSAFE_ENTRY, path)
         note(DiscoveryFindingKind.TRUNCATED, path, "primary_source_limit_exceeded", None, 0)
         return True
+
+    @staticmethod
+    def _attachment_policies(runtime) -> tuple:
+        """Every distinct enabled attachment policy in the pinned configuration.
+
+        Discovery reuses the exact ``AttachmentPolicy`` objects the production
+        Preview consumes rather than inventing a second matcher, so folder
+        discovery and the later exact Preview agree on whether a sidecar video
+        is an attachment.  Duplicate objects are collapsed so a many-policy
+        configuration is still evaluated once per distinct policy.
+        """
+
+        strategy = getattr(runtime, "strategy", None)
+        seen: list[object] = []
+        for policy in getattr(strategy, "recognition_type_policies", ()) or ():
+            if not getattr(policy, "enabled", False):
+                continue
+            organize = getattr(policy, "organize_policy", None)
+            attachments = getattr(organize, "attachments", None)
+            if attachments is None or not getattr(attachments, "enabled", False):
+                continue
+            if attachments not in seen:
+                seen.append(attachments)
+        return tuple(seen)
+
+    @staticmethod
+    def _trailer_candidate(name: str) -> bool:
+        """Whether a name uses the existing Trailer sidecar suffix rule.
+
+        The suffix rule is exactly the one the production ``AttachmentDiscovery``
+        already applies to classify a Trailer, so this introduces no second
+        matching language.  It is applied only when the pinned configuration
+        actually enables attachments; a configuration that does not enable them
+        keeps treating such a video as an ordinary primary.
+        """
+
+        stem, dot, _extension = name.rpartition(".")
+        if not dot:
+            return False
+        folded = stem.casefold()
+        return any(
+            folded.endswith(suffix) and len(stem) > len(suffix)
+            for suffix in (".trailer", "-trailer")
+        )
+
+    def _attachment_owner(
+        self,
+        runtime,
+        library,
+        relative: str,
+        entry: StorageEntry,
+        entries: list[tuple[str, int, StorageEntry]],
+        admitted: dict[str, dict[str, object]],
+    ) -> str | None:
+        """The exact relative path of the admitted main file this entry attaches to.
+
+        The authoritative association is the production ``AttachmentDiscovery``
+        itself, invoked with the *same* policy the exact Preview will consume and
+        over the real same-directory entry set.  An entry is an attachment
+        exactly when that discovery classifies it as one for an already admitted
+        primary, so it never becomes an independent primary of its own.  Nothing
+        is fabricated: a video with no admitted main file is not an attachment
+        and keeps its ordinary primary identity.
+        """
+
+        if entry is None or not admitted:
+            return None
+        policies = self._attachment_policies(runtime)
+        if not policies:
+            return None
+        directory = relative.rsplit("/", 1)[0] if "/" in relative else ""
+        same_directory = [
+            candidate_entry
+            for candidate_relative, _depth, candidate_entry in entries
+            if (candidate_relative.rsplit("/", 1)[0] if "/" in candidate_relative else "")
+            == directory
+        ]
+        for owner_relative, owner in admitted.items():
+            if (owner_relative.rsplit("/", 1)[0] if "/" in owner_relative else "") != directory:
+                continue
+            owner_entry = next(
+                (
+                    candidate_entry
+                    for candidate_relative, _depth, candidate_entry in entries
+                    if candidate_relative == owner_relative
+                ),
+                None,
+            )
+            if owner_entry is None:
+                continue
+            primary = StorageLocation(library.storage_id, owner_entry.path)
+            for policy in policies:
+                discovered = AttachmentDiscovery().discover(
+                    _ObservedDirectoryStorage(library.storage_id, tuple(same_directory)),
+                    primary,
+                    policy,
+                )
+                if any(
+                    attachment.source.path == entry.path for attachment in discovered.attachments
+                ):
+                    return owner_relative
+        return None
+
+    def _demote_attachments(
+        self,
+        runtime,
+        library,
+        entries: list[tuple[str, int, StorageEntry]],
+        sources: dict[str, dict[str, object]],
+    ) -> None:
+        """Drop every observed video that is an attachment of an admitted primary.
+
+        This runs after the walk has established the real primary set, so the
+        association is evaluated once per distinct policy against the actual
+        admitted main files.  It is the folder-discovery equivalent of the exact
+        Preview's own attachment step, not a second matcher: a classified
+        attachment is not an independent primary and therefore cannot inflate the
+        primary count or trip the 100-primary gate.
+        """
+
+        if not entries or not sources:
+            return
+        owners = {
+            relative: self._attachment_owner(runtime, library, relative, entry, entries, sources)
+            for relative, _depth, entry in entries
+            if relative in sources
+        }
+        for relative, owner in owners.items():
+            if owner is not None and owner != relative:
+                sources.pop(relative, None)
 
     def _admit_provider_entry(self, raw, directory: str, library) -> str | None:
         """The admitted ResourceLibrary-relative path of one provider entry.
@@ -1582,8 +1839,10 @@ class MediaDiscoveryService:
                 details={"relativePath": entry.path},
             )
         if observed.entry_type is StorageEntryType.DIRECTORY:
+            self._refuse_unselectable_directory(library, entry.path, observed)
             return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.DIRECTORY)
         if observed.entry_type is StorageEntryType.FILE:
+            self._refuse_unselectable_file(library, entry.path, observed)
             return DiscoveryScopeEntry(entry.path, DiscoveryEntryKind.FILE)
         raise DiscoveryError(
             "the selected source has an unsupported entry type",
@@ -1592,6 +1851,116 @@ class MediaDiscoveryService:
             next_action="select a folder or an ordinary file inside the ResourceLibrary",
             details={"relativePath": entry.path},
         )
+
+    def _refuse_unselectable_directory(
+        self, library, relative: str, observed: StorageEntry
+    ) -> None:
+        """Refuse a directly selected folder the pinned policy already excludes.
+
+        Filtering must not depend on *how* a source was selected.  A directory
+        the configured exclude rules, include rules or configured depth reject
+        is not a legal entry point: selecting it directly must not walk past the
+        same policy that prunes it during a parent walk, and it must not
+        silently become an empty "complete" discovery either.  The refusal is
+        bounded, actionable and creates no durable record.
+        """
+
+        if excluded_directory(library, relative, observed):
+            raise DiscoveryError(
+                "the selected folder is excluded by the pinned ResourceLibrary policy",
+                code="source_excluded",
+                status=409,
+                next_action=(
+                    "select a folder that the configured exclude rules do not exclude, or "
+                    "update the ResourceLibrary policy and publish it"
+                ),
+                details={"relativePath": relative, "reason": _REASON_EXCLUDED_RULE},
+            )
+        if not directory_may_match(library.include_rules, relative):
+            raise DiscoveryError(
+                "the selected folder cannot contain an included source under the pinned policy",
+                code="source_not_included",
+                status=409,
+                next_action=(
+                    "select a folder that satisfies the configured include rules, or update "
+                    "the ResourceLibrary policy and publish it"
+                ),
+                details={"relativePath": relative, "reason": _REASON_NOT_INCLUDED},
+            )
+        if not self._within_configured_depth(library, relative, DiscoveryEntryKind.DIRECTORY):
+            raise DiscoveryError(
+                "the selected folder is deeper than the configured ResourceLibrary depth",
+                code="source_excluded",
+                status=409,
+                next_action=(
+                    "select a shallower folder, or raise the configured depth and publish it"
+                ),
+                details={"relativePath": relative, "reason": _REASON_DEPTH},
+            )
+
+    def _refuse_unselectable_file(self, library, relative: str, observed: StorageEntry) -> None:
+        """Refuse a directly selected file the pinned policy excludes.
+
+        An explicit file is a legal entry point only when the same
+        root-relative extension/include/exclude/depth policy that governs a
+        folder walk admits it.  A temporary/download file, an excluded path or
+        a file the configured depth never reaches stays excluded instead of
+        becoming a primary source merely because the operator clicked it
+        directly.
+        """
+
+        verdict = classify_entry(library, relative, observed)
+        if verdict is not ScanEntryVerdict.CANDIDATE:
+            reason = {
+                ScanEntryVerdict.EXCLUDED_EXTENSION: _REASON_UNSUPPORTED_EXTENSION,
+                ScanEntryVerdict.EXCLUDED_RULE: _REASON_EXCLUDED_RULE,
+                ScanEntryVerdict.NOT_INCLUDED: _REASON_NOT_INCLUDED,
+                ScanEntryVerdict.UNSUPPORTED_TYPE: _REASON_UNSUPPORTED_TYPE,
+            }[verdict]
+            raise DiscoveryError(
+                "the selected file is excluded by the pinned ResourceLibrary policy",
+                code="source_excluded",
+                status=409,
+                next_action=(
+                    "select a file the configured policy admits, or update the ResourceLibrary "
+                    "policy and publish it"
+                ),
+                details={"relativePath": relative, "reason": reason},
+            )
+        if not self._within_configured_depth(library, relative, DiscoveryEntryKind.FILE):
+            raise DiscoveryError(
+                "the selected file is deeper than the configured ResourceLibrary depth",
+                code="source_excluded",
+                status=409,
+                next_action=(
+                    "select a file inside the configured depth, or raise the configured depth "
+                    "and publish it"
+                ),
+                details={"relativePath": relative, "reason": _REASON_DEPTH},
+            )
+
+    @staticmethod
+    def _within_configured_depth(library, relative: str, kind: DiscoveryEntryKind) -> bool:
+        """Whether a *directly selected* entry is reachable under configured depth.
+
+        The walk prunes a child directory found in a directory of depth ``d``
+        when ``d >= max_depth`` (depth 0 is the ResourceLibrary root).  A direct
+        selection must not be a shortcut around that rule, so it is legal only
+        when the directory that would have to be listed to reach it is itself
+        listable under the same predicate.  This keeps one depth meaning for the
+        whole ResourceLibrary regardless of the selection entrance.
+        """
+
+        maximum = getattr(library, "max_depth", None)
+        if maximum is None:
+            return True
+        parent = relative.rsplit("/", 1)[0] if "/" in relative else ""
+        if kind is DiscoveryEntryKind.FILE:
+            # A file is reached by listing its containing directory, which the
+            # walk may only enter from that directory's own parent.
+            parent = parent.rsplit("/", 1)[0] if "/" in parent else ""
+        depth = 0 if not parent else parent.count("/") + 1
+        return depth < maximum
 
     def _finalize(self, discovery: MediaDiscovery, claim_token: str | None) -> MediaDiscovery:
         """Freeze the discovered sources and hand them to the existing admission."""
@@ -2053,3 +2422,67 @@ class _DiscoveryReadOnlyStorage:
 
 class _DiscoveryMutationError(RuntimeError):
     """Raised before a discovery-stage Storage mutation can reach an adapter."""
+
+
+class _ObservedDirectoryStorage:
+    """A read-only view of one already-observed directory's entries.
+
+    The authoritative attachment association must be evaluated over the exact
+    same-directory entry set the production ``AttachmentDiscovery`` expects.
+    This adapter publishes only the entries the walk already observed from live
+    Storage and refuses every mutation, so reuse of the production matcher adds
+    no new Storage read and no mutation capability.
+    """
+
+    def __init__(self, storage_id: str, entries: tuple[StorageEntry, ...]) -> None:
+        self.storage_id = storage_id
+        self._entries = tuple(entries)
+
+    @property
+    def name(self) -> str:
+        return "discovery-observed-directory"
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    def list(self, path: str):
+        return self._entries
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None):
+        from mediaflow.domain.storage import StoragePage
+
+        return StoragePage(self._entries[:limit], None)
+
+    def stat(self, path: str):
+        for entry in self._entries:
+            if entry.path == path:
+                return entry
+        raise _DiscoveryMutationError("the observed directory has no such entry")
+
+    def exists(self, path: str) -> bool:
+        return any(entry.path == path for entry in self._entries)
+
+    def read(self, path: str):
+        raise _DiscoveryMutationError("discovery is metadata-only and never reads content")
+
+    def write(self, path: str, data, *, overwrite: bool = False) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def create_directory(self, path: str) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def delete(self, path: str) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def hard_link(self, source: str, target: str) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")
+
+    def soft_link(self, source: str, target: str) -> None:
+        raise _DiscoveryMutationError("discovery never mutates Storage")

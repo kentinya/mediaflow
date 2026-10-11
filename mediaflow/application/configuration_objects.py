@@ -85,7 +85,7 @@ from mediaflow.domain.configuration_management import (
     StorageSetupCheckEvidence,
     validate_storage_configuration,
 )
-from mediaflow.domain.library import MediaLibrary
+from mediaflow.domain.library import MediaLibrary, ScanRule, ScanRuleKind
 from mediaflow.domain.metadata import (
     METADATA_POLICY_CONFIGURATION_FIELDS,
     CachePolicy,
@@ -344,8 +344,22 @@ class ConfigurationObjectService:
         "enabled",
         "extensions",
         "maxDepth",
+        "includeRules",
+        "excludeRules",
+        "stability",
     }
     _RESOURCE_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "storagePath", "enabled"}
+    #: The supported include/exclude/stability policy a ResourceLibrary Save or
+    #: edit may carry.  The Files drawer exposes these deliberately as an
+    #: *optional* set: omitting them preserves the exact legacy defaults and
+    #: every unexposed field of an existing object.
+    _RESOURCE_LIBRARY_POLICY_FIELDS = ("includeRules", "excludeRules", "stability")
+    _RESOURCE_STABILITY_FIELDS = {
+        "minimumAgeSeconds",
+        "modifiedThresholdSeconds",
+        "stableSizeDurationSeconds",
+    }
+    _RESOURCE_SCAN_RULE_FIELDS = {"kind", "pattern"}
     _RESOURCE_LIBRARY_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
     _MEDIA_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
     _MEDIA_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
@@ -599,9 +613,12 @@ class ConfigurationObjectService:
 
         if not isinstance(candidate, Mapping):
             raise ValueError("ResourceLibrary Save candidate must be an object")
-        if set(candidate) != self._RESOURCE_LIBRARY_SAVE_FIELDS:
+        required = self._RESOURCE_LIBRARY_SAVE_FIELDS
+        unknown = set(candidate).difference(required | set(self._RESOURCE_LIBRARY_POLICY_FIELDS))
+        if unknown or not required.issubset(candidate):
             raise ValueError(
-                "ResourceLibrary Save accepts only id, name, storageId, storagePath, and enabled"
+                "ResourceLibrary Save accepts only id, name, storageId, storagePath, enabled, "
+                "and the optional includeRules/excludeRules/stability policy"
             )
         name = candidate.get("name")
         storage_id = candidate.get("storageId")
@@ -1030,10 +1047,15 @@ class ConfigurationObjectService:
             )
         self._managed.verify_integrity(active)
         library = self._active_resource_library(active, resource_library_id)
+        projected = {key: library.get(key) for key in self._RESOURCE_LIBRARY_SAVE_FIELDS}
+        # The supported include/exclude/stability policy is projected so the
+        # edit surface can show and preserve the exact admitted policy rather
+        # than an unexposed field the operator cannot see.
+        for key in self._RESOURCE_LIBRARY_POLICY_FIELDS:
+            if key in library:
+                projected[key] = library.get(key)
         return {
-            "resourceLibrary": {
-                key: library.get(key) for key in self._RESOURCE_LIBRARY_SAVE_FIELDS
-            },
+            "resourceLibrary": projected,
             "storages": self._edit_storage_projection(active),
             "active": active.summary(),
             "sideEffects": "none",
@@ -9070,6 +9092,10 @@ class ConfigurationObjectService:
                 ):
                     raise ValueError("ResourceLibrary maxDepth must be a non-negative integer")
                 result["maxDepth"] = maximum
+            for key in cls._RESOURCE_LIBRARY_POLICY_FIELDS:
+                if key not in value:
+                    continue
+                result[key] = cls._resource_library_policy_field(key, value[key])
         else:
             result["rootPath"] = cls._relative_path(
                 value.get("rootPath", ""), "MediaLibrary rootPath"
@@ -9078,6 +9104,66 @@ class ConfigurationObjectService:
         if len(encoded) > cls._MAX_OBJECT_BYTES:
             raise ValueError(f"{section} object is too large")
         return result
+
+    @classmethod
+    def _resource_library_policy_field(cls, key: str, value: object) -> object:
+        """Validate and normalize one ResourceLibrary include/exclude/stability field.
+
+        The managed document is the single authority the production loader
+        consumes, so the guided Save surface must accept exactly the shape the
+        loader understands: an array of rule strings or ``{"kind","pattern"}``
+        objects, and a strict ``stability`` object of three non-negative
+        integer durations.  Nothing here trims, rewrites or invents a value.
+        """
+
+        if key in {"includeRules", "excludeRules"}:
+            if not isinstance(value, list):
+                raise ValueError(f"ResourceLibrary {key} must be an array of rules")
+            rules: list[object] = []
+            for item in value:
+                if isinstance(item, str):
+                    if not item or "\x00" in item:
+                        raise ValueError(f"ResourceLibrary {key} rule must be a non-empty string")
+                    rules.append(item)
+                    continue
+                if not isinstance(item, Mapping):
+                    raise ValueError(f"ResourceLibrary {key} rule must be a string or an object")
+                unknown = set(item).difference(cls._RESOURCE_SCAN_RULE_FIELDS)
+                if unknown:
+                    raise ValueError(
+                        f"ResourceLibrary {key} rule contains unsupported field "
+                        f"{sorted(unknown)[0]!r}"
+                    )
+                pattern = item.get("pattern")
+                if not isinstance(pattern, str) or not pattern or "\x00" in pattern:
+                    raise ValueError(
+                        f"ResourceLibrary {key} rule pattern must be a non-empty string"
+                    )
+                rule: dict[str, object] = {"pattern": pattern}
+                kind = item.get("kind", ScanRuleKind.GLOB.value)
+                if not isinstance(kind, str):
+                    raise ValueError(f"ResourceLibrary {key} rule kind must be a string")
+                try:
+                    ScanRule(ScanRuleKind(kind), pattern)
+                except (ValueError, re.error) as error:
+                    raise ValueError(f"ResourceLibrary {key} rule is invalid") from error
+                rule["kind"] = kind
+                rules.append(rule)
+            return rules
+        if not isinstance(value, Mapping):
+            raise ValueError("ResourceLibrary stability must be an object")
+        unknown = set(value).difference(cls._RESOURCE_STABILITY_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"ResourceLibrary stability contains unsupported field {sorted(unknown)[0]!r}"
+            )
+        stability: dict[str, object] = {}
+        for name in cls._RESOURCE_STABILITY_FIELDS:
+            raw = value.get(name, 0)
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+                raise ValueError(f"ResourceLibrary stability {name} must be a non-negative integer")
+            stability[name] = raw
+        return stability
 
     @classmethod
     def _validate_automation_definition_reference(

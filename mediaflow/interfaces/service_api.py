@@ -344,6 +344,12 @@ class MediaFlowApi:
     #: closed).
     NOTIFICATION_DEFINITIONS_PAGE_LIMIT = 100
 
+    #: The supported ResourceLibrary include/exclude/stability policy fields the
+    #: Files Save/edit surface accepts alongside the five immutable basics.  A
+    #: request that omits them preserves the exact existing object, so every
+    #: legacy client keeps its current behavior.
+    _RESOURCE_LIBRARY_POLICY_KEYS = ("includeRules", "excludeRules", "stability")
+
     def __init__(
         self,
         repository,
@@ -4678,6 +4684,7 @@ class MediaFlowApi:
                     "managed configuration object service is unavailable",
                 )
             document = self._document(environ)
+            policy_keys = set(self._RESOURCE_LIBRARY_POLICY_KEYS)
             allowed = {
                 "resourceLibraryId",
                 "name",
@@ -4687,8 +4694,13 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
-            }
-            if set(document) != allowed or document["resourceLibraryId"] != parts[3]:
+            } | policy_keys
+            required = allowed.difference(policy_keys)
+            if (
+                not required.issubset(document)
+                or set(document).difference(allowed)
+                or document["resourceLibraryId"] != parts[3]
+            ):
                 raise ValueError(
                     "ResourceLibrary edit requires immutable matching ID and Active identity"
                 )
@@ -4699,6 +4711,9 @@ class MediaFlowApi:
                 "storageId": document["storageId"],
                 "storagePath": document["storagePath"],
             }
+            for key in policy_keys:
+                if key in document:
+                    candidate[key] = document[key]
             prepared: list[_ApiRuntimeBinding] = []
             with self._runtime_binding_lock:
                 self._refresh_configuration_binding_locked()
@@ -4739,6 +4754,11 @@ class MediaFlowApi:
                     "resourceLibrary": {
                         key: resource.get(key)
                         for key in ("id", "name", "storageId", "storagePath", "enabled")
+                    }
+                    | {
+                        key: resource.get(key)
+                        for key in self._RESOURCE_LIBRARY_POLICY_KEYS
+                        if key in resource
                     },
                     "active": revision.summary(),
                     "configuration": {
@@ -4762,11 +4782,19 @@ class MediaFlowApi:
                     "managed configuration object service is unavailable",
                 )
             document = self._document(environ)
-            allowed = {"resourceLibraryId", "name", "enabled", "storageId", "storagePath"}
-            if set(document) != allowed:
+            policy_keys = set(self._RESOURCE_LIBRARY_POLICY_KEYS)
+            required = {
+                "resourceLibraryId",
+                "name",
+                "enabled",
+                "storageId",
+                "storagePath",
+            }
+            allowed = required | policy_keys
+            if not required.issubset(document) or not set(document).issubset(allowed):
                 raise ValueError(
-                    "ResourceLibrary Save requires only resourceLibraryId, name, enabled, "
-                    "storageId, and storagePath"
+                    "ResourceLibrary Save requires resourceLibraryId, name, enabled, storageId, "
+                    "storagePath, and the optional includeRules/excludeRules/stability policy"
                 )
             candidate = {
                 "id": document["resourceLibraryId"],
@@ -4775,6 +4803,9 @@ class MediaFlowApi:
                 "storageId": document["storageId"],
                 "storagePath": document["storagePath"],
             }
+            for key in policy_keys:
+                if key in document:
+                    candidate[key] = document[key]
             prepared: list[_ApiRuntimeBinding] = []
             with self._runtime_binding_lock:
                 # Pin the process to the same save-time Active before any
@@ -4829,6 +4860,11 @@ class MediaFlowApi:
                         "storageId": resource["storageId"],
                         "storagePath": resource.get("storagePath", ""),
                         "enabled": resource["enabled"],
+                    }
+                    | {
+                        key: resource.get(key)
+                        for key in self._RESOURCE_LIBRARY_POLICY_KEYS
+                        if key in resource
                     },
                     "active": revision.summary(),
                     "configuration": {
@@ -12344,6 +12380,8 @@ class MediaFlowApi:
             "journey": "discovery",
             "discoveryId": discovery.discovery_id,
             "resourceLibraryId": discovery.resource_library_id,
+            "storageId": discovery.storage_id,
+            "configurationSnapshotId": discovery.snapshot_id,
             "status": discovery.status.value,
             "version": discovery.version,
             "createdAt": discovery.created_at.isoformat(),
@@ -12387,6 +12425,14 @@ class MediaFlowApi:
             ),
             "pauseRequested": discovery.pause_requested,
             "cancelRequested": discovery.cancel_requested,
+            # The durable instant at which waiting work may be re-observed.  It
+            # is published so the operator can see that a still-waiting
+            # discovery is deliberately idle rather than stalled.
+            "nextObservationAt": (
+                discovery.next_observation_at.isoformat()
+                if discovery.next_observation_at is not None
+                else None
+            ),
             "worker": worker,
             "actions": {
                 "pause": {
@@ -12486,10 +12532,21 @@ class MediaFlowApi:
         return document
 
     def _discovery_worker_evidence(self, binding) -> dict[str, object]:
+        """Whether a live resident Worker can actually consume this discovery.
+
+        Process health alone never implies discovery can run: a live,
+        schema-compatible Worker that does not advertise the ``media_discovery``
+        command family would leave the admitted discovery queued forever.  The
+        projection therefore reports the *command-specific* readiness of the
+        same WorkerService the discovery Worker registers with, so the operator
+        sees the real condition (missing/stale/schema/unsupported command) and
+        its own meaningful next action.  Existing manual/transfer readiness is
+        unaffected: this answers only the discovery command family.
+        """
+
         service = self._worker_service
-        if service is None or not callable(
-            getattr(service, "evaluate_manual_organize_readiness", None)
-        ):
+        evaluator = getattr(service, "evaluate_command_readiness", None)
+        if service is None or not callable(evaluator):
             return {
                 "ready": False,
                 "condition": "no_worker",
@@ -12497,7 +12554,7 @@ class MediaFlowApi:
                 "nextAction": "start the resident Processing Worker",
             }
         try:
-            readiness = service.evaluate_manual_organize_readiness()
+            readiness = evaluator(("media_discovery",))
         except Exception:
             return {
                 "ready": False,

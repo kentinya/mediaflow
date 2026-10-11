@@ -3185,12 +3185,34 @@ async function submitAutomationMutation<T>(
   }
 }
 
+/**
+ * The supported ResourceLibrary include/exclude/stability policy.
+ *
+ * A rule is either a bounded glob/path string or an explicit
+ * `{kind, pattern}` object, exactly the shape the backend validates and the
+ * production runtime loader consumes. Omitting the whole policy preserves the
+ * exact legacy defaults and every unexposed field of an existing object.
+ */
+export interface ResourceLibraryScanRule {
+  readonly kind?: string;
+  readonly pattern: string;
+}
+
+export interface ResourceLibraryStabilityPolicy {
+  readonly minimumAgeSeconds?: number;
+  readonly modifiedThresholdSeconds?: number;
+  readonly stableSizeDurationSeconds?: number;
+}
+
 export interface SaveResourceLibraryOptions {
   readonly resourceLibraryId: string;
   readonly name: string;
   readonly enabled: boolean;
   readonly storageId: string;
   readonly storagePath: string;
+  readonly includeRules?: readonly (string | ResourceLibraryScanRule)[];
+  readonly excludeRules?: readonly (string | ResourceLibraryScanRule)[];
+  readonly stability?: ResourceLibraryStabilityPolicy;
 }
 
 const RESOURCE_LIBRARY_SAVE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -3225,10 +3247,34 @@ export async function saveResourceLibrary(
       enabled: options.enabled,
       storageId: options.storageId,
       storagePath: options.storagePath,
+      ...resourceLibraryPolicyBody(options),
     },
     normalizeResourceLibrarySave,
     fetchImpl,
   );
+}
+
+/**
+ * The optional policy fields of one Save/edit body.
+ *
+ * Only fields the caller actually supplied are sent, so a legacy caller keeps
+ * its exact current request body and an edit never rewrites policy it did not
+ * intend to change.
+ */
+function resourceLibraryPolicyBody(
+  options: SaveResourceLibraryOptions,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (options.includeRules !== undefined) {
+    body["includeRules"] = [...options.includeRules];
+  }
+  if (options.excludeRules !== undefined) {
+    body["excludeRules"] = [...options.excludeRules];
+  }
+  if (options.stability !== undefined) {
+    body["stability"] = { ...options.stability };
+  }
+  return body;
 }
 
 export interface LibraryEditProjection<T> {
@@ -3323,6 +3369,23 @@ export function fetchResourceLibraryEdit(
         storageId: String(item.storageId),
         storagePath:
           typeof item.storagePath === "string" ? item.storagePath : "",
+        ...(Array.isArray(item.includeRules)
+          ? {
+              includeRules: item.includeRules as readonly (
+                string | ResourceLibraryScanRule
+              )[],
+            }
+          : {}),
+        ...(Array.isArray(item.excludeRules)
+          ? {
+              excludeRules: item.excludeRules as readonly (
+                string | ResourceLibraryScanRule
+              )[],
+            }
+          : {}),
+        ...(typeof item.stability === "object" && item.stability !== null
+          ? { stability: item.stability as ResourceLibraryStabilityPolicy }
+          : {}),
       } satisfies SaveResourceLibraryOptions;
     },
   );

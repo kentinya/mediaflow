@@ -76,10 +76,13 @@ function discoveryDocument(progress: Record<string, unknown>) {
     journey: "discovery",
     nextAction:
       "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset",
+    nextObservationAt: null,
     pauseRequested: false,
     primarySourceCount: 1,
     progress,
     resourceLibraryId: "library",
+    storageId: "source",
+    configurationSnapshotId: "active-1",
     selection: {
       scopeCount: 2,
       scopes: [

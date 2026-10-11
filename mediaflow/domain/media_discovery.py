@@ -178,19 +178,33 @@ def discovery_material_refusal(progress: DiscoveryProgress) -> DiscoveryIncomple
 
 
 def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
-    """The canonical, order-stable signature of one deduplicated scope.
+    """The canonical signature of one deduplicated scope.
 
-    Admission reconciliation compares this exact signature, so an identical
-    actor/scope/pin resubmission can be matched to its already durable open
-    record without ever guessing from labels or creation times.
+    The signature is *set-canonical*, not submission-ordered: the same set of
+    exact relative scopes submitted as ``[A, B]`` or ``[B, A]`` is one admitted
+    scope, so admission reconciliation compares this exact signature and an
+    equivalent resubmission converges on the already durable open record
+    without ever guessing from labels or creation times.  Distinct paths and
+    distinct entry kinds still produce distinct signatures, so a genuinely
+    different selection is always a different admission.
     """
 
-    return json.dumps(
-        [entry.document() for entry in entries],
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    canonical = sorted((entry.path, entry.kind.value) for entry in entries)
+    return json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
+
+
+def canonical_scope(
+    entries: tuple[DiscoveryScopeEntry, ...],
+) -> tuple[DiscoveryScopeEntry, ...]:
+    """The deterministic, submission-order-independent form of one scope.
+
+    Two equivalent selections must persist the *same* durable scope, otherwise
+    a lost-response resubmission could reconcile by signature yet still carry a
+    different order into the frozen manifest.  Sorting is by exact path then
+    kind; names are never trimmed or rewritten.
+    """
+
+    return tuple(sorted(entries, key=lambda entry: (entry.path, entry.kind.value)))
 
 
 def deduplicate_sources(
@@ -647,6 +661,14 @@ class MediaDiscovery:
     pause_requested: bool = False
     cancel_requested: bool = False
     error: str | None = None
+    #: The earliest durable instant at which a waiting discovery may be
+    #: claimed again.  A discovery that finished a walk with sources still
+    #: unproven stable is *not* immediately reclaimable: it becomes due only
+    #: once the shortest configured stability interval it is actually waiting
+    #: for has elapsed.  That keeps waiting work from spinning, exhausting the
+    #: traversal budget or starving other resident commands, while never
+    #: fabricating the interval itself.
+    next_observation_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
@@ -666,6 +688,8 @@ class MediaDiscovery:
             raise ValueError("discovery status is invalid")
         if self.created_at.tzinfo is None or self.updated_at.tzinfo is None:
             raise ValueError("discovery timestamps must include timezone")
+        if self.next_observation_at is not None and self.next_observation_at.tzinfo is None:
+            raise ValueError("discovery observation deadline must include timezone")
         if len(self.sources) > self.budgets.max_primary_sources:
             raise ValueError("discovery source list exceeds its admitted bound")
 
@@ -697,6 +721,11 @@ class MediaDiscovery:
             "error": self.error,
             "primarySourceCount": len(self.sources),
             "sideEffects": "none",
+            "nextObservationAt": (
+                self.next_observation_at.isoformat()
+                if self.next_observation_at is not None
+                else None
+            ),
         }
         if include_sources:
             value["sources"] = [dict(item) for item in self.sources]
@@ -715,6 +744,7 @@ class MediaDiscovery:
             raise ValueError("discovery sources are invalid")
         frozen = value.get("frozenAt")
         expires = value.get("claimExpiresAt")
+        next_observation = value.get("nextObservationAt")
         return cls(
             str(value.get("discoveryId")),
             str(value.get("actor")),
@@ -738,6 +768,11 @@ class MediaDiscovery:
             bool(value.get("pauseRequested", False)),
             bool(value.get("cancelRequested", False)),
             str(value["error"]) if isinstance(value.get("error"), str) else None,
+            (
+                datetime.fromisoformat(str(next_observation))
+                if isinstance(next_observation, str)
+                else None
+            ),
         )
 
 

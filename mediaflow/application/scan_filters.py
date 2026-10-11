@@ -165,6 +165,43 @@ def stability_decision(
     return StabilityVerdict.STABLE
 
 
+def stability_wait_seconds(
+    library: ResourceLibrary,
+    entry: StorageEntry,
+    *,
+    now: datetime,
+    unchanged_previous: bool,
+    observed_since: datetime | None,
+) -> float:
+    """The bounded real time still required before this source can be re-proven.
+
+    A source that is not yet proven stable must be *re-observed* later, never
+    immediately: reclaiming it in a tight loop would spin, consume the durable
+    traversal budget while doing no traversal and starve every other resident
+    command.  This returns the remaining genuine interval for the exact reason
+    the source is still waiting, so a waiting discovery becomes claimable again
+    only when an observation could actually change the verdict.
+
+    The value is never fabricated and never negative: when no interval has been
+    established yet, the next observation must itself be separated from this one
+    by the full configured stable-size duration before it can prove stability.
+    """
+
+    policy = library.stability_policy
+    required_age = max(policy.minimum_age_seconds, policy.modified_threshold_seconds)
+    age = max(0.0, (now - entry.modified_at).total_seconds())
+    if age < required_age:
+        return required_age - age
+    if policy.stable_size_duration_seconds == 0:
+        return 0.0
+    if not unchanged_previous or observed_since is None:
+        # The interval starts now: the next observation has to be a full
+        # duration later to prove an unchanged stable-size interval.
+        return float(policy.stable_size_duration_seconds)
+    elapsed = max(0.0, (now - observed_since).total_seconds())
+    return max(0.0, float(policy.stable_size_duration_seconds) - elapsed)
+
+
 @dataclass(frozen=True)
 class ObservedSource:
     """One bounded durable observation of a real Storage source."""
