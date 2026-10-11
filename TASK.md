@@ -491,6 +491,7 @@ P2/P3 wording/assertion notes were left untouched as non-blocking.
 ```text
 Status: READY FOR B REVIEW
 Head SHA: 12fd1b3a75cf76743912b57d1f51d184acb10901
+Report SHA: 883f11ebe69fe23d99ac94406422b14137748144 (TASK.md only)
 ```
 
 ## B Independent Verification — correction round 2
