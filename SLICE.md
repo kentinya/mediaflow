@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: 7e2ab801eaef25b083640813375a49f536ae202f
 Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: A FINAL REVIEW
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ```
 
 ## Authority and sequencing
@@ -1407,7 +1407,7 @@ B owns the next focused correction Task; A creates no Task and changes no implem
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
 
-## A Final Review
+## Prior A Final Review — 2026-10-10 / fd52b0332c4b
 
 ```text
 Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..fd52b0332c4baed3dd5417bf18799a91dd74d028
@@ -1501,5 +1501,114 @@ B owns one focused correction Task and its normal review loop.
 - Four pre-existing untracked user PNGs remain preserved and outside the checkpoint;
   config/alist.json remains ignored, untracked and unstaged. Known P2 wording/assertion issues
   are not blockers. Roadmap, Progress and other CURRENT documents receive no closure update.
+
+NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
+
+## A Final Review
+
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..7e2ab801eaef25b083640813375a49f536ae202f
+Decision: FIX REQUIRED
+Review Date: 2026-10-11
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+P0/P1 Blockers:
+- P1 / A44-6 — RO-6 duplicate-free durable admission/recovery, acceptance 30:
+  two concurrent authenticated submissions by the same actor, ResourceLibrary,
+  canonical paths=[Movies] and immutable pin both return HTTP 202 with different
+  discovery IDs. Real SQLite retains two queued walks for the same admission.
+  The independent concurrentAdmission receipt coordinates only the boundary
+  before the unchanged repository insert, after both requests have completed
+  their reconciliation reads; it changes no Storage response or product behavior.
+  Evidence: mediaflow/application/media_discovery.py:233-244 checks recent work
+  before generating a fresh UUID; :288-291 inserts separately. The repository at
+  mediaflow/infrastructure/sqlite_runtime.py:9953-9970 protects only that new UUID,
+  not the actor/library/Storage/canonical-scope/pin admission identity. Minimum
+  correction: reconcile and admit that exact open-work identity atomically in
+  durable authority so overlapping requests converge on one record across
+  connections/restart; retain separate terminal/successor work and different
+  actor/library/scope/pin isolation. Verify actual concurrent authenticated
+  admission, overlapping unknown-response recovery and ordinary readback, with
+  one durable walk and no implicit execution authority. A process-local lock or
+  a best-effort search of only the most recent records is not durable uniqueness.
+- P1 / A44-7 — RO-6 pinned configurable filtering/stability, acceptance 28/30
+  and its required native configuration/runtime surface: include/exclude and
+  stability behavior exists only for directly constructed/injected domain objects,
+  not the production managed ResourceLibrary journey. The actual runtime loader
+  at mediaflow/infrastructure/runtime_configuration.py:332-341 consumes only
+  extensions/maxDepth beyond the basic binding; it never loads include/exclude or
+  FileStabilityPolicy. The typed ResourceLibrary allowlist at
+  mediaflow/application/configuration_objects.py:338-348 exposes none of them.
+  Consequently all production-loaded stability durations are zero. Tests at
+  tests/test_media_discovery.py:438-463 replace the loaded library's policy rather
+  than proving the published configuration reaches the Worker.
+  Independent managed-policy-receipt uses an imported, validated, activated exact
+  revision and the unchanged production managed-runtime loader, with no injected
+  filter/stability policy. Supplied includeRules/excludeRules/stabilityPolicy remain
+  in the revision but runtime ignores them: the specifically excluded movie is
+  accepted immediately, status=completed, one primary source, Finalize available,
+  and all three stability durations zero. These probe key names are evidence of
+  missing mapping, not a prescribed new schema. Minimum correction: make the
+  promised bounded library filtering/stability configuration Web/API-completable
+  through the shared managed validation/publication authority and consume it from
+  the exact immutable admission pin in real discovery/Worker composition. Preserve
+  old documents/defaults and focused edits, expose invalid settings/recovery, and
+  prove configured exclusions and a nonzero genuine stable-size interval through
+  actual publication, restart and old/new pin isolation without replacing the
+  runtime library in the test. Do not defer this promised outcome or use domain-only
+  tests as completion of the required surface.
+```
+
+These are unmet RO-6 outcomes inside the unchanged Contract, not evidence that the Contract is
+impossible. Base, Implementation Head, Required Outcomes, Required Surfaces, Safety Invariants,
+acceptance and Explicitly Deferred stay unchanged. Task 44.8's accepted B review remains historical;
+A does not conduct another Task review. The current Closure Packet remains B's submission record,
+but its RO-6 COMPLETE conclusion is contradicted by these independent observations. No closure
+reconciliation occurs and no next Slice is selected. B owns focused correction planning and its
+normal implementation/review loop; A changes no implementation and creates no Task.
+
+### Validation and evidence
+
+- Independent unchanged full Python regression: `.venv/bin/python -m unittest discover -s tests`
+  — **PASS**, 2384 tests, 7 skipped, 0 failures/errors, 420.213 seconds. Ruff format/check, pip
+  dependency check and complete Base..Head diff check also pass. A green suite does not satisfy
+  the uncovered admission/configuration outcomes above.
+- Fresh reruns retain the earlier corrections: mixed stability freezes exactly A/B once each;
+  sibling escape and cyclic-cursor-then-read-failure refuse Finalize with 409; queued/in-flight
+  cancellation settles and permits deliberate successor work; a stale Worker cannot change a
+  successor claim. Same-owner pause preserves 101 visited / 100 sources / primary_limit, and
+  the later legal shrink cannot authorize that prefix. Three pending-Pause cases refuse early
+  Continue without a durable change, then acknowledged Continue completes the same scope.
+  Concurrent Finalize passes 10/10 with 201/409 and one linked intent. Original adapted helpers,
+  fresh receipts and logs are retained; these checks do not excuse the new admission race.
+- A verified all 625 B-indexed candidate inputs (excluding the two documented handoff files),
+  all 178 B-indexed artifacts, current built Web digests and the four preserved user PNG hashes,
+  with no mismatch. Reviewed Head and workspace HEAD
+  e30da30f15b8d6760ddb7d97a3c83366ce689b11 differ only in SLICE.md/TASK.md. Source, tests,
+  dependencies, runtime configuration, harnesses and built artifacts match the tested candidate.
+  Original B Python/Web/E2E/native/Docker/wheel/upgrade logs and first failures/interruption
+  remain intact. Seven unchanged external-service/endurance profiles remain SKIPPED/UNAVAILABLE;
+  no production-service or live-deployment acceptance is inferred.
+- Additional independent Web/browser/Docker/wheel/migration reruns are NOT RUN after the proven
+  P1 blockers. Matching B evidence establishes provenance, not A final acceptance of the remaining
+  surfaces. P2 concurrent-Save assertion, queued/paused progress wording and Move-summary copy
+  remain non-blocking; none alone caused this decision.
+- New probes use temporary synthetic Local files, real SQLite, authenticated API and actual
+  Worker pickup. They record zero Storage content-read/mutation calls and zero execution Tasks.
+  The policy probe reloads the actual published revision through the production loader instead
+  of using the fixture's injected library policy. Test coordination wraps only the unchanged
+  insert boundary. No product source/tests, production media/services, live deployment or frozen
+  Slice 43 code changed. config/alist.json remains ignored, untracked and unstaged; all four
+  pre-existing untracked PNGs remain preserved outside the checkpoint.
+- Evidence is local/not pushed at
+  .git/validation-evidence/7e2ab801eaef25b083640813375a49f536ae202f/a-final-review3/,
+  including review-index.json, full-python.log, admission-probes.py,
+  admission-probe-receipts.json, managed-policy-probe.py, managed-policy-receipt.json and the
+  rerun correction/control/Finalize receipts. All earlier A/B evidence remains unchanged.
+- Pre-decision governance passes. The existing guard at scripts/check_governance.py:161-162
+  still rejects the workflow-required FIX REQUIRED plus NO ACTIVE IMPLEMENTATION TASK handoff
+  with `Slice FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK`. Record the post-decision
+  failure honestly; A does not fabricate B's Task, revert to ACTIVE, move Base or change guard
+  implementation to hide this known tooling mismatch. B must account for it in planning preflight.
+  Roadmap, Progress and other CURRENT documents receive no closure update.
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
