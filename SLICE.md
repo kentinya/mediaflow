@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: fd52b0332c4baed3dd5417bf18799a91dd74d028
+Implementation Head: 7e2ab801eaef25b083640813375a49f536ae202f
 Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: B PLANS ONE FOCUSED CORRECTION TASK
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -1135,23 +1135,24 @@ with governance and diff checks; those checks do not establish runtime acceptanc
 
 ## Closure Packet
 
-This is the current correction-loop handoff after Task 44.7 PASS on 2026-10-10. The prior
-submission and A's FIX REQUIRED review below remain historical records. Required Outcomes,
-Required Surfaces, Safety Invariants, acceptance, deferrals and Slice Base are unchanged.
-B has not conducted A Final Review or declared Slice PASS/CLOSED.
+This is the correction-loop handoff after Task 44.8 PASS on 2026-10-11. Prior submission/rejection
+records remain in Git, retained evidence and A's reviews below. This returns the corrected candidate
+to A; B does not conduct another A Final Review or declare Slice PASS/CLOSED. The unchanged
+RO-1 through RO-5 implementation/surface facts carry forward with current regressions; RO-6's
+required correction is now verified. Contract outcomes/surfaces/safety/acceptance/deferrals/Base stay fixed.
 
 ```text
 Slice: 44 — Existing V2 Pages Functional Improvements
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Head SHA: fd52b0332c4baed3dd5417bf18799a91dd74d028
+Head SHA: 7e2ab801eaef25b083640813375a49f536ae202f
 
 Required Outcomes:
-- RO-1 — COMPLETE: consistent ordinary file maintenance on both library surfaces; retained implementation and fresh affected/full regressions.
-- RO-2 — COMPLETE: reference-aligned Rules workspace/forms; retained implementation and fresh Web/browser regressions.
-- RO-3 — COMPLETE: MediaLibrary/path destination semantics and explicit legacy compatibility; retained implementation and fresh Python/upgrade regressions.
-- RO-4 — COMPLETE: object-scoped Rules tests and separate complete flow; retained implementation and fresh Python/Web regressions.
-- RO-5 — COMPLETE: exact long-name paths/toolbars on both routes/list/grid; retained implementation/visual evidence and current matching Docker assets.
-- RO-6 — COMPLETE: exact bounded discovery manifest, confined provider observations, durable refusal, one atomic linked intent and native separately confirmed Preview/execution.
+- RO-1 — COMPLETE: consistent ordinary file maintenance on both library surfaces; retained implementation and current full/native regressions.
+- RO-2 — COMPLETE: reference-aligned Rules workspace/forms; retained implementation and current full Web/E2E regressions.
+- RO-3 — COMPLETE: MediaLibrary/path destination semantics and explicit legacy compatibility; retained implementation and current Python/upgrade regressions.
+- RO-4 — COMPLETE: object-scoped Rules tests and separate complete flow; retained implementation and current Python/Web regressions.
+- RO-5 — COMPLETE: exact long-name paths/toolbars on both routes/list/grid; retained layout and current browser/Docker assets.
+- RO-6 — COMPLETE: exact bounded manifest, confined observations, durable refusals, usable cancellation/pause/Continue, fenced ownership, atomic intent and native separately confirmed Preview/execution.
 
 Required Surfaces:
 - COMPLETE — Both Files routes, menus/selections/dialogs/text editor, context/recovery and long-name browsing.
@@ -1165,12 +1166,11 @@ Required Surfaces:
 - COMPLETE — Family-specific Rules controls/results, Overview complete flow, bounded evidence and historical readback.
 
 Implemented:
-- Prior 44.1–44.6 implementation retained within the unchanged Contract.
-- One source per exact admitted Storage/library/path across pages/observations/restart; changed/missing/unstable observations cannot retain unproven sources.
-- Exact provider child/path/name/type confinement before observation/traversal; current unsafe OpenList names publish actionable durable refusal.
-- Material budget/safety/cursor refusal remains durable across ordinary read failures, continuation and restart; explicitly reviewed read-failure-only subsets remain legal.
-- Finalize prepares the existing validated actor/pin/source intent, then commits intent/items/audit and the one-shot version-fenced discovery link in one SQLite transaction.
-- Concurrent/repeated/lost-response/restart finalize produces one linked intent; native conflict recovery refreshes durable work. Discovery grants no execution/overwrite/delete authority.
+- Prior 44.1–44.7 implementation retained: exact deduplicated/confined manifests, monotonic material refusals and one atomic linked intent.
+- Operator controls preserve current ownership; Worker publications/observations and settlements are atomically fenced by exact persisted claims. Lost owners stop without changing successors.
+- Accepted cancellation settles terminal state and claim release atomically, preserving durable findings and allowing explicit successor selection without execution authority.
+- Same-owner pause acknowledgement preserves bounded work/observations/refusals and releases the claim atomically. Pending Pause explains waiting and refuses premature Continue without a durable change; acknowledged native Continue resumes the same pinned scope.
+- Existing Worker/SQLite/statuses suffice; no schema change, extra engine/queue or new authority. Discovery/analysis/Preview stay zero mutation; execution needs separate exact confirmation.
 
 Tasks completed:
 - 44.1 — Consistent ordinary file maintenance and recovery.
@@ -1180,45 +1180,46 @@ Tasks completed:
 - 44.5 — Both-library long-name paths and toolbars.
 - 44.6 — Bounded folder and mixed-selection discovery through native manual Organize.
 - 44.7 — Exact bounded manifest, confinement, durable refusal and atomic one-intent handoff.
+- 44.8 — Complete discovery controls under durable Worker ownership.
 
 Final Tests:
-- .venv/bin/python -m unittest discover -s tests — PASS: 2374 tests, 7 skipped, 0 failures/errors, 544.984 seconds; fresh unfiltered B run.
-- web/: npm run test -- --run — PASS on exact repeat: 73 files / 1086 tests, 0 skipped/failed, 404.65 seconds. First run: 1085 passed / 1 failed while Rules navigation remained loading; full original log retained. Genuine Task-Base Rules file: 49 PASS, did not reproduce that timeout. No assertion/timeout/selection/retry-option change.
-- web/: npm run format:check, lint, typecheck, build — PASS; npm run test:e2e — PASS 246; real-Python Operations config/spec — PASS 21; direct-files config/spec — PASS 10.
-- Governance, Ruff format/check (358 files), compileall, pip check, both example config validations and git diff --check — PASS; governance/diff rechecked for the document-only handoff.
-- Fresh wheel build/smoke — PASS, schema 45; wheel SHA-256 ad35263de4471a89c2b66d8ca89151330557a15ad48d209ffeef6ddfd2e4d1aa; packaged source matches candidate.
-- Native discovery browser proof — PASS 11; four selection kinds, refusal/reconciliation, exact separate confirmation and one verified effect without replay.
-- Docker release-security smoke — PASS, fresh committed-source image mediaflow:b-task44-7-final-fd52b0332c4b; Docker discovery proof — PASS 7 with real Worker exact Move/non-replay; genuine schema-38 to schema-45 upgrade/recovery — PASS, including backup/rehearsal/injected failure/restore/historical work/discovery durability.
-- First Docker security/upgrade/discovery runs and an additional security repeat failed at unchanged Compose health waiting. Original logs and 3-second probe timeouts retained; exact subsequent commands pass without timeout/assertion weakening. No failed run is relabelled PASS.
-- Independent current managed/OpenList duplicate-page and unsafe-name probes — PASS; original current managed Local/SQLite concurrent finalize probe — PASS 10/10, one visible linked intent each, zero execution Tasks/source effects; focused discovery/provider/manual-intent regression — PASS 69.
-- SKIP/UNAVAILABLE: seven unchanged real remote-service/endurance profiles; no production service/media/live deployment certification. Isolated Docker is available and passed.
+- .venv/bin/python -m unittest discover -s tests — PASS: 2384 tests, 7 original skips, zero failures/errors; 451.632 seconds including process overhead. Assigned affected/focused modules included; independently focused discovery/provider run also PASS 71.
+- web/: npm run test -- --run — PASS: 73 files / 1088 tests, zero failed/skipped; 399.674 seconds including process overhead. B's prior incomplete exit-143 run is retained as INTERRUPTED, not PASS.
+- web/: npm run format:check, lint, typecheck, build — PASS. npm run test:e2e — PASS 246; real-Python Operations config/spec — PASS 21; real-Python direct-files config/spec — PASS 10; original screenshots retained before shared-output overwrite.
+- Governance, Ruff format/check (358 files), compileall, pip check, both example config validations and reviewed-range git diff --check — PASS. Document-consuming governance/diff are rechecked after the handoff checkpoint.
+- Fresh single wheel build/smoke — PASS, schema 45; SHA-256 c94d6ac15898460567a7640d1abaf1daefe9ac3494f5a56cb5c8ca8333f55820; all 163 packaged Python sources match the candidate. Smoke backup SHA-256 260ed838a4feaa6278534bc678243b0e8f3f09f5f9df177275e8c702407503e9.
+- Native discovery browser proof — PASS 11, including four selections, refusals/reconciliation and exact separately confirmed Move/non-replay; additional native Pause/wait/acknowledged Continue/completion journey — PASS, zero source changes/execution work.
+- B current managed Local/SQLite/API/actual-Worker controls — PASS 4/4; pause-settlement premature-refusal/acknowledged-Continue probe — PASS 3/3. Claim takeover remains fenced; 101 visited / 100 sources / primary_limit survives Pause and legal shrink, with Finalize 409.
+- Docker release-security smoke — PASS: current committed-source image mediaflow:b-task44-8-7e2ab801eaef. Docker discovery browser proof — PASS 7 with actual resident Worker exact Move/non-replay. Genuine archived schema-38 (360e59e0791c60635f050a0444b1a2d0b4458ea4) to schema-45 upgrade/recovery — PASS: backup/preflight/rehearsal/injected failure/restore/historical state/new discovery durability.
+- Submitted Developer evidence is not used to infer missing gate passes: its retained clean Web log is 1086 (old candidate), its 1088 log has one Rules timeout, and several reported final logs are absent. Additional reported earlier runs/pre-correction-image failure lack readable original artifacts here; no PASS is inferred. Fresh current B gates above establish acceptance; submitted logs and prior negative reviews remain intact.
+- SKIP/UNAVAILABLE: seven unchanged dedicated real SMB/S3/OpenList and Local/remote endurance profiles. Isolated Docker is available; no production-service/media/live-deployment certification is claimed.
 
 Safety Evidence:
-- Whole Task Base..Head inspected, including the original implementation and correction; report-only successor changes TASK.md only.
-- Metadata-only discovery and zero-mutation analysis retained; only separately authorized OrganizerExecutor work mutates Storage. No FileIndex authority, Provider/content reads, automatic uncertain-effect replay or C-to-A recognition conversion.
-- Atomic one-shot handoff retains actor/pin/source/version binding, source immutability and legitimate successor intents; no orphan work, added grants or silent overwrite/delete/fallback.
-- Current security/discovery/upgrade images each match all 163 runtime Python files and four built Web assets; native/Docker Preview images and durable effect receipts inspected.
-- No removed/weakened tests, new hidden skips, forbidden dependency, private configuration, real credentials, frozen Slice 43 changes or user-image changes. Four original PNG hashes preserved; config/alist.json ignored/untracked/unstaged.
+- Actual immutable Task Base..Head reviewed; executable 12fd1b3 to tested/report Head differs only in TASK.md. All candidate inputs and image/dependency/configuration identities are indexed.
+- Metadata-only discovery/current control probes make zero content-read/Provider/mutation calls and create zero execution Tasks. Only separately authorized OrganizerExecutor work produces the verified synthetic Move; completed effects refuse replay.
+- Claims, immutable actor/library/Storage/scope/pins, bounded manifests/refusals and one-shot intent/execution authority remain binding. Read/analysis/control cannot repin to current Active or grant overwrite/delete/fallback authority. C remains C with A policies.
+- Both tested current Docker images match all 163 runtime Python sources and 4 built assets. Native pending/acknowledged/Preview and Docker visible states/receipts are inspected; built-input-identities.json records exact image IDs and served-file digests.
+- No deleted tests or weakened safety assertions, new hidden skips, forbidden dependency, private config/real credentials, unrelated files, frozen Slice 43 or user-image changes. Control regressions retain bounds/refusals/ownership checks under the authorized pending-Continue refusal semantics. Four original PNG hashes preserved; config/alist.json ignored/untracked/unstaged.
 
 Known Non-blocking Issues:
-- P2 — Existing Rules concurrent-Save allowed-code assertion and queued/paused progress wording remain unchanged; original prior failures/Base proofs retained. Final B Python run has no failure excluded.
-- P2 — Existing Move Preview impact summary says source media is retained even when the operation row says Move. The same wording exists at Slice Base and Task Base; exact Move/target, separate confirmation and verified effect remain visible. No authority regression or extra Task is created for this wording.
+- P2 — Existing Rules concurrent-Save allowed-code assertion; prior original failures/genuine Base proofs remain retained. This fresh Python/Web full run excludes no failure.
+- P2 — Queued/paused progress can say “已完整遍历所选范围” while its main lifecycle is queued/paused. Current native images retain this wording; no Finalize/authority is fabricated.
+- P2 — Existing Move Preview impact summary says source media is retained while its operation row correctly says Move. Prior genuine Base evidence/current image retain the copy inconsistency; exact target, separate confirmation and verified effect remain visible.
 
 Explicitly Deferred:
 - Exactly the unchanged Contract's Explicitly Deferred list above; no item added, removed or made a hidden dependency.
 
 Documentation Reconciliation Needed:
-- A to review the full immutable Slice Base..current Head, reconcile CURRENT product/architecture/requirements and Roadmap/Progress only after its decision, and retain the frozen Slice 43 boundary.
-- Distinguish current managed ResourceLibrary controls from labelled policy/Storage-port regression cases; do not claim injected policy/future-adapter cases as current production reachability.
-- Evidence is local/not pushed and retained through A review: .git/validation-evidence/fd52b0332c4baed3dd5417bf18799a91dd74d028/b-review44-7/ (review-index.json, input/environment/artifact hashes, original failures/repeats, API receipts, browser images and accepted Task snapshot). Prior B/A records remain intact.
+- A to review the complete immutable Slice Base..current Head, reconcile CURRENT product/architecture/requirements and Roadmap/Progress only after its decision, and retain the frozen Slice 43 boundary.
+- Distinguish current managed ResourceLibrary controls from labelled injected policy/Storage-port/legacy-shape tests; do not infer current production reachability from those tests alone.
+- Evidence is local/not pushed, retained through A review: .git/validation-evidence/7e2ab801eaef25b083640813375a49f536ae202f/b-review44-8-final/ (review-index.json, input/environment/build/artifact hashes, exact commands/raw logs, original failures/interruption, API receipts, browser images and accepted Task snapshot). Prior B/A records remain intact.
 
 Decision: SLICE READY FOR A REVIEW
 ```
 
-The tested Head above is the implementation/report candidate. The handoff checkpoint changes only
-SLICE.md/TASK.md; executable inputs, tests, dependencies, configuration, harnesses and built assets
-remain identical. The outcome/surface facts carry forward prior implementation plus the accepted
-correction; A retains the full-range final decision.
+The Head above is the tested/report candidate; the implementation is 12fd1b3. This handoff changes
+only SLICE.md/TASK.md. It returns A's correction loop for the full-range final decision; B declares
+neither Slice PASS/CLOSED nor another independently final-accepted Slice.
 
 ## Prior Closure Packet — superseded by the correction handoff
 
