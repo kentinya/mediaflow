@@ -88,7 +88,8 @@ This factual status update does not change the stable requirement IDs or accepta
 
 ## Authority and evolution
 
-The V1 canonical specification and stable V1 requirements remain the product baseline. V2 uses
+The complete canonical V1 definition and stable IDs in [requirements.md](requirements.md) remain
+the product baseline. V2 uses
 operator goals and the UX requirements above to shape interaction while preserving every existing
 correctness, security, authority and data-integrity invariant. Each active Slice contract may refine
 its V2 surface and architecture within these boundaries, and a

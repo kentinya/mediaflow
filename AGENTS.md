@@ -8,9 +8,8 @@ Before making any changes, read:
 
 - AGENTS.md
 - docs/development-workflow.md
-- 影视媒体资源自动整理系统需求规格说明书.md (canonical product requirements)
+- docs/requirements.md (canonical product requirements and stable requirement IDs)
 - docs/product-experience.md
-- docs/requirements.md
 - docs/architecture.md if it exists
 - docs/roadmap.md if it exists
 - docs/progress.md
@@ -34,9 +33,9 @@ Use this hierarchy when interpreting future work:
 1. `AGENTS.md` defines permanent safety, architecture, role, and scope-control rules.
 2. `docs/development-workflow.md` is the sole authority for implementation, commit, review,
    closure, and next-slice sequencing.
-3. The root Chinese product requirements specification defines canonical V1 product scope.
+3. `docs/requirements.md` defines complete canonical V1 product scope and stable engineering/UX IDs.
 4. `docs/product-experience.md` defines canonical user journeys and product-completion semantics.
-5. `docs/requirements.md` provides stable engineering/UX requirement IDs, while
+5. `docs/v2-requirements.md` extends the frozen V1 baseline for V2, while
    `docs/architecture.md` distinguishes CURRENT implementation from TARGET design.
 6. `docs/roadmap.md` records only large Slice priority and status.
 7. `SLICE.md` is the current A-owned Slice Contract: user goal, required outcomes, boundaries,

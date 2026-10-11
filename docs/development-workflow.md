@@ -515,7 +515,7 @@ entry; the Developer document stays blank until concrete implementation lessons 
 | `docs/agent-experience/*.md` | Short reusable role lessons; read before work and reconcile once at Slice closure, never scope or status authority |
 | `docs/roadmap.md` | Large Slice goal, order, dependency and status only |
 | `docs/progress.md` | Large Slice closure ledger only |
-| `docs/requirements.md` | Stable requirements, not Task status or review logging |
+| `docs/requirements.md` | Complete canonical V1 product definition and stable engineering/UX requirement IDs; live work state remains in Slice/Task documents |
 | `docs/v2-requirements.md` | Stable V2 requirements extending the frozen V1 baseline; root Slice/Task documents own live work state |
 | `docs/product-experience.md` | User journeys, not workflow audit history |
 | `docs/architecture.md` | CURRENT/TARGET architecture, not Task workflow |

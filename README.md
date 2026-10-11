@@ -231,8 +231,8 @@ checkpoint. No new lesson requires no entry; the Developer document stays blank 
 
 - [Runtime configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)
-- [Product requirements](影视媒体资源自动整理系统需求规格说明书.md)
-- [Engineering requirements](docs/requirements.md)
+- [Canonical product requirements and stable IDs](docs/requirements.md)
+- [V2 requirements](docs/v2-requirements.md)
 - [Large-Slice roadmap](docs/roadmap.md)
 - [Slice closure ledger](docs/progress.md)
 
