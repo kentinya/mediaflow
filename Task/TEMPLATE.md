@@ -3,6 +3,9 @@
 This Task follows [the development workflow](../docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](../SLICE.md).
 
+Planning/review reads [B's experience](../docs/agent-experience/task-planner-reviewer.md);
+implementation reads [Developer's experience](../docs/agent-experience/developer-implementation-role.md).
+
 ```text
 Task ID: [ID]
 Parent Slice: [Slice ID / Name]
@@ -108,6 +111,9 @@ development-only feedback or an unverifiable prior run as final checkpoint accep
 ### Remaining In-Slice Work
 
 ### Risks / Deviations
+
+If new reusable lessons emerge, supply brief candidates for the Slice Closure Packet. A merges
+them at Slice closure; a separate per-Task summary is not required and is not a PASS gate.
 
 ### Checkpoint
 

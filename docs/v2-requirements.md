@@ -12,14 +12,13 @@ product and authority boundaries.
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
-Current Contract: Slice 44 — Existing V2 Pages Functional Improvements — PLANNED
+Current Contract: Slice 44 — Existing V2 Pages Functional Improvements — ACTIVE
 Working branch: slice/44-page-improvements
 Suspended Slice: 43 — V2 Automation Workspace and Engine Settings — PLANNED / USER FROZEN
 Slice 42 Base: ffee77348cebcb05e356c8111c5861ed64ca0388
 Slice 42 Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
 Slice 42 A Final Review: PASS / CLOSED — 2026-10-06
-Implementation Task: NO ACTIVE IMPLEMENTATION TASK
-Next action: A COMPLETES AND ACTIVATES SLICE 44 AFTER REMAINING SCOPE IS SET
+Implementation Task and next action: see root TASK.md and SLICE.md
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -47,8 +46,8 @@ and arbitrary historical Reprocess remain deferred under the unchanged Slice bou
 Object-scoped Rules testing under `V2-RULES-009` is a selected Slice 44 TARGET, not delivered
 Slice 41 behavior. Each editor analyzes its exact candidate independently of unrelated downstream
 configuration, while complete-flow analysis and checked publication retain their own prerequisites
-and evidence purposes. Slice 44 remains PLANNED with no active implementation Task; frozen Slice
-43 is not an implementation dependency or accepted capability.
+and evidence purposes. Slice 44 is ACTIVE; root `SLICE.md` and `TASK.md` own its current
+implementation/review state. Frozen Slice 43 is not an implementation dependency or accepted capability.
 
 The setup, empty-business configuration and resident-service requirements below are delivered Slice
 40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal

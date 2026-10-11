@@ -13,8 +13,11 @@ Before making any changes, read:
 - docs/requirements.md
 - docs/architecture.md if it exists
 - docs/roadmap.md if it exists
+- docs/progress.md
+- docs/v2-requirements.md
 - SLICE.md
 - TASK.md when it contains an active implementation Task
+- the experience document for your current role, linked under Development Roles
 
 Do not implement the whole project at once.
 
@@ -711,6 +714,13 @@ RecognitionType == C
 
 MediaFlow has two formal management objects—Slice and Task—and three responsibilities. Detailed
 lifecycle, status, testing, Git and review rules live only in `docs/development-workflow.md`.
+
+Read the corresponding role experience before work. These are reusable guidance, not requirements,
+scope authority or a competing workflow; maintenance follows the workflow's Slice-closure rules.
+
+- [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md)
+- [B experience](docs/agent-experience/task-planner-reviewer.md)
+- [Developer experience](docs/agent-experience/developer-implementation-role.md)
 
 ## A — Slice Owner / Architect / Final Reviewer
 

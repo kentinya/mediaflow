@@ -93,10 +93,10 @@ read-only Library journey across bounded Active Storage browsing, FileIndex cata
 physical/indexed context. Slice 33 delivered the Operations command center across actionable
 Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
 scheduled Automation and Notification delivery operation, including the accepted Worker
-pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-22
+pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-23
 post-reactivation Final Review at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`3feab84a0fbbf7cebfe1f5507e548636da5ab283`. It delivered the replacement light shell in the
+`aa54854c442d117c7eb23ae9800045c423db1368`. It delivered the replacement light shell in the
 canonical Files reference, bounded ResourceLibrary activation, complete Files
 Create Folder/Text File, Rename/Copy/Move/Delete/text Edit and Organize continuation, plus formal
 `library/path` destination parity, truthful refresh/presentation and exact Storage path identity.
@@ -104,9 +104,9 @@ The page does not render recognition-result or organize-status feedback. Direct 
 Upload/Download was removed from the current surface; generic Storage/provider transfer primitives
 remain available.
 Non-Files business journeys remain unchanged inside the replacement shell. The previously planned
-Slice 34–36 boundaries are retired from the current Roadmap. Slice 37 is currently reactivated
-for one focused P1 correction in Files-originated manual Organize Save Choice runtime resolution;
-B plans the correction Task inside the existing Slice boundary.
+Slice 34–36 boundaries are retired from the current Roadmap. Slice 37's correction is closed;
+Slices 38–42 are also closed. Slice 44 is ACTIVE and Slice 43 remains user-frozen. Current
+implementation/review state and next actions live in [SLICE.md](SLICE.md) and [TASK.md](TASK.md).
 The V1 API, authentication and Storage authority remain
 available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
 
@@ -350,6 +350,19 @@ destination precheck remain read-only setup evidence and do not grant execution 
 switching is explicitly V1.x/post-V1. The bounded Files/Media manual-organize
 journey and scheduled unattended organization are current capabilities under their separate explicit
 authority boundaries.
+
+## Development workflow
+
+Read [AGENTS.md](AGENTS.md) and [the development workflow](docs/development-workflow.md) before
+work. [SLICE.md](SLICE.md) owns the current capability contract; [TASK.md](TASK.md) owns the active
+implementation unit, planned from [the Task template](Task/TEMPLATE.md).
+
+- **A:** owns Slice scope, architecture and final review; read [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md).
+- **B:** plans and reviews Tasks; read [B experience](docs/agent-experience/task-planner-reviewer.md).
+- **Developer:** implements the active Task; read [Developer experience](docs/agent-experience/developer-implementation-role.md).
+
+At each Slice closure, merge only new reusable lessons into these short lists in the same closure
+checkpoint. No new lesson requires no entry; the Developer document stays blank until lessons exist.
 
 ## Configuration and architecture
 

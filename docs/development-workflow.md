@@ -208,6 +208,19 @@ B and Developer may update factual progress fields explicitly delegated by the C
 not add outcomes, weaken criteria, move deferrals into scope, change Base, or redefine boundaries.
 Material Contract change returns to A.
 
+A clarification is factual only when Required Outcome, Required Surface and Safety Invariant
+acceptance meanings remain unchanged: A may clarify without moving Base, then B rechecks Task
+legality. A Contract edit that changes these acceptance meanings, obligations or the current Task
+boundary is material even if the user goal stays the same. A checkpoints the revised Contract;
+B explicitly decides whether the current Task continues, is legally adjusted or is replanned
+before Developer proceeds.
+
+For `PARTIAL / RESCOPE`, A records the Contract problem, still-valid implementation facts,
+superseded scope/assumptions and replacement Contract. Keep the same Slice ACTIVE with its original
+Base when it still represents the true start. If the business boundary makes it invalid,
+create a new Slice ID with the current committed HEAD as Base and retain the old partial record;
+do not declare the old Slice PASS.
+
 Slice Base is the immutable checkpoint immediately before Slice implementation starts. Slice Final
 Review always covers Base..Implementation Head, not only the last Task or documentation commit.
 
@@ -436,6 +449,9 @@ Explicitly Deferred:
 Documentation Reconciliation Needed:
 - ...
 
+Reusable Lesson Candidates (optional; 1–3 per role when warranted):
+- ...
+
 Decision:
 SLICE READY FOR A REVIEW
 ```
@@ -462,6 +478,10 @@ A returns one of:
 - `FIX REQUIRED` — only current-Slice P0/P1 or unmet Required Outcomes; B creates one focused Task.
 - `PARTIAL / RESCOPE` — the Contract or business boundary must return to A before more work.
 
+Record Reviewed Range, Decision and P0/P1 Blockers in `SLICE.md`'s A Final Review. On
+`FIX REQUIRED`, set the top-level status to `FIX REQUIRED`, retain Base and hand Task planning to
+B; do not fill Closure Reconciliation because no closure occurred.
+
 After PASS, A performs one factual closure reconciliation as needed across `SLICE.md`, Roadmap,
 Progress, requirements, Product Experience, Architecture, README/configuration guidance, and then
 records `PASS / CLOSED`. Those closure changes should form one coherent Slice-closure checkpoint,
@@ -470,6 +490,10 @@ that closure; B does not pre-plan its Implementation Tasks. The closure checkpoi
 already-reviewed Implementation Head and does not silently extend the Base..Head product range.
 If reconciliation would change product scope, architecture contracts or safety rather than record
 facts, A must not hide that change in closure; the decision returns to `PARTIAL / RESCOPE`.
+
+The PASS checkpoint also records Closure Reconciliation and sets `TASK.md` to
+`NO ACTIVE IMPLEMENTATION TASK`, with `Next Action: A SELECTS THE NEXT LARGE SLICE`.
+Stop after closure; selecting the next Slice is a separate action.
 
 Each Slice closure includes a brief review of the experience documents for
 [A](agent-experience/slice-owner-architect-final-reviewer.md),
@@ -488,9 +512,11 @@ entry; the Developer document stays blank until concrete implementation lessons 
 | `SLICE.md` | Current A-owned large-Slice Contract and final review packet |
 | `TASK.md` | Current B-owned Implementation Task only, or an explicit no-active-Task notice |
 | `Task/TEMPLATE.md` | B-owned Task template |
+| `docs/agent-experience/*.md` | Short reusable role lessons; read before work and reconcile once at Slice closure, never scope or status authority |
 | `docs/roadmap.md` | Large Slice goal, order, dependency and status only |
 | `docs/progress.md` | Large Slice closure ledger only |
 | `docs/requirements.md` | Stable requirements, not Task status or review logging |
+| `docs/v2-requirements.md` | Stable V2 requirements extending the frozen V1 baseline; root Slice/Task documents own live work state |
 | `docs/product-experience.md` | User journeys, not workflow audit history |
 | `docs/architecture.md` | CURRENT/TARGET architecture, not Task workflow |
 | `CLAUDE.md` | Thin execution/autonomy and destructive-operation guidance by reference |
