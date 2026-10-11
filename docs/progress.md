@@ -8,10 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 44 — **Existing V2 Pages Functional Improvements** — is ACTIVE under
-[`SLICE.md`](../SLICE.md), with the complete RO-1 through RO-6 boundary selected, including bounded
-ResourceLibrary folder/mixed-selection organization. Other page contents are deferred. No active
-implementation Task exists; B next plans one coherent Task within the checkpointed Contract. The
+Slice 44 — **Existing V2 Pages Functional Improvements** — is the current unclosed development
+boundary under [`SLICE.md`](../SLICE.md), with RO-1 through RO-6 selected, including bounded
+ResourceLibrary folder/mixed-selection organization. Other page contents are deferred. Root
+[`SLICE.md`](../SLICE.md) and [`TASK.md`](../TASK.md) hold the current correction and implementation
+state; this pointer makes no Task acceptance or Slice-closure claim. The
 working branch `slice/44-page-improvements` starts from the accepted Slice 42
 closure and excludes the unaccepted Slice 43 implementation. Slice 43 is user-frozen on
 `frozen/slice-43-2026-10-07`, retaining its original Base, Task review and unresolved blockers.

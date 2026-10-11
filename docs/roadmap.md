@@ -132,7 +132,8 @@ recovery are included. A global Review inbox, cross-task bulk review, history re
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
 redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
 and retired Slice boundaries are unchanged. Slice 44 is ACTIVE for its six selected file-operation,
-Rules and browsing outcomes, with no active implementation Task; this Roadmap does not pre-split Tasks.
+Rules and browsing outcomes; current implementation and review state is authoritative in root
+`SLICE.md` and `TASK.md`. This Roadmap does not pre-split Tasks.
 
 ## Current active and suspended boundary
 
@@ -149,6 +150,10 @@ include usable long-name breadcrumbs/toolbars while preserving exact paths and n
 ResourceLibrary Files also includes bounded recursive folder/mixed-selection discovery with
 deduplication, pinned filtering/stability, durable progress/recovery and the existing exact manual
 Preview/confirmed execution journey. MediaLibrary remains outside organizing-source scope.
+The selected discovery target uses atomic admission/recovery, bounded durable steps, due-time
+stability observation and shared authoritative policy/state projection within the existing Worker
+and organizing pipeline. This implementation simplification preserves the same user capability,
+100-primary bound, safety invariants and explicit deferrals; it is not a delivery or closure claim.
 The user explicitly requested A activation of this complete six-outcome boundary on 2026-10-07.
 Other page contents are deferred. These remain TARGET outcomes, not new CURRENT delivery or
 retroactive changes to Slice 37/41 closure. The current working branch is

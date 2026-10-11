@@ -15,11 +15,11 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: 7e2ab801eaef25b083640813375a49f536ae202f
-Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
+Contract Revision: 2026-10-11 — User-approved RO-6 discovery architecture simplification; business outcomes, surfaces, safety, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: B PLANS ONE FOCUSED CORRECTION TASK
+Next Action: USER-AUTHORIZED CORRECTION TASK PLANNING, THEN DEVELOPER IMPLEMENTATION AND B REVIEW
 ```
 
 ## Authority and sequencing
@@ -108,6 +108,23 @@ REQ-ATT-001/002/003, REQ-CONFIG-008, REQ-TASK-001 through REQ-TASK-007/009,
 REQ-RECOVERY-001/002/006/007/008/009, REQ-ORG-001/003/004/007/008/009/010/011/012,
 REQ-REC-004, REQ-WEB-001/005/007 and the existing API, redaction and mutation-safety requirements.
 Folder selection does not itself authorize execution, overwrite, source removal or directory cleanup.
+
+### User-authorized architecture amendment and planning exception — 2026-10-11
+
+After A's complete folder-journey audit, the user explicitly requested incorporating the simpler
+discovery design into this Slice and asked A to substitute for B in Task planning. This amendment
+changes the implementation architecture Contract and requires fresh planning; it is not factual
+wording cleanup or permission for Developer to continue an old Task. A exercises the authorized
+planning exception once. B retains independent Task review, and A retains Slice Final Review;
+neither role may treat this planning decision as implementation acceptance.
+
+The same business boundary remains: RO-1 through RO-6, their required surfaces, Safety Invariants,
+acceptance 1–32, Deferred and the original Base. The reviewed implementation still requires all
+eight P1 corrections A44-6 through A44-13; the A Final Review below remains FIX REQUIRED and the
+previous Closure Packet/Task 44.8 PASS remain historical. No outcome is removed or added, no
+business rescope/new Slice is needed, and no CURRENT delivery or closure is declared. Checkpoint
+this A amendment before planning the replacement correction Task. A's authorized planning must
+explicitly reassess the current no-active-Task state against this amended Contract.
 
 ## Frozen Slice 43 preservation and resumption
 
@@ -759,6 +776,65 @@ explicit successor work and never rewrites a frozen list, historical pin, comple
 consumed execution authority. FileIndex synchronization remains post-result and its failure cannot
 trigger another media mutation.
 
+#### Required RO-6 discovery implementation shape — user-approved simplification
+
+Keep one journey: selection → bounded durable discovery → explicitly reviewed frozen primary
+manifest → existing manual intent/Preview → separately confirmed execution. Retain the existing
+resident Worker, SQLite boundary and source-only discovery record; introduce no second queue,
+Scheduler, supervisor, execution engine or general workflow framework. The following architecture
+constraints consolidate existing RO-6 obligations rather than introduce new user steps:
+
+1. **One admission/recovery authority.** Normalize the exact scope set and atomically reconcile
+   open work under actor/ResourceLibrary/Storage/admitted pin. Request correlation must locate the
+   actual durable admission after a lost response, including intervening activation/root changes;
+   scope equivalence alone cannot prove which request succeeded. Use machine-held correlation,
+   bounded server validation and durable repository lookup, not recent-list/path guessing or raw
+   identifiers handled by the operator. Preserve explicit terminal successors and cross-binding
+   isolation; retries/reads never create execution authority.
+2. **Small durable discovery steps.** Advance bounded pages/files or equivalent small work units,
+   retaining traversal cursor, pending scope, findings, source identities, observations and actual
+   cumulative budgets at a durable boundary. Count directories, entries, pages and active time by
+   their distinct meanings. A restart/control cannot reset consumed work or erase material refusals;
+   ownership loss cannot publish over a successor. Do not hold a SQLite write transaction across a
+   Storage call. A same-owner control-version race retains its bounded attempted work; an owner
+   that lost its claim stops without publishing private findings over the successor. Already durable
+   budgets and material refusals remain monotonic across either case; no completeness is fabricated.
+3. **Due-time stability observation.** Retain a durable next-observation time and unchanged-source
+   evidence. Wait without an immediately reclaimable loop or repeated whole-scope traversal just
+   to prove size stability; observe bounded waiting candidates when due and let independent
+   discovery/manual/transfer work advance. Do not sleep inside a long HTTP/Worker operation,
+   fabricate elapsed time, use FileIndex as authority, reset budgets or add a Scheduler. The first
+   bounded traversal remains a non-atomic observation, and waiting rechecks do not claim a fresh
+   complete provider snapshot. Changed/missing/unreadable candidates remain explicit; discovering
+   new sources uses a deliberate successor rather than enlarging a frozen manifest.
+4. **Explicit write ownership.** API controls record operator intent; the currently valid Worker
+   publishes bounded work and acknowledges controls at safe boundaries. Give progress/observations
+   and control intent clear field ownership instead of reconciling whole stale objects through
+   exception-specific branches. Repository transitions enforce live claim, terminal/frozen state,
+   accepted control and optimistic operator checks together. Pending Pause offers no premature
+   Continue; acknowledged Pause supports normal Continue. Keep cancellation, crash/lease recovery,
+   takeover fencing, cumulative refusals and atomic one-intent Finalize correct.
+5. **Shared source and policy semantics.** Consume supported managed configuration through actual
+   checked Web/API publication and the admitted immutable runtime; all selection entrances use the
+   same root-relative filtering/depth rules. Reuse existing pure scan filters and main/attachment
+   association semantics, with bounded evidence across pages, preserving exact names and parent
+   context. An associated Trailer is not a second independent primary. Do not substitute the
+   FileIndex-coupled StorageScanner as admission/stability authority, invent an Extras engine or
+   invoke Metadata during discovery. Analysis later binds exact attachments in the existing Preview.
+6. **One truthful projection.** Application/API supply phase, progress, completeness, independent
+   errors, command-specific Worker readiness, allowed actions and recovery reasons. Web renders
+   this authority through a compatible bounded typed model, preserving exact names/paths; it does
+   not guess request identity, completeness or readiness. A legal isolated item failure is durable
+   and diagnosable, cannot silently strand the entire batch, and cannot become whole-scope success.
+
+Preserve readable existing discoveries, historical file-only intents/Previews/results/pins and
+the one-shot atomic handoff. Necessary persistence evolution is additive, requires actual migration/
+restart proof, and must preserve existing duplicate/ambiguous history without deletion, guessed
+merging or new execution rights. Specific fields/methods and checkpoint granularity are Task
+implementation choices; code-line quotas, class counts, optional cleanup and P2 notes cannot alone
+block acceptance. Merely splitting the existing function while leaving the eight P1s does not
+satisfy this architecture or RO-6.
+
 RO-1 through RO-6 define the complete activated boundary. Other existing-page contents remain
 unselected and deferred; B must not invent additional outcomes or field/operation-sized Task
 ladders. Required Outcomes are not pre-created implementation Tasks.
@@ -1132,6 +1208,14 @@ existing direct commands, MediaLibrary isolation, RO-3 destinations and RO-5 too
 The complete activated boundary requires final T4 validation. Any future material Contract change
 requires A to reassess that gate. Validate and checkpoint the ACTIVE Contract/Roadmap relationship
 with governance and diff checks; those checks do not establish runtime acceptance.
+
+The approved RO-6 architecture amendment requires production-path proof of atomic concurrent
+admission/correlation, managed filter/stability publication and pin consumption, root-relative
+policy parity, due-time fair pickup and bounded checkpoints, long-name/path compatibility,
+per-file error isolation, true paging units, existing Trailer association and command readiness.
+Retain earlier control/ownership/refusal/atomic-Finalize/exact-execution regressions. Domain-policy
+injection alone cannot prove the newly completed real managed path; the Task defines staged T4
+commands and independent critical reproductions. No test-count or code-size target is added.
 
 ## Closure Packet
 
