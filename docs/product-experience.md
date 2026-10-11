@@ -556,6 +556,33 @@ RBAC, revalidation, bounded authority, limits, audit, conflict handling and no a
 uncertain effects remain mandatory. Older FileIndex-backed operation routes remain compatibility
 surfaces outside this Files-originated journey.
 
+### TARGET — Slice 44 bounded folder organization with safe discovery restart
+
+The operator selects folders/files on ResourceLibrary Files or enters from Operations, deliberately
+starts bounded discovery, sees exact scope/pinned context, progress, exclusions, waiting and read
+errors, then reviews the frozen sources through existing exact Preview and separately confirms
+execution. MediaLibrary remains outside organizing-source scope; the first delivery retains the
+100-primary bound, main/attachment semantics and genuine configured stability.
+
+Normal cooperative Pause/Continue and cancel remain available. If unfrozen discovery is interrupted
+and safe continuation cannot be proved, show the failed/stopped stage, retained findings and zero
+media effects, then offer explicit new discovery after the old attempt is settled/fenced. The new
+attempt is visibly distinct; reads never restart work. Waiting stability is re-observed only after
+the required interval; lost observations do not count as proof.
+
+A lost admission response either recovers a proved original request or remains unresolved with
+native Operations inspection/resolution and retained request context. Do not select another
+root/pin or automatically resubmit. Guaranteed seamless recovery across simultaneous activation,
+every old duplicate/interrupted discovery and arbitrary control/crash combinations is locally
+deferred by the user-approved PARTIAL / RESCOPE in root `SLICE.md`. This reduces discovery recovery
+promises without claiming the old promises shipped or changing stable product recovery targets.
+
+Legal long names and ordinary configuration/read/paging/attachment/readiness defects still require
+correction. Read failures preserve unaffected findings and allow only an explicitly reviewed known
+subset; material bounds cannot expose an executable first-N prefix. Exact Preview permissions,
+source checks, independent outcomes and completed/uncertain-effect non-replay remain mandatory.
+This is TARGET behavior, not Slice acceptance or a CURRENT delivery update.
+
 ## Manual operations and file lifecycle
 
 ### Current

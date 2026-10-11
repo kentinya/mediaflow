@@ -632,46 +632,47 @@ Scan and Preview remain DryRun/zero-mutation operations. Organize requires expli
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
-## TARGET — Slice 44 bounded folder discovery simplification
+## TARGET — Slice 44 ordinary bounded folder discovery and safe restart
 
-This is the user-approved implementation target for RO-6, not a CURRENT delivery claim.
-The current candidate contains a dedicated discovery domain/service/Worker and SQLite discovery/
-observation records; it already shares pure scan filters and hands a frozen source list into manual
-organize. A's consolidated audit identifies eight unresolved cross-boundary P1s. Root `SLICE.md`
-defines the exact capability, safety boundary and acceptance; this target consolidates that existing
-journey without expanding media sources, limits, execution authority or deferred features.
+This is the user-approved smaller RO-6 target, not a CURRENT delivery claim. The candidate already
+contains a dedicated discovery domain/service/Worker, SQLite records, shared pure filters and frozen
+manual-intent handoff. The consolidated audit remains evidence of unimplemented defects; root
+`SLICE.md` records the subsequent PARTIAL / RESCOPE and current acceptance. RO-1 through RO-5,
+required native surfaces, the 100-primary bound and all mutation safety are unchanged.
 
-The target is one durable metadata-only discovery stage followed by the existing immutable manual
-intent, exact Preview and explicitly confirmed OrganizerExecutor execution. Reuse the resident
-Worker and repository; add no queue, Scheduler, supervisor, generalized workflow engine or parallel
-execution lifecycle. StorageScanner's FileIndex persistence/observation authority is not substituted
-for source-only discovery. Existing pure filtering and attachment-association semantics are reused.
+Use one metadata-only background discovery followed by the existing immutable manual intent,
+exact Preview and separately confirmed OrganizerExecutor execution. Reuse the resident Worker,
+repository, filtering and attachment association; introduce no queue, Scheduler, supervisor,
+general workflow engine, FileIndex admission authority or alternate execution lifecycle.
 
-- Admission atomically canonicalizes/reconciles the actor/library/Storage/pin-bound open scope.
-  Separate machine-held request correlation recovers the actual original admission across response
-  loss and a later activation; frontend recent-list/path guessing is insufficient. Terminal
-  successors remain deliberate, and neither correlation nor readback grants execution authority.
-- The Worker advances bounded pages/files and publishes a durable checkpoint with source evidence,
-  traversal position, findings and correctly separated cumulative budgets. Storage calls occur
-  outside write transactions; live-owner publication and restart/control accounting remain fenced.
-- Stability uses durable observation evidence and a next-observation time. Waiting candidates are
-  rechecked when due without repeated full-directory traversal or starving other work. A completed
-  traversal is not an atomic provider snapshot; source changes/read failures remain explicit and
-  frozen scope never grows automatically.
-- Operator commands own control intent; the valid Worker owns progress and safe-boundary control
-  acknowledgement. Repository transitions check ownership, accepted controls, terminal/frozen state
-  and operator concurrency without replaying whole stale objects. Pause must be acknowledged before
-  Continue; cancellation, lease recovery and atomic one-intent Finalize preserve existing evidence.
-- Managed Web/API validation/publication and exact-pin loading deliver shared root-relative policy
-  semantics at every selection entrance. Main-versus-attachment evidence stays consistent through
-  paging and manual handoff; matched Trailer sidecars do not receive independent primary identity.
-- Application/API project truthful completeness, independent failures, discovery-command readiness,
-  available actions and recovery. Web shares exact-name/path bounds and renders that authority.
+- Atomically reconcile equivalent open actor/library/Storage/pin-bound scope, independently of
+  recent-list windows. Lost-response readback must prove the original admission; if it cannot,
+  show unresolved admission and native Operations inspection. Never guess a newer root/pin or
+  automatically resubmit. Guaranteed seamless correlation through simultaneous activation changes
+  is deferred; existing reliable correlation can be retained.
+- Discovery remains bounded and publishes truthful durable state/findings. Count directories,
+  pages, entries and active work separately. Storage calls stay outside write transactions. Claims,
+  controls, material refusals and atomic one-intent Finalize remain authoritative.
+- Real managed publication/runtime mapping applies pinned root-relative filters and genuine
+  age/mtime/size observations to every selection entrance. Waiting cannot busy-loop, exhaust idle
+  budgets or starve resident work. Re-observe eligible sources after the required interval; if
+  evidence is lost, wait again or stop truthfully. No new persistent per-page scheduling framework
+  is required. Associated Trailer videos remain attachments across paging/manual handoff.
+- Normal acknowledged Pause/Continue and cancellation remain supported. If a crash, control race
+  or incompatible old discovery prevents provable continuation, preserve durable history/findings,
+  fence/settle the unfrozen attempt and offer explicit new discovery. Precise cursor/unpublished-work
+  continuity and automatic repair/resumption of every legacy duplicate are deferred. Frozen work,
+  old execution pins and completed/uncertain media effects never gain scope/authority or replay.
+- Application/API and typed Web agree on exact supported names/paths, completeness, isolated errors,
+  discovery-command readiness and permitted recovery. A legal long-name failure cannot strand a
+  batch; a read failure is incomplete and permits only explicit known-subset review.
 
-Any necessary schema evolution is additive and verified with existing interrupted discoveries and
-historical file-only work; duplicate/ambiguous history is preserved rather than silently merged or
-deleted. The actual migration and served native Web/API/Worker journeys require T4 evidence.
-Schema numbers, concrete fields and implementation choices remain factual only after implementation.
+Persistence changes require actual old-schema migration/reopen proof of preserved history, a
+representative interrupted discovery and frozen/file-only intents/Previews/results/pins. Unsupported
+unfinished discovery may stop with a native explanation and deliberate new-discovery path; do not
+delete/guess-merge history or silently repin old work. Reuse existing useful mechanisms rather than
+rewrite them solely for a preferred state-machine shape. T4 remains assigned for managed Active
+configuration, concurrency, persistence and the exact execution handoff; no runtime PASS is claimed.
 
 ## Automation and unattended execution
 

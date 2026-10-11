@@ -150,10 +150,14 @@ include usable long-name breadcrumbs/toolbars while preserving exact paths and n
 ResourceLibrary Files also includes bounded recursive folder/mixed-selection discovery with
 deduplication, pinned filtering/stability, durable progress/recovery and the existing exact manual
 Preview/confirmed execution journey. MediaLibrary remains outside organizing-source scope.
-The selected discovery target uses atomic admission/recovery, bounded durable steps, due-time
-stability observation and shared authoritative policy/state projection within the existing Worker
-and organizing pipeline. This implementation simplification preserves the same user capability,
-100-primary bound, safety invariants and explicit deferrals; it is not a delivery or closure claim.
+On 2026-10-11 the user approved a smaller discovery-recovery boundary (PARTIAL / RESCOPE):
+normal cooperative controls and safe stopping with explicit new discovery replace guaranteed
+seamless continuation through every exceptional crash/control/activation/legacy combination.
+Unknown admission requires proved original readback or native unresolved-state inspection, never
+wrong-root/pin guessing or automatic submission. Ordinary correctness, genuine non-busy stability,
+required surfaces, the 100-primary bound and all Safety Invariants remain; advanced automatic
+recovery is explicitly deferred in root `SLICE.md`. Slice 44 remains ACTIVE on its original Base.
+This is a changed TARGET acceptance boundary, not delivered fixes or closure.
 The user explicitly requested A activation of this complete six-outcome boundary on 2026-10-07.
 Other page contents are deferred. These remain TARGET outcomes, not new CURRENT delivery or
 retroactive changes to Slice 37/41 closure. The current working branch is
