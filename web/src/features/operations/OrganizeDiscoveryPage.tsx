@@ -263,6 +263,12 @@ export function OrganizeDiscoveryPage() {
                 {model.progress.message !== "" ? (
                   <p>{model.progress.message}</p>
                 ) : null}
+                {model.actions.resume.pendingReason !== null ? (
+                  <p role="status">
+                    暂停请求已记录，正在等待后台 Worker
+                    在安全边界确认；确认完成后即可继续发现。
+                  </p>
+                ) : null}
                 {model.progress.incomplete ? (
                   <p role="status">
                     发现未完整遍历所选范围，已知来源只能作为明确复核的子集，

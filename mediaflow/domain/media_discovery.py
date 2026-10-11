@@ -73,6 +73,27 @@ CLAIMABLE_DISCOVERY_STATUSES = frozenset(
     }
 )
 
+#: Lifecycle statuses a *settlement* writes rather than a bounded traversal.
+#: ``_publish_paused``, ``_cancel`` and ``_fail`` settle one boundary and release
+#: the claim; they never describe the outcome of a walk.  A fenced projection
+#: that carries one of them therefore describes a control the operator may
+#: already have superseded, so its lifecycle must never be replayed as the
+#: traversal outcome: the latest accepted control decides the lifecycle, and a
+#: cleared pause is not a completed traversal.
+SETTLEMENT_DISCOVERY_STATUSES = frozenset(
+    {
+        DiscoveryStatus.PAUSED,
+        DiscoveryStatus.CANCELLED,
+        DiscoveryStatus.FAILED,
+    }
+)
+
+
+def is_settlement_status(status: object) -> bool:
+    """Whether one discovery status is a settled control rather than a walk."""
+
+    return status in SETTLEMENT_DISCOVERY_STATUSES
+
 
 class DiscoveryEntryKind(StrEnum):
     FILE = "file"

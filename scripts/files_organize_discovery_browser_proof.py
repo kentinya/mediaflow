@@ -537,10 +537,35 @@ def main() -> int:
         )
         if conflicted["error"]["code"] != "discovery_conflict":
             raise RuntimeError(f"a stale control was accepted: {conflicted}")
-        _, resumed = api(
+        # Acknowledge-before-Continue: while the pause is still pending the
+        # safe-boundary acknowledgement, Continue is not offered and a direct
+        # Continue is refused actionably without changing any work.
+        if paused["actions"]["resume"]["available"] is not False:
+            raise RuntimeError(f"a pending pause advertised Continue: {paused}")
+        if paused["actions"]["resume"]["pendingReason"] != "discovery_pause_pending":
+            raise RuntimeError(f"a pending pause gave no bounded reason: {paused}")
+        _, premature = api(
             "POST",
             f"/api/v1/operations/organize/discoveries/{target_id}/resume",
             {"expectedVersion": paused["version"]},
+        )
+        if premature.get("error", {}).get("code") != "discovery_pause_pending":
+            raise RuntimeError(f"a premature Continue was accepted: {premature}")
+        _run_worker(configuration_path)
+        time.sleep(0.4)
+        _, acknowledged = api(
+            "GET", f"/api/v1/operations/organize/discoveries/{target_id}", expect=200
+        )
+        if (
+            acknowledged["status"] != "paused"
+            or acknowledged["pauseRequested"] is not True
+            or acknowledged["actions"]["resume"]["available"] is not True
+        ):
+            raise RuntimeError(f"the pause was not acknowledged truthfully: {acknowledged}")
+        _, resumed = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{target_id}/resume",
+            {"expectedVersion": acknowledged["version"]},
             expect=200,
         )
         if resumed["pauseRequested"] is not False:
@@ -572,11 +597,20 @@ def main() -> int:
         if (
             control_paused["pauseRequested"] is not True
             or control_paused["progress"]["visitedEntries"] != 0
-            or control_paused["actions"]["resume"]["available"] is not True
+            # Acknowledge-before-Continue: the request is durable but not yet
+            # acknowledged, so Continue is not offered and a direct Continue is
+            # refused actionably without changing any work.
+            or control_paused["actions"]["resume"]["available"] is not False
+            or control_paused["actions"]["resume"]["pendingReason"] != "discovery_pause_pending"
         ):
-            raise RuntimeError(
-                f"a pre-pickup pause was not acknowledged truthfully: {control_paused}"
-            )
+            raise RuntimeError(f"a pending pause advertised Continue: {control_paused}")
+        _, control_premature = api(
+            "POST",
+            f"/api/v1/operations/organize/discoveries/{control_mass_id}/resume",
+            {"expectedVersion": control_paused["version"]},
+        )
+        if control_premature.get("error", {}).get("code") != "discovery_pause_pending":
+            raise RuntimeError(f"a premature Continue was accepted: {control_premature}")
         _run_worker(configuration_path)
         time.sleep(0.4)
         _, control_held = api(
@@ -586,8 +620,9 @@ def main() -> int:
             control_held["status"] != "paused"
             or control_held["progress"]["visitedEntries"] != 0
             or control_held["pauseRequested"] is not True
+            or control_held["actions"]["resume"]["available"] is not True
         ):
-            raise RuntimeError(f"a paused record was walked anyway: {control_held}")
+            raise RuntimeError(f"a paused record was not acknowledged truthfully: {control_held}")
         _, control_resumed = api(
             "POST",
             f"/api/v1/operations/organize/discoveries/{control_mass_id}/resume",
@@ -614,8 +649,8 @@ def main() -> int:
         if control_refused.get("error", {}).get("code") != "discovery_budget_limited":
             raise RuntimeError(f"a bounded prefix was frozen: {control_refused}")
         print(
-            "   control preservation: pre-pickup pause truthful; continue reached "
-            "101 visited / 100 sources / primary_limit; finalize refused"
+            "   control preservation: pending pause refused Continue; acknowledged pause "
+            "continued to 101 visited / 100 sources / primary_limit; finalize refused"
         )
 
         # Cooperative cancellation of work that no Worker has picked up yet is

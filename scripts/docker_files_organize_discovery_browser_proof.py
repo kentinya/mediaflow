@@ -555,14 +555,45 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             )
             if paused.get("pauseRequested") is not True:
                 raise RuntimeError(f"the cooperative pause was not recorded: {paused}")
-            # Continue the same durable scope, let the Worker finish the walk,
-            # then finalize explicitly.
-            _, resumed = api(
+            # Acknowledge-before-Continue: the request is durable but not yet
+            # acknowledged, so Continue is not offered and a direct Continue is
+            # refused actionably without changing any work.
+            resume_action = paused.get("actions", {}).get("resume", {})
+            if resume_action.get("available") is not False:
+                raise RuntimeError(f"a pending pause advertised Continue: {paused}")
+            if resume_action.get("pendingReason") != "discovery_pause_pending":
+                raise RuntimeError(f"a pending pause gave no bounded reason: {paused}")
+            _, premature = api(
                 base,
                 api_token,
                 "POST",
                 f"/api/v1/operations/organize/discoveries/{target_id}/resume",
                 {"expectedVersion": paused["version"]},
+            )
+            if premature.get("error", {}).get("code") != "discovery_pause_pending":
+                raise RuntimeError(f"a premature Continue was accepted: {premature}")
+            # Wait for the resident production Worker to acknowledge the pause
+            # at its safe boundary, then continue the same durable scope, let
+            # the Worker finish the walk, and finalize.
+            acknowledged = paused
+            for _ in range(40):
+                _, acknowledged = api(
+                    base,
+                    api_token,
+                    "GET",
+                    f"/api/v1/operations/organize/discoveries/{target_id}",
+                )
+                if acknowledged.get("status") == "paused" and acknowledged.get("pauseRequested"):
+                    break
+                time.sleep(0.5)
+            if acknowledged.get("actions", {}).get("resume", {}).get("available") is not True:
+                raise RuntimeError(f"the pause was not acknowledged truthfully: {acknowledged}")
+            _, resumed = api(
+                base,
+                api_token,
+                "POST",
+                f"/api/v1/operations/organize/discoveries/{target_id}/resume",
+                {"expectedVersion": acknowledged["version"]},
             )
             if resumed.get("pauseRequested") is not False:
                 raise RuntimeError(f"continue did not clear the pause: {resumed}")

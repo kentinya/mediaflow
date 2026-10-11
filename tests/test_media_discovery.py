@@ -1167,8 +1167,17 @@ class WorkerOwnershipTests(_DiscoveryFixture):
             self.assertEqual((), value.repository.list_tasks())
             self.assertEqual([], value.source.mutations)
 
-    def test_a_continue_racing_the_publication_publishes_the_work_once(self) -> None:
-        """AC3/AC5: a cleared pause must not silently reset bounded progress."""
+    def test_a_continue_racing_the_publication_is_refused_until_acknowledged(self) -> None:
+        """AC3/AC5: a pending pause refuses Continue, then continues the same work.
+
+        The Worker really completes the bounded walk (101 primary candidates in
+        a real Local directory) and its publication is held.  An accepted pause
+        is still pending acknowledgement, so a Continue in that window must be
+        refused actionably with the durable work unchanged instead of racing the
+        acknowledgement.  Once the pause is acknowledged with the same owner's
+        work, Continue is offered again and the same scope continues without a
+        reset or a redundant re-walk.
+        """
 
         for index in range(101):
             self.media(f"Movies/Film.{index:03}.2001.mkv")
@@ -1207,25 +1216,161 @@ class WorkerOwnershipTests(_DiscoveryFixture):
                     "POST",
                     {"expectedVersion": before["version"]},
                 )
-                _, resumed = self.request(
+                self.assertTrue(paused["pauseRequested"], paused)
+                # The pause is not acknowledged at a safe boundary yet, so the
+                # native Continue is not offered and the backend refuses a
+                # direct/stale-client Continue without changing any work.
+                self.assertFalse(paused["actions"]["resume"]["available"], paused)
+                self.assertEqual(
+                    "discovery_pause_pending",
+                    paused["actions"]["resume"]["pendingReason"],
+                    paused,
+                )
+                status, refused = self.request(
                     value,
                     f"/api/v1/operations/organize/discoveries/{identifier}/resume",
                     "POST",
                     {"expectedVersion": paused["version"]},
                 )
-                self.assertFalse(resumed["pauseRequested"])
+                self.assertEqual(409, status, refused)
+                self.assertEqual("discovery_pause_pending", refused["error"]["code"], refused)
             finally:
                 release.set()
                 thread.join(10)
                 self.assertFalse(thread.is_alive())
-            _, after = self.request(value, f"/api/v1/operations/organize/discoveries/{identifier}")
-            # The completed bounded work was published under the live claim
-            # instead of being discarded by the resumed control.
-            self.assertFalse(after["pauseRequested"])
-            self.assertEqual(101, after["progress"]["visitedEntries"], after["progress"])
-            self.assertEqual(["primary_limit"], after["progress"]["refusalReasons"])
-            self.assertEqual(100, len(after["sources"]), after["sources"])
+            _, acknowledged = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            # The acknowledgement preserved the same owner's completed bounded
+            # work and released ownership; only now is Continue offered.
+            self.assertEqual("paused", acknowledged["status"], acknowledged)
+            self.assertTrue(acknowledged["pauseRequested"], acknowledged)
+            self.assertEqual(
+                101, acknowledged["progress"]["visitedEntries"], acknowledged["progress"]
+            )
+            self.assertEqual(["primary_limit"], acknowledged["progress"]["refusalReasons"])
+            self.assertEqual(100, len(acknowledged["sources"]), acknowledged["sources"])
+            self.assertTrue(acknowledged["actions"]["resume"]["available"], acknowledged)
             self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
+            _, resumed = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                "POST",
+                {"expectedVersion": acknowledged["version"]},
+            )
+            self.assertFalse(resumed["pauseRequested"], resumed)
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual(["primary_limit"], settled["progress"]["refusalReasons"], settled)
+            self.assertFalse(settled["actions"]["finalize"]["available"], settled)
+            self.assertEqual(100, len(settled["sources"]), settled["sources"])
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual([], value.source.mutations)
+
+    def test_a_premature_continue_never_strands_the_pause_acknowledgement(self) -> None:
+        """B44-8-2: pending Pause refuses Continue, then acknowledged Continue works.
+
+        This is the deterministic form of the reviewed defect sequence: the
+        Worker really completes the walk, its publication loses the version CAS
+        to an accepted pause, and the operator's Continue arrives while the
+        acknowledgement is still uncommitted.  Under the acknowledge-before-
+        Continue rule the premature Continue is refused without changing the
+        durable work, the acknowledgement then lands with that work preserved,
+        and the native Continue genuinely continues the same scope instead of
+        leaving the record durably ``paused`` with no usable Resume.
+        """
+
+        self.media("Movies/Film.2001.mkv")
+        with self.journey() as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            identifier = admitted["discoveryId"]
+            publish_entered, publish_release = threading.Event(), threading.Event()
+            settle_entered, settle_release = threading.Event(), threading.Event()
+            original_publish = value.repository.record_media_discovery_progress
+            original_settle = value.repository.settle_media_discovery_control
+            settlement_attempts: list[dict] = []
+
+            def delayed_publish(discovery, **kwargs):
+                if kwargs.get("claim_token"):
+                    publish_entered.set()
+                    if not publish_release.wait(10):
+                        raise AssertionError("publication coordination timed out")
+                return original_publish(discovery, **kwargs)
+
+            def delayed_settle(discovery, **kwargs):
+                if kwargs.get("claim_token"):
+                    settlement_attempts.append(discovery.document())
+                    if len(settlement_attempts) == 1:
+                        settle_entered.set()
+                        if not settle_release.wait(10):
+                            raise AssertionError("settlement coordination timed out")
+                return original_settle(discovery, **kwargs)
+
+            value.repository.record_media_discovery_progress = delayed_publish
+            value.repository.settle_media_discovery_control = delayed_settle
+            worker = MediaDiscoveryWorker(
+                value.discovery, clock=value.clock, worker_id="live-worker"
+            )
+            thread = threading.Thread(target=worker.run_next)
+            thread.start()
+            try:
+                self.assertTrue(publish_entered.wait(10))
+                _, before = self.request(
+                    value, f"/api/v1/operations/organize/discoveries/{identifier}"
+                )
+                _, paused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/pause",
+                    "POST",
+                    {"expectedVersion": before["version"]},
+                )
+                self.assertTrue(paused["pauseRequested"], paused)
+                publish_release.set()
+                self.assertTrue(settle_entered.wait(10))
+                # The operator's Continue arrives while the pause
+                # acknowledgement is still in flight and uncommitted.
+                status, refused = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                    "POST",
+                    {"expectedVersion": paused["version"]},
+                )
+                self.assertEqual(409, status, refused)
+                self.assertEqual("discovery_pause_pending", refused["error"]["code"], refused)
+            finally:
+                publish_release.set()
+                settle_release.set()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+            # The acknowledgement settled the accepted pause with the same
+            # owner's completed bounded work, and it is natively continuable.
+            _, acknowledged = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{identifier}"
+            )
+            self.assertEqual("paused", acknowledged["status"], acknowledged)
+            self.assertTrue(acknowledged["pauseRequested"], acknowledged)
+            self.assertTrue(acknowledged["actions"]["resume"]["available"], acknowledged)
+            self.assertEqual(
+                1, acknowledged["progress"]["visitedEntries"], acknowledged["progress"]
+            )
+            self.assertEqual(1, len(acknowledged["sources"]), acknowledged["sources"])
+            self.assertIsNone(value.repository.media_discovery_claim(identifier)["claimToken"])
+            # The acknowledged Continue really continues the same scope.
+            _, resumed = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{identifier}/resume",
+                "POST",
+                {"expectedVersion": acknowledged["version"]},
+            )
+            self.assertFalse(resumed["pauseRequested"], resumed)
+            settled = self.run_discovery(value, steps=8)
+            self.assertEqual(
+                ["Movies/Film.2001.mkv"], [item["path"] for item in settled["sources"]]
+            )
             self.assertEqual((), value.repository.list_tasks())
             self.assertEqual([], value.source.mutations)
 

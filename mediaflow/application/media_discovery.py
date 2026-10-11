@@ -75,6 +75,7 @@ from mediaflow.domain.media_discovery import (
     discovery_budget_limited,
     discovery_material_refusal,
     discovery_scope_signature,
+    is_settlement_status,
 )
 from mediaflow.domain.storage import (
     Storage,
@@ -387,7 +388,17 @@ class MediaDiscoveryService:
         )
 
     def resume(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
-        """Clear a cooperative pause so the next Worker pass continues safely."""
+        """Clear an *acknowledged* cooperative pause so the Worker continues.
+
+        A pause stays cooperative: the resident Worker acknowledges it at its
+        next safe boundary and releases the claim in the same transaction.  A
+        Continue is only meaningful after that acknowledgement, because only
+        then has the interrupted pass's bounded work been settled durably.
+        Accepting a Continue while the pause is still pending would let the
+        operator's action race the acknowledgement and leave the record with no
+        truthful continuation, so the pending stage is refused actionably here
+        as well as in the advertised action availability.
+        """
 
         actor = self._actor(actor)
         discovery = self._require_version(discovery_id, expected_version)
@@ -402,6 +413,22 @@ class MediaDiscoveryService:
             raise DiscoveryConflict(
                 "this discovery already has a cooperative cancellation request",
                 details={"discoveryId": discovery_id},
+            )
+        if discovery.pause_requested and discovery.status is not DiscoveryStatus.PAUSED:
+            # The pause request is durable but the resident Worker has not yet
+            # acknowledged it at a safe boundary.  The pending stage is a real
+            # transient state, not an error the operator must work around: the
+            # acknowledgement is what preserves the interrupted pass's bounded
+            # work and releases ownership.  Refusing here changes nothing.
+            raise DiscoveryError(
+                "the cooperative pause has not been acknowledged yet",
+                code="discovery_pause_pending",
+                status=409,
+                next_action=(
+                    "wait for the resident Processing Worker to acknowledge the pause at "
+                    "its safe boundary, then continue the same discovery"
+                ),
+                details={"status": discovery.status.value},
             )
         if not discovery.pause_requested:
             return discovery
@@ -600,6 +627,12 @@ class MediaDiscoveryService:
         re-reads the fresh record and re-applies the same rule; the bounded loop
         ends by yielding the claim, which leaves the operator's control durable
         and lets the next pass continue instead of stranding the record.
+
+        A settlement projection is never replayed as traversal work.  The latest
+        accepted control decides the lifecycle: a pause acknowledgement that lost
+        its own CAS to a newer control contributes its bounded counters,
+        findings, manifest and refusals, but not its superseded ``paused``
+        status.
         """
 
         attempted = refusal.attempted if isinstance(refusal, DiscoveryConflict) else None
@@ -630,11 +663,14 @@ class MediaDiscoveryService:
                 if fresh.pause_requested:
                     return self._publish_paused(carried, claim_token, observations=observations)
                 if self._publication_differs(fresh, carried):
-                    # The operator cleared the pause (or our lease lapsed) *and*
-                    # this pass completed bounded work that is not durable yet.
-                    # Publish it under the live claim in the same transaction
-                    # that releases that claim, so a Continue never re-walks or
-                    # resets the work this pass already established.
+                    # The operator's pause was already acknowledged and then
+                    # cleared (or our lease lapsed) *and* this pass completed
+                    # bounded work that is not durable yet.  Publish it under the
+                    # live claim in the same transaction that releases that
+                    # claim, so a Continue never re-walks or resets the work this
+                    # pass already established.  A pause that is still pending
+                    # acknowledgement never reaches here: Continue is refused
+                    # until the acknowledgement has settled the bounded work.
                     return self._settle_control(
                         replace(carried, version=fresh.version + 1),
                         expected_version=fresh.version,
@@ -669,6 +705,16 @@ class MediaDiscoveryService:
         else (a different pin, a different scope, a stale attempt from another
         owner's record) is discarded, so a control can never be reconciled with
         work that was never admitted for this discovery.
+
+        The operator owns the lifecycle.  A refused *walk* publication carries a
+        truthful traversal outcome -- completed, partial success or waiting for
+        stability -- so that outcome is preserved together with the counters,
+        findings, manifest, pending traversal, observations and monotonic
+        material refusals of the same pass.  A refused *control settlement*
+        (paused, cancelled or failed) is the previous control's own projection:
+        it is never replayed as this pass's traversal outcome, so the latest
+        accepted control keeps deciding the lifecycle.  Its bounded work is
+        still kept.
         """
 
         if attempted is None or attempted.discovery_id != fresh.discovery_id:
@@ -685,12 +731,18 @@ class MediaDiscoveryService:
             discovery_scope_signature(fresh.progress.scope_entries)
         ):
             return fresh
-        # The operator owns the control flags and the lifecycle *transition*; the
-        # completed bounded pass owns the truthful outcome of its own walk
-        # (status, counters, findings, manifest, observations and refusals).  A
-        # pause/cancel settlement replaces the status explicitly, so carrying it
-        # here only makes a cleared-pause publication report the real completed
-        # state instead of forcing a redundant full re-walk of the same scope.
+        if is_settlement_status(attempted.status):
+            # The latest accepted control decides the lifecycle and its own
+            # phase/message; this pass only contributes the work it completed.
+            return replace(
+                fresh,
+                progress=replace(
+                    attempted.progress,
+                    phase=fresh.progress.phase,
+                    message=fresh.progress.message,
+                ),
+                sources=attempted.sources,
+            )
         return replace(
             fresh,
             status=attempted.status,

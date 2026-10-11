@@ -87,6 +87,10 @@ export interface OrganizeDiscoveryAction {
    * published by the backend so the page can explain the refusal without
    * inventing one. `null` when the action is available. */
   readonly refusal: string | null;
+  /** A bounded transient reason the backend publishes while an action is
+   * deliberately not offered yet, such as a pause whose safe-boundary
+   * acknowledgement has not landed. `null` when the action is not pending. */
+  readonly pendingReason: string | null;
 }
 
 export interface OrganizeDiscoveryModel {
@@ -177,6 +181,11 @@ function normalizeAction(
     refusal:
       typeof record.refusal === "string" && record.refusal.length > 0
         ? record.refusal
+        : null,
+    pendingReason:
+      typeof record.pendingReason === "string" &&
+      record.pendingReason.length > 0
+        ? record.pendingReason
         : null,
   };
 }

@@ -12408,13 +12408,33 @@ class MediaFlowApi:
                     "sideEffects": "none",
                 },
                 "resume": {
-                    "available": can_manage and discovery.pause_requested and not terminal,
+                    # Continue is only offered once the resident Worker has
+                    # *acknowledged* the pause at its safe boundary: only then
+                    # has the interrupted pass's bounded work been settled and
+                    # the claim released.  A pending pause is a real transient
+                    # state, so the action is not advertised yet and the
+                    # application refuses a premature or stale-client Continue
+                    # with the same rule instead of accepting it and stranding
+                    # the record.  Cancellation keeps its own terminal path.
+                    "available": can_manage
+                    and discovery.pause_requested
+                    and discovery.status is DiscoveryStatus.PAUSED
+                    and not terminal,
                     "method": "POST",
                     "path": (
                         f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/resume"
                     ),
                     "requiresVersion": True,
                     "sideEffects": "none",
+                    "pendingReason": (
+                        "discovery_pause_pending"
+                        if (
+                            discovery.pause_requested
+                            and discovery.status is not DiscoveryStatus.PAUSED
+                            and not terminal
+                        )
+                        else None
+                    ),
                 },
                 "finalize": {
                     "available": can_manage
@@ -12501,7 +12521,16 @@ class MediaFlowApi:
         if discovery.status is DiscoveryStatus.FAILED:
             return "inspect the recorded failure and start a new bounded discovery"
         if discovery.pause_requested:
-            return "continue the paused discovery to finish the admitted scope"
+            if discovery.status is DiscoveryStatus.PAUSED:
+                return "continue the paused discovery to finish the admitted scope"
+            # The pause is durable but not yet acknowledged at a safe boundary.
+            # State the real transient stage instead of promising a Continue
+            # that the backend will refuse until the acknowledgement lands.
+            return (
+                "the cooperative pause is waiting for the resident Processing Worker to "
+                "acknowledge it at its safe boundary; continue the same discovery after "
+                "the acknowledgement"
+            )
         if discovery.cancel_requested:
             # An accepted cancellation that is not yet terminal is settled by the
             # resident Worker at its next safe boundary.  The readback states the

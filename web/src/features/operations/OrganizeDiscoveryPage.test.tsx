@@ -29,6 +29,7 @@ function action(
   path: string,
   available: boolean,
   refusal: string | null = null,
+  pendingReason: string | null = null,
 ) {
   return {
     available,
@@ -37,6 +38,7 @@ function action(
     requiresVersion: true,
     sideEffects: "none",
     refusal,
+    pendingReason,
   };
 }
 
@@ -214,5 +216,87 @@ describe("bounded discovery refusal journey", () => {
     });
     // The raw protocol code never reaches the operator.
     expect(screen.queryByText(/discovery_conflict/)).toBeNull();
+  });
+
+  it("shows the pending pause stage and offers Continue only after acknowledgement", async () => {
+    authStore.setToken(TOKEN);
+    // The pause request is durable but the resident Worker has not yet
+    // acknowledged it at a safe boundary: Continue must not be offered, and the
+    // transient stage must be explained instead of looking like a dead end.
+    const pending = discoveryDocument({
+      activeSeconds: 1.5,
+      errorEntries: 0,
+      excludedEntries: 0,
+      findings: [],
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      message:
+        "a cooperative pause was requested; the Worker stops at a safe boundary",
+      pageFetches: 3,
+      phase: "queued",
+      primarySources: 1,
+      reasons: [],
+      unstableEntries: 0,
+      visitedDirectories: 3,
+      visitedEntries: 20,
+    });
+    pending.pauseRequested = true;
+    pending.status = "queued";
+    pending.actions.pause = action("pause", false);
+    pending.actions.resume = action(
+      "resume",
+      false,
+      null,
+      "discovery_pause_pending",
+    );
+    stubFetch(pending);
+    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "整理发现" });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/正在等待后台 Worker/, { exact: false }),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "继续发现" })).toBeNull();
+  });
+
+  it("offers Continue once the pause has been acknowledged", async () => {
+    authStore.setToken(TOKEN);
+    const acknowledged = discoveryDocument({
+      activeSeconds: 1.5,
+      errorEntries: 0,
+      excludedEntries: 0,
+      findings: [],
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      message:
+        "discovery is paused; findings and counters are durable and safe to continue",
+      pageFetches: 3,
+      phase: "paused",
+      primarySources: 1,
+      reasons: [],
+      unstableEntries: 0,
+      visitedDirectories: 3,
+      visitedEntries: 20,
+    });
+    acknowledged.pauseRequested = true;
+    acknowledged.status = "paused";
+    acknowledged.actions.pause = action("pause", false);
+    acknowledged.actions.resume = action("resume", true);
+    stubFetch(acknowledged);
+    renderApp(`/ui-v2/operations/organize/discovery/${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "整理发现" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "继续发现" })).toBeTruthy();
+    });
+    expect(
+      screen.queryByText(/正在等待后台 Worker/, { exact: false }),
+    ).toBeNull();
   });
 });
