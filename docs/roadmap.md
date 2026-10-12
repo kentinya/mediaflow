@@ -35,7 +35,8 @@ only in [the development workflow](development-workflow.md).
 
 Slice 43 is ACTIVE under [SLICE.md](../SLICE.md), resumed by A at the user's explicit request
 following accepted Slice 44. Task 43.1 is recovered with its original ID/Base/Goal/Scope and latest
-FIX REQUIRED; B reassesses the integrated candidate before Developer continuation. The working
+FIX REQUIRED; B's independent resumption reassessment confirms the same Task correction loop.
+Next action is Developer correction when directed. The working
 branch `slice/43-resumed-after-44` combines the accepted Slice 44 line with the preserved unfinished
 Task. Its original Slice Base and frozen review evidence remain intact; resumption is not acceptance.
 

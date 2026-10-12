@@ -16,7 +16,7 @@ Contract Revision: 2026-10-12 — A resumption after accepted Slice 44; original
 Working Branch: slice/43-resumed-after-44
 Risk: High
 Final Test Level: T4
-Next Action: B REASSESSES RECOVERED TASK 43.1; SAME TASK FIX LOOP
+Next Action: DEVELOPER CONTINUES TASK 43.1 SAME FIX LOOP WHEN DIRECTED
 ```
 
 ## Authority and sequencing
@@ -61,6 +61,15 @@ Current authority is this checkpointed ACTIVE Contract and recovered FIX REQUIRE
 and earlier accepted closures remain immutable facts. See the
 [resumption assessment](docs/reviews/slice-43-resumption-20261012.md) for integration and validation
 limits. No Slice Final Review, push, release or completed Automation redesign is claimed.
+
+B completed the independent resumption reassessment at
+`39a6a40e4a66de508a331c2d83d17d65578c08cc` (TASK.md only). It reproduced the same P1 on the
+integrated source after 505 ordinary publications and runtime reopen, with intact occurrence,
+exact revision and activation evidence. Decision remains FIX REQUIRED; the same Task may continue
+under its unchanged Goal/Scope/acceptance and High/T4. No new integration blocker was identified
+in that reassessment; complete corrected-candidate gates remain due. Current next action is
+Developer correction of Task 43.1 when directed. This is a factual handoff update, not a Contract
+amendment, Task PASS or authority to start another Task.
 
 ### A development hold — 2026-10-07 (historical)
 

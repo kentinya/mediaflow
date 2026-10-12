@@ -12,8 +12,9 @@ Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** a
 user-authorized A resumption following Slice 44 closure. Working branch `slice/43-resumed-after-44`
 integrates accepted Slice 44 with the preserved unfinished Task 43.1. Its original Slice Base and
 Task ID/Base/Goal/Scope remain unchanged; [`TASK.md`](../TASK.md) retains **FIX REQUIRED**, the
-removed-definition-history P1 and B's complexity reassessment. Next action is B reassessment of the
-actual integrated candidate, followed by the same Task correction loop when authorized by B.
+removed-definition-history P1 and B's complexity reassessment. B independently reproduced the
+same P1 on the integrated candidate and authorized the same Task correction loop; no new integration
+blocker was identified in that reassessment. Next action is Developer correction when directed.
 
 Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
 Its closure-ledger entry and all earlier accepted entries below are unchanged. Preservation branch

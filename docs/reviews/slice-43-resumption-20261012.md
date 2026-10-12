@@ -26,9 +26,11 @@ FIX REQUIRED correction loop; it does not merge a PASS claim into accepted histo
 
 The read-only merge preview found no executable-source text conflict. The ten shared executable
 paths are configuration objects, SQLite runtime, service API, Operations harness, Playwright default
-configuration, frontend normalizers, router, API transport and navigation model/test. Their integrated
-diffs against accepted Slice 44 retain the original Slice 43 addition/removal counts; A also inspects
-the changed authority paths and runs affected behavior checks. Counts alone are not acceptance.
+configuration, frontend normalizers, router, API transport and navigation model/test. All ten
+integrated executable diffs against accepted Slice 44 retain exactly the original Slice 43
+added/removed patch lines. The 140 accepted Slice 44-only paths retain their complete tree identity.
+A also inspects changed authority paths and runs affected behavior checks; patch equality is not
+Task acceptance.
 
 - Configuration combines focused Automation publication/removal with the accepted Rules local-test
   and MediaLibrary-plus-path semantics. Whole-candidate validation, checked activation, applicable
@@ -96,3 +98,33 @@ affected upgrade/deployment checks remain required by the recovered Task/Contrac
 those expensive completion gates while the known Task blocker is unresolved. No Task PASS follows
 from this table. The HEAD-authoritative governance guard runs after the activation commit, before B
 reassessment. No push, deployment, production-service certification or Slice closure is claimed.
+
+## B reassessment completed and current handoff
+
+A activation/integration checkpoint: `28eb41997e1bac1cffef13896bc769ba7ffcfd6d`.
+B TASK-only reassessment checkpoint: `39a6a40e4a66de508a331c2d83d17d65578c08cc`.
+The final handoff sync changes only this report and A-owned Slice/Roadmap/Progress pointers;
+executable inputs, tests, harnesses, dependencies and built artifacts remain unchanged.
+
+B independently verified the 594 source inputs and built Web against A's recorded candidate,
+then reproduced the P1 using new temporary Local/SQLite, authenticated API, actual Scheduler and
+the built native browser on isolated port 4197. Deleted history is initially readable; all 505
+ordinary focused publications return 200; four historical routes then return 404 before and after
+runtime reopen. The occurrence, exact superseded revision/digest and publication audit remain intact.
+The defect reproduction exits 0 by asserting the existing failure; it is not a product PASS.
+Fresh API documents, read-only SQLite proof, browser trace/images and original logs are retained in
+`.git/validation-evidence/28eb41997e1bac1cffef13896bc769ba7ffcfd6d/b-reassess43-20261012/`.
+
+**B decision: FIX REQUIRED; SAME TASK CONTINUATION YES.** No additional integration blocker was
+identified in this reassessment. Task identity/Base/Goal/Scope/AC and High/T4 remain unchanged;
+B explicitly corrects only the obsolete combined real-Python browser invocation to the existing
+Automation, Operations and Unicode isolated configurations and clarifies verification stages.
+Developer next corrects the retained-history P1 in Task 43.1 when directed; no replacement Task,
+new outcome, implementation acceptance or Slice readiness follows from resumption.
+
+The initial A final-manifest audit expected ten check receipts instead of the actual eleven and
+exited 1 after matching tested source bytes. The corrected post-commit audit verifies all eleven
+successful receipts, committed input bytes, both parent/Bases' ancestry and governance; the original
+harness mistake remains disclosed in A's evidence index. No source, test or history rewrite fixes it.
+The document-only handoff reruns governance and whitespace after its checkpoint; runtime baseline
+evidence is retained with verified unchanged inputs rather than rerun as a completion claim.
