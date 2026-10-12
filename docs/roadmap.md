@@ -28,17 +28,16 @@ only in [the development workflow](development-workflow.md).
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
-| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; resumed with preserved Task 43.1 FIX REQUIRED | ACTIVE | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
+| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers | ACTIVE | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 
 ## Current boundary
 
-Slice 43 is ACTIVE under [SLICE.md](../SLICE.md), resumed by A at the user's explicit request
-following accepted Slice 44. Task 43.1 is recovered with its original ID/Base/Goal/Scope and latest
-FIX REQUIRED; B's independent resumption reassessment confirms the same Task correction loop.
-Next action is Developer correction when directed. The working
-branch `slice/43-resumed-after-44` combines the accepted Slice 44 line with the preserved unfinished
-Task. Its original Slice Base and frozen review evidence remain intact; resumption is not acceptance.
+Slice 43 is ACTIVE under [SLICE.md](../SLICE.md), resumed at the user's explicit request after
+accepted Slice 44. Branch `slice/43-resumed-after-44` combines that accepted baseline with the
+preserved unfinished work. The original Slice Base and business boundary remain intact; resumption
+is not acceptance. Current development uses the Slice 44-era governance documents and Slice/Task
+rules. [TASK.md](../TASK.md) owns the current Task plan and review; Git retains prior review rounds.
 
 Slice 44 remains PASS / CLOSED, with its accepted six-outcome boundary and exceptional-discovery
 recovery deferrals retained. Its complete Contract/reviews remain reachable at its closure checkpoint.

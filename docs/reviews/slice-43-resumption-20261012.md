@@ -1,7 +1,9 @@
 # Slice 43 — A Resumption and Integration Assessment / 2026-10-12
 
-**Decision: RESUME ACTIVE; hand recovered Task 43.1 to B for reassessment.** This is the
+**Initial decision: RESUME ACTIVE; hand Task 43.1 to B for reassessment.** This is the
 user-authorized end of the development hold, not Task acceptance or Slice Final Review.
+B has since returned FIX REQUIRED. Current documents follow Slice 44-era governance as recorded
+in the reconciliation section below; prior recovery and reassessment sections record their historical steps.
 
 ## Authority and preserved lineage
 
@@ -128,3 +130,24 @@ successful receipts, committed input bytes, both parent/Bases' ancestry and gove
 harness mistake remains disclosed in A's evidence index. No source, test or history rewrite fixes it.
 The document-only handoff reruns governance and whitespace after its checkpoint; runtime baseline
 evidence is retained with verified unchanged inputs rather than rerun as a completion claim.
+
+## Current-document reconciliation after user clarification
+
+The user subsequently specified that Slice 44-era governance and current Slice/Task documents take
+precedence over old documents. All eight core governance files already match accepted Slice 44
+byte-for-byte: AGENTS.md, the development workflow, Task/TEMPLATE.md, the three role-experience
+documents, scripts/check_governance.py and CLAUDE.md. They remain unchanged.
+
+The initial resumption copied the preserved Task report history into root TASK.md. The current
+documents are now reconciled to the existing workflow/template: SLICE.md records current authority
+and integration context without obsolete activation/hold instructions; B maintains a compact
+TASK.md with its current plan, required verification stages and latest FIX REQUIRED result.
+Prior Contract/report/review details remain available at the immutable snapshots above. Roadmap
+records only the large-Slice boundary/status; Progress retains its accepted ledger and a compact
+current pointer. This supersedes the restored document layout, not the original business promises.
+
+Both original Bases, all Required Outcomes/surfaces/safety/deferrals/acceptance, Task Goal/Scope/AC,
+the unresolved P1, High/T4 and concrete final-validation coverage remain intact. No production,
+test, harness, dependency or governance-core input changes in this reconciliation. Its checks are
+document/invariant/link, whitespace and committed-authority governance checks; the earlier runtime
+evidence remains integration/rejection evidence, not corrected-candidate acceptance.

@@ -8,18 +8,15 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** after explicit
-user-authorized A resumption following Slice 44 closure. Working branch `slice/43-resumed-after-44`
-integrates accepted Slice 44 with the preserved unfinished Task 43.1. Its original Slice Base and
-Task ID/Base/Goal/Scope remain unchanged; [`TASK.md`](../TASK.md) retains **FIX REQUIRED**, the
-removed-definition-history P1 and B's complexity reassessment. B independently reproduced the
-same P1 on the integrated candidate and authorized the same Task correction loop; no new integration
-blocker was identified in that reassessment. Next action is Developer correction when directed.
+Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on
+`slice/43-resumed-after-44`, integrating accepted Slice 44 with preserved unfinished work under
+the current Slice 44-era governance. [SLICE.md](../SLICE.md) retains the original Base and business
+boundary; [TASK.md](../TASK.md) retains Task 43.1 **FIX REQUIRED** and the unresolved P1, with the
+same Task correction loop next. Detailed implementation and review history remains in Git.
 
 Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
-Its closure-ledger entry and all earlier accepted entries below are unchanged. Preservation branch
-`frozen/slice-43-2026-10-07` and its exact review snapshot remain reachable and unchanged; suspended
-implementation is not an accepted outcome. This resumption is repository-local, with no push/release.
+Its closure-ledger entry and all earlier accepted entries below are unchanged. The frozen Slice 43
+branch and exact review snapshots remain reachable as historical evidence.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the

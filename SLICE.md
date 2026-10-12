@@ -11,103 +11,58 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: b364a04d1c916ed327e3e8f470dc05e413ad80e6
-Development Hold: LIFTED BY USER — 2026-10-12; prior freeze retained below
-Contract Revision: 2026-10-12 — A resumption after accepted Slice 44; original scope and Base retained
+Development Hold: LIFTED BY USER — 2026-10-12
+Contract Revision: 2026-10-12 — current Slice 44 governance; original business scope and Base retained
 Working Branch: slice/43-resumed-after-44
 Risk: High
 Final Test Level: T4
 Next Action: DEVELOPER CONTINUES TASK 43.1 SAME FIX LOOP WHEN DIRECTED
 ```
 
-## Authority and sequencing
+## Authority and current state
 
-### A explicit resumption and accepted-line integration — 2026-10-12
+The user explicitly authorized A to resume Slice 43 after accepted Slice 44, integrate its accepted
+changes, retain the original Base and unresolved Task blocker, and hand Task 43.1 to B. The user's
+subsequent direction makes the Slice 44-era current documents and Slice/Task rules authoritative.
+[AGENTS.md](AGENTS.md) owns permanent invariants; [the development workflow](docs/development-workflow.md)
+is the sole lifecycle authority. The current [Task template](Task/TEMPLATE.md) and role guidance
+remain those from accepted Slice 44. Frozen snapshots supply the original business commitments,
+lineage and review evidence; their old document layout, historical statuses and governance wording
+do not override these current rules.
 
-The user explicitly requested A to resume Slice 43, recover its frozen Contract and latest Task
-43.1 B review, assess and integrate accepted Slice 44, preserve the original Base and unresolved
-blockers, checkpoint ACTIVE authority and then hand the same Task to B for reassessment.
+Applicable requirements are UX-001 through UX-010, REQ-SCHED-001 through REQ-SCHED-007,
+REQ-TASK-001/002/003/005/006/007/008/009, REQ-RECOVERY-002/006/009, REQ-SAFE-008 and the existing
+Storage, execution and configuration invariants. V2-AUTO-001 through V2-AUTO-008 refine this journey
+without changing frozen V1 authority semantics. Only the business capability below is resumed;
+accepted closures and deferrals remain historical facts.
 
-- Working branch: `slice/43-resumed-after-44`, created from accepted Slice 44 closure
-  `a72252091d5d46edf3e2114b994036ae21b08e2e`.
-- Preserved integration parent: `8a41e131f3a668388381ab51c8876668108871d8` on
-  `frozen/slice-43-2026-10-07`; neither preservation branch nor accepted history is rewritten.
-- Original Slice Base: `853973dbbf8289fa2ad40657033e94e870a690e4` (unchanged).
-- Last suspended implementation: `b364a04d1c916ed327e3e8f470dc05e413ad80e6` (still unaccepted).
-  The Implementation Head field retains that factual Task checkpoint; the resumption merge is an
-  integration/activation checkpoint, not a new Developer completion report or B PASS.
-- Recovered Task authority: `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`, including the latest
-  B FIX REQUIRED and complexity reassessment. Task ID 43.1 and original Task Base
-  `79544d9aba697036405b06054c0c56a740281bab`, Goal, Scope, acceptance and High/T4 remain intact.
+| Preserved record | Immutable reference |
+|---|---|
+| Original Slice Base | `853973dbbf8289fa2ad40657033e94e870a690e4` |
+| Original Task 43.1 Base | `79544d9aba697036405b06054c0c56a740281bab` |
+| Last Developer checkpoint | `b364a04d1c916ed327e3e8f470dc05e413ad80e6` — unaccepted |
+| Frozen Contract and Task/B evidence | `8a41e131f3a668388381ab51c8876668108871d8:SLICE.md`; `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md` |
+| Accepted Slice 44 closure | `a72252091d5d46edf3e2114b994036ae21b08e2e` |
+| Integrated source / A activation | `28eb41997e1bac1cffef13896bc769ba7ffcfd6d` |
+| Latest independent B reassessment | `39a6a40e4a66de508a331c2d83d17d65578c08cc:TASK.md` — FIX REQUIRED |
 
-The integration deliberately carries the unfinished Task implementation as FIX REQUIRED; it does
-not accept rejected code. Shared configuration, SQLite/API, harness, frontend transport/normalizers,
-routes and navigation changes are combined with Slice 44's accepted implementation. Runtime schema
-45, canonical MediaLibrary-plus-path behavior and explicit legacy conversion, page-local Rules
-analysis/complete-flow separation, both-library file operations/navigation and bounded folder/mixed
-Organize remain the accepted baseline. Future RO-4 may reuse those existing bounded sources, but
-this resumption does not implement Run once or enlarge either Slice's scope/recovery promises.
+The working branch combines accepted Slice 44 with the preserved unfinished implementation without
+rewriting either source branch. The Implementation Head field identifies the last Developer report;
+its unaccepted status is unchanged. The integrated source retains runtime schema 45, canonical
+MediaLibrary-plus-path classification and explicit legacy conversion, page-local Rules tests and
+separate complete-flow checks, both-library file operations/navigation, and bounded ResourceLibrary
+folder/mixed Organize. The resumption checkpoint adds no Run-once behavior and changes no recovery
+promise.
+The [resumption assessment](docs/reviews/slice-43-resumption-20261012.md) records integration checks
+and their limits.
 
-The remaining P1 stays unresolved: removed-definition history can become unreachable after ordinary
-subsequent publications despite intact durable occurrence/pin/publication evidence, including after
-restart (Task AC-T5/T6, RO-2). Its source and latest B reproduction/assessment are preserved. Resolve
-history by the exact durable occurrence revision/publication evidence or a complete targeted read;
-window enlargement and another recovery engine are not authorized substitutes. B must reassess the
-actual integrated candidate before Developer continues; no Task outcome or blocker is reset to PASS.
-
-Required Outcomes RO-1 through RO-7, Required Surfaces, Safety Invariants, UX constraints, Deferred,
-Slice acceptance and final validation below retain their frozen meaning. The earlier hold and
-activation paragraphs are historical, including their then-current no-active-Task statements.
-Current authority is this checkpointed ACTIVE Contract and recovered FIX REQUIRED Task. Slice 44
-and earlier accepted closures remain immutable facts. See the
-[resumption assessment](docs/reviews/slice-43-resumption-20261012.md) for integration and validation
-limits. No Slice Final Review, push, release or completed Automation redesign is claimed.
-
-B completed the independent resumption reassessment at
-`39a6a40e4a66de508a331c2d83d17d65578c08cc` (TASK.md only). It reproduced the same P1 on the
-integrated source after 505 ordinary publications and runtime reopen, with intact occurrence,
-exact revision and activation evidence. Decision remains FIX REQUIRED; the same Task may continue
-under its unchanged Goal/Scope/acceptance and High/T4. No new integration blocker was identified
-in that reassessment; complete corrected-candidate gates remain due. Current next action is
-Developer correction of Task 43.1 when directed. This is a factual handoff update, not a Contract
-amendment, Task PASS or authority to start another Task.
-
-### A development hold — 2026-10-07 (historical)
-
-The user explicitly authorized A to freeze this development and preserve its implementation,
-then reserve one Slice for improvements across several already implemented pages; that Slice's
-contents will be supplied later. This is the user-authorized priority exception in
-`docs/development-workflow.md`, not Slice acceptance or a change to any outcome, surface,
-invariant, acceptance criterion or deferral below.
-
-- Preservation branch: `frozen/slice-43-2026-10-07`.
-- Exact implementation: `b364a04d1c916ed327e3e8f470dc05e413ad80e6` (not accepted).
-- Full Task 43.1 and latest B review snapshot: `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`.
-- Slice Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`.
-- Task 43.1 remains FIX REQUIRED: removed-definition history becomes inaccessible after subsequent
-  ordinary publications despite intact durable run/pin/publication evidence. Its exact blocker,
-  reproduction and complexity assessment are retained in the recorded Task snapshot.
-
-Root `TASK.md` contains no active implementation Task. No B planning, Developer implementation,
-automatic continuation, Slice Final or completion claim is authorized on this held branch.
-To resume, A must explicitly reactivate this same Contract and recover Task 43.1 from the snapshot,
-retaining its original ID/Base/Goal/Scope and outstanding blocker. Intervening accepted work must
-be assessed before integration; no automatic merge or repinning is authorized.
-
-### Original activation authority (retained history)
-
-The user first requested analysis of `docs/pics/自动化.png` and
-`docs/pics/自动化-全局设置.png`, then explicitly authorized A to plan this Slice. This checkpoint
-changes planning documents only. Slice 42 remains PASS / CLOSED; its complete Contract, Closure
-Packet and A Final Review are retained at this Slice's Base. Earlier closures and their deferrals
-remain historical facts. This Slice selects Automation redesign previously deferred by Slice 42;
-it does not reopen that Slice or authorize Notifications redesign.
-
-`AGENTS.md` and `docs/development-workflow.md` remain authoritative. Applicable product requirements
-include UX-001 through UX-010, REQ-SCHED-001 through REQ-SCHED-007, REQ-TASK-001/002/003/005/006/007/008/009,
-REQ-RECOVERY-002/006/009, REQ-SAFE-008 and the existing Storage, execution and configuration invariants.
-V2-AUTO-001 through V2-AUTO-008 refine this journey without changing frozen V1 authority semantics.
-B plans Tasks only after this Contract and the matching ACTIVE Roadmap row are committed.
-`TASK.md` remains an explicit no-active-Task notice until B acts.
+Task 43.1 remains FIX REQUIRED with its original ID/Base/Goal/Scope/acceptance and High/T4. B's
+independent reassessment reproduced the P1: after 505 ordinary publications, removed-definition
+history becomes unreachable before and after runtime reopen despite intact occurrence, exact
+revision and publication evidence. No additional integration blocker was identified in that review.
+The same Task correction loop continues. Current TASK.md contains the latest plan and B result;
+prior reports and review rounds remain in the recorded Git snapshots. No Task PASS, Slice readiness
+or A Final Review is claimed.
 
 ## User Goal and Journey
 
@@ -142,16 +97,17 @@ and occurrences, exact Preview, scoped revocable unattended grants, pinned Worke
 TaskItem/Result/checkpoint recovery. V2 has definition/list/editor/Preview/occurrence pages; Slice 42
 provides the shared Operations run inventory and native task-linked controls/recovery.
 
-The current list is a bounded card projection with a truncation marker, not the reference table with
-cross-definition metrics/history. Its editor exposes separate Draft/save/validate/activate steps.
-No complete definition-bound Run-once journey is currently advertised by its action projection.
+At the original Base, the list is a bounded card projection with a truncation marker, not the
+reference table with cross-definition metrics/history. Its editor exposes separate
+Draft/save/validate/activate steps.
+No complete definition-bound Run-once journey is advertised at that Base.
 
 All four engine fields exist. `maximumActiveJobs` counts pending plus running Jobs in the shared
 AutomationJob admission pool, not execution parallelism. `staleJobAgeSeconds` is a stale-update
 observation threshold, not a task timeout or automatic replay instruction. Settings metadata labels
 polling values hot-consumed, but the Base resident Worker/Scheduler capture their poll interval at
 startup and `ResidentLoop` retains that value. API configuration binding alone is not evidence that
-those processes changed cadence. This Slice must close that concrete consumption gap for its four
+those processes changed cadence. This Slice must close that original-Base consumption gap for its four
 fields; it is not authorization to rewrite the queue or general deployment administration.
 
 ## Required Outcomes
@@ -387,10 +343,9 @@ reference availability must be reported rather than replacing the originals with
 
 ## Final Validation Expectations
 
-This is scope/architecture planning, not an ordinary factual T0 sync or an implementation-test PASS.
-B assigns Task levels by actual risk; Active publication, grants, execution, migrations and resident
-adoption require T4. B sizes coherent vertical Tasks, normally roughly 3–7; more than 8 requires the
-workflow complexity reassessment, not one Task per tab/field/endpoint/test.
+Task test assignment and execution stages follow [the current workflow](docs/development-workflow.md#6-test-levels).
+This high-risk Slice retains T4 final acceptance. Development/correction feedback does not replace
+the complete corrected-candidate gates or Slice Final; the concrete risk coverage below remains required.
 
 - Exercise existing Automation definitions, occurrence/Cron/DST, Preview/grant/execution, admission/
   fencing, settings/configuration and resident suites plus Operations/manual-organize/recovery/RBAC.
@@ -418,22 +373,18 @@ workflow complexity reassessment, not one Task per tab/field/endpoint/test.
   private credentials. Verify both reference checksums; do not weaken tests to turn missing evidence
   into PASS. No FFmpeg/FFprobe.
 
-## Delegated factual updates and stop rule
+## Factual updates and review authority
 
-Only A materially changes this Contract, Base, Required Outcomes, safety, acceptance or deferrals.
-After activation B/Developer may update factual Implementation Head, Task progress and test evidence
-within their roles. B owns Task sizing/review. After each Task PASS reevaluate RO-1 through RO-7.
-Once all are satisfied, stop creating Tasks, run Slice Final, prepare the Closure Packet, set
-`READY FOR A REVIEW` and report `SLICE READY FOR A REVIEW`. Only A reviews the complete
-Base..Implementation Head and declares PASS / CLOSED; non-blocking polish is not another Task.
+Only A materially changes the Contract, Base, Required Outcomes, safety, acceptance or deferrals.
+B/Developer may update factual Implementation Head, Task progress and evidence within their roles.
+Task planning/review, correction loops, stop rules, Closure Packet and final review follow
+[the current workflow](docs/development-workflow.md). This document does not define a separate lifecycle.
 
 ## Closure Packet
 
-Not submitted. Recovered Task 43.1 remains FIX REQUIRED; no Slice readiness or closure is claimed.
-B supplies the workflow packet with RO/surface coverage, Base/Head, compact Task references,
-actual tests/safety evidence, known non-blockers, deferrals and documentation reconciliation needed.
+Not submitted. Task 43.1 remains FIX REQUIRED. No Slice readiness or closure is claimed.
 
 ## A Final Review
 
-Not performed. This activation is not product acceptance. Final review covers the full immutable
-Base..Implementation Head and reconciles TARGET to CURRENT only after accepted implementation.
+Not performed. The resumption and document-format reconciliation are not product acceptance.
+Final review will cover the original immutable Base through the submitted Implementation Head.
