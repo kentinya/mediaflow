@@ -1,25 +1,10 @@
 # Task 43.1 — Native Automation Definition Lifecycle and Focused Publication
 
-This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](SLICE.md).
-
-## A Recovery Context — 2026-10-12
-
-Recovered verbatim from `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`, apart from this
-factual recovery context. All original reports/reviews below retain their historical ranges and
-results. The latest B Decision remains FIX REQUIRED; ID/Base/Goal/Scope/acceptance and High/T4
-are unchanged. Original Task Base: `79544d9aba697036405b06054c0c56a740281bab`.
-
-A resumes parent Slice 43 on `slice/43-resumed-after-44` after explicitly integrating accepted
-Slice 44 closure `a72252091d5d46edf3e2114b994036ae21b08e2e` with preserved parent
-`8a41e131f3a668388381ab51c8876668108871d8`. Intervening Slice 44 changes are inherited accepted
-baseline, not new Task 43.1 scope. The original Base remains reachable through merge ancestry;
-no rebase/repin is performed. Fresh integration checks are not a replacement for this Task's T4
-candidate gates or the latest B blocker reproduction.
-
-Next Action: B REASSESSES THE SAME TASK AGAINST THE CHECKPOINTED ACTIVE CONTRACT AND ACTUAL
-INTEGRATED CANDIDATE. Keep the removed-definition-history P1 and the latest complexity assessment;
-no Developer implementation, new Task or PASS is authorized by this A recovery note alone.
+This Task follows [the current development workflow](docs/development-workflow.md) and is subordinate
+to [`SLICE.md`](SLICE.md). Planning/review reads [B's experience](docs/agent-experience/task-planner-reviewer.md);
+implementation reads [Developer's experience](docs/agent-experience/developer-implementation-role.md).
+The current governance and document format adopted during Slice 44 remain authoritative; this file
+retains Task 43.1's business obligations and current facts, while detailed prior reports stay in Git.
 
 ```text
 Task ID: 43.1
@@ -44,39 +29,23 @@ RO-1, RO-3 or RO-7 complete.
 
 ## Why This Task Exists
 
-The committed Slice 43 and Roadmap are ACTIVE; governance passes. At Task Base, `TASK.md` contains
-`NO ACTIVE IMPLEMENTATION TASK`. There is no Developer checkpoint to review.
+The original coherent unit is the native definition lifecycle across managed configuration,
+application, persistence, API and Web. Its latest Developer implementation checkpoint
+`b364a04d1c916ed327e3e8f470dc05e413ad80e6` remains unaccepted. A resumed Slice 43 and integrated
+accepted Slice 44 at `28eb41997e1bac1cffef13896bc769ba7ffcfd6d`; no corrected Developer candidate has
+been submitted since that recovery. Task identity, original Base and business scope are unchanged.
 
-The actual implementation has these gaps and reusable boundaries:
+The current blocker is retained-history resolution: after a definition is removed, recent-window
+searches eventually hide its durable occurrence, pin and publication evidence from required API/Web
+routes. B reproduced this on the integrated production assembly after 505 ordinary publications and
+runtime reopen. The existing exact revision/publication and sequenced ledger readers are sufficient
+for correction inside this same Task. Current schema45 and accepted Slice 44 behaviors are inherited
+baseline; no new recovery engine, A RESCOPE or next Task is needed for this defect.
 
-- `AutomationTaskDefinitionService` wraps revision-bound Draft operations. `AutomationNewPage`,
-  `AutomationEditorPage` and definition actions still require an open successor Draft, save,
-  validation and activation as separate ordinary user steps.
-- `MediaFlowApi._automation_definition_activate_checked_draft` already confines activation to one
-  definition, fences exact Draft/Active identities and starts no work. Preserve those guarantees,
-  composing ordinary publication in the shared application layer.
-- Existing managed normalization owns modes, ResourceLibrary references, relative scope, item bounds
-  and interval/Cron validation. Rules/library focused publication, applicable checks, Preview/grant,
-  occurrence and Worker services are reusable authority, not reasons to create another store.
-- Removal needs live grant revocation and usable retained history, not only configuration deletion.
-
-This is one independently acceptable definition-management boundary across application, persistence,
-API and Web. Manual Run once, consolidated reporting and settings adoption remain coherent further
-in-Slice work. Initial sizing is compatible with roughly 3–7 major Tasks; only this Task is planned,
-and B reevaluates all Required Outcomes after PASS rather than predefining a field/endpoint ladder.
-
-Planning baseline (not Developer implementation evidence):
-
-```text
-Branch: main
-HEAD: 79544d9aba697036405b06054c0c56a740281bab
-python3 scripts/check_governance.py: PASS
-.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_v2_automation_operations tests.test_cron_scheduler
-Result: 40 tests, OK, no skips (38.473s)
-```
-
-The baseline emitted an unclosed SQLite `ResourceWarning`, not a test failure; unrelated cleanup
-is not authorized. Bare `python` is absent; use `.venv/bin/python` for project tests/tools.
+Detailed planning, rejected implementation and review history remains reachable at
+`a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`; the independent resumption assessment is retained at
+`39a6a40e4a66de508a331c2d83d17d65578c08cc:TASK.md`. Those snapshots are historical evidence, not a
+replacement for current governance or a claim that prior READY/PASS states are current.
 
 ## Implementation Scope
 
@@ -168,9 +137,9 @@ in-Slice work; do not add fake/decorative actions or claim the whole reference w
 
 Freeze `SLICE.md`, Roadmap, Progress, permanent product/requirement/safety contracts and Slice Base.
 Only necessary Task-owned operational documentation or an explained factual architecture adjustment
-may change. Preserve all three pre-existing untracked PNGs in `docs/pics/`; do not stage/edit/recompress
-them. Both Automation checksums match the Slice at planning. `config/alist.json` is ignored/untracked
-and must remain unstaged; never use private configuration/credentials to obtain evidence.
+may change. Preserve all four pre-existing untracked PNGs in `docs/pics/`; do not stage/edit/recompress
+them. Both Automation checksums remain unchanged. `config/alist.json` stays ignored/untracked/unstaged;
+never use private configuration/credentials to obtain evidence.
 
 ## Acceptance Criteria
 
@@ -208,33 +177,55 @@ and must remain unstaged; never use private configuration/credentials to obtain 
 
 ## Required Tests
 
-Commands run from repository root. Add focused application/API suites
-`tests/test_automation_definition_publication.py` and `tests/test_v2_automation_lifecycle.py`, native
-form/action tests, and `web/tests/e2e/automation-lifecycle.python.spec.ts`. Reuse/extend the isolated
-Python harness; explicitly separate real-Python specs from Node-fake selection. These are coverage
-locations, not new product abstractions. Update changed presentation expectations without losing
-existing compatibility/safety assertions.
+Follow [current test levels, stages and evidence rules](docs/development-workflow.md#6-test-levels).
+Commands run from repository root. Extend the existing focused application/API, typed Web and native
+Python lifecycle coverage; preserve all compatibility/safety assertions. High/T4 remains binding.
 
-### Focused and related integration
+### Development and correction feedback
+
+Resolve the known retained-history P1 before expensive gates. Run changed/new tests and directly
+affected regressions first, including the existing publication/lifecycle suites and affected Web
+model/form/query/transport tests:
 
 ```bash
 .venv/bin/python scripts/check_governance.py
 .venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle
-.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_v2_automation_operations tests.test_configuration_successor_draft tests.test_configuration_management tests.test_configuration_destination_activation tests.test_v2_rules_workspace_commands tests.test_system_settings_management
-.venv/bin/python -m unittest tests.test_cron_scheduler tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing
-npm --prefix web run test -- run src/entities/operations/automation.test.ts src/features/operations/AutomationRouter.test.tsx
+npm --prefix web run test -- run src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx
+npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts
 ```
 
-Also run every added/affected Web form/query/transport test. Required scenarios: all lifecycle actions;
-stale/concurrent publication and unrelated Draft/sibling preservation; scope/schedule numeric/finite/
-boundary/dependency errors; management/activation/revoke permission separation and Viewer denial;
-applicable check/persistence/runtime failures; commit-then-response/read failure and duplicate clicks;
-Draft-only recovery; empty/no/corrupt Active; retained history after reopen; Scheduler evaluation around
-disable/remove; an actual admitted old Job and revocation before the next mutation; fresh grant
-binding after relevant edits; zero side effects on reads. Use supported production assemblies, with
-fakes/local services at external ports, not test doubles that remove current production capabilities.
+Add durable-history cases beyond both former revision/audit windows, runtime reopen, exact historical
+name/scope/mode/version, no-occurrence history, unpublished Draft exclusion and missing/corrupt/
+unavailable/incomplete evidence. Preserve read-only bounded behavior and true absence versus failure
+semantics. The retained B reproducer asserts the existing 404 defect; use its scenario for correction,
+then assert readable history rather than treating that reproducer's exit 0 as product acceptance.
+Use real API/SQLite/browser feedback for the affected surface, with temporary Local/fake services.
 
-### Full regression and quality/safety — T4
+### Final checkpoint gates
+
+These assigned focused/integration cases cover publication, compatibility, Active authority, RBAC,
+grant/revocation, schedule/admission and concurrency. Run every added/affected Web test as well:
+
+```bash
+.venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle
+.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_v2_automation_operations tests.test_configuration_successor_draft tests.test_configuration_management tests.test_configuration_destination_activation tests.test_v2_rules_workspace_commands tests.test_system_settings_management
+.venv/bin/python -m unittest tests.test_cron_scheduler tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing
+npm --prefix web run test -- run src/entities/operations/automation.test.ts src/features/operations/AutomationRouter.test.tsx src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx
+```
+
+Required scenarios: all lifecycle actions; stale/concurrent publication and unrelated Draft/sibling
+preservation; scope/schedule numeric/finite/boundary/dependency errors; management/activation/revoke
+permission separation and Viewer denial; applicable check/persistence/runtime failures;
+commit-then-response/read failure and duplicate clicks; Draft-only recovery; empty/no/corrupt Active;
+retained history beyond former windows and after reopen; Scheduler evaluation around disable/remove;
+an actual admitted old Job and revocation before its next mutation; fresh grant binding after relevant
+edits; zero side effects on reads. Use supported production assemblies, with fakes/local services at
+external ports, rather than doubles that remove production capabilities.
+
+Full regression and quality/safety gates remain required on the corrected executable candidate.
+A final full run that includes the focused cases under their required configuration may record that
+coverage instead of mechanically rerunning them; separate native Python, security and other assigned
+gates remain due.
 
 ```bash
 .venv/bin/python -m unittest discover -s tests
@@ -257,56 +248,67 @@ npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.co
 .venv/bin/python scripts/check_governance.py
 git diff --check
 sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
 ```
 
-### Resumption execution stages — B, 2026-10-12
+The FFmpeg/FFprobe check expects exit 1 with no runtime/dependency matches. The three real-Python
+browser commands retain separate existing configurations: Automation publications change Active and
+invalidate build-time fixture pins, while Unicode-principal verification requires its configured
+Unicode identity. This preserves all journeys without the obsolete mixed-harness invocation.
 
-The three real-Python commands above replace the obsolete combined default-config invocation.
-Automation lifecycle publishes new Active revisions and therefore needs its existing isolated
-port/config; the Unicode-principal journey needs its existing configured Unicode identity and
-separate port. The Operations inventory keeps its default isolated assembly. This changes command
-selection only: every required journey, ID/Base/Goal/Scope/acceptance and High/T4 remain unchanged.
+Native real-Python/SQLite/browser evidence must drive typed create → Save → actual Active readback,
+edit/copy/toggle, stale/denied/unknown recovery, removal and retained history. Also drive exact Preview
+→ explicit grant → real Scheduler emission/Worker outcome on temporary Local Storage and a synthetic/
+local Provider; assert Save/reads do not emit that work and explicitly invoke Scheduler/Worker.
+Node fixtures alone cannot replace production application/persistence evidence. Preserve current live
+revocation, old/new admitted pins, OrganizerExecutor-only mutation and C-with-A/A identity.
 
-- **Development/correction feedback:** first reproduce and correct the retained-history P1, then
-  run the changed focused application/API/Web cases and directly affected historical-context,
-  publication/reconciliation, grant and occurrence regressions. Cover history beyond both recent
-  windows, restart, exact published identity, no-occurrence history, unpublished Draft exclusion and
-  unavailable/incomplete evidence without new work or authority. Retain real API/browser coverage.
-- **Final corrected candidate:** execute all assigned focused/integration and T4 checkpoint gates
-  above on the new executable candidate; do not reuse this resumption's runtime evidence after
-  source/tests/harness/dependency/config/artifact changes. Schema45 is inherited accepted Slice 44
-  baseline; this reassessment introduces no migration. Any new migration still requires the stated
-  additive rehearsal and preservation gates, including the affected current-baseline upgrade.
-- **B independent review:** verify exact candidate/input/artifact identity and original evidence;
-  independently drive removed-definition detail/occurrence/grant history beyond the former windows
-  and across restart, preserving historical context and task/authority links. Repeat only missing,
-  incompatible or contradicted gates; an independently proven P1 permits rejection before expensive
-  remaining gates, never PASS with an incomplete T4 candidate.
+Audit the exact `Task Base..Head` manifest and staged/unstaged changes for frozen/unrelated/private
+files and credentials. Distinguish accepted Slice 44 baseline from new Task correction. Confirm all
+four user PNGs are untouched and `config/alist.json` remains ignored/untracked/unstaged.
 
-The A resumption integration checks and the independent B reassessment below establish an actual
-integrated baseline and reproduce the blocker. They are neither the corrected candidate's complete
-T4 evidence nor Slice-final acceptance. Four pre-existing untracked PNGs, including
-`docs/pics/整理规则需修复.png`, and ignored/untracked/unstaged `config/alist.json` remain preserved.
+Schema45 is inherited accepted baseline; this document reconciliation introduces no migration. If
+correction changes schema, additionally run
+`.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_upgrade_preflight` and document
+additive **Task Base schema44 → candidate schema** and affected **current schema45 → candidate schema**
+rehearsals preserving historical rows/pins/grants/audits. Old-schema fixtures alone do not prove the
+actual upgrade. Otherwise record schema unchanged by Task correction. Wheel/static-serving and
+Compose lifecycle checks remain Slice-final gates unless the correction changes packaging/deployment/
+resident boundaries; then include the affected gates with exact commands/results. Production media,
+private credentials and external-service validation remain unauthorized. Report failed, skipped or
+unavailable gates honestly; do not omit them or call them PASS.
 
-Real-Python browser evidence drives typed create → Save → actual Active readback, edit/copy/toggle,
-stale/denied/unknown recovery, removal and retained history. Also drive exact Preview → explicit grant
-→ real Scheduler emission/Worker outcome on temporary Local Storage and a synthetic/local Provider;
-assert Save/reads do not emit that work, and explicitly invoke Scheduler/Worker. Node fixtures alone
-cannot replace production application/persistence integration evidence.
+### B independent verification
 
-Audit exact `Task Base..Head` manifest and unstaged/staged changes for frozen/unrelated/private files
-and credentials; confirm `config/alist.json` remains ignored/untracked/unstaged.
-`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` must find no runtime/dependency reference (exit 1
-with no matches is the expected clean result).
+B inspects the actual candidate diff and matching original evidence, then independently drives the
+removed-definition API/Web detail, occurrences and grant history beyond both former windows and
+across runtime reopen. Verify exact published identity, retained Job/Task/authority links, history
+without an occurrence, unpublished Draft exclusion, actionable missing/unavailable evidence and
+no side effects.
+B verifies publication/reconciliation, permissions and current revocation at the affected boundaries.
+A proven P1 permits FIX REQUIRED before remaining expensive gates; PASS requires the complete assigned
+candidate plan. Repeated full suites need missing, incompatible or contradicted evidence as a reason.
 
-If schema changes are necessary, additionally run
-`.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_upgrade_preflight` and a
-documented additive **Task Base schema44 → implemented schema** rehearsal preserving historical
-rows/pins/grants/audits; old-schema fixtures alone do not prove that upgrade. Otherwise record schema
-unchanged. Wheel/static-serving and Compose lifecycle checks remain Slice-final gates unless this
-Task changes their packaging/deployment/resident boundary, in which case include the affected gate
-and record exact commands/results. Production media/credentials/external-service validation is not
-authorized. Honest unavailable gates are reported for B to assess, not silently skipped or called PASS.
+### Evidence and rerun rules
+
+Retain each candidate's index/raw logs/browser artifacts in CI or
+`.git/validation-evidence/<full-source-sha>/<run-id>/` through A final review. Record source/reviewed
+SHAs, working-tree input changes, commands/cwd/runtime/dependency/config/selection/retry settings,
+build digests, exits/counts/durations, first failures/repeats and actual limitations.
+
+The current baseline evidence is
+`.git/validation-evidence/28eb41997e1bac1cffef13896bc769ba7ffcfd6d/b-reassess43-20261012/evidence-index.json`.
+It independently proves the blocker and verifies matching A integration evidence (442 Python,
+Web 80 + 119 and native Automation 10 tests plus recorded quality checks). It is not corrected-candidate
+T4 acceptance. Old `/tmp` logs are historical references, not fresh evidence.
+
+Reuse only after verifying identical executable inputs, tests/harnesses, dependencies/configuration
+and built artifacts. A report/document-only successor may reuse runtime evidence with an explicit
+input diff; rerun document-consuming checks. Any changed executable/test/harness/dependency/config/
+artifact needs fresh affected evidence, and the corrected T4 candidate must satisfy its complete final
+gates. New authority/Active/mutation/persistence/concurrency risk returns to B for reassessment rather
+than a weaker plan. This consolidation changes presentation and current facts only: original meaningful
+High/T4 gates and obligations remain intact.
 
 ## Non-goals
 
@@ -326,1244 +328,67 @@ authorized. Honest unavailable gates are reported for B to assess, not silently 
 
 ### Changed Files
 
-Added:
-
-- `mediaflow/application/automation_workspace_commands.py` — focused Automation definition
-  publication/lifecycle application service (save/enable/disable/copy/remove, form authority, edit and
-  copy candidates, removal evidence, zero-mutation schedule preview, historical projection).
-- `tests/test_automation_definition_publication.py` — 20 application-level regressions.
-- `tests/test_v2_automation_lifecycle.py` — 12 real-API integration regressions.
-- `web/src/entities/operations/automation-lifecycle.ts` (+ `.test.ts`) — fail-closed bounded models
-  for the lifecycle documents.
-- `web/src/features/operations/AutomationLifecyclePage.tsx` (+ `.test.tsx`) — native typed form,
-  lifecycle actions and confirmed removal.
-- `web/tests/e2e/automation-lifecycle.python.spec.ts` — real-Python browser proof (4 tests).
-- `web/playwright.python.automation.config.ts` — isolated harness instance for that spec.
-
-Modified:
-
-- `mediaflow/domain/configuration_management.py` — added `AutomationDefinitionSaveError` (bounded
-  definition/stage/authority-state details).
-- `mediaflow/application/configuration_objects.py` — `mutate(..., allow_automation_definition_delete=)`
-  gate so only the focused workspace removal may delete a definition.
-- `mediaflow/interfaces/service_api.py` — service wiring, `/api/v1/operations/automation/definitions`
-  routes, publication readback and the error mapping.
-- `scripts/operations_inventory_harness.py` — additive control routes (`automation-lifecycle-state`,
-  `seed-automation-definition-grant`, `reset-automation-definitions`).
-- `web/src/shared/api/api-client.ts`, `web/src/routes/router.tsx`,
-  `web/src/shared/navigation/destination-model.ts` (+ test), `web/src/features/operations/AutomationListPage.tsx`
-  — typed client, routes, deep-link continuation and entry links.
-- `web/playwright.config.ts` — exclude the new real-Python spec from the Node-fake path.
-- `TASK.md` — Developer report and the repo-mandated release-quality gate line (see Risks).
+No new corrected candidate has been submitted. The last Developer implementation is
+`b364a04d1c916ed327e3e8f470dc05e413ad80e6`; its detailed report remains in the Git snapshots above.
 
 ### Implemented
 
-- **One checked Save per intended change (AC-T1/T2):** `save_object` composes a fresh successor from
-  the exact observed Active, normalizes and validates the whole document through the existing managed
-  authority, and publishes through checked atomic activation. A defensive confinement proof refuses a
-  successor that changes any other section or sibling definition.
-- **Typed surface (AC-T3):** `GET /definitions` (form authority), `GET /definitions/{id}` (edit
-  prefill), `GET /definitions/{id}/copy-candidate`, `POST /definitions/schedule-preview`. The form owns
-  name/identity, ResourceLibrary, relative scope, three modes, item bound, enabled state and exactly
-  one interval or Cron/IANA-timezone schedule; switching forms clears the other. Unsafe/absolute/
-  traversal scopes, out-of-bound/non-finite values, invalid Cron/timezone and missing/disabled
-  references fail before publication with zero Active change.
-- **Independent states (AC-T4):** create and copy always publish disabled; a create/copy candidate
-  that submits `enabled: true` is refused. Enable/disable publishes only enabled state; enabling starts
-  no scan/Job/Task/occurrence/grant and disabling neither cancels admitted work nor revokes a grant.
-- **Safe removal (AC-T5):** `DELETE /definitions/{id}` resolves references, then **durably revokes
-  applicable future unattended authority before** publishing the removal successor, so no window exists
-  in which the definition is gone while its scheduled mutation authority is live. Grants, audits,
-  occurrences, Jobs/Tasks/Results and pins are retained. A revocation that precedes a failed
-  publication is fail-closed, leaves the Active definition in place and reports `authorityState`
-  truthfully. Recreating or copying an ID does not revive a removed grant.
-- **Recovery/compatibility (AC-T6):** stale Active intent raises `ConfigurationVersionConflict`
-  (409) with refresh guidance; `GET /definitions/{id}` and the removal/copy projections also resolve
-  Draft-only candidates; `historical_definition` keeps removed-definition history readable from
-  non-Active revisions. V1 `/api/v1/automation/*` and `/api/v1/operations/automation/task-definitions`
-  reads are unchanged (asserted).
-- **Permissions (AC-T7):** writes require `MANAGE_CONFIGURATION` + `ACTIVATE_CONFIGURATION`; reads
-  require `READ`. Viewer and manage-without-activate principals are denied (asserted).
-- **Zero mutation:** reads and schedule preview create no Draft, Job, Task, occurrence, Provider call
-  or Storage call (asserted with a RecordingStorage fake and revision/job counts).
+Prior lifecycle implementation remains unaccepted with the retained-history P1 unresolved. This
+current document reconciliation implements no product change and does not adopt old completion claims.
 
 ### Tests and Results
 
-- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle` — 32 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_v2_automation_operations tests.test_configuration_successor_draft tests.test_configuration_management tests.test_configuration_destination_activation tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,216 tests, 7 skipped, 0 failures. All 7 skips are the pre-existing real OpenList/S3/SMB/Local-endurance external-service gates.
-- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and `--config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — `npm --prefix web run test -- run` — 67 files / 1,021 tests.
-- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run format:check`; `npm --prefix web run build`.
-- PASS — `npm --prefix web run test:e2e` — 203 Node-fake tests.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21/21.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts` — 4/4 (real Python/API/SQLite/browser: create→Save→durable Active readback across restart, zero-side-effect preview, edit/enable/copy/removal, live-authority revocation with retained audit).
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
-- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: the Docker daemon in this environment cannot see harness bind sources (`invalid mount config ... bind source path does not exist`), so the isolated four-service stack cannot start. The image build, image inspection and Compose rendering stages completed. Not a code failure and not called PASS.
-- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and `git ls-files config/alist.json` (empty).
-- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` (grep tool; `rg` is not installed in this environment).
-- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
-- Schema unchanged: no migration rehearsal required.
+No new Developer candidate evidence or T4 completion report exists. The baseline/reproduction index
+above records B's latest independent findings; the next candidate must supply its own assigned gates.
 
 ### Decisions
 
-- **New application service, not a second store.** `AutomationWorkspaceCommandService` composes the
-  existing `ConfigurationObjectService`/`ManagedConfigurationService` normalization, validation, audit,
-  optimistic concurrency and checked activation; it adds only focused composition and the lifecycle
-  commands. It reuses the established `RulesWorkspaceCommandService` pattern.
-- **Confinement proof over re-running page-local evidence.** As with the existing
-  `_automation_definition_activate_checked_draft`, publication is safe because the successor is
-  composed from the exact observed Active and every other section and sibling definition is proven
-  byte-identical; that is what makes the previously reviewed Storage/strategy/destination semantics
-  carry over unchanged. No Storage/strategy/destination evidence gate is re-invented or bypassed.
-- **Revoke-before-publish for removal.** The two stores are separate SQLite databases, so a single
-  cross-store transaction is impossible. The chosen order (durable revocation, then publication) is
-  fail-closed: a failure after revocation leaves the definition Active with no live authority and
-  reports that truthfully, which is strictly safer than the reverse order (definition gone, authority
-  live). Grants and audits are never deleted.
-- **Create/copy always publish disabled.** This makes "published" and "authorized/enabled" independent
-  by construction and prevents a new or copied definition from inheriting schedule authority; the
-  operator enables it as a separate explicit command.
-- **Explicit route intent over body inference.** `PUT`/`POST .../copy` carry the definition identity in
-  the path, and the body ID must match (or be absent); this prevents one filled-in form from silently
-  changing identity or overwriting an unrelated row.
-- **Isolated Playwright config for the real-Python lifecycle spec.** The journey legitimately advances
-  the authoritative Active revision, which by design invalidates the build-time snapshot pins other
-  journeys seed once. Sharing the harness would couple unrelated journeys to this spec's ordering, so
-  the spec owns `playwright.python.automation.config.ts` on its own port, mirroring the existing
-  `playwright.python.unicode-principal.config.ts` precedent. `web/playwright.config.ts` now excludes it
-  from the Node-fake path, like the other real-Python specs.
-- **Form authority includes the Active revision digest.** It is the immutable optimistic fence the next
-  command submits back and is an identity, not secret evidence; the equivalent rules-workspace surface
-  already exposes it. No definition/source fingerprint or raw plan is projected.
+Correction stays in Task 43.1 with its original Base, Goal/Scope/acceptance and High/T4.
 
 ### Remaining In-Slice Work
 
-Known, not part of this Task: definition-bound Run once/manual-origin admission, consolidated
-metrics/reporting and full server inventory/search/paging/reference tabs, and global settings plus
-resident adoption. `AutomationTaskDefinitionService`, the Draft-based `AutomationNewPage`/
-`AutomationEditorPage` routes and the existing `/activate-draft` path are intentionally left in place
-and working; this Task adds the native focused surface alongside them rather than removing them.
+Resolve this Task's P1, then B reevaluates all Slice Required Outcomes after Task PASS. Run once,
+consolidated inventory/metrics/history and runtime settings adoption remain outside this Task.
 
 ### Risks / Deviations
 
-- **TASK.md release-quality gate line (repo-policy repair, not a scope change).** Full regression failed
-  `tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution`
-  because B's `TASK.md` did not document `scripts/docker_release_security_smoke_test.py`, which the
-  repository requires for every active Task. I added exactly that one line to the existing T4 gate block;
-  no Acceptance Criterion, scope, Task Base or Contract wording was changed. `tests.test_release_security`
-  now passes (6 tests).
-- UNAVAILABLE — the Docker release-security smoke gate (see Tests). Reported honestly for B to assess.
-- The 7 full-regression skips are pre-existing external-service gates (real OpenList/S3/SMB/Local
-  endurance), unrelated to this Task.
-- `web/tests/e2e/operations-principal-identity.python.spec.ts` fails under
-  `playwright.python.config.ts` alone; it requires its own `playwright.python.unicode-principal.config.ts`
-  (its `BASE` is hardcoded to port 4184). Verified PRE-EXISTING at Task Base with the harness reverted,
-  so B's documented combined command for that spec does not hold independently of this Task; the spec
-  passes with its dedicated config (1/1).
-- The `_open_draft_definition` read path means a Draft-only candidate can be corrected and published by
-  the same Save; its old Draft is left untouched, so unrelated edits neither ride along nor disappear.
-  This is asserted for the published path; the Draft-only correction path is covered by the shared
-  managed authority rather than a dedicated new assertion.
-- No schema change, so no migration rehearsal was run.
+Historical reports are reachable in Git; none is a current READY/PASS or complete corrected-candidate
+claim. Current unknown, failed or unavailable gates must be recorded on the new candidate.
 
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
-Head SHA: 4380c15b100d362bc057f7527ce34e4b840b0581
+Latest Developer Head SHA: b364a04d1c916ed327e3e8f470dc05e413ad80e6
+New corrected candidate: NONE
+Latest acceptance: FIX REQUIRED
 ```
-
-## Correction Report — Fix Loop 1 (B Decision: FIX REQUIRED, 79544d9..4380c15)
-
-This correction addresses exactly the five P1 blockers listed in `## B Review Result` and their
-direct root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion,
-Contract wording or Task Base was altered.
-
-### Changed Files (correction)
-
-Modified:
-
-- `mediaflow/features/operations/AutomationLifecyclePage.tsx` (web) — route-context-bound form
-  state and command targets; explicit scope submission; fractional-interval validation; daily/weekly
-  schedule conveniences; actionable failed-edit-read recovery; unknown-Copy intent tracking with
-  durable reconciliation before resubmission.
-- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — 5 new journey regressions
-  (copy-route Save targeting, scope clear, fractional interval, daily convenience, unknown-Copy
-  reconciliation).
-- `web/src/entities/operations/automation-lifecycle.ts` (+ test) — `AutomationCopyIntentModel`
-  fail-closed normalizer; historical edit-projection state; exclusive-minimum interval limits.
-- `web/src/entities/operations/automation.ts` (+ existing test) — fractional-interval document
-  support; `historical` definition state; (no test changes needed there).
-- `web/src/entities/shared/normalize.ts` — `normalizeFiniteNumber`/`normalizeOptionalFiniteNumber`
-  strict finite-number primitives.
-- `web/src/shared/api/api-client.ts` — `fetchAutomationCopyIntent`.
-- `web/src/features/operations/AutomationDetailPage.tsx` — retained-history labelling.
-- `mediaflow/application/automation_workspace_commands.py` — removal authority restore/residual
-  proof (no `TypeError`), live authority readback, copy-intent projection, copy audit source
-  evidence, exclusive-minimum interval limits.
-- `mediaflow/interfaces/service_api.py` — historical resolution in `_automation_definition_resolution`
-  and a new `_automation_definition_context_historical`; V1 detail/grant/audit/revoke/occurrences and
-  V2 detail/draft/occurrences resolve removed history; `GET /definitions/{id}/copy-intent`; grant and
-  revoke routes serialized on `_runtime_binding_lock`.
-- `mediaflow/infrastructure/sqlite_configuration_management.py` —
-  `list_recent_command_audits` bounded durable-evidence reader.
-- `scripts/operations_inventory_harness.py` — additive `run-automation-scheduler-tick` control route.
-- `tests/test_automation_definition_publication.py` — 6 new regressions (26 total).
-- `tests/test_v2_automation_lifecycle.py` — 5 new regressions (17 total).
-- `web/tests/e2e/automation-lifecycle.python.spec.ts` — 2 new real-Python journeys (6 total).
-- `TASK.md` — Status and this correction report.
-
-### Implemented (correction)
-
-- **P1-1 — Copy navigation (AC-T1/T2/T6):** form state now carries its route-context key; a
-  retained form from another definition route is never used as the Save candidate. Edit Saves
-  always target the route's definition ID (`targetId`), not the retained form's ID, and the
-  submitted candidate is recomposed under that identity. Proven by a real-browser journey
-  (create → publish copy → open origin → change Name unsaved → open copy route → Save → the
-  copy is published with its own loaded values and the origin's durable name is unchanged) and a
-  component regression that navigates through the real router.
-- **P1-2 — Removal authority (AC-T2/T5/T6):** the pre-publication revocation now captures the
-  exact prior live grant first. When publication is rejected because a legitimate concurrent Save
-  won, the exact prior grant is durably restored (new grant row with identical bounds, prior row
-  retained as audit) and the bounded error reports the *live* authority state read at that moment —
-  no `TypeError` (the unsupported `current_revision_id` kwarg is gone). When publication succeeds,
-  a residual re-revoke proves no live authority survived; a residual failure is reported as
-  `automation_definition_removal_authority_live` on the already-published removal instead of being
-  hidden. Concurrent grant/revoke API journeys are serialized with publication on
-  `_runtime_binding_lock`, so an interleaved confirmed regrant cannot slip live authority between
-  the revocation and publication. Proven by three application regressions (interleaved Save wins
-  with authority restored; interleaved regrant fenced; residual-failure truthfully reported) plus
-  the real grant/revoke routes.
-- **P1-3 — Retained history (AC-T5/T6):** `_automation_definition_resolution` now resolves a
-  removed definition from its newest non-Active revision as a last step and labels it
-  `definitionState: "historical"` / `historicalState: "removed"` in the V2 operator document; the
-  V1 detail, grant/grant-state, grant-audit, revoke and occurrences routes resolve the same
-  evidence through `_automation_definition_context_historical`, and the V2 occurrences response
-  reports `historicalState`. Granting/previewing a removed definition stays impossible (404 on
-  POST grant). Proven by a real Scheduler emission (harness tick through the production
-  `IntervalScheduler` assembly) whose occurrence remains readable through the V1 and V2 detail and
-  occurrence routes after removal, and by API regressions.
-- **P1-4 — Scope/schedule (AC-T3):** the typed form always submits `sourceScope` (empty string
-  publishes the cleared scope); the Web definition normalizer and form validation accept any
-  finite positive number (fractional `1.5` round-trips through create/edit/read with the exact
-  value); the form limits now carry the domain's exclusive-minimum interval bound;
-  daily (`0 8 * * *`) and weekly (`0 8 * * 1`) convenience controls compile to the existing Cron
-  semantics with the same timezone field; a failed edit read now renders an actionable recovery
-  state instead of a stuck loader.
-- **P1-5 — Unknown Copy (AC-T6):** a Copy whose response is lost (`transport_unavailable`) is an
-  unknown outcome, not a rejection: the page retains the submitted intent, blocks further Copy
-  commands, and offers one explicit reconciliation read (`GET /definitions/{id}/copy-intent`)
-  which resolves the exact committed identity from durable managed-configuration audit evidence
-  (`routeObjectId`/`sourceObjectId`/candidate recorded at command time). A committed copy is
-  opened directly; a genuinely unpublished outcome is labelled as such before deliberate
-  resubmission. Nothing is replayed automatically and no second copy is allocated.
-
-### Tests and Results (correction)
-
-- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle` — 43 tests (26 + 17).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_v2_automation_operations tests.test_configuration_successor_draft tests.test_configuration_management tests.test_configuration_destination_activation tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,227 tests, 7 skipped (the same
-  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures.
-- PASS — `.venv/bin/python -m unittest tests.test_release_security` — 6 tests.
-- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
-  `--config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run format:check`; `npm --prefix web run build`.
-- PASS — `npm --prefix web run test -- run` — 67 files / 1,030 tests.
-- PASS — `npm --prefix web run test -- run src/entities/operations/automation.test.ts src/features/operations/AutomationRouter.test.tsx` — 24 tests.
-- PASS — `npm --prefix web run test:e2e` — 203 Node-fake tests.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts` — 6/6, including the new copy-navigation,
-  retained-history (with a real Scheduler-emitted occurrence) and removal-authority journeys on
-  the real Python/API/SQLite/browser harness.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21/21.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
-- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: this run failed
-  earlier than the checkpointed one — the image build's `npm ci` step timed out reaching
-  `registry.npmjs.org` (`EIDLETIMEOUT`), so no image/stack stages ran this time. The checkpointed
-  run's environment limitation (bind-source mount visibility for the four-service stack) also
-  remains. Not a code failure and not called PASS; both failures are environment/network
-  conditions outside the repository.
-- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and
-  `git ls-files config/alist.json` (empty).
-- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` and `pyproject.toml`
-  (`grep -rni`, exit 1 with no matches; `rg` is not installed in this environment).
-- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
-- Schema unchanged: no migration rehearsal required.
-
-### Decisions (correction)
-
-- **Route-context-bound form state over per-route components.** The lifecycle page keys its form
-  state to the exact route context (`definitionId` or create) and derives every definition-bound
-  command target from the route rather than the form. This preserves the single-page architecture
-  and makes Copy navigation safe by construction; the e2e journey covers the real navigation.
-- **Restore-on-rejected-removal.** The revocation-before-publication order is retained (no window
-  with the definition gone while authority is live), but a *known rejected* publication now
-  restores the exact prior live grant durably — a new grant row with the prior row retained as
-  audit, since the revoked PK row is durable evidence that may not be rewritten. Restoration is
-  best-effort: the raised error always reports live truth read after the fact.
-- **Residual post-publication re-revoke.** A successful removal re-checks applicable authority at
-  publication time and revokes any residual grant; failure is reported as
-  `automation_definition_removal_authority_live` (HTTP 200 with `durableState:
-  successor_published`) instead of silently claiming full revocation. Grant and revoke routes now
-  share `_runtime_binding_lock` with publication, closing the review's interleave.
-- **Copy-intent reconciliation from managed audit evidence.** The copy command's audit context now
-  records `routeObjectId` (route target), `sourceObjectId` (copy source) and the exact candidate;
-  `list_recent_command_audits` (bounded, newest-first, redaction-preserving) reads them back. This
-  avoids guessing from today's Active document and works across removal of either definition.
-- **Exclusive-minimum interval bound.** The form authority now advertises `minimum: 0,
-  exclusiveMinimum: true` for `intervalSeconds` (matching the domain's `0 < x <= MAX` rule) and
-  the Web model/normalizer accept finite positive numbers, so a supported `1.5` no longer breaks
-  the edit read.
-- **Historical resolution as a bounded read-only fallback.** The Active → open-Draft → newest
-  non-Active revision resolution order keeps every existing route truthful; historical documents
-  are labelled (`historicalState: "removed"`) and never presented as Active/Draft authority.
-  Granting and Preview stay Active-only.
-
-### Risks / Deviations (correction)
-
-- UNAVAILABLE — the Docker release-security smoke gate (see Tests; both the checkpointed bind-source
-  limitation and this run's npm registry timeout). Reported honestly for B to assess.
-- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
-- The copy-intent reconciliation's evidence window covers audited copy/create commands (200 most
-  recent); it resolves the latest observed command for the definition, which is the exact intent a
-  lost-response operator reconciles.
-- No schema change; no migration rehearsal required.
-- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
-  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
-
-### Checkpoint (correction)
-
-```text
-Status: READY FOR B REVIEW
-Head SHA: 94e1858b8cf1eb30b432eb11fb1af64a73e29ffc
-```
-
-## Correction Report — Fix Loop 2 (B Decision: FIX REQUIRED, 79544d9..94e1858)
-
-This correction addresses exactly the four P1 blockers listed in `## B Review Result` and their
-direct root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion,
-Contract wording or Task Base was altered.
-
-### Changed Files (fix loop 2)
-
-Modified:
-
-- `mediaflow/application/automation_workspace_commands.py` — the candidate authority binding,
-  the removal persistence/ambiguity boundary, published-evidence historical resolution
-  (`historical_definition` + `definition_was_published` + occurrence-store binding), and the
-  intent-bound `copy_intent` fence.
-- `mediaflow/interfaces/service_api.py` — occurrence-store binding, Draft-before-history
-  resolution gated on published evidence, `copy-intent` query-fence parsing, and the historical
-  helpers passing the retained occurrence.
-- `mediaflow/infrastructure/sqlite_runtime.py` —
-  `clear_automation_definition_schedule_states` (bounded due-state deletion for removed
-  definitions, used by the harness reset).
-- `scripts/operations_inventory_harness.py` — the reset route now clears removed definitions'
-  Scheduler due-state rows so a recreated definition ID starts fresh.
-- `web/src/features/operations/AutomationLifecyclePage.tsx` — candidate-bound command fences,
-  truthful stale-candidate recovery, principal-scoped session-persisted pending Copy intent with
-  one deliberate reconciliation, and the resolved-intent clear.
-- `web/src/shared/api/api-client.ts` — `fetchAutomationCopyIntent` accepts the intent-fence query.
-- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — 2 new component regressions
-  (stale candidate not silently repinned; unknown Copy blocking survives reload) plus the
-  principal-endpoint stubbing every render now performs.
-- `tests/test_automation_definition_publication.py` — 4 new regressions (30 total).
-- `tests/test_v2_automation_lifecycle.py` — 3 new regressions (20 total).
-- `web/tests/e2e/automation-lifecycle.python.spec.ts` — 3 new real-Python journeys (9 total).
-- `TASK.md` — Status and this correction report.
-
-### Implemented (fix loop 2)
-
-- **P1 — Refresh never repins stale input (AC-T2/T6).** The form entry now carries the exact
-  Active identity snapshot the candidate was composed against; every definition-bound command
-  (Save, enable/disable, Copy, Remove) fences with that snapshot, never with the latest authority
-  query. After a concurrent writer publishes, Refresh re-reads authority but the retained
-  candidate keeps its own fence: the page truthfully reports "your unsaved edits are based on an
-  older configuration", disables Save, and offers one deliberate action — re-adopt the current
-  durable values with the current authority, or discard the edits. The old candidate can never
-  silently publish against a newer identity, so a peer's concurrent edit is never overwritten.
-  Proven by a component regression (refresh observes a newer revision → banner, blocked Save,
-  re-adoption loads current values) and the real two-tab browser journey.
-- **P1 — A known failed removal preserves authority (AC-T2/T5/T6).** Two boundaries are now
-  protected. (a) A persistence failure inside the shared managed-authority Draft edit — before
-  any revocation and before any activation — raises
-  `automation_definition_persistence_failed` with `durableState: active_preserved` and the live
-  authority read: the Active definition and its grant are untouched. (b) A persistence failure
-  inside the activation transaction (a foreign writer's `BEGIN IMMEDIATE` write lock, exactly the
-  review's `OperationalError: database is locked` scenario) no longer escapes: the exact prior
-  live grant is durably restored, the Active pointer and live authority are read back, and the
-  bounded error reports `automation_definition_removal_not_published` with
-  `durableState: active_preserved` (`commit_state_unknown` only when the read-back matches the
-  attempted successor). The previously admitted Job's authority survives, verified against the
-  real grant service's own match/snapshot boundary; no automatic regrant/replay is added. Proven
-  by two application regressions, one real-API regression driving the same second-writer lock,
-  and the full Preview→grant→Scheduler-admission→lock reproduction (grant stays `active`, the
-  admitted job's authority still authorizes).
-- **P1 — Retained history resolves from published evidence (AC-T5/T6).** `historical_definition`
-  now only considers revisions with durable activation evidence (`activate` audit rows), and the
-  API layer pins the exact revision from the definition's newest durable occurrence
-  (revision id → digest+version → definition fingerprint). An open successor Draft is never
-  substituted: its candidate was never published. The published configuration is what the V2
-  typed edit projection, the V1/V2 detail routes, the grant-state route and the occurrences route
-  return for a removed definition (`historicalState: "removed"`); the open Draft stays reachable
-  through the draft route for explicit correction, and a fresh draft-only create/copy still
-  resolves draft-only because it has no published evidence. Proven by application and API
-  regressions and a real-API reproduction of the review's exact scenario (real Scheduler
-  emission, `NEVER PUBLISHED draft name` Draft, removal, then both detail routes return the
-  published name).
-- **P1 — Copy reconciliation binds to the submitted intent (AC-T6).** The Copy command's audit
-  context already records the `publishedFromRevisionId` fence it was submitted against;
-  `copy_intent` now accepts that fence (`GET .../copy-intent?expectedRevisionId=…`) and only a
-  command recorded against the exact submitted authority can be reported as that intent's
-  committed result; a fence no observed command was submitted against resolves no committed
-  outcome. Without a fence the read still resolves the newest source-matching command but stops
-  at the first committed evidence instead of overwriting it with an older submission's identity.
-  The pending intent now persists in principal-scoped session storage (identity + observed
-  authority only — no token, secret or reusable execution authority; cleared with the principal
-  session data), so after a real page reload Copy stays blocked without any reconciliation, and
-  the reconciliation read carries the submitted fence; a resolved-unpublished outcome releases
-  the block explicitly. Proven by application regressions (intent binding, unknown-outcome,
-  zero-side-effect), an API regression (fenced read resolves the first submission's copy, an
-  unobserved fence resolves nothing), a component regression (reload keeps Copy blocked until
-  reconciliation with the fence in the request), and the real browser journey (lost response →
-  reload → still blocked → reconcile → open the committed copy → no second copy).
-
-### Tests and Results (fix loop 2)
-
-- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_v2_automation_lifecycle` — 50 tests (30 + 20).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
-  tests.test_v2_automation_operations tests.test_configuration_successor_draft
-  tests.test_configuration_management tests.test_configuration_destination_activation
-  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler
-  tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview
-  tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant
-  tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix
-  tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,234 tests, 7 skipped (the same
-  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures.
-- PASS — `.venv/bin/python -m unittest tests.test_release_security` — 6 tests.
-- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
-  `--config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — `npm --prefix web run test -- run` — 67 files / 1,032 tests.
-- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run
-  format:check`; `npm --prefix web run build`.
-- PASS — `npm --prefix web run test:e2e` — 203 Node-fake tests.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-lifecycle.python.spec.ts` — 9/9, including the new two-tab stale-candidate
-  journey, the lost-response Copy reload/reconciliation journey, and the published-history
-  journey (real Scheduler emission + removal + detail route) on the real Python/API/SQLite/
-  browser harness.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts` — 21/21.
-- PASS — `npm --prefix web run test:e2e --
-  --config=playwright.python.unicode-principal.config.ts
-  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
-- PASS — B-reproduction scenarios, re-run against the implemented code:
-  the DB-lock removal scenario (real exact Preview, confirmed grant, real Scheduler admission,
-  second SQLite writer holding `BEGIN IMMEDIATE` at the runtime-preparation/activation seam)
-  now returns the bounded 503 with `durableState: active_preserved` and `authorityState: active`,
-  the definition stays published, the grant stays `active`, and the admitted job's authority
-  still authorizes; the Draft-substitution scenario (real occurrence + open `NEVER PUBLISHED
-  draft name` Draft + removal) now returns the published name through both detail routes and the
-  V2 edit projection.
-- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: this run
-  reached the four-service stack creation but the daemon rejected the bind mounts
-  (`invalid mount config for type "bind": bind source path does not exist … deployment.env`),
-  the same harness bind-source limitation recorded at the original checkpoint. Not a code
-  failure and not called PASS.
-- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and
-  `git ls-files config/alist.json` (empty).
-- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` and `pyproject.toml`
-  (`grep -rni`, exit 1 with no matches; `rg` is not installed in this environment).
-- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
-- Schema unchanged: no migration rehearsal required.
-
-### Decisions (fix loop 2)
-
-- **Candidate-bound fences over latest-authority fences.** The retained form carries the exact
-  Active identity snapshot it was composed against, and every definition-bound command submits
-  that snapshot. Refresh re-reads authority for display but never mutates a retained candidate's
-  fence, so a stale candidate is rejected by the existing optimistic-concurrency boundary instead
-  of silently republished against a newer Active. This preserves the single-page architecture
-  and reuses the backend conflict semantics; the new recovery actions only replace the local
-  candidate, never publish anything.
-- **Restore-on-known-failure at the activation boundary.** The activation pointer swap is one
-  SQLite transaction in the repository, so a failure there (a foreign `BEGIN IMMEDIATE` writer,
-  a storage fault) is a known failed removal whose prior Active and live authority survive. The
-  removal durably restores the exact prior grant on that path (same mechanism the rejected-
-  publication path already uses) and reports the live authority read after the fact. The
-  read-back distinguishes `active_preserved` from `commit_state_unknown` when the persisted
-  pointer already matches the attempted successor; no automatic regrant/replay is added, exactly
-  as the blocker requires.
-- **Published-evidence historical resolution with occurrence pinning.** `historical_definition`
-  only trusts revisions with durable activation evidence, and the API binds the definition's
-  newest durable occurrence so the exact published revision that emitted the run resolves first
-  (revision id, then digest+version, then definition fingerprint). The resolution order is
-  Active → published history (only when the definition was ever published) → open Draft, so a
-  removed definition's history is never replaced by an unpublished Draft candidate while a
-  fresh draft-only create/copy keeps resolving draft-only. The Draft stays available for
-  explicit correction through the draft route.
-- **Intent-bound copy reconciliation.** The copy command's audit context already recorded the
-  `publishedFromRevisionId` fence; the reconciliation read now accepts that fence and only
-  reports commands recorded against the exact submitted authority, and without a fence it stops
-  at the newest committed evidence. The pending intent persists in principal-scoped session
-  storage bounded to identity and observed authority (no token, secret or reusable execution
-  authority), following the existing recovery-batch session-context precedent, and is cleared
-  with the principal session data when the active principal changes.
-- **Harness reset clears removed due-state rows.** The reset route removes definitions through
-  the real publication boundary; the removed definitions' Scheduler due-state rows are then
-  cleared through a new bounded repository method, so a journey recreating the same definition
-  ID starts with a fresh due state exactly as a genuinely new definition would. This is test
-  infrastructure for the browser harness only; production removal intentionally retains
-  occurrences/Jobs/Tasks and never deletes history.
-
-### Remaining In-Slice Work
-
-Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
-metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
-plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based `AutomationNewPage`/
-`AutomationEditorPage` routes and the existing `/activate-draft` path remain in place and
-working alongside the native focused surface.
-
-### Risks / Deviations (fix loop 2)
-
-- UNAVAILABLE — the Docker release-security smoke gate (see Tests; the harness bind-source
-  mount limitation, same as the original checkpoint). Reported honestly for B to assess.
-- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
-- The copy-intent reconciliation's evidence window remains bounded to the 200 most recent
-  audited commands; a fence beyond that window resolves no committed outcome, which the page
-  presents as genuinely unpublished before deliberate resubmission.
-- The principal-scoped pending-Copy session key is written on Copy submission and read during
-  render; a browser that blocks session storage still reconciles from the durable inventory
-  (the write is best-effort and never carries credentials).
-- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
-  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
-- No schema change; no migration rehearsal required.
-
-### Checkpoint (fix loop 2)
-
-```text
-Status: READY FOR B REVIEW
-Head SHA: bb4367fad6cd94a7d3781e5ab096f7b02760ccea
-```
-
-## Correction Report — Fix Loop 3 (B Decision: FIX REQUIRED, 79544d9..bb4367f)
-
-This correction addresses exactly the three P1 blockers listed in `## B Review Result` and their
-direct root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion,
-Contract wording or Task Base was altered.
-
-### Changed Files (fix loop 3)
-
-Modified:
-
-- `mediaflow/application/automation_workspace_commands.py` — the removal ordering is now
-  publish-then-revoke (fail-closed authority preflight before publication; durable revocation
-  only after a proven publication), the compensating `_restore_prior_grant` write is removed
-  entirely, and the copy-intent reconciliation is a targeted, window-independent durable-evidence
-  read (`_definition_command_audits` + `_candidate_publication`).
-- `mediaflow/infrastructure/sqlite_configuration_management.py` — two additive bounded
-  repository readers: `list_command_audits_before` (newest-first audits strictly older than a
-  sequence anchor) and `latest_command_audit_sequence`. No schema change.
-- `web/src/features/operations/AutomationLifecyclePage.tsx` — deliberate re-adoption now
-  re-reads the edit projection first and pairs the loaded values with the projection's own
-  Active identity; the "Reconciled: no copy was published" release is offered only for a
-  genuinely unpublished outcome (no observed command), never for an unproven one.
-- `scripts/operations_inventory_harness.py` — the lifecycle-state route now reports each
-  definition's `itemLimit` (read-only projection field for the browser proof).
-- `tests/test_automation_definition_publication.py` — the residual wrapper follows the reordered
-  boundary (preflight + residual reads); 2 new regressions (32 total): committed copy beyond the
-  recent audit window, and an unproven publication stays unknown.
-- `tests/test_v2_automation_lifecycle.py` — a new `SameFileRemovalAuthorityTests` class driving
-  the real API on the production same-file SQLite arrangement (foreign `BEGIN IMMEDIATE` writer
-  between runtime preparation and activation); 1 new API regression (21 total): the known failed
-  removal preserves the definition and its live grant, and the admitted Job's authority still
-  authorizes; plus the beyond-window copy-intent API regression.
-- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — the existing stale-candidate
-  regression's stub now returns the projection's newer fence (real projection semantics); 2 new
-  component regressions (14 total): re-adoption re-reads with its own fence and preserves the
-  peer's durable limit, and an unproven Copy outcome keeps the block with no release action.
-- `web/tests/e2e/automation-lifecycle.python.spec.ts` — the stale-candidate journey now proves
-  the real backend outcome: after re-adoption the peer's item limit 9 is loaded with the
-  matching fence, Save publishes exactly the reviewed values, and the durable inventory reads
-  `itemLimit: 9`.
-- `TASK.md` — Status and this correction report.
-
-### Implemented (fix loop 3)
-
-- **P1 — Known failed removal preserves authority at the same-file production boundary
-  (AC-T2/T5/T6).** The removal no longer revokes before publication. The new ordering is:
-  (1) persist and validate the removal successor — a persistence/validation failure there is a
-  pure configuration failure, authority untouched; (2) a fail-closed authority *preflight* read
-  refuses to publish when the grant state cannot be read (an unreadable grant is never treated
-  as no authority); (3) atomically activate — a known rejected or known failed activation is a
-  known failed removal whose Active pointer never moved, so the definition and its live
-  authority are preserved *by construction* and reported truthfully (`active_preserved`, or
-  `commit_state_unknown` only when the pointer read-back matches the attempted successor);
-  (4) only a *proven* publication is followed by the durable revocation, and a revocation that
-  cannot prove the revoked state is reported as `automation_definition_removal_authority_live`
-  on the already-published removal. The compensating restore grant is gone: no best-effort
-  replacement grant after a committed revocation is attempted anywhere, and grant/revoke API
-  routes remain serialized with publication on `_runtime_binding_lock`, so a residual regrant
-  in the published window is still re-revoked by the post-publication revocation. Proven by the
-  new same-file API regression (real API, one shared SQLite file, foreign writer lock) and the
-  updated application regressions; the DB-lock B-reproduction scenario now reports
-  `authorityState: active` with the definition published and the grant active.
-- **P1 — Stale recovery loads current values with their own fence (AC-T2/T6).** Re-adoption no
-  longer joins the separately cached `loadedForRoute` values to the latest authority. It first
-  re-reads the edit projection (which resolves the definition and its exact Active identity
-  together) and builds the candidate from that fresh read: the fence belongs to the values the
-  operator actually reviews. If the definition cannot be re-read, the stale input is discarded
-  instead of repinned. Proven by the new component regression (peer publishes limit 9 → refresh
-  blocks → re-adoption loads limit 9 with the peer's fence → Save submits the matching fence and
-  the peer's durable field survives) and the extended real-browser journey (durable inventory
-  reads `itemLimit: 9` after the Save).
-- **P1 — Copy reconciliation finds committed evidence beyond recent activity (AC-T6).** The
-  reconciliation no longer scans a bounded recent window to decide publication. It now walks the
-  definition's targeted durable audit trail newest-first (`list_recent_command_audits` +
-  `list_command_audits_before` paged by sequence anchor, no increased global limit), locates the
-  exact submitted create/copy command, and proves its candidate's publication from that
-  command revision's activation evidence (`_candidate_publication`: revision exists, has an
-  `activate` audit row, and its activated document contains the candidate). Three outcomes are
-  now honestly distinguished: committed (proven publication — including copies submitted far
-  beyond any recent window), unproven (a located command whose publication cannot be proven —
-  an unknown outcome that keeps the resubmission block and offers no release), and genuinely
-  unpublished (no observed command at all — the only case that releases the block). The intent
-  fence binding is unchanged. Proven by application and real-API regressions (300 intervening
-  supported edits; the committed copy is still resolved; the unproven case stays unknown), and
-  the component regression that verifies no release action is offered for an unproven outcome.
-
-### Tests and Results (fix loop 3)
-
-- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_v2_automation_lifecycle` — 54 tests (32 + 22).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
-  tests.test_v2_automation_operations tests.test_configuration_successor_draft
-  tests.test_configuration_management tests.test_configuration_destination_activation
-  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler
-  tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview
-  tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant
-  tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix
-  tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,248 tests, 7 skipped (the same
-  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures.
-- PASS — `.venv/bin/python -m unittest tests.test_release_security` — 6 tests.
-- PASS — `.venv/bin/python -m unittest tests.test_migration_rehearsal
-  tests.test_upgrade_preflight` — 10 tests (schema unchanged; run as a belt-and-braces check).
-- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
-  `--config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — `npm --prefix web run test -- run` — 67 files / 1,033 tests.
-- PASS — `npm --prefix web run test -- run
-  src/features/operations/AutomationLifecyclePage.test.tsx` — 14 tests.
-- PASS — `npm --prefix web run test -- run src/entities/operations/automation.test.ts
-  src/features/operations/AutomationRouter.test.tsx` — 24 tests.
-- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run
-  format:check`; `npm --prefix web run build`.
-- PASS — `npm --prefix web run test:e2e` — 202 Node-fake tests.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-lifecycle.python.spec.ts` — 9/9, including the extended stale-recovery
-  journey (re-adoption → Save → the peer's durable item limit 9 survives) on the real
-  Python/API/SQLite/browser harness.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts` — 21/21. (The first run recorded 1 failed /
-  20 passed for `server-side filtered selection and return keep the list context`; an
-  immediate clean rerun passed 21/21 with no repository change in between — the first run
-  overlapped with concurrent Playwright jobs on this machine. Reported for B to assess.)
-- PASS — `npm --prefix web run test:e2e --
-  --config=playwright.python.unicode-principal.config.ts
-  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
-- PASS — B-reproduction scenarios re-run against the implemented code: the same-file DB-lock
-  removal scenario now returns the bounded 503 with `durableState: active_preserved` and
-  `authorityState: active`; the definition stays published, the grant stays `active`, and the
-  admitted Job's authority still authorizes; the bounded-audit-window scenario (real committed
-  copy + 300 supported edits) resolves `committed: true` with the exact copy identity.
-- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: the image
-  build, image inspection and Compose rendering stages completed; the four-service stack start
-  failed because the Docker daemon cannot see the harness-created bind sources. Verified with
-  an instrumented run: at `compose up` time the process's own environment reported
-  `MEDIAFLOW_CONFIG_FILE`/`MEDIAFLOW_ENV_FILE` paths that exist (`EXISTS: True`), while the
-  daemon rejected a *different, stale-looking* temp path from the same run. A fresh
-  `docker run -v <fresh temp file>` probe succeeds, a 20-second-delayed probe succeeds, so the
-  limitation is specifically the daemon's view of this run's bind sources, consistent with the
-  bind-source limitation recorded at the original checkpoint. Not a code failure and not
-  called PASS.
-- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and
-  `git ls-files config/alist.json` (empty).
-- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` and `pyproject.toml`
-  (`grep -rni`, exit 1 with no matches).
-- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
-- Schema unchanged: no migration rehearsal required.
-
-### Decisions (fix loop 3)
-
-- **Publish-then-revoke with a fail-closed preflight.** The previous revoke-before-publish
-  order created the exact hazard the review found: a known failed activation left the
-  definition Active while its authority was durably revoked, and because configuration and
-  grants live in the SAME SQLite file in production, the compensating restore write could not
-  even commit while the foreign lock was held. The corrected order makes "failed removal
-  preserves authority" true by construction — the activation transaction that never committed
-  leaves both the Active pointer and the grant untouched, so no compensation write exists to
-  fail. The residual hazard (authority live on a published removal) is strictly smaller and is
-  handled by the post-publication revocation plus the serialized `_runtime_binding_lock`
-  window, with any unprovable revocation reported truthfully on the published outcome. The
-  preflight keeps the fail-closed rule that an unreadable grant state never publishes.
-- **Targeted durable evidence instead of a bigger window.** The copy-intent reconciliation now
-  pages the definition's own `draft_edit` audit trail newest-first through the additive
-  sequenced repository readers (bounded per page, unbounded only by the trail's real length)
-  and proves publication from the located command revision's activation evidence. Absence from
-  recent activity is never evidence of non-publication; only "no observed command at all" is
-  proven-unpublished, and every located-but-unprovable command stays an unknown outcome that
-  keeps the resubmission block.
-- **Re-adoption re-reads before it offers.** The stale-recovery action now treats the cached
-  edit projection as exactly what it is — a possibly outdated read — and re-reads the
-  definition (whose projection carries its own Active identity) before offering the current
-  values. The offered fence therefore always belongs to the reviewed values, which is what
-  makes "Save preserves the peer's durable fields" provable rather than assumed.
-- **Harness state exposes `itemLimit`.** One read-only field added to the browser harness's
-  lifecycle-state projection so the real-browser journey can assert the durable peer field the
-  blocker requires; no product route changed.
-
-### Remaining In-Slice Work
-
-Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
-metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
-plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based
-`AutomationNewPage`/`AutomationEditorPage` routes and the existing `/activate-draft` path
-remain in place and working alongside the native focused surface.
-
-### Risks / Deviations (fix loop 3)
-
-- UNAVAILABLE — the Docker release-security smoke gate (see Tests; the harness bind-source
-  mount limitation, instrumented and re-confirmed this round). Reported honestly for B to
-  assess.
-- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
-- The first `operations-inventory.python.spec.ts` e2e run had 1 failed / 20 passed; a clean
-  immediate rerun passed 21/21 with no repository change in between (resource contention with
-  concurrently running Playwright jobs on this machine). Evidence retained in this report;
-  B decides whether further isolation is required.
-- The removal's error contract changed on one path: a persistence failure *before* activation
-  still reports `automation_definition_persistence_failed`, but a persistence failure *inside*
-  activation now reports `automation_definition_removal_not_published` with
-  `durableState: active_preserved`/`commit_state_unknown` exactly as before — however the
-  pre-publication revocation codes (`automation_definition_authority_revoke_failed`,
-  `automation_definition_authority_unavailable`) can no longer abort a removal after
-  publication; the preflight keeps `automation_definition_authority_unavailable` as a
-  pre-publication abort, and the residual post-publication case reports
-  `automation_definition_removal_authority_live`. The Web page renders removal failures by
-  code/message and needs no change.
-- No schema change; no migration rehearsal required (the rehearsal suites were still run and
-  pass).
-- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
-  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
-
-### Checkpoint (fix loop 3)
-
-```text
-Status: READY FOR B REVIEW
-Head SHA: dc31b46d28b5d1cd2887dce39ccb5571ac70f747
-```
-
-## B Review Evidence — Fix Loop 3 Checkpoint
-
-Reviewed the actual `79544d9aba697036405b06054c0c56a740281bab..dc31b46d28b5d1cd2887dce39ccb5571ac70f747`
-implementation, including the correction diff from `bb4367f`. The latest Correction Report submits
-`dc31b46` as READY FOR B REVIEW; the top-level FIX REQUIRED still records the prior B decision.
-The current review below supersedes that decision without changing Task identity or scope.
-
-B independently ran:
-
-- `.venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle`
-  — PASS, 54 tests, no skips; `/tmp/mediaflow-b-review-43-1-r4-focused.log`.
-- `npm --prefix web run test -- run src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx`
-  — PASS, 2 files / 29 tests; `/tmp/mediaflow-b-review-43-1-r4-web.log`.
-- `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts`
-  — PASS, 9/9; `/tmp/mediaflow-b-review-43-1-r4-e2e.log`.
-- `npm --prefix web run build` — PASS; `/tmp/mediaflow-b-review-43-1-r4-build.log`.
-- `.venv/bin/python /tmp/mediaflow-b-review-43-1-r4-python.py` — the real same-file SQLite,
-  Preview/grant/Scheduler and runtime-preparation reproduction confirms failed activation preserves
-  Active, the active grant and the admitted Job's authorization. Removed history resolves the
-  published name, not an unpublished Draft; `/tmp/mediaflow-b-review-43-1-r4-python.log`.
-- `node /tmp/mediaflow-b-review-43-1-r4-browser.mjs` against the built Web and
-  `.venv/bin/python scripts/operations_inventory_harness.py --port 4190` — stale re-adoption loads
-  the peer's limit 9 and Save preserves durable limit 9; the >500-edit Copy journey reproduces the
-  remaining blocker below; `/tmp/mediaflow-b-review-43-1-r4-browser.log`.
-- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` — PASS, 342 formatted files;
-  governance and exact reviewed-range whitespace check — PASS. Both Automation PNG checksums match
-  the Contract; `config/alist.json` remains ignored and untracked. Runtime/dependency search finds
-  no FFmpeg/FFprobe references. The reviewed manifest contains only Task-owned changes; all three
-  pre-existing untracked PNGs remain untouched.
-
-The full T4 counts and Docker unavailability above remain Developer-reported evidence; B did not
-rerun the entire T4 suite because the independent production-path reproduction already prevents
-Task PASS. Passing focused/browser tests do not resolve that contrary evidence. Slice Final has
-not run, and no Slice completion is claimed.
-
-## B Complexity Reassessment — Fourth Fix Requested
-
-Three correction checkpoints have now been reviewed, and this decision requires a fourth same-Task
-fix. Reconsidered the complete solution rather than requesting another unrelated assertion or Task.
-The repeated defects concern the lifecycle's persistence/readback boundary: compensating authority
-writes after failed publication, combining separately cached values and authority, and treating
-recent global activity as exact submitted-intent evidence. They do not establish a need for another
-media pipeline or broader Slice scope. The current checkpoint removes the first compensation path
-and reads current values with their own identity; the remaining correction should converge on the
-existing revision/audit persistence authority for the exact command and its publication.
-
-Do not add a parallel copy engine, another compensation/state-machine layer, or an ever-larger
-recent-history limit. Prefer a complete targeted evidence read (or correctly cursor-bounded pages)
-over the existing SQLite history, and preserve unknown/unavailable state when that read cannot
-complete. Keep the existing organizer/Preview/grant/Worker boundaries, Task ID/Base/Goal/Scope and
-all Contract clauses unchanged. No Contract change or A RESCOPE is currently necessary.
-
-## B Review Result — Superseded Fix Loop 3
-
-```text
-Reviewed: 79544d9aba697036405b06054c0c56a740281bab..dc31b46d28b5d1cd2887dce39ccb5571ac70f747
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
-```
-
-- **P1 — Copy reconciliation still mistakes a committed submission outside recent activity for
-  an unpublished outcome and releases duplicate submission (AC-T6; RO-2 unknown-submission
-  reconciliation; Shared publication and lifecycle / API recovery).** Current production
-  reachability is reproduced with the actual built Web, Python API and SQLite harness on temporary
-  data: Copy `r3-bounded` returns 200 from the backend; only delivery of that response is aborted.
-  Another definition then receives 505 ordinary authenticated focused edits, each returning 200.
-  Intent-fenced reconciliation returns `committed: false`, `observedCommands: 0`, and
-  `no pending copy command was observed for this definition`, although `r3-bounded-copy` remains
-  published. The operator can click `Reconciled: no copy was published`, Refresh, and Copy again;
-  this creates `r3-bounded-copy-2`. Both copies subsequently read back as published, disabled
-  definitions with HTTP 200. This is a current user-visible duplicate lifecycle outcome, not a
-  future adapter or a test double that removes production capabilities.
-  Evidence: `node /tmp/mediaflow-b-review-43-1-r4-browser.mjs`, case
-  `committed-copy-outside-audit-window` in `/tmp/mediaflow-b-review-43-1-r4-browser.log`.
-  In the reviewed code, `_definition_command_audits` starts with 500 recent `draft_edit` rows,
-  then derives its next-page marker from `ConfigurationChangeAudit.sequence`; that attribute
-  does not exist on the real domain object and is not returned by SQLite `_audit`, so the reader
-  stops after its first page. `_candidate_publication` also still calls `_published_revision_ids`,
-  which reads only 500 recent activation audits. The added 300-edit tests remain inside both
-  windows and therefore do not prove the reported window-independent reconciliation.
-  Correct the exact intent/publication evidence lookup using existing durable revision/audit
-  authority, with a real usable cursor if paging is chosen and publication proof scoped to the
-  command revision rather than recent global activations. Do not enlarge the window again.
-  A truncated, failed or otherwise incomplete evidence read must remain unknown/unavailable and
-  must not permit the unpublished-release action. Verify the actual SQLite/API/browser journey
-  beyond the production page boundary with the submitted fence: it resolves the original committed
-  identity, survives reload/reconnect, and cannot create a second copy for that unresolved intent.
-
-## Correction Report — Fix Loop 4 (B Decision: FIX REQUIRED, 79544d9..dc31b46)
-
-This correction addresses exactly the one P1 blocker listed in `## B Review Result` and its direct
-root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion, Contract
-wording or Task Base was altered.
-
-### Changed Files (fix loop 4)
-
-Modified:
-
-- `mediaflow/domain/configuration_management.py` — `ConfigurationChangeAudit` now carries an
-  optional durable `sequence` cursor, validated at construction. It stays `None` for a
-  not-yet-persisted audit and is filled by repository readers.
-- `mediaflow/infrastructure/sqlite_configuration_management.py` — `_audit` populates the real
-  stored `sequence`; `list_command_audits_before` now orders by the ledger's monotonic
-  `sequence DESC` instead of `occurred_at DESC, sequence DESC`, so the sequence cursor it pages
-  with cannot skip or repeat a row when wall-clock order disagrees with insertion order. No
-  schema change and no window enlargement.
-- `mediaflow/application/automation_workspace_commands.py` — the copy-intent reconciliation reads
-  a `_DefinitionCommandEvidence` (commands plus an explicit `complete` flag) and proves
-  publication through a `_PublicationProof` (revision identity plus `available`). The trail walk
-  starts just above `latest_command_audit_sequence()` and pages strictly downward on the real
-  cursor until a short page proves the end; publication is proven from the command revision's own
-  per-revision `activate` audit (`list_revision_audits`) rather than the recent global activation
-  window. An incomplete walk, an unreadable proof, a missing revision or a possibly-truncated
-  per-revision audit trail all stay unknown; a truncated/failed read can no longer be reported as
-  "genuinely unpublished". `_published_revision_ids` remains only for the retained-history
-  resolution path, which the blocker did not concern. `COMMAND_TRAIL_PAGE_SIZE` documents the
-  page bound as a query bound, not an answer bound.
-- `web/src/entities/operations/automation-lifecycle.ts` (+ test) — `AutomationCopyIntentModel`
-  gains `evidenceComplete`, normalized fail-closed from the explicit backend `true`.
-- `web/src/features/operations/AutomationLifecyclePage.tsx` — the "Reconciled: no copy was
-  published" release now additionally requires `evidenceComplete`; an incomplete read renders an
-  unknown-outcome explanation and keeps the Copy block.
-- `scripts/operations_inventory_harness.py` — one additive bounded control route
-  (`POST /__harness__/crowd-automation-command-trail?edits=N`) that publishes ordinary focused
-  successor revisions through the real `AutomationWorkspaceCommandService`, so the browser proof
-  can cross the production paging boundary without thousands of clicks.
-- `tests/test_automation_definition_publication.py` — 3 new regressions (34 total): a committed
-  copy outside a window-only reader stays unknown and blocked, an incomplete/truncated read
-  reports `evidenceComplete: False`, and the unproven-publication regression now hides the
-  command revision's own activation evidence instead of a global window.
-- `tests/test_configuration_management.py` — 1 new regression (4 total): the audit cursor is
-  optional but must be an integer when present.
-- `tests/test_configuration_snapshot.py` — 1 new regression (45 total): the paged command-audit
-  reader returns the real stored sequence, anchors newest-first by sequence, and walks the whole
-  trail with no gap or repeat even when stored `occurred_at` values deliberately invert insertion
-  order. Verified to fail against the previous `occurred_at DESC, sequence DESC` ordering.
-- `tests/test_v2_automation_lifecycle.py` — the beyond-window API regression now crowds an
-  unrelated definition past a full page and reads with the submitted fence (23 total), plus 1
-  new regression that an incomplete API evidence read stays unknown and does not release.
-- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — 2 new component regressions
-  (16 total): an incomplete evidence read never releases the block, and a complete command-free
-  read still does.
-- `web/tests/e2e/automation-lifecycle.python.spec.ts` — 1 new real-Python browser journey
-  (10 total): a committed Copy whose command row is crowded past a full page still reconciles to
-  the original committed identity after a real reload, and no second copy is created.
-
-### Implemented (fix loop 4)
-
-- **P1 — Committed Copy outside the bounded scan (AC-T6; RO-2 unknown-submission reconciliation).**
-  B's reproduction is fixed at its exact root causes rather than by widening any window.
-  (1) *A real usable cursor.* `ConfigurationChangeAudit.sequence` now exists on the real domain
-  object and every repository reader fills it from the stored row, so `_definition_command_evidence`
-  can page with it instead of stopping after its first page as the reviewed code did. The reader
-  also orders by `sequence DESC` alone: paging on `sequence` while ordering by `occurred_at` can
-  skip a row whenever wall-clock order disagrees with insertion order, and a skipped row would have
-  been silently reported as an absent command. (2) *Publication proof scoped to the command
-  revision.* `_candidate_publication` no longer consults the recent-500 global activation window;
-  it proves publication from the command revision's own `activate` audit through the per-revision
-  reader, and treats a missing revision, an unreadable reader or a possibly-truncated per-revision
-  trail as unavailable rather than as non-publication. (3) *Completeness is explicit.* The read
-  reports `evidenceComplete`, which is true only when the trail was walked to its end and every
-  relevant proof was readable; the Web release action requires it, so a truncated, failed or
-  otherwise incomplete read stays unknown and cannot release a duplicate Copy. Verified by an
-  application reproduction (`/tmp/repro-copy-window.py`: a Copy followed by 520 focused edits now
-  reports `committed: True`, `observedCommands: 1`, `nightly-copy`; previously
-  `committed: False`/`observedCommands: 0`), by new application/API/component regressions at and
-  beyond a full page, and by a real built-Web/Python/SQLite browser journey that crowds 260 real
-  focused publications past the page boundary, reloads, reconciles the original committed identity
-  through the submitted fence, and leaves exactly one copy.
-
-### Tests and Results (fix loop 4)
-
-All commands run from the repository root.
-
-- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_v2_automation_lifecycle tests.test_configuration_management
-  tests.test_configuration_snapshot` — 106 tests (34 + 23 + 4 + 45).
-- PASS — `.venv/bin/python -m unittest tests.test_configuration_management
-  tests.test_configuration_snapshot tests.test_configuration_objects
-  tests.test_storage_configuration_management` — 131 tests (4 + 45 + 71 + 11).
-- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
-  tests.test_v2_automation_operations tests.test_configuration_successor_draft
-  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 110 tests.
-- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,243 tests, 7 skipped (the same
-  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures. Two clean
-  consecutive full runs; see Risks for one intermittent observation.
-- PASS — `.venv/bin/python -m unittest tests.test_release_security tests.test_migration_rehearsal
-  tests.test_upgrade_preflight tests.test_container_deployment tests.test_container_probe` —
-  41 tests (6 + 6 + 4 + 13 + 12).
-- PASS — `.venv/bin/ruff check .`; `.venv/bin/ruff format --check .` (342 files).
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
-- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
-  `--config config/mediaflow.phase13.2.example.json config validate`.
-- PASS — `npm --prefix web run test -- run` — 67 files / 1,037 tests.
-- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`;
-  `npm --prefix web run format:check`; `npm --prefix web run build`.
-- PASS — `npm --prefix web run test:e2e` (Node-fake path) — 203 tests.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-lifecycle.python.spec.ts` — 10/10, including the new
-  "a committed Copy beyond the audit page boundary still reconciles after reload" journey.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts` — 21/21.
-- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts
-  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
-- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
-  `config/alist.json` remains ignored, untracked and unstaged.
-- Schema unchanged: no migration rehearsal required (the rehearsal suites were still run and pass).
-
-### Decisions (fix loop 4)
-
-- **Fix the cursor and the proof, never the window.** B forbade enlarging the audit window and
-  required a *real usable cursor* plus revision-scoped publication proof. Both are now structural:
-  the cursor is a first-class field on the persisted audit row, and publication is answered by the
-  command revision's own activation evidence. No window constant was increased; the previous
-  per-page bound of 500 was in fact reduced to a documented 200-row page, which only makes an
-  incomplete read more detectable.
-- **Order by `sequence`, not `occurred_at`.** The reviewed reader paged on `sequence` but ordered
-  by `occurred_at`. Those can disagree, and a row skipped in that disagreement would have been
-  reported as an absent command — the same class of false "unpublished" outcome B found. The
-  targeted reader now orders by the ledger's monotonic sequence alone.
-- **Completeness is a first-class, fail-closed field.** "Observed zero commands" is only evidence
-  of non-publication when the read actually completed. The backend states `evidenceComplete`
-  explicitly and the Web model defaults an absent or malformed value to `false`, so a truncated
-  response can never release the duplicate-copy block by omission.
-- **Unknown stays unknown on every unreadable path.** A missing revision, a failing reader, a
-  full-page per-revision audit trail (possibly truncated), or a trail walk that could not anchor
-  its next page all yield unknown rather than a proven non-publication.
-- **Harness crowd route reuses production commands.** The browser proof needs to cross a real page
-  boundary; the control route issues the same focused `save_object` publications the browser does,
-  so the journey exercises production behavior rather than a database edit.
-
-### Remaining In-Slice Work
-
-Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
-metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
-plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based
-`AutomationNewPage`/`AutomationEditorPage` routes and the existing `/activate-draft` path
-remain in place and working alongside the native focused surface.
-
-### Risks / Deviations (fix loop 4)
-
-- One full-regression run (`unittest discover -s tests`) reported 1 failure
-  (`-1 != 0 ... OperationalError: database is locked`) while Playwright suites were running
-  concurrently on this machine; two clean consecutive full runs immediately afterwards passed
-  2,243 tests / 7 skipped / 0 failures with no repository change in between, and the affected
-  module (`tests.test_resident_services`, 28 tests) passed three further sequential runs and four
-  concurrent runs. The touched code does not include `sqlite_runtime.py`, `cli.py` or the resident
-  services; the observation is consistent with transient SQLite lock contention under load.
-  Reported honestly for B to assess rather than dismissed.
-- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
-- UNAVAILABLE — the Docker release-security smoke gate (see the Tests note; the harness
-  bind-source mount limitation is pre-existing and unrelated to this Task).
-- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
-  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
-- `_definition_was_published` still resolves retained history through a bounded recent activation
-  window. That is the *retained-history* path, not the copy-intent blocker B named, and it answers
-  a different question (whether a definition was ever published) truthfully for its own retention
-  semantics. Left unchanged to keep this correction inside the blocker's scope.
-- The audit cursor is an additive field with no schema change; the `configuration` schema version
-  is unchanged, so no migration rehearsal was required.
-- A pre-existing untracked PNG (`docs/pics/整理规则需修复.png`) appeared in the working tree during
-  this session; it is not Task-owned, was not staged, and was left untouched.
-
-### Checkpoint (fix loop 4)
-
-```text
-Status: READY FOR B REVIEW
-Head SHA: b364a04d1c916ed327e3e8f470dc05e413ad80e6
-```
-
-## B Review Evidence — Fix Loop 4 Checkpoint
-
-Reviewed the actual
-`79544d9aba697036405b06054c0c56a740281bab..b364a04d1c916ed327e3e8f470dc05e413ad80e6`
-implementation and the `dc31b46..b364a04` correction, at repository HEAD
-`5484e837dedbd5d27685fd82cd1a717d2cf0c807` (completion-report documentation only).
-The latest Developer checkpoint is READY FOR B REVIEW; the top-level FIX REQUIRED was the prior
-decision. This review supersedes that prior decision without changing Task identity, Base, Goal,
-Scope or Acceptance Criteria. Slice 43 remains ACTIVE.
-
-B independently ran:
-
-- `.venv/bin/python -m unittest tests.test_automation_definition_publication
-  tests.test_v2_automation_lifecycle tests.test_configuration_management
-  tests.test_configuration_snapshot` — PASS, 106 tests, no skips; unclosed SQLite ResourceWarnings
-  remain visible in `/tmp/mediaflow-b-review-43-1-r5-focused.log`.
-- `npm --prefix web run test -- run src/entities/operations/automation-lifecycle.test.ts
-  src/features/operations/AutomationLifecyclePage.test.tsx` — PASS, 2 files / 32 tests;
-  `/tmp/mediaflow-b-review-43-1-r5-web.log`.
-- `npm --prefix web run build` — PASS; the bundle-size advisory remains visible;
-  `/tmp/mediaflow-b-review-43-1-r5-build.log`.
-- `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
-  tests/e2e/automation-lifecycle.python.spec.ts` — PASS, 10/10;
-  `/tmp/mediaflow-b-review-43-1-r5-e2e.log`.
-- `node /tmp/mediaflow-b-review-43-1-r5-browser.mjs` against the freshly built Web and
-  `.venv/bin/python scripts/operations_inventory_harness.py --port 4191` — real Python/API/SQLite/
-  browser reproduction, temporary data only. A committed Copy followed by 505 ordinary authenticated
-  focused publications and a reload resolves the original copy through its submitted fence,
-  reports `committed: true` and `evidenceComplete: true`, and exposes no unpublished-release action.
-  The same supported assembly reproduces the retained-history blocker below before and after
-  runtime restart; `/tmp/mediaflow-b-review-43-1-r5-browser.log`.
-- A read-only SQLite query of that harness's actual persisted rows proves that the removed
-  definition still has one occurrence, its exact superseded pinned revision, and that revision's
-  activation audit; `/tmp/mediaflow-b-review-43-1-r5-durable-history.log`. The harness's
-  `automation-lifecycle-state.occurrenceTotal` is scoped to its fixed fixture definition and is
-  not used as evidence for the independently named reproduction definition.
-- `.venv/bin/python /tmp/mediaflow-b-review-43-1-r4-python.py` — PASS for the independent
-  production-path checks: real Preview/grant/Scheduler/runtime preparation with configuration and
-  grants in one shared SQLite file; a foreign writer lock causing known failed activation preserves
-  Active, the live grant and the admitted Job's authorization. Removed history inside the current
-  window uses the published name rather than an unpublished Draft;
-  `/tmp/mediaflow-b-review-43-1-r5-removal.log`.
-- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` — PASS, 342 formatted files;
-  governance and whitespace check of the exact reviewed range — PASS. Both Automation PNG hashes
-  match the Contract. `config/alist.json` remains ignored, untracked and unstaged. The runtime/
-  dependency FFmpeg/FFprobe search returns no matches (expected exit 1). The 27-file reviewed
-  manifest contains Task-owned code, tests, harness/config and TASK.md; no frozen Slice/Roadmap/
-  product contract or private file is included. All four pre-existing untracked PNGs are untouched.
-
-The reported full T4 totals and Docker unavailability remain Developer-reported evidence; B did
-not rerun the entire T4 suite or mark that unavailable gate PASS. The independently reproduced
-current-production failure prevents Task PASS regardless of the passing focused/browser suites.
-No Slice Final or Slice completion is claimed.
-
-## B Complexity Reassessment — After Four Correction Checkpoints
-
-Reassessed the complete Task rather than creating another assertion-sized Task. The core feature
-still fits the Contract: typed forms compose existing managed successors, atomic publication and
-existing grant/Scheduler/Worker authority. It does not require another execution engine, another
-configuration store, distributed coordination or an A RESCOPE.
-
-The recovery reads are more complicated than this feature needs: copy reconciliation now uses
-durable cursor-based evidence and revision-specific publication proof, while retained-history
-resolution separately guesses from recent revisions, recent activations and a boolean
-ever-published scan. Those independent windows are inconsistent with the durable historical
-identity already recorded by the occurrence. This is the same evidence-boundary problem across
-two paths, not a need for broader product scope.
-
-Converge on the existing durable authority: when an occurrence supplies an exact revision pin,
-read that revision and its publication evidence directly; when no pin exists, use a complete
-targeted query or correct cursor paging over existing history. Distinguish unavailable/incomplete
-evidence from absence, and preserve the published-versus-Draft distinction. Do not enlarge window
-constants, introduce another cache/compensation/state-machine layer, or require operators to
-recreate definitions to recover records. The current Task already owns retained history under
-AC-T5/T6; fix it in this same Task with its existing Goal/Scope and no Contract changes.
 
 ## B Review Result
 
 ```text
-Reviewed: 79544d9aba697036405b06054c0c56a740281bab..b364a04d1c916ed327e3e8f470dc05e413ad80e6
+Reviewed: 28eb41997e1bac1cffef13896bc769ba7ffcfd6d
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Removed-definition history becomes unreachable after ordinary subsequent publications
-  despite intact durable occurrence/pin/publication evidence (AC-T5/T6; RO-2 retained-history
-  readability; Shared publication and lifecycle 6; compatibility recovery).** Current production
-  reachability is independently reproduced with the actual built Web, real Python API, SQLite,
-  Local-backed temporary configuration and the production Scheduler: create `r5-history` in
-  scan-only mode, enable it, emit one due occurrence, then remove it through the authenticated
-  focused command (200). Its V2 occurrences route initially returns 200 with that run. Another
-  definition then receives 505 ordinary authenticated focused edits, all returning 200. The
-  removed definition's V2 detail and occurrences routes and V1 detail/grant routes now return 404;
-  opening `/ui-v2/operations/automation/occurrences/r5-history` shows `Record not found` and offers
-  only return links. A real runtime restart retains the same 404. This breaks the supported
-  operator journey of following a removed definition's existing run/authority history; no future
-  adapter, invalid configuration or capability-removing double is involved.
-  Evidence: `node /tmp/mediaflow-b-review-43-1-r5-browser.mjs`, cases
-  `removed-history-after-505-authenticated-publications` and
-  `removed-history-after-runtime-restart`, in `/tmp/mediaflow-b-review-43-1-r5-browser.log`.
-  The read-only database proof in `/tmp/mediaflow-b-review-43-1-r5-durable-history.log` confirms
-  one retained occurrence, its existing superseded pinned revision containing `r5-history`,
-  and one activation audit for that exact revision; neither history nor its evidence was deleted.
-  The Task-added `historical_definition` reads only 200 recent revisions before it even attempts
-  to match the supplied occurrence pin (`automation_workspace_commands.py:718`), then also
-  requires membership in 500 recent activation audits (`:793`). The related ever-published
-  classification checks only 200 recent activation audits (`:1927`). The Developer report's
-  claimed separate retention semantics cannot weaken the existing Contract: no such age/window
-  limit on readable removed history is authorized. Correct historical resolution using the
-  exact durable occurrence revision and revision-scoped publication proof; for definitions
-  without a pin, use complete durable targeted evidence rather than recent-window absence.
-  Keep unavailable evidence actionable and distinct from not-found/Draft-only state, preserve
-  unpublished-Draft exclusion and read-only behavior, and do not enlarge limits or add another
-  recovery engine. Verify the real API/browser removed-history journey beyond both current
-  windows and across restart, with exact historical identity and retained run/authority links.
+**P1 — Removed-definition history becomes unreachable after ordinary subsequent publications
+(AC-T5/T6; RO-2).** B independently used the real supported Python API/SQLite/Local/Scheduler harness
+and matching built Web: removal initially leaves V2 detail/occurrences and V1 detail/grant routes
+readable (200); 505 ordinary authenticated focused publications of another definition all succeed
+(200), then those historical routes return 404. Runtime/API/SQLite reopen retains the 404, and the
+browser shows `Record not found`. Read-only SQLite proves the occurrence, exact superseded pinned
+revision/digest, original historical name and activation publication audit are still present.
+The existing resolver incorrectly treats absence from 200 recent revisions, 500 activation audits or
+200 ever-published audits as absence from durable history.
 
-## B Resumption Reassessment — 2026-10-12
+Use the existing exact durable revision and publication proof, or complete targeted/cursor reads when
+no pin exists. Preserve published-versus-Draft distinction and actionable unavailable/incomplete
+states; never substitute current or unrelated identity. Do not enlarge windows or add a recovery
+engine. Verify the corrected native journey beyond both former windows and across reopen, preserve
+all authority/safety/accepted-baseline behavior and meet complete assigned T4 before PASS.
 
-```text
-Reviewed integrated source: 28eb41997e1bac1cffef13896bc769ba7ffcfd6d
-Original Task Base: 79544d9aba697036405b06054c0c56a740281bab
-Preserved rejected Developer checkpoint: b364a04d1c916ed327e3e8f470dc05e413ad80e6
-Decision: FIX REQUIRED
-Same Task continuation: YES — Task 43.1, unchanged Goal/Scope/AC, High/T4
-New integration blockers identified: NONE in this reassessment; not full T4 acceptance
-Slice Required Outcomes all satisfied: NO
-Next: DEVELOPER CONTINUES TASK 43.1 SAME FIX LOOP WHEN DIRECTED
-```
-
-### Authority, integration and evidence reuse
-
-Read the recovered ACTIVE Contract, original Task and latest B review, workflow/B experience and
-applicable requirements/product/architecture. Governance passes on the checkpointed activation.
-The original Slice/Task Bases remain reachable; neither preservation nor accepted history is
-rewritten. The merge's accepted Slice 44 parent is inherited baseline, not additional Task scope.
-No new Task, acceptance reset, Slice closure or implementation is authorized by this reassessment.
-
-Inspected the integrated configuration/API/SQLite/harness/frontend boundaries and retained historical
-resolution. `automation_workspace_commands.py` is byte-identical to the rejected `b364a04` version:
-the 200-revision, 500-activation and 200-ever-published windows remain. SQLite already provides exact
-`get_revision`, revision-scoped audits and a complete sequenced command-audit reader. Accepted
-runtime schema45, canonical MediaLibrary-plus-path classification, Rules object-local analysis and
-bounded Files discovery remain the inherited implementation, rather than a competing Automation
-engine. No integration change requires a new Task or A RESCOPE on the evidence inspected.
-
-Independently verified all 594 A-run source/test/harness/frontend input hashes against actual HEAD,
-the committed tree and A's manifest; Python 3.13.5, Node v22.19.0, npm 10.9.3, Web lockfile and the
-served built artifact also match. Inspected A's original raw logs and matching command receipts:
-442 Python integration tests, Web 80 + 119 tests and 10 real-Python lifecycle browser tests pass;
-Python format/lint/compile and Web typecheck/lint/format/build receipts pass. The initial A audit-count
-mistake (10 expected receipts versus 11 actual) and its corrected post-commit audit remain disclosed.
-The accepted-line preservation audit records 140 unchanged Slice 44-only paths and all 10 shared
-executable patches retaining the original Slice 43 additions/removals. These integration results are
-reused as baseline evidence only; they do not establish complete T4, corrected-candidate or Slice
-acceptance. No full regression, Docker/Compose, packaging or upgrade gate was rerun by B after the
-known blocker was proven; none is reported PASS on that basis.
-
-### Fresh independent production-path reproduction
-
-Evidence directory (repository-local, ignored; not remotely published):
-`.git/validation-evidence/28eb41997e1bac1cffef13896bc769ba7ffcfd6d/b-reassess43-20261012/`.
-Its index retains exact commands, input/artifact identity, dependency/runtime facts, raw logs,
-script hashes, API documents, SQLite proof and browser traces/screenshots. Old `/tmp` review logs
-are historical references only and are not counted as fresh evidence.
-
-B ran the retained `reproduce-history.py` with `.venv/bin/python` from repository root. It starts
-the unchanged supported `scripts/operations_inventory_harness.py` on isolated port 4197 with a new
-temporary Local-backed SQLite/configuration fixture. All lifecycle publications use authenticated
-real HTTP/application commands; Scheduler emission uses the harness's production Scheduler assembly.
-The current matching built Web is served by real Python, with headless Chromium, no retries and a
-1536 x 1024 viewport. No private configuration, production media or external service is used.
-
-- Create/enable `b-resume-history` in scan-only mode; the real Scheduler emits its occurrence.
-  Create an independent publisher, then remove the historical definition through focused DELETE
-  (200). V2 detail/occurrences and V1 detail/grant immediately return 200. The browser displays the
-  occurrence and its pinned revision, bound and Job link.
-- Publish 505 ordinary focused authenticated edits of the other definition, all 200. All four
-  historical API routes now return 404. The same browser deep link displays `Record not found`.
-- Close/reopen the actual SQLite/runtime/API through the supported restart control. The four routes
-  still return 404; the fresh browser connection still displays `Record not found`.
-- Independently query the fixture SQLite read-only: one occurrence remains with exact revision
-  `97b70ae5-2603-4ee4-a1e3-76021c80a220`, matching persisted digest, superseded published revision,
-  original name `B resume historical published name` and one activation audit naming that revision.
-  The missing history is a resolution failure; neither occurrence nor publication evidence was
-  deleted. The harness's `occurrenceTotal` counts its fixed fixture ID only and is not used for this
-  independently named definition's count.
-
-Fresh reproduction exits 0 in 46.713 seconds because it asserts and proves the existing defect;
-this is **P1 REPRODUCED**, not a passing product acceptance test. Inspected the actual before/after
-browser screenshots: usable occurrence/Job navigation becomes the not-found panel with only return
-and refresh actions. The process is terminated after evidence capture. Current source inputs and
-served artifacts remain unchanged; user PNGs and private-file tracking/ignore state are preserved.
-
-### Same-Task continuation conditions and complexity
-
-The existing **P1 remains blocking AC-T5/T6 and RO-2** on the integrated production candidate. Continue
-Task 43.1's fix loop with its original High/T4 plan. The existing durable pin and publication ledger
-are sufficient authority; the intervening accepted implementation does not justify another store,
-recovery engine, configuration cache, expanded history-retention scope or a new Task.
-
-Resolve pinned historical context by the exact durable revision and its publication proof; verify
-its recorded identity rather than substituting a recent revision, today's definition or an open
-Draft. For no-occurrence/legacy history, use complete targeted or correctly paged durable evidence;
-absence from a recent window is not absence from history. Distinguish unavailable/incomplete
-evidence from a true missing or never-published definition and keep read paths bounded and free of
-work, Provider calls, grants and media mutation. Enlarging any of the window constants is not a fix.
-
-The corrected candidate must prove native API/Web retained-history readability beyond both former
-windows and across runtime restart, exact historical identity and usable run/authority links, with
-unpublished Drafts excluded and missing/corrupt/unavailable evidence actionable. Preserve current
-publication/copy reconciliation, grant/revocation, new/old admitted pins, RBAC, OrganizerExecutor-only
-mutation and accepted Slice 44 behaviors; then satisfy the complete assigned T4 checkpoint plan.
-This reassessment changes only the explicit command-selection/stage facts in Required Tests and
-records the current result. Developer correction remains for subsequent implementation direction.
+Latest B reassessment checkpoint: `39a6a40e4a66de508a331c2d83d17d65578c08cc` (documentation only).
+Same Task continuation is valid; no new integration blocker was identified in that assessment.
+The reproducer's exit 0 means **P1 REPRODUCED**, not product PASS. No new corrected Developer checkpoint,
+Task PASS, next Task or Slice completion is claimed; Developer continues the same Task when directed.
