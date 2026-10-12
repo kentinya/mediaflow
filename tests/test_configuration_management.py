@@ -54,6 +54,32 @@ class ConfigurationManagementTests(unittest.TestCase):
         self.assertEqual(audit.safe_before()["password"], "***REDACTED***")
         self.assertEqual(audit.safe_after()["password"], "***REDACTED***")
 
+    def test_audit_sequence_is_optional_but_typed(self) -> None:
+        """The durable ledger cursor is optional and validated when present.
+
+        A not-yet-persisted audit leaves ``sequence`` at ``None``; a repository
+        reader supplies the stored row's real sequence so reconciliation can
+        page the ledger. A non-integer cursor would make paging unsound, so it
+        is rejected at construction.
+        """
+
+        base = (
+            "audit-1",
+            ConfigurationObjectKind.STORAGE,
+            "source",
+            "update",
+            {},
+            {},
+            datetime.now(UTC),
+            "operator",
+        )
+        self.assertIsNone(ConfigurationChangeAudit(*base).sequence)
+        self.assertEqual(ConfigurationChangeAudit(*base, 7).sequence, 7)
+        with self.assertRaises(ValueError):
+            ConfigurationChangeAudit(*base, "7")  # type: ignore[arg-type]
+        with self.assertRaises(ValueError):
+            ConfigurationChangeAudit(*base, True)
+
 
 if __name__ == "__main__":
     unittest.main()

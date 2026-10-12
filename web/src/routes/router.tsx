@@ -34,6 +34,7 @@ import { AutomationListPage } from "../features/operations/AutomationListPage";
 import { AutomationNewPage } from "../features/operations/AutomationNewPage";
 import { AutomationDetailPage } from "../features/operations/AutomationDetailPage";
 import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
+import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
 import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
 import { NotificationListPage } from "../features/operations/NotificationListPage";
@@ -237,6 +238,18 @@ const automationEditorRoute = createRoute({
   component: AutomationEditorPage,
 });
 
+const automationLifecycleRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/lifecycle/$definitionId",
+  component: AutomationLifecyclePage,
+});
+
+const automationLifecycleNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/lifecycle",
+  component: AutomationLifecyclePage,
+});
+
 const automationPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/preview/$definitionId/$previewId",
@@ -340,6 +353,8 @@ const routeTree = rootRoute.addChildren([
   automationNewRoute,
   automationDefinitionRoute,
   automationEditorRoute,
+  automationLifecycleRoute,
+  automationLifecycleNewRoute,
   automationPreviewRoute,
   automationOccurrencesRoute,
   notificationListRoute,

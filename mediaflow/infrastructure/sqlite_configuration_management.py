@@ -1531,6 +1531,7 @@ class SQLiteConfigurationRepository:
 
     @staticmethod
     def _audit(row: sqlite3.Row) -> ConfigurationChangeAudit:
+        sequence = row["sequence"] if "sequence" in row.keys() else None
         return ConfigurationChangeAudit(
             row["audit_id"],
             ConfigurationObjectKind(row["object_kind"]),
@@ -1540,6 +1541,7 @@ class SQLiteConfigurationRepository:
             json.loads(row["after_json"]),
             datetime.fromisoformat(row["occurred_at"]),
             row["actor"],
+            int(sequence) if sequence is not None else None,
         )
 
     def _reference_count(
@@ -1575,6 +1577,101 @@ class SQLiteConfigurationRepository:
                 audit.actor,
             ),
         )
+
+    def list_recent_command_audits(
+        self,
+        actions: tuple[str, ...],
+        *,
+        limit: int = 50,
+    ) -> tuple[ConfigurationChangeAudit, ...]:
+        """The newest lifecycle-command audits across all revisions, bounded.
+
+        Lifecycle-command reconciliation (for example, resolving whether an
+        Automation definition copy was actually published after its HTTP
+        response was lost) reads durable change evidence directly instead of
+        guessing from today's Active document.  The result is newest-first and
+        bounded, and every row passes through the same redaction the per-object
+        audit path uses.
+        """
+
+        if (
+            not actions
+            or any(not isinstance(action, str) or not action.strip() for action in actions)
+            or len(actions) > 16
+        ):
+            raise ValueError("recent command audit actions must be bounded non-empty strings")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("recent command audit limit must be between 1 and 500")
+        placeholders = ", ".join("?" for _ in actions)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT * FROM configuration_change_audits
+                WHERE action IN ({placeholders})
+                ORDER BY occurred_at DESC, sequence DESC LIMIT ?
+                """,
+                (*actions, limit),
+            ).fetchall()
+        return tuple(self._audit(row) for row in rows)
+
+    def list_command_audits_before(
+        self,
+        actions: tuple[str, ...],
+        *,
+        before_sequence: int,
+        limit: int = 50,
+    ) -> tuple[ConfigurationChangeAudit, ...]:
+        """Newest-first lifecycle-command audits strictly older than a sequence.
+
+        A bounded recent scan cannot prove that an *older* audited command
+        never happened: absence from the newest N rows is not evidence of
+        non-publication. Reconciliation reads therefore use this targeted,
+        sequenced scan to look past recent activity for one specific durable
+        intent without increasing the global scan bound.
+
+        The ordering is the ledger's own ``sequence DESC`` — a strictly
+        monotonic, gap-free cursor. That matters: ordering by ``occurred_at``
+        while paging on ``sequence`` can skip or repeat a row whenever a clock
+        adjustment makes wall-clock order disagree with insertion order, and a
+        skipped row would be silently reported as an absent command. Every row
+        passes through the same redaction the recent reader uses.
+        """
+
+        if (
+            not actions
+            or any(not isinstance(action, str) or not action.strip() for action in actions)
+            or len(actions) > 16
+        ):
+            raise ValueError("recent command audit actions must be bounded non-empty strings")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("recent command audit limit must be between 1 and 500")
+        if isinstance(before_sequence, bool) or not isinstance(before_sequence, int):
+            raise ValueError("before_sequence must be an integer")
+        placeholders = ", ".join("?" for _ in actions)
+        with self._lock:
+            rows = self._connection.execute(
+                f"""
+                SELECT * FROM configuration_change_audits
+                WHERE action IN ({placeholders}) AND sequence < ?
+                ORDER BY sequence DESC LIMIT ?
+                """,
+                (*actions, before_sequence, limit),
+            ).fetchall()
+        return tuple(self._audit(row) for row in rows)
+
+    def latest_command_audit_sequence(self) -> int:
+        """The newest audit sequence currently persisted, or ``0`` when empty.
+
+        Reconciliation reads anchor their targeted look-behind on this marker
+        so an intent submitted at a known moment can be searched for without
+        increasing any global scan bound.
+        """
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT MAX(sequence) AS sequence FROM configuration_change_audits"
+            ).fetchone()
+        return int(row["sequence"]) if row["sequence"] is not None else 0
 
     @staticmethod
     def _row_integrity_valid(row: sqlite3.Row) -> bool:

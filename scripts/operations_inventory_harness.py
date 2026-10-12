@@ -59,6 +59,7 @@ is involved. The script fails fast when the built artifact is missing.
 from __future__ import annotations
 
 import argparse
+import copy
 import dataclasses
 import io
 import json
@@ -527,6 +528,9 @@ class AppState:
             if worker is not None:
                 self.repository.heartbeat_worker(WORKER_ID, datetime.now(UTC))
 
+
+#: The definition identity the real-Python Automation lifecycle proof drives.
+AUTOMATION_LIFECYCLE_DEFINITION_ID = "harness-automation"
 
 STATE: AppState | None = None
 
@@ -1857,6 +1861,294 @@ def seed_authority_refusal(state: AppState) -> dict[str, object]:
     }
 
 
+def automation_lifecycle_state(state: AppState) -> dict[str, object]:
+    """Report the durable definition/authority state for the lifecycle proof.
+
+    Bounded reads only: the Active definitions, the definition's live
+    unattended-grant state and the linked occurrence count. No Storage,
+    Provider or work is touched.
+    """
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    definitions = (
+        [
+            {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "enabled": item.get("enabled"),
+                "mode": item.get("mode"),
+                "resourceLibraryId": item.get("resourceLibraryId"),
+                "itemLimit": item.get("itemLimit"),
+            }
+            for item in active.document.get("automationTaskDefinitions", [])
+        ]
+        if active is not None
+        else []
+    )
+    grants = getattr(state.api, "_unattended_grants", None)
+    occurrences = getattr(state.api, "_automation_occurrences", None)
+    grant_state = None
+    if grants is not None:
+        try:
+            grant = grants.get_for_definition(AUTOMATION_LIFECYCLE_DEFINITION_ID)
+        except Exception:
+            grant = None
+        if grant is not None:
+            grant_state = {
+                "status": grant.status.value,
+                "grantId": grant.grant_id,
+                "definitionId": grant.definition_id,
+            }
+    occurrence_total = 0
+    if occurrences is not None:
+        try:
+            occurrence_total = len(occurrences.list(AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20))
+        except Exception:
+            occurrence_total = 0
+    return {
+        "activeRevisionId": active.revision_id if active is not None else None,
+        "definitions": definitions,
+        "grant": grant_state,
+        "occurrenceTotal": occurrence_total,
+    }
+
+
+def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
+    """Persist one real active unattended grant for the removal proof.
+
+    The grant admission journey requires a persisted exact Preview; this
+    isolated harness writes the durable grant row directly through the runtime
+    repository, exactly as the grant service would, so the browser can then
+    prove that a real removal revokes live authority and keeps its audit.
+    """
+
+    from mediaflow.domain.automation import AutomationTaskDefinition
+    from mediaflow.domain.unattended_execution import (
+        UnattendedExecutionGrant,
+        UnattendedExecutionGrantAudit,
+        UnattendedExecutionGrantStatus,
+    )
+
+    active = state.managed.configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    stored = next(
+        (
+            item
+            for item in active.document.get("automationTaskDefinitions", [])
+            if item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
+        ),
+        None,
+    )
+    if stored is None:
+        return {"error": "definition not found"}
+    domain = AutomationTaskDefinition.from_document(stored)
+    now = datetime.now(UTC)
+    grant = UnattendedExecutionGrant(
+        "harness-grant-1",
+        domain.definition_id,
+        domain.resource_library_id,
+        domain.source_scope,
+        domain.run_mode,
+        domain.item_limit,
+        UnattendedExecutionGrantStatus.ACTIVE,
+        "harness-admin",
+        now,
+        domain.definition_fingerprint,
+        active.revision_id,
+        active.digest,
+        active.version,
+    )
+    state.repository.create_unattended_execution_grant(
+        grant,
+        UnattendedExecutionGrantAudit(
+            "harness-grant-audit-1",
+            grant.grant_id,
+            "granted",
+            now,
+            "harness-admin",
+            {"definitionId": domain.definition_id},
+        ),
+    )
+    return {"grantId": grant.grant_id, "status": grant.status.value}
+
+
+def reset_automation_definitions(state: AppState) -> dict[str, object]:
+    """Publish an empty Automation section through the real managed authority.
+
+    The isolated browser journey runs several sequential tests against one
+    temporary configuration store. Each test must start from a known definition
+    population, so this control route performs a real focused successor
+    publication that removes every definition and revokes their unattended
+    authority — the same production boundary the browser exercises, not a
+    database edit. The removed definitions' Scheduler due-state rows are
+    cleared through the runtime repository, so a later journey recreating the
+    same definition ID starts with a fresh due state exactly as a genuinely
+    new definition would.
+    """
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    grants = getattr(state.api, "_unattended_grants", None)
+    definition_ids = [
+        str(item.get("id"))
+        for item in active.document.get("automationTaskDefinitions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    if grants is not None:
+        for definition_id in definition_ids:
+            try:
+                if grants.get_for_definition(definition_id) is not None:
+                    grants.revoke(
+                        definition_id=definition_id,
+                        actor="harness-admin",
+                        reason="harness reset",
+                    )
+            except Exception:
+                pass
+    draft = configuration_service.create_successor_draft(
+        actor="harness",
+        expected_active_revision_id=active.revision_id,
+        expected_active_version=active.revision_sequence or active.version,
+        expected_active_digest=active.digest,
+        verified_active=active,
+    )
+    document = copy.deepcopy(draft.document)
+    document["automationTaskDefinitions"] = []
+    edited = configuration_service.edit_draft(
+        draft.revision_id,
+        document,
+        expected_version=draft.version,
+        actor="harness",
+        audit_context={
+            "kind": "schedule",
+            "objectId": "",
+            "action": "harness_reset",
+            "before": None,
+            "after": None,
+        },
+    )
+    validated = configuration_service.validate(edited.revision_id, actor="harness")
+    if validated.status.value != "validated":
+        return {"error": "reset validation failed", "errors": list(validated.validation_errors)}
+    activated = configuration_service.activate(
+        validated.revision_id,
+        expected_version=validated.version,
+        actor="harness",
+    )
+    state.repository.clear_automation_definition_schedule_states(tuple(definition_ids))
+    return {
+        "removed": definition_ids,
+        "activeRevisionId": activated.revision_id,
+    }
+
+
+def crowd_automation_command_trail(state: AppState, *, edits: int) -> dict[str, object]:
+    """Publish ordinary focused Automation edits to crowd the command trail.
+
+    The Copy-reconciliation proof must cross the production paging boundary the
+    real browser journey cannot reach economically by clicking: after a real
+    Copy commits, this control publishes ordinary focused successor revisions
+    (the same ``AutomationWorkspaceCommandService`` commands the browser issues,
+    not database writes) so the committed Copy's command row is only reachable
+    by a reader that pages the durable ledger with a real cursor. The edit
+    target is deliberately a definition other than the copy's source, matching
+    the shape B reproduced.
+    """
+
+    workspace = getattr(state.api, "_automation_workspace", None)
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if workspace is None or active is None:
+        return {"error": "no Active Automation workspace"}
+    definition_ids = [
+        str(item.get("id"))
+        for item in active.document.get("automationTaskDefinitions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    if not definition_ids:
+        return {"error": "no definition to crowd the trail with"}
+    target = definition_ids[-1]
+    published = 0
+    for index in range(max(0, int(edits))):
+        try:
+            current = configuration_service.active()
+            if current is None:
+                break
+            workspace.save_object(
+                {"id": target, "name": f"Harness crowd {index}"},
+                actor="harness",
+                object_id=target,
+                expected_revision_id=current.revision_id,
+                expected_version=current.revision_sequence or current.version,
+                expected_digest=current.digest,
+            )
+        except Exception as error:
+            return {
+                "error": f"crowd publication failed: {type(error).__name__}",
+                "published": published,
+            }
+        published += 1
+    return {"published": published, "target": target}
+
+
+def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
+    """Invoke the real managed-definition Scheduler once against the Active.
+
+    The retained-history proof needs a real due occurrence emitted by the
+    production Scheduler — not a database edit — so this control constructs
+    the exact resident Scheduler assembly (one repository, the managed
+    snapshot resolver, the Active definitions) and calls ``tick`` once. The
+    emitted occurrence, Job and due-state advance are the same durable rows
+    the resident service writes.
+    """
+
+    from mediaflow.application.automation import IntervalScheduler
+    from mediaflow.domain.automation import SchedulerConfigurationSnapshot
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    try:
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                active.document,
+                bootstrap_database_path=str(state.database),
+            ),
+            snapshot_id=active.revision_id,
+            digest=active.digest,
+            version=active.version,
+        )
+    except Exception as error:
+        return {"error": f"runtime configuration did not load: {type(error).__name__}"}
+    scheduler = IntervalScheduler(
+        state.repository,
+        (),
+        configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+            active.revision_id,
+            active.digest,
+            (),
+            runtime.automation_maximum_active_jobs,
+            tuple(runtime.automation_task_definitions),
+            active.version,
+            tuple(item.library_id for item in runtime.resource_libraries),
+            tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
+        ),
+    )
+    emitted = scheduler.tick()
+    occurrences = state.repository.list_automation_definition_occurrences(
+        AUTOMATION_LIFECYCLE_DEFINITION_ID, limit=20
+    )
+    return {
+        "emitted": [job.definition_id for job in emitted],
+        "occurrenceTotal": len(occurrences),
+    }
+
+
 def continuation_journey_state(state: AppState) -> dict[str, object]:
     """Report the durable state of the continuation journey (bounded reads only)."""
 
@@ -2046,6 +2338,22 @@ def application(environ, start_response):
             document = seed_authority_refusal(STATE)
         elif path == "/__harness__/continuation-state" and method == "GET":
             document = continuation_journey_state(STATE)
+        elif path == "/__harness__/automation-lifecycle-state" and method == "GET":
+            document = automation_lifecycle_state(STATE)
+        elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
+            document = seed_automation_definition_grant(STATE)
+        elif path == "/__harness__/reset-automation-definitions" and method == "POST":
+            document = reset_automation_definitions(STATE)
+        elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
+            document = run_automation_scheduler_tick(STATE)
+        elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            raw_edits = (query.get("edits") or ["0"])[0]
+            try:
+                requested_edits = max(0, min(1000, int(raw_edits)))
+            except ValueError:
+                requested_edits = 0
+            document = crowd_automation_command_trail(STATE, edits=requested_edits)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}

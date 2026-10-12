@@ -192,6 +192,9 @@ export function AutomationDetailPage() {
                   {definition.definitionState === "draft-only" && (
                     <>draft-only · </>
                   )}
+                  {definition.definitionState === "historical" && (
+                    <>removed · retained history · </>
+                  )}
                   {definition.activeConfiguration
                     ? `Active revision ${definition.activeConfiguration.revisionId} · version ${definition.activeConfiguration.version}`
                     : "no Active configuration"}

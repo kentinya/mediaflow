@@ -1798,6 +1798,22 @@ import {
   type AutomationPreviewModel,
 } from "../../entities/operations/automation";
 import {
+  normalizeAutomationFormAuthority,
+  normalizeAutomationCopyCandidate,
+  normalizeAutomationCopyIntent,
+  normalizeAutomationEditProjection,
+  normalizeAutomationPublication,
+  normalizeAutomationRemovalImpact,
+  normalizeAutomationSchedulePreview,
+  type AutomationDefinitionFormAuthorityModel,
+  type AutomationCopyCandidateModel,
+  type AutomationCopyIntentModel,
+  type AutomationEditProjectionModel,
+  type AutomationPublicationModel,
+  type AutomationRemovalImpactModel,
+  type AutomationSchedulePreviewModel,
+} from "../../entities/operations/automation-lifecycle";
+import {
   NOTIFICATION_URI_SAFE_SEGMENT,
   normalizeNotificationActivation,
   normalizeNotificationDeliveriesPage,
@@ -3138,6 +3154,54 @@ function failureDetailsSpread(value: unknown): {
 } {
   const details = normalizeAutomationMutationFailureDetails(value);
   return details === undefined ? {} : { details };
+}
+
+async function fetchAutomationDocument<T>(
+  token: string | null,
+  url: string,
+  normalize: (payload: unknown) => T,
+  fetchImpl: FetchLike,
+): Promise<AutomationMutationResult<T>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (response.status === 401) {
+    return { ok: false, status: 401, code: "unauthorized" };
+  }
+  if (response.status === 403) {
+    return { ok: false, status: 403, code: "forbidden" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    const code =
+      typeof envelope.code === "string" && envelope.code.length > 0
+        ? envelope.code
+        : "request_rejected";
+    const details = normalizeAutomationMutationFailureDetails(envelope.details);
+    return {
+      ok: false,
+      status: response.status,
+      code,
+      ...(details === undefined ? {} : { details }),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, status: response.status, model: normalize(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
 }
 
 async function submitAutomationMutation<T>(
@@ -7591,6 +7655,247 @@ export async function removeRuleObject(
     "DELETE",
     `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}`,
     { ...authority },
+    fetchImpl,
+  );
+}
+
+// --- Focused Automation definition lifecycle -----------------------------
+
+const AUTOMATION_DEFINITIONS_BASE = "/api/v1/operations/automation/definitions";
+
+export interface AutomationDefinitionAuthority {
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
+  readonly expectedDigest: string;
+}
+
+async function submitAutomationDefinitionCommand<T>(
+  token: string | null,
+  method: "POST" | "PUT" | "DELETE",
+  url: string,
+  body: Record<string, unknown>,
+  normalize: (payload: unknown) => T,
+  fetchImpl: FetchLike,
+): Promise<AutomationMutationResult<T>> {
+  return submitAutomationMutation(
+    token,
+    method,
+    url,
+    body,
+    normalize,
+    fetchImpl,
+  );
+}
+
+export async function fetchAutomationFormAuthority(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationDefinitionFormAuthorityModel>> {
+  return fetchAutomationDocument(
+    token,
+    AUTOMATION_DEFINITIONS_BASE,
+    normalizeAutomationFormAuthority,
+    fetchImpl,
+  );
+}
+
+export async function fetchAutomationEditProjection(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationEditProjectionModel>> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return fetchAutomationDocument(
+    token,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}`,
+    normalizeAutomationEditProjection,
+    fetchImpl,
+  );
+}
+
+export async function fetchAutomationCopyCandidate(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationCopyCandidateModel>> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return fetchAutomationDocument(
+    token,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-candidate`,
+    normalizeAutomationCopyCandidate,
+    fetchImpl,
+  );
+}
+
+/**
+ * Reconcile one submitted-but-unconfirmed Copy command from durable truth.
+ * A transport-lost Copy response is an unknown outcome, not a rejection; this
+ * read resolves whether the command actually published before any deliberate
+ * resubmission is allowed.
+ */
+export async function fetchAutomationCopyIntent(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+  query = "",
+): Promise<AutomationMutationResult<AutomationCopyIntentModel>> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  // The optional query binds the reconciliation to the exact submitted intent:
+  // the observed Active identity the lost Copy command was submitted against.
+  // Without it the read still resolves durable evidence, but a later
+  // submission's copy is never named as this intent's result.
+  return fetchAutomationDocument(
+    token,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-intent${query}`,
+    normalizeAutomationCopyIntent,
+    fetchImpl,
+  );
+}
+
+export async function fetchAutomationRemovalImpact(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationRemovalImpactModel>> {
+  if (!isSafeIdentifier(definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return fetchAutomationDocument(
+    token,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/removal-impact`,
+    normalizeAutomationRemovalImpact,
+    fetchImpl,
+  );
+}
+
+/** Zero-mutation upcoming-run calculation; it persists nothing. */
+export async function previewAutomationSchedule(
+  token: string | null,
+  options: {
+    readonly candidate: Record<string, unknown>;
+    readonly objectId: string | null;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationSchedulePreviewModel>> {
+  return submitAutomationDefinitionCommand(
+    token,
+    "POST",
+    `${AUTOMATION_DEFINITIONS_BASE}/schedule-preview`,
+    { candidate: options.candidate, objectId: options.objectId },
+    normalizeAutomationSchedulePreview,
+    fetchImpl,
+  );
+}
+
+/** One checked create Save; the backend validates and activates atomically. */
+export async function createAutomationDefinitionFocused(
+  token: string | null,
+  options: {
+    readonly object: Record<string, unknown>;
+    readonly authority: AutomationDefinitionAuthority;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  return submitAutomationDefinitionCommand(
+    token,
+    "POST",
+    AUTOMATION_DEFINITIONS_BASE,
+    { object: options.object, ...options.authority },
+    normalizeAutomationPublication,
+    fetchImpl,
+  );
+}
+
+/** One checked edit Save for the definition the route opened. */
+export async function saveAutomationDefinitionFocused(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly object: Record<string, unknown>;
+    readonly authority: AutomationDefinitionAuthority;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  if (!isSafeIdentifier(options.definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitAutomationDefinitionCommand(
+    token,
+    "PUT",
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}`,
+    { object: options.object, ...options.authority },
+    normalizeAutomationPublication,
+    fetchImpl,
+  );
+}
+
+export async function copyAutomationDefinitionFocused(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly authority: AutomationDefinitionAuthority;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  if (!isSafeIdentifier(options.definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitAutomationDefinitionCommand(
+    token,
+    "POST",
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}/copy`,
+    { ...options.authority },
+    normalizeAutomationPublication,
+    fetchImpl,
+  );
+}
+
+export async function setAutomationDefinitionEnabledFocused(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly enabled: boolean;
+    readonly authority: AutomationDefinitionAuthority;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  if (
+    !isSafeIdentifier(options.definitionId) ||
+    typeof options.enabled !== "boolean"
+  )
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitAutomationDefinitionCommand(
+    token,
+    "POST",
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}/${options.enabled ? "enable" : "disable"}`,
+    { ...options.authority },
+    normalizeAutomationPublication,
+    fetchImpl,
+  );
+}
+
+/** One checked removal; future unattended authority is revoked first. */
+export async function removeAutomationDefinitionFocused(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly authority: AutomationDefinitionAuthority;
+    readonly reason?: string | null;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationPublicationModel>> {
+  if (!isSafeIdentifier(options.definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  const body: Record<string, unknown> = { ...options.authority };
+  if (options.reason) {
+    body.reason = options.reason;
+  }
+  return submitAutomationDefinitionCommand(
+    token,
+    "DELETE",
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}`,
+    body,
+    normalizeAutomationPublication,
     fetchImpl,
   );
 }

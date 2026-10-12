@@ -97,7 +97,7 @@ export function AutomationListPage() {
               {create.available && (
                 <Link
                   className="mf-button mf-button-secondary"
-                  to="/operations/automation/new"
+                  to="/operations/automation/lifecycle"
                 >
                   Create Automation definition
                 </Link>
@@ -192,6 +192,13 @@ export function AutomationListPage() {
                         params={{ definitionId: definition.document.id }}
                       >
                         Open definition
+                      </Link>
+                      <Link
+                        className="mf-button mf-button-secondary"
+                        to="/operations/automation/lifecycle/$definitionId"
+                        params={{ definitionId: definition.document.id }}
+                      >
+                        Edit definition
                       </Link>
                       <Link
                         className="mf-button mf-button-secondary"

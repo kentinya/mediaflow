@@ -247,6 +247,25 @@ const childDestinationData = [
       "Bounded successor-Draft form for one scheduled Automation definition.",
   },
   {
+    id: "operations-automation-lifecycle-new",
+    label: "New Automation definition",
+    path: "/operations/automation/lifecycle",
+    title: "New Automation definition | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "One checked Save publishes a focused Automation definition successor.",
+  },
+  {
+    id: "operations-automation-lifecycle",
+    label: "Automation lifecycle",
+    path: "/operations/automation/lifecycle/$definitionId",
+    title: "Edit Automation definition | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Typed definition form, zero-mutation schedule preview and lifecycle commands.",
+    dynamicPrefix: "/operations/automation/lifecycle/" as const,
+  },
+  {
     id: "operations-automation-definition",
     label: "Automation definition",
     path: "/operations/automation/definition/$definitionId",
@@ -925,6 +944,8 @@ export function allowlistedDestinationSearch(
     path === "/operations/scan/$taskId" ||
     path === "/operations/preview/$previewId" ||
     path === "/operations/automation/new" ||
+    path === "/operations/automation/lifecycle" ||
+    path === "/operations/automation/lifecycle/$definitionId" ||
     path === "/operations/automation/definition/$definitionId" ||
     path === "/operations/automation/editor/$definitionId" ||
     path === "/operations/automation/preview/$definitionId/$previewId" ||

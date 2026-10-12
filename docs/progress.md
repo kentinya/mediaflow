@@ -8,14 +8,17 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 44 — **Existing V2 Pages Functional Improvements** — is **PASS / CLOSED** after A's complete
-Base..Implementation Head review. All six Required Outcomes and nine Required Surfaces are accepted
-under the user-approved discovery recovery rescope. [`TASK.md`](../TASK.md) has no active
-implementation; A selects the next large Slice only in a separate action. Closure is repository-
-local; no push or release is claimed. The working branch `slice/44-page-improvements` starts from
-accepted Slice 42 and excludes unaccepted Slice 43 implementation. Slice 43 remains user-frozen on
-`frozen/slice-43-2026-10-07`, with original Base, Task review and unresolved blockers retained.
-Suspension is not closure; Slice 42 and all earlier closure-ledger entries remain unchanged.
+Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** after explicit
+user-authorized A resumption following Slice 44 closure. Working branch `slice/43-resumed-after-44`
+integrates accepted Slice 44 with the preserved unfinished Task 43.1. Its original Slice Base and
+Task ID/Base/Goal/Scope remain unchanged; [`TASK.md`](../TASK.md) retains **FIX REQUIRED**, the
+removed-definition-history P1 and B's complexity reassessment. Next action is B reassessment of the
+actual integrated candidate, followed by the same Task correction loop when authorized by B.
+
+Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
+Its closure-ledger entry and all earlier accepted entries below are unchanged. Preservation branch
+`frozen/slice-43-2026-10-07` and its exact review snapshot remain reachable and unchanged; suspended
+implementation is not an accepted outcome. This resumption is repository-local, with no push/release.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the

@@ -73,6 +73,32 @@ export function normalizeBoundedCount(value: unknown, field: string): number {
   return value;
 }
 
+/**
+ * A finite number whose server value survives byte-identically.
+ *
+ * Scheduling durations are finite positive numbers on the backend, not
+ * integers: an interval of `1.5` seconds is a supported definition value, so
+ * an integer-only guard would reject a real server document as malformed and
+ * hide a failed edit read. Non-finite values (NaN/Infinity) stay malformed.
+ */
+export function normalizeFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    fail(field);
+  }
+  return value;
+}
+
+/** An optional finite number; an absent field is null. */
+export function normalizeOptionalFiniteNumber(
+  value: unknown,
+  field: string,
+): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return normalizeFiniteNumber(value, field);
+}
+
 export function readRecord(
   value: unknown,
   field: string,

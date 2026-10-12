@@ -7507,6 +7507,30 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._automation_definition_due_state(row)
 
+    def clear_automation_definition_schedule_states(self, definition_ids: tuple[str, ...]) -> int:
+        """Delete the named definitions' Scheduler due-state rows.
+
+        A definition removed from the Active configuration no longer exists
+        for the Scheduler: its retained history lives in occurrences, Jobs and
+        Tasks, but its due-state row is scheduling state for a definition that
+        is gone. Clearing it lets a later recreation of the same definition
+        ID start with a fresh due state instead of inheriting the removed
+        run's next-run schedule.
+        """
+
+        if not definition_ids:
+            return 0
+        if any(not isinstance(value, str) or not value.strip() for value in definition_ids):
+            raise ValueError("automation definition ID is required")
+        placeholders = ", ".join("?" for _ in definition_ids)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                f"DELETE FROM automation_definition_due_state "
+                f"WHERE definition_id IN ({placeholders})",
+                tuple(definition_ids),
+            )
+        return cursor.rowcount
+
     def record_automation_definition_failure(
         self,
         definition_id: str,
