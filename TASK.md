@@ -894,3 +894,166 @@ projection, Web normalization and rendered layout; exact durable data alone does
 operator can review it. No experience file is updated during this fix loop.
 
 NEXT ACTION: B INDEPENDENTLY REVIEWS THIS TASK CHECKPOINT
+
+## B Review Result — 7a010b33832c / report e5178bf3148d
+
+Independent review on 2026-10-12. Reviewed Task Base
+`ab94ce53189b5a9f16e7614cd011480a42d91e79` through executable checkpoint
+`7a010b33832cbab2b6fb09d1d797625eb7b3708d`; submission HEAD
+`e5178bf3148d66d1d565131e10b2c1529ffb9632` changes only `TASK.md` afterwards.
+Governance passes against the unchanged committed amended Slice. Mandatory guidance and B
+experience were read/rechecked; unchanged prior canonical readings remain valid. The latest
+14-file implementation changes identity projection/normalization, scoped long-path rendering,
+regressions and the native proof. No A-owned authority, requirement, Roadmap, private configuration,
+user image or production source is changed by B.
+
+**Previous blocker: corrected.** B's original native two-source/179-character-basename/
+1222-character-path reproduction now retains and visibly wraps both exact paths through Freeze
+and manual intent. Full Python includes the real long-source intent/Choice/successful exact Preview
+regression; intent/Preview Web bounds and whitespace tests pass. The original eight production-path
+attachment/request-ID probes and successful default-A Preview handoff also pass. Native partial
+findings freeze only the explicitly reviewed good subset; unresumable old work stops, and explicit
+new discovery uses a distinct new pin without rewriting or executing the old attempt. Lost response
+with an intervening root activation recovers only the actual request, not the stale open admission,
+with one submission and zero execution Tasks.
+
+Current independent evidence:
+`.git/validation-evidence/e5178bf3148d66d1d565131e10b2c1529ffb9632/b-review44-9/evidence-index.md`.
+Full Python: 2,430 run / 7 external skips / OK, 513.360 s. Full Web: 1,106 PASS / 74 files.
+The first Web attempt exited 143 without a completion receipt; its original log is retained as
+INTERRUPTED, cause unproved, never PASS. The same command's separate completed rerun changes no
+coverage/assertion/timeout. Quality/static/config/build gates pass. Independent genuine elapsed
+published stability and actual old-schema-45 seed/migration/reopen/history/pin preservation pass.
+Standard native Python/browser proof passes 13 cases plus separately confirmed Executor execution.
+
+Packaging audit: Developer's wheel matches all 163 current Python modules but also contains two
+cached, non-candidate upload/download modules. B preserved it and built a clean wheel from the exact
+committed archive; all 163 modules match, no extra/missing module, smoke PASS. Use that verified
+clean artifact (`c598c4f29f70e854972a9061e26387a08cf5b2ecbb6dda05ef5d255d19495ef1`), not the cached
+wheel, for this candidate's packaging evidence. Both submitted Docker images match all 163 runtime
+sources and all four built assets. Matching Developer Playwright 246, Operations Python 21,
+direct-Files Python 10 and Docker release/upgrade/browser raw evidence was inspected; those gates
+were not independently repeated. An additional B Docker-toolbar run timed out waiting for healthy
+services; its original trace is retained. Its supplied TMPDIR did not exist, and a corrected readable
+bind probe succeeds. This extra geometry gate was not completed or claimed PASS, and no repeat or
+Slice-final completion is claimed after the required blocker below. Seven real-service/endurance
+skips and existing Vite/ResourceWarning/jsdom output remain disclosed.
+
+```text
+Decision: FIX REQUIRED
+P0/P1 blockers: 1
+Slice Required Outcomes all satisfied: NO — required historical Operations surface is broken
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — The shared identity-bound change breaks native Operations for valid historical long
+  scopes (Task AC7/AC8; RO-6 preserved history and Required Task/Worker/Operations Web/API surface).**
+  Use the real accepted schema-38 executable `360e59e0791c60635f050a0444b1a2d0b4458ea4` to persist
+  a historical Task with a legal 1222-character relative `scope_path`; upgrade it by opening the
+  current API. The record and scope remain durable, but `/api/v1/operations/runs` now returns the
+  full scope in a successful 200 response. `run.ts:475` still reads `source_scope` through the
+  generic 1024-character normalizer, so it rejects the entire collection. Built Chromium shows
+  “操作与任务暂不可用 / The Operations response could not be understood as the expected contract”,
+  with no historical row. A single affected legacy row prevents the normal inventory from rendering
+  on that page; native history inspection is unavailable. No hostile path, secret, unavailable pin,
+  Worker execution or current-Active substitution is needed.
+  **Cause/evidence:** `manual_safety.py:35` raises the shared public identity boundary from 512
+  characters to 4096 UTF-8 bytes for every caller; `service_api.py:14424` also uses it for run scopes,
+  while the changed Web normalizers cover only manual intent/Preview sources. The new long-path
+  test in run-inventory tests exercises the domain helper alone, not the public/API/native inventory.
+  `legacy_inventory_probe.py`, `legacy38-seed.log`, `legacy38-upgrade-receipt.json`,
+  `legacy-long-native-receipt.json`, inspected `legacy-long-native-inventory.png` and native body
+  prove actual old-code persistence, current migration, exact durable scope and native failure.
+  A controlled real-API baseline using executable `e307cbbfa817f6a67bcabadf77648c544e905569` with
+  the same current built Web returns `[redacted-path]` and successfully renders that row; baseline
+  logs/receipts/image are retained. Thus this is introduced by the current shared-bound change,
+  not an unavailable historical fixture or a generic frontend failure. Synthetic media/target and
+  execution authority are unchanged. Initial harness directory/locator/target-baseline mistakes
+  and their corrected repeats are retained, not counted as product failures.
+  **Correction:** preserve the now-correct long manual source handoff while making every affected
+  historical run projection and native consumer agree on their bounded public form. Reuse existing
+  identity/display/search boundaries; either keep the manual-source widening scoped or align the
+  affected run consumers without weakening backend bounds, redaction or search/privacy agreement.
+  Do not rewrite/delete old scopes, backfill from current Active, hide the affected population or
+  present malformed reads as empty success. Verify actual old-code upgrade plus native inventory
+  and selected-run readback, along with the long manual intent/Preview and hostile-scope privacy
+  regressions. This remains one correction inside the current Task.
+
+**Complexity reassessment:** the shared helper conflates exact source identities with bounded
+historical/display consumers; this is the cross-surface root, not another independent business goal.
+The amended Contract remains feasible. Retain Task 44.9 ID/Base/Goal/Scope/acceptance and High/T4;
+no material A rescope is established. RO-1 through RO-5 retain prior delivery facts, but the required
+shared Operations compatibility surface blocks RO-6/Slice readiness. Create no next Task, Closure
+Packet or Slice closure; A-owned documents and reusable experience files remain unchanged.
+
+Experience candidate for eventual A closure: a wider shared identity boundary can break consumers
+outside the repaired journey; audit its real callers and native compatibility before declaring the
+handoff complete. Merge with the existing final-projection/cross-stage experience candidate.
+
+NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+## Developer Completion Report — 2026-10-12 (fix loop 6)
+
+```text
+Status: READY FOR B REVIEW
+Task: 44.9 — High / T4
+Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
+Addressed B Review: 7a010b33832cbab2b6fb09d1d797625eb7b3708d / report e5178bf3148d66d1d565131e10b2c1529ffb9632 — FIX REQUIRED
+Executable checkpoint: b4a14e0284b66597baf306a95224fc1dabf60033
+Evidence: .git/validation-evidence/b4a14e0284b66597baf306a95224fc1dabf60033/task44-9/fix-loop-6-long-scope/evidence-index.md
+```
+
+Fixed the P1 historical Operations regression by restoring the 512-character public identity and
+search boundary for run scopes, while giving exact Manual Organize source paths a separate bounded
+4096-byte projection. The API continues to publish and search historical run scopes using the same
+redacted form; a 1222-character old scope no longer breaks the Operations collection or selected-run
+detail and cannot be found by searching its hidden path. Manual source paths still retain their exact
+supported identity through the action matrix, intent and Preview, with the existing absolute-root,
+endpoint, credential, evidence-digest and traversal checks intact. The implementation checkpoint
+contains only the scoped helper, its API call sites and focused regressions in four files.
+
+The correction was test-first: the new public inventory and searchable-form regressions failed before
+the change, and the old schema-38 reproduction returned the full historical scope to native Web.
+After correction, focused run-inventory and manual-intent/Preview regressions passed. The same real
+schema-38 source was upgraded to schema 45: durable source scope remained exact, source and target
+were unchanged, no execution authority was created, list and selected-run API projections returned
+`[redacted-path]`, and Chromium displayed the historical row and selected details. The standard
+real-Python/Chromium discovery proof passed 13 cases, including the long manual path, with a separate
+confirmed OrganizerExecutor execution.
+
+All assigned final T4 gates passed on executable candidate `b4a14e0284b66597baf306a95224fc1dabf60033`:
+
+- Python full suite: **2,431 run, 7 skipped, OK**; Web unit suite: **1,106 passed / 74 files**.
+- Default Playwright: **246 passed**; real-Python Operations: **21 passed**; real-Python Direct
+  Files: **10 passed**.
+- Ruff format/check, compileall, pip check, both configuration validations, Web format/lint/typecheck/
+  production build and FFmpeg/FFprobe dependency audit: **PASS**.
+- Exact archive wheel smoke: **PASS**, wheel SHA-256
+  `3fffa78fc065d931ae70061f70a0ac51da434ec417c9273ea00ac65f9d56ed1c`. All 163 wheel modules
+  byte-match the candidate archive; there are no extra or missing modules.
+- Docker release-security and schema-38 upgrade/recovery: **PASS**. Docker production-image browser
+  proof: **PASS**, 7 browser stages and 4 discovery cases; confirmed execution completed once with no
+  replay. The image digest is `sha256:08bfbbc351cf79c8402c19ec59894a74f28aa322919558c1fe7092e43c5e379d`;
+  all 163 Python modules and all four served Web files byte-match the candidate source/build.
+
+The seven Python skips are **SKIP / UNAVAILABLE** because dedicated real SMB, S3 and OpenList
+acceptance environments and isolated Local, SMB, OpenList and S3 endurance profiles were absent.
+No product assertion was skipped. Existing SQLite/temp-directory `ResourceWarning`s, Vitest/jsdom
+`scrollTo()` notices and the Vite chunk-size warning remain visible in the logs. A first Playwright
+config attempt was rejected because Node does not load TypeScript configs from `node_modules`; a
+subsequent full attempt on custom port 47971 exposed existing fixtures' fixed 4173 calls (219 passed,
+24 failed, 3 did not run). Both attempts are retained as setup diagnostics; the unchanged complete
+246-test suite then passed on its exclusive expected fixture port, without changed tests, assertions,
+timeouts or coverage.
+
+`TASK.md` is the only staged file for this report checkpoint. The four pre-existing untracked
+`docs/pics/*.png` files remain untouched; `config/alist.json`, Slice, Roadmap, requirements,
+experience documents and production configuration were not changed. The report-only successor does
+not change tested runtime, tests, dependencies, served assets or configuration, so the indexed
+candidate evidence remains valid. No Task PASS, Slice PASS or Slice closure is claimed.
+
+Reusable lesson candidate for A's Slice closure: whenever an identity bound changes, audit each
+public projection and its search counterpart, then verify the historical record through the native
+inventory and selected-detail journey.
+
+NEXT ACTION: B INDEPENDENTLY REVIEWS THIS TASK CHECKPOINT
