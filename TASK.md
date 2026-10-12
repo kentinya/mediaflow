@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and
 ```text
 Task ID: 44.9
 Parent Slice: 44
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
 Difficulty: High
 Test Level: T4
@@ -485,6 +485,61 @@ Next: SAME TASK FIX LOOP
   51-associated-Trailer coverage and the existing 100/101-primary refusal.
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+## Developer Completion Report — 2026-10-12 (fix loop 4)
+
+```text
+Status: READY FOR B REVIEW
+Task: 44.9
+Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
+Implementation Head: e307cbbfa817f6a67bcabadf77648c544e905569
+Difficulty / Test Level: High / T4
+Addressed B Review: 0b1077324d36117c374d410b87db1ce1feedfd1c — FIX REQUIRED
+```
+
+Fixed B's P1 discovery-to-intent/Preview handoff defect. Discovery now resolves the attachment
+policy from the same default manual choice used by `ManualOrganizeIntentService`, using the exact
+pinned runtime. A path RecognitionRule that returns B no longer permits B's Trailer policy to hide
+a source when the unchanged manual intent defaults to A. Sources remain ordinary reviewed items
+when the later manual choice cannot be proven. The operator's default A choice remains unchanged,
+and B remains available for explicit review. The regression uses actual managed publication and
+loading, authenticated API, temporary Local/SQLite, Worker pickup, Finalize and a successful exact
+Preview; both source paths are represented and discovery/Preview cause no Storage mutations.
+
+The executable checkpoint contains only `mediaflow/application/media_discovery.py`,
+`mediaflow/application/manual_organize.py`, and `tests/test_media_discovery.py`. It also records
+B's FIX REQUIRED review in this Task file. The original request-ID, policy, attachment, pagination,
+primary-bound and handoff protections remain covered. The exact B production probes pass 8/8, and
+the metadata-ready successful Preview handoff probe passes with both sources represented under
+the unchanged default choice.
+
+Final T4 evidence is indexed at
+`.git/validation-evidence/e307cbbfa817f6a67bcabadf77648c544e905569/task44-9/t4-fix-loop-5-20261012/evidence-index.md`.
+The full Python suite passed 2,429 tests with 7 environment-dependent skips. Full Web unit tests
+passed 1,102 tests across 74 files; Playwright passed 246, Python Operations inventory passed 21,
+and direct Files passed 10. A separate real-time stability probe consumed the published 2-second
+policy through the actual Worker and measured 2.36 seconds between observations before admission.
+Native Python and Docker browser proofs passed, including exact Preview and separately confirmed
+execution. Docker release-security, Docker upgrade/recovery, wheel smoke, configuration validation,
+Ruff, compileall, dependency checks, Web format/lint/typecheck/build and governance all passed.
+
+The wheel SHA-256 is `99ff328cad87169116ca222ae8d22d720ac014f9fd80fc80195f293e866d321e`; the existing
+wheel under `dist/task44-9` was preserved by writing this candidate to the evidence directory. The
+Vite build retains its >500 kB chunk-size warning. The seven Python skips require dedicated real
+OpenList/SMB/S3 acceptance environments or isolated Local/SMB/OpenList/S3 endurance profiles; those
+were unavailable. Python ResourceWarnings, jsdom `scrollTo` notices and the Vite warning are
+recorded as non-blocking.
+
+Artifact preservation note: the native browser proof script clears stale PNGs in its fixed
+`.git/validation-evidence/_discovery-proof/browser` output directory before writing. This run's
+images and JSON were copied to the candidate evidence directory and visually inspected. The four
+pre-existing untracked `docs/pics/*.png` files remain untouched, and `config/alist.json` was neither
+modified nor committed. No production media/service, remote push, Slice/Roadmap edit, Task PASS or
+Slice closure is claimed.
+
+```text
+Next Action: B INDEPENDENT TASK REVIEW
+```
 
 
 ## B Review Result — 74126160d7f8
