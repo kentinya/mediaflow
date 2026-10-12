@@ -82,9 +82,14 @@ test("the Operations landing links the Automation workspace with Active identity
   await expect(page.getByText(new RegExp(ACTIVE_REVISION))).toBeVisible();
   await expect(page.getByText(/Nightly automation/)).toBeVisible();
   await expect(page.getByText(/every 3600 seconds/)).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Create Automation definition" }),
-  ).toBeVisible();
+  const create = page.getByRole("link", {
+    name: "Create Automation definition",
+  });
+  await expect(create).toBeVisible();
+  await expect(create).toHaveAttribute(
+    "href",
+    /\/ui-v2\/operations\/automation\/lifecycle$/,
+  );
   // The definition card links the exact durable detail route.
   await page
     .getByRole("link", { name: /Nightly automation/ })
@@ -254,15 +259,10 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
   );
 });
 
-test("a created definition stays reachable as a draft-only detail until activation", async ({
+test("the legacy create deep link keeps a new definition recoverable until activation", async ({
   page,
 }) => {
-  await connect(page);
-  await openAutomation(page);
-  await page
-    .getByRole("link", { name: "Create Automation definition" })
-    .click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/new$/);
+  await connectOn(page, "/ui-v2/operations/automation/new");
   // No Draft exists yet in this fresh session: start one explicitly.
   await page.getByRole("button", { name: "Start successor Draft" }).click();
   await page.getByLabel("Name").fill("Created automation");

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -56,7 +56,16 @@ MAX_DEFINITION_TIMEZONE_LENGTH = AutomationTaskDefinition.MAX_TIMEZONE_LENGTH
 MAX_DEFINITION_ITEM_LIMIT = AutomationTaskDefinition.MAX_ITEM_LIMIT
 MAX_DEFINITION_INTERVAL_SECONDS = AutomationTaskDefinition.MAX_INTERVAL_SECONDS
 UPCOMING_RUN_LIMIT = 5
-HISTORICAL_REVISION_SCAN_LIMIT = 200
+
+#: Rows read per page when walking the durable activation ledger for one
+#: definition's retained published history. Like ``COMMAND_TRAIL_PAGE_SIZE``
+#: this is a *page* size, not a window on the answer: the walk continues from
+#: the ledger's own monotonic ``sequence`` cursor until a short page proves it
+#: reached the end, so a publication is still located after any number of later
+#: ordinary publications. It is deliberately no larger than the smallest reader
+#: bound the repository offers, so a full page is always detectable as a
+#: possibly-truncated read rather than silently mistaken for the end.
+ACTIVATION_TRAIL_PAGE_SIZE = 200
 
 #: Rows read per page when walking a definition's durable command trail. This
 #: is a *page* size, not a window on the answer: the walk continues with a real
@@ -153,10 +162,71 @@ class _PublicationProof:
         return self.revision_id is not None
 
 
+@dataclass(frozen=True)
+class _PublishedHistory:
+    """One removed definition's resolved published revision, or why it is unknown.
+
+    ``revision`` is the exact published revision whose document still contains
+    the definition, or ``None`` when the durable activation ledger was read
+    completely and provably never published it. ``available`` is ``False`` when
+    the evidence could not be read completely; the caller must then report
+    bounded unavailability instead of presenting absence as a proven
+    non-publication.
+    """
+
+    revision: object | None
+    available: bool
+
+
+@dataclass(frozen=True)
+class _StoredDefinition:
+    """One definition's stored value together with its truthful lifecycle state.
+
+    ``state`` is ``"active"``, ``"historical"``, ``"draft-only"`` or
+    ``"absent"``, derived from the same single evidence read that produced
+    ``item`` so no second lookup can label it differently.
+    """
+
+    item: dict[str, object] | None
+    state: str
+
+
+class _ActivationLedgerUnavailable(RuntimeError):
+    """The activation ledger could not be read completely and in order."""
+
+
 def _bounded(value: object, maximum: int) -> str | None:
     if not isinstance(value, str):
         return None
     return value[:maximum]
+
+
+def _occurrence_pin(occurrence: object) -> dict[str, object]:
+    """The exact published-revision pin a durable occurrence recorded.
+
+    An occurrence row pins the configuration revision its run consumed by
+    identity, version and digest, plus the definition fingerprint. Those four
+    values are the durable proof of the exact published run context, and they
+    are read here in one place so every historical reader pins identically.
+    """
+
+    row = getattr(occurrence, "document", lambda: None)() if occurrence else None
+    if not isinstance(row, dict):
+        return {}
+    pin: dict[str, object] = {}
+    revision_id = row.get("configurationRevisionId")
+    if isinstance(revision_id, str) and revision_id:
+        pin["pinned_revision_id"] = revision_id
+    version = row.get("configurationRevisionVersion")
+    if version is not None:
+        pin["pinned_revision_version"] = version
+    digest = row.get("configurationRevisionDigest")
+    if isinstance(digest, str) and digest:
+        pin["pinned_revision_digest"] = digest
+    fingerprint = row.get("definitionFingerprint")
+    if isinstance(fingerprint, str) and fingerprint:
+        pin["pinned_fingerprint"] = fingerprint
+    return pin
 
 
 class AutomationWorkspaceCommandService:
@@ -690,83 +760,252 @@ class AutomationWorkspaceCommandService:
         thing that was never published, so its name/scope/mode must not be
         substituted for what the removed run actually used.
 
-        With an ``occurrence`` (the durable emitted row), the newest
-        non-Active revision whose digest and revision identity match the
-        occurrence's pinned configuration is returned — the publication that
-        actually emitted the run. Without one, the newest non-Active revision
-        that still contains the definition and is backed by published
-        activation evidence is used; a definition without published evidence
-        has no retained history here.
+        With an ``occurrence`` (the durable emitted row), the exact non-Active
+        revision the occurrence pins is read by identity — no revision window
+        is involved, so the publication that actually emitted the run resolves
+        after any number of later ordinary publications. Without a usable pin,
+        the durable activation ledger is walked newest-first with its own
+        monotonic sequence cursor until a short page proves the walk ended, and
+        the newest activated revision that still contains the definition is
+        used. A definition with no activation evidence at all has no retained
+        history here.
+
+        An incomplete read — a failing repository read, a possibly truncated
+        page, or an activation naming a revision that is no longer readable —
+        is never presented as "this definition has no history". It raises
+        :class:`RuntimeSnapshotUnavailable`, so the caller answers with the
+        actionable configuration-unavailable state instead of a false 404 that
+        would also let an unpublished Draft candidate be substituted.
         """
 
-        occurrence_row = getattr(occurrence, "document", lambda: None)() if occurrence else None
-        if not isinstance(occurrence_row, dict):
-            occurrence_row = None
-        pinned_revision_id = (
-            str(occurrence_row.get("configurationRevisionId")) if occurrence_row else None
-        )
-        pinned_revision_version = (
-            occurrence_row.get("configurationRevisionVersion") if occurrence_row else None
-        )
-        pinned_revision_digest = (
-            str(occurrence_row.get("configurationRevisionDigest")) if occurrence_row else None
-        )
-        pinned_fingerprint = (
-            str(occurrence_row.get("definitionFingerprint")) if occurrence_row else None
-        )
-        try:
-            revisions = self._repository.list_revisions(limit=HISTORICAL_REVISION_SCAN_LIMIT)
-        except Exception:
+        history = self._published_definition_revision(definition_id, **_occurrence_pin(occurrence))
+        if not history.available:
+            raise RuntimeSnapshotUnavailable(
+                f"the retained published history of Automation Task Definition "
+                f"{definition_id!r} could not be read from durable evidence",
+                reason="historical_evidence_unavailable",
+            )
+        revision = history.revision
+        if revision is None:
             return None
-        published_revision_ids = self._published_revision_ids()
-        exact = None
-        best = None
-        for revision in revisions:
-            if revision.status is ManagedConfigurationStatus.ACTIVE:
-                continue
-            # An open Draft/Validated revision that was never published must
-            # never be presented as a removed definition's history: its
-            # candidate was never Active and the removed run's occurrence
-            # cannot name it.  Only revisions with durable activation
-            # evidence are historical run context; a definition without any
-            # such evidence has no retained history here.
-            if str(revision.revision_id) not in published_revision_ids:
-                continue
+        item = self._definition_item(revision, definition_id)
+        if item is None:
+            return None
+        return {
+            "definition": copy.deepcopy(item),
+            "revision": self._safe_active(revision),
+            "revisionStatus": revision.status.value,
+        }
+
+    def _published_definition_revision(
+        self,
+        definition_id: str,
+        *,
+        pinned_revision_id: str | None = None,
+        pinned_revision_version: object = None,
+        pinned_revision_digest: str | None = None,
+        pinned_fingerprint: str | None = None,
+    ) -> _PublishedHistory:
+        """The newest published revision containing the definition, exactly read.
+
+        The pinned occurrence's revision is read by its own identity, which is
+        the strongest durable proof and involves no window at all: the retained
+        occurrence row exists only because that exact published revision ran.
+        A missing or contradictory pinned revision is unavailable; it must not
+        fall back to a different published revision. Only when no revision ID
+        pin exists is the activation ledger walked with a real ``sequence``
+        cursor, so a publication is still located after any number of later
+        ordinary publications. ``available`` is ``False`` whenever the read
+        could not be completed: absence from an incomplete read is not evidence
+        that nothing was ever published.
+        """
+
+        if pinned_revision_id is not None:
             try:
-                values = self._objects._automation_definition_objects(revision.document)
-            except (ValueError, KeyError):
-                continue
-            item = next((entry for entry in values if str(entry.get("id")) == definition_id), None)
+                revision = self._repository.get_revision(pinned_revision_id)
+            except Exception:
+                return _PublishedHistory(None, False)
+            if revision is None or not self._pin_matches(
+                revision, pinned_revision_version, pinned_revision_digest
+            ):
+                # A missing revision or contradictory pin is unavailable. Do
+                # not resolve a different publication by fingerprint or recency.
+                return _PublishedHistory(None, False)
+            if revision.status is not ManagedConfigurationStatus.SUPERSEDED:
+                # A removed definition's run context must be a published
+                # historical revision, never an Active or unpublished Draft.
+                return _PublishedHistory(None, False)
+            item = self._definition_item(revision, definition_id)
             if item is None:
-                continue
-            candidate = {
-                "definition": copy.deepcopy(item),
-                "revision": self._safe_active(revision),
-                "revisionStatus": revision.status.value,
-            }
-            if pinned_revision_id is not None and str(revision.revision_id) == pinned_revision_id:
-                exact = candidate
-                break
-            if (
-                pinned_revision_digest is not None
-                and str(revision.digest) == pinned_revision_digest
-                and pinned_revision_version is not None
-                and str(revision.version) == str(pinned_revision_version)
+                return _PublishedHistory(None, False)
+            if pinned_fingerprint is not None and self._definition_fingerprint(item) != (
+                pinned_fingerprint
             ):
-                exact = candidate
-                break
+                return _PublishedHistory(None, False)
+            return _PublishedHistory(revision, True)
+        revision_pin_present = (
+            pinned_revision_digest is not None or pinned_revision_version is not None
+        )
+        fingerprint_pin_present = pinned_fingerprint is not None
+        any_pin_present = revision_pin_present or fingerprint_pin_present
+        try:
+            for revision_id, audit in self._activation_ledger():
+                named = self._activation_names_definition(audit, definition_id)
+                if named is False:
+                    # The activation's own complete evidence proves this
+                    # revision did not carry the definition, so its document
+                    # need not be read at all.
+                    continue
+                try:
+                    revision = self._repository.get_revision(revision_id)
+                except Exception:
+                    return _PublishedHistory(None, False)
+                if revision is None:
+                    # An activation names a revision durable authority no
+                    # longer holds. Absence from the unreadable revision is
+                    # unavailable, never a proven non-publication.
+                    return _PublishedHistory(None, False)
+                if revision.status is ManagedConfigurationStatus.ACTIVE:
+                    continue
+                if revision.status is not ManagedConfigurationStatus.SUPERSEDED:
+                    return _PublishedHistory(None, False)
+                item = self._definition_item(revision, definition_id)
+                matches_revision_pin = revision_pin_present and self._pin_matches(
+                    revision, pinned_revision_version, pinned_revision_digest
+                )
+                if matches_revision_pin:
+                    if item is None:
+                        return _PublishedHistory(None, False)
+                    if fingerprint_pin_present and self._definition_fingerprint(item) != (
+                        pinned_fingerprint
+                    ):
+                        return _PublishedHistory(None, False)
+                    return _PublishedHistory(revision, True)
+                if item is None:
+                    continue
+                if fingerprint_pin_present:
+                    if self._definition_fingerprint(item) == pinned_fingerprint:
+                        return _PublishedHistory(revision, True)
+                    continue
+                if not any_pin_present:
+                    # Pages are newest-first. The first matching activated
+                    # revision is therefore the desired historical context.
+                    return _PublishedHistory(revision, True)
+        except _ActivationLedgerUnavailable:
+            return _PublishedHistory(None, False)
+        return _PublishedHistory(None, not any_pin_present)
+
+    @staticmethod
+    def _pin_matches(
+        revision, pinned_revision_version: object, pinned_revision_digest: str | None
+    ) -> bool:
+        """Whether a revision is consistent with an occurrence's recorded pin.
+
+        A pin that records no digest/version cannot contradict anything. A pin
+        that records them must match exactly: a mismatch means the durable
+        evidence disagrees with itself, so the read is unavailable rather than
+        silently resolving a different revision's identity.
+        """
+
+        if pinned_revision_digest is not None and str(revision.digest) != pinned_revision_digest:
+            return False
+        if pinned_revision_version is not None and str(revision.version) != str(
+            pinned_revision_version
+        ):
+            return False
+        return True
+
+    def _activation_ledger(self) -> Iterator[tuple[str, object]]:
+        """Yield durable activations newest-first through bounded cursor pages.
+
+        Paging uses the ledger's own strictly monotonic ``sequence`` as a real
+        cursor, so the walk is not a window: it reaches activations older than
+        any number of later ordinary publications. Each page is validated
+        before it is yielded; a short page proves the end, while a missing,
+        repeated, unordered or out-of-range cursor makes the evidence
+        unavailable rather than silently hiding an activation. Only one page
+        is held at a time.
+        """
+
+        repository = self._managed.repository
+        targeted = getattr(repository, "list_command_audits_before", None)
+        latest = getattr(repository, "latest_command_audit_sequence", None)
+        if not callable(targeted) or not callable(latest):
+            raise _ActivationLedgerUnavailable("activation ledger cursor readers are unavailable")
+        page_size = ACTIVATION_TRAIL_PAGE_SIZE
+        try:
+            latest_sequence = latest()
             if (
-                pinned_fingerprint is not None
-                and self._definition_fingerprint(item) == pinned_fingerprint
+                isinstance(latest_sequence, bool)
+                or not isinstance(latest_sequence, int)
+                or latest_sequence < 0
             ):
-                # The published revision whose definition content matches the
-                # occurrence's recorded fingerprint is the exact run context.
-                exact = exact or candidate
-            if best is None:
-                best = candidate
-        if exact is not None:
-            return exact
-        return best
+                raise _ActivationLedgerUnavailable("activation ledger high-water mark is invalid")
+            marker = latest_sequence + 1
+            while True:
+                page = targeted(("activate",), before_sequence=marker, limit=page_size)
+                if not page:
+                    return
+                sequences = []
+                for audit in page:
+                    sequence = getattr(audit, "sequence", None)
+                    if (
+                        isinstance(sequence, bool)
+                        or not isinstance(sequence, int)
+                        or sequence <= 0
+                        or sequence >= marker
+                    ):
+                        raise _ActivationLedgerUnavailable("activation audit cursor is invalid")
+                    sequences.append(sequence)
+                if any(newer <= older for newer, older in zip(sequences, sequences[1:])):
+                    raise _ActivationLedgerUnavailable("activation audit cursors are unordered")
+                for audit in page:
+                    revision_id = audit.after.get("revisionId")
+                    if not isinstance(revision_id, str) or not revision_id:
+                        revision_id = str(audit.object_id)
+                    yield revision_id, audit
+                if len(page) < page_size:
+                    return
+                marker = sequences[-1]
+        except _ActivationLedgerUnavailable:
+            raise
+        except Exception as error:
+            raise _ActivationLedgerUnavailable from error
+
+    @staticmethod
+    def _activation_names_definition(audit: object, definition_id: str) -> bool | None:
+        """Whether one activation's own bounded evidence names the definition.
+
+        ``True`` means the activation positively carried it. ``False`` means the
+        activation's evidence is positively complete — explicitly not truncated
+        and covering exactly the recorded total — so absence proves this
+        revision did not carry it. ``None`` means completeness cannot be proven,
+        so absence proves nothing and the revision document must be read.
+        """
+
+        definitions = audit.after.get("automationTaskDefinitions")
+        if not isinstance(definitions, dict):
+            return None
+        items = definitions.get("items")
+        if not isinstance(items, list):
+            return None
+        if any(isinstance(item, dict) and str(item.get("id")) == definition_id for item in items):
+            return True
+        total = definitions.get("total")
+        if definitions.get("truncated") is not False:
+            return None
+        if not isinstance(total, int) or isinstance(total, bool) or total != len(items):
+            return None
+        return False
+
+    def _definition_item(self, revision, definition_id: str) -> dict[str, object] | None:
+        """One revision's raw definition, or ``None`` when it does not carry it."""
+
+        try:
+            values = self._objects._automation_definition_objects(revision.document)
+        except (ValueError, KeyError):
+            return None
+        return next((entry for entry in values if str(entry.get("id")) == definition_id), None)
 
     @staticmethod
     def _definition_fingerprint(item: dict[str, object]) -> str | None:
@@ -776,29 +1015,6 @@ class AutomationWorkspaceCommandService:
             return AutomationTaskDefinition.from_document(item).definition_fingerprint
         except (TypeError, ValueError, KeyError):
             return None
-
-    def _published_revision_ids(self) -> set[str]:
-        """Revision identities with durable activation evidence.
-
-        The activation audit is the publication proof: an ``activate`` audit row
-        names exactly the revision that was once Active. Draft/Validated
-        revisions without activation evidence are never historical run context.
-        """
-
-        repository = self._managed.repository
-        reader = getattr(repository, "list_recent_command_audits", None)
-        if not callable(reader):
-            return set()
-        try:
-            audits = reader(("activate",), limit=500)
-        except Exception:
-            return set()
-        published: set[str] = set()
-        for audit in audits:
-            revision_id = audit.after.get("revisionId")
-            if isinstance(revision_id, str) and revision_id:
-                published.add(revision_id)
-        return published
 
     # ------------------------------------------------------------------
     # Commands (one explicit intent publishes one exact Active successor)
@@ -1823,24 +2039,48 @@ class AutomationWorkspaceCommandService:
     def _stored_definition(
         self, active: ManagedConfigurationRevision, definition_id: str
     ) -> dict[str, object] | None:
+        return self._stored_definition_state(active, definition_id).item
+
+    def _stored_definition_state(
+        self, active: ManagedConfigurationRevision, definition_id: str
+    ) -> _StoredDefinition:
+        """One definition's stored value plus its truthful lifecycle state.
+
+        Active is read first. A definition that was once published and is no
+        longer Active is a removed definition: its retained history is the
+        *published* configuration its runs used — an open successor Draft's
+        candidate was never published and must never be substituted for it. A
+        definition that exists only inside an open Draft (a fresh create/copy
+        candidate) has no published evidence and resolves draft-only for
+        explicit correction.
+
+        An incomplete evidence read raises :class:`RuntimeSnapshotUnavailable`
+        rather than reporting "no history": absence from a partial read must
+        never masquerade as a removed definition, and must never release an
+        unpublished Draft candidate in its place.
+        """
+
         for item in self._objects._automation_definition_objects(active.document):
             if str(item.get("id")) == definition_id:
-                return item
-        # A definition that was once published and is no longer Active is a
-        # removed definition: its retained history is the *published*
-        # configuration its runs used — an open successor Draft's candidate
-        # was never published and must never be substituted for it.  A
-        # definition that exists only inside an open Draft (a fresh
-        # create/copy candidate) has no published evidence and resolves
-        # draft-only for explicit correction.
-        if self._definition_was_published(definition_id):
-            historical = self.historical_definition(
-                definition_id,
-                occurrence=self._latest_occurrence(definition_id),
+                return _StoredDefinition(item, "active")
+        historical = self._published_definition_revision(
+            definition_id, **_occurrence_pin(self._latest_occurrence(definition_id))
+        )
+        if not historical.available:
+            raise RuntimeSnapshotUnavailable(
+                f"the durable publication evidence for Automation Task Definition "
+                f"{definition_id!r} could not be read completely",
+                reason="historical_evidence_unavailable",
             )
-            if historical is not None:
-                return historical.get("definition")
-        return self._open_draft_definition(definition_id)
+        revision = historical.revision
+        if revision is not None:
+            item = self._definition_item(revision, definition_id)
+            if item is not None:
+                return _StoredDefinition(item, "historical")
+        draft = self._open_draft_definition(definition_id)
+        if draft is not None:
+            return _StoredDefinition(draft, "draft-only")
+        return _StoredDefinition(None, "absent")
 
     def _latest_occurrence(self, definition_id: str):
         """The definition's newest durable occurrence, when a store is bound.
@@ -1881,8 +2121,8 @@ class AutomationWorkspaceCommandService:
     def _resolve_source(
         self, active: ManagedConfigurationRevision, definition_id: str, action: str
     ) -> tuple[dict[str, object], str]:
-        stored = self._stored_definition(active, definition_id)
-        if stored is None:
+        state = self._stored_definition_state(active, definition_id)
+        if state.item is None:
             raise AutomationDefinitionSaveError(
                 "automation_definition_not_found",
                 f"Automation Task Definition {definition_id!r} is not present in the current "
@@ -1896,13 +2136,10 @@ class AutomationWorkspaceCommandService:
                     "refresh the Active Automation inventory and choose an existing definition"
                 ),
             )
-        if definition_id in self._active_ids(active):
-            return stored, "active"
-        if self._definition_was_published(definition_id):
-            # A removed definition resolves from its durable published
-            # history: labelled historical, never Active/Draft authority.
-            return stored, "historical"
-        return stored, "draft-only"
+        # The state is derived from the same single evidence read, so a
+        # historical resolution can never be reported as draft-only (or the
+        # reverse) by a second, differently-windowed lookup.
+        return state.item, state.state
 
     def definition_was_published(self, definition_id: str) -> bool:
         """Whether durable activation evidence ever published this definition.
@@ -1912,33 +2149,31 @@ class AutomationWorkspaceCommandService:
         removed definition whose retained history resolves from published
         evidence, while a definition that exists only inside an open Draft is
         still a draft-only candidate for explicit correction.
+
+        The answer comes from the same complete-evidence resolution the
+        historical read uses, so it is not limited by any recent-publication
+        window. When that evidence cannot be read completely the read raises
+        :class:`RuntimeSnapshotUnavailable`: an incomplete read must never be
+        reported as "never published", because that would substitute an
+        unpublished Draft candidate for a removed definition's real history.
         """
 
-        return self._definition_was_published(definition_id)
+        history = self._published_definition_revision(
+            definition_id,
+            **_occurrence_pin(self._latest_occurrence(definition_id)),
+        )
+        if not history.available:
+            raise RuntimeSnapshotUnavailable(
+                f"the durable publication evidence for Automation Task Definition "
+                f"{definition_id!r} could not be read completely",
+                reason="historical_evidence_unavailable",
+            )
+        return history.revision is not None
 
     def _definition_was_published(self, definition_id: str) -> bool:
         """Whether durable activation evidence ever published this definition."""
 
-        repository = self._managed.repository
-        reader = getattr(repository, "list_recent_command_audits", None)
-        if not callable(reader):
-            return False
-        try:
-            audits = reader(("activate",), limit=200)
-        except Exception:
-            return False
-        for audit in audits:
-            definitions = audit.after.get("automationTaskDefinitions")
-            if not isinstance(definitions, dict):
-                continue
-            items = definitions.get("items")
-            if not isinstance(items, list):
-                continue
-            if any(
-                isinstance(item, dict) and str(item.get("id")) == definition_id for item in items
-            ):
-                return True
-        return False
+        return self.definition_was_published(definition_id)
 
     @staticmethod
     def _form_projection(stored: Mapping[str, object]) -> dict[str, object]:

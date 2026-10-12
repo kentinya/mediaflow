@@ -14,6 +14,7 @@ runtime and prove the focused publication surface:
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -361,6 +362,290 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             "POST", "/api/v1/automation/task-definitions/nightly/grant", {}
         )
         self.assertEqual(status, 404)
+
+    def test_retained_history_survives_publications_beyond_every_former_window(
+        self,
+    ) -> None:
+        """P1 regression: retained history is not a bounded recent window.
+
+        The exact production shape B reproduced: a published, enabled and
+        emitted definition is removed; hundreds of ordinary authenticated
+        focused publications of another definition then succeed; every
+        retained-history route must still resolve the removed definition from
+        its durable publication evidence with ``definitionState: historical``
+        and ``historicalState: removed`` — never 404, never a substituted
+        identity, and never an unpublished Draft candidate.
+
+        The same assertion is then repeated after a runtime/API reopen, because
+        the evidence is durable and must not depend on process state.
+        """
+
+        routes = (
+            "/api/v1/operations/automation/task-definitions/nightly",
+            "/api/v1/operations/automation/task-definitions/nightly/occurrences",
+            "/api/v1/automation/task-definitions/nightly",
+            "/api/v1/automation/task-definitions/nightly/grant",
+        )
+
+        def assert_historical() -> None:
+            status, detail = self.request("GET", routes[0])
+            self.assertEqual(status, 200, detail)
+            self.assertEqual(detail["definition"]["definitionState"], "historical")
+            self.assertEqual(detail["definition"]["historicalState"], "removed")
+            self.assertEqual(detail["definition"]["name"], "Retained historical name")
+            self.assertEqual(detail["definition"]["id"], "nightly")
+            self.assertEqual(detail["definition"]["mode"], "scan-and-plan")
+            self.assertEqual(detail["definition"]["sourceScope"], "incoming/series")
+            self.assertEqual(detail["definition"]["itemLimit"], 23)
+            status, occurrences = self.request("GET", routes[1])
+            self.assertEqual(status, 200, occurrences)
+            self.assertEqual(occurrences["historicalState"], "removed")
+            status, legacy = self.request("GET", routes[2])
+            self.assertEqual(status, 200, legacy)
+            self.assertEqual(legacy["definition"]["definitionState"], "historical")
+            self.assertEqual(legacy["definition"]["historicalState"], "removed")
+            status, grant_state = self.request("GET", routes[3])
+            self.assertEqual(status, 200, grant_state)
+            self.assertEqual(grant_state["historicalState"], "removed")
+
+        status, _created = self.request(
+            "POST",
+            BASE,
+            {
+                **self.authority(),
+                "object": _definition(
+                    name="Retained historical name",
+                    mode="scan-and-plan",
+                    sourceScope="incoming/series",
+                    itemLimit=23,
+                ),
+            },
+        )
+        self.assertEqual(status, 200)
+        status, _enabled = self.request("POST", f"{BASE}/nightly/enable", self.authority())
+        self.assertEqual(status, 200)
+        status, _other = self.request(
+            "POST", BASE, {**self.authority(), "object": _definition("publisher")}
+        )
+        self.assertEqual(status, 200)
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        assert_historical()
+
+        # 505 ordinary authenticated focused publications, far beyond the
+        # former 200-revision, 500-activation and 200-ever-published windows.
+        for index in range(505):
+            status, _body = self.request(
+                "PUT",
+                f"{BASE}/publisher",
+                {
+                    **self.authority(),
+                    "object": {"id": "publisher", "name": f"Ordinary publication {index}"},
+                },
+            )
+            self.assertEqual(status, 200)
+        assert_historical()
+
+        # A runtime/API reopen must not change the durable answer.
+        reopened = MediaFlowApi(
+            self.runtime,
+            None,
+            principals=(
+                ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=self.managed,
+            bootstrap_document=self.document,
+        )
+        original = self.api
+        self.api = reopened
+        try:
+            assert_historical()
+        finally:
+            self.api = original
+
+    def test_retained_history_is_unavailable_not_absent_when_evidence_cannot_be_read(
+        self,
+    ) -> None:
+        """P1 regression: an incomplete evidence read is 503, never a false 404.
+
+        When the durable activation ledger cannot be walked and no occurrence
+        pin exists, absence from the unreadable evidence must not be presented
+        as "this definition has no history": the route reports the actionable
+        configuration-unavailable state instead of a 404 that would let an
+        unpublished Draft candidate be substituted.
+        """
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition(name="Removed name")})
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+
+        repository = self.api._configuration_service.repository
+        real_before = repository.list_command_audits_before
+        real_latest = repository.latest_command_audit_sequence
+
+        def failing_before(*args, **kwargs):
+            raise RuntimeError("simulated truncating activation read failure")
+
+        def failing_latest():
+            raise RuntimeError("simulated truncating activation read failure")
+
+        repository.list_command_audits_before = failing_before
+        repository.latest_command_audit_sequence = failing_latest
+        try:
+            status, body = self.request(
+                "GET", "/api/v1/operations/automation/task-definitions/nightly"
+            )
+            self.assertEqual(status, 503, body)
+            self.assertNotIn("definition", body)
+            status, _legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+            self.assertEqual(status, 503)
+            # The V1 grant surface must fail closed identically rather than
+            # resolve a substituted identity from unreadable evidence.
+            status, _grant = self.request(
+                "GET", "/api/v1/automation/task-definitions/nightly/grant"
+            )
+            self.assertEqual(status, 503)
+        finally:
+            repository.list_command_audits_before = real_before
+            repository.latest_command_audit_sequence = real_latest
+
+        # The real readers resolve the same route truthfully.
+        status, detail = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+
+    def test_open_draft_is_not_substituted_when_publication_evidence_is_unreadable(
+        self,
+    ) -> None:
+        """P1 regression: an unreadable evidence read must not release the Draft.
+
+        This is the dangerous shape: the definition is removed, a compatible
+        open successor Draft still carries an unpublished candidate for the same
+        ID, and the publication evidence cannot be read. Reporting "never
+        published" would silently substitute the Draft candidate for the
+        removed definition's real published history, so the route must instead
+        report the actionable unavailable state.
+        """
+
+        self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition(name="Published historical name")},
+        )
+        active = self.managed.active()
+        assert active is not None
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        document["automationTaskDefinitions"][0]["name"] = "NEVER PUBLISHED draft name"
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+
+        repository = self.api._configuration_service.repository
+        real_before = repository.list_command_audits_before
+        real_latest = repository.latest_command_audit_sequence
+
+        def failing_before(*args, **kwargs):
+            raise RuntimeError("simulated truncating activation read failure")
+
+        def failing_latest():
+            raise RuntimeError("simulated truncating activation read failure")
+
+        repository.list_command_audits_before = failing_before
+        repository.latest_command_audit_sequence = failing_latest
+        try:
+            status, body = self.request(
+                "GET", "/api/v1/operations/automation/task-definitions/nightly"
+            )
+            self.assertEqual(status, 503, body)
+            # The Draft candidate was never substituted for the real history.
+            self.assertNotIn("NEVER PUBLISHED draft name", json.dumps(body))
+        finally:
+            repository.list_command_audits_before = real_before
+            repository.latest_command_audit_sequence = real_latest
+
+        # With the real readers the published history wins over the Draft.
+        status, detail = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+        self.assertEqual(detail["definition"]["name"], "Published historical name")
+        self.assertNotEqual(detail["definition"]["name"], "NEVER PUBLISHED draft name")
+
+    def test_retained_history_never_substitutes_an_open_draft_beyond_the_window(
+        self,
+    ) -> None:
+        """P1 regression: published history is never replaced by a Draft candidate.
+
+        A removed definition with a compatible open successor Draft whose
+        candidate carries a different name must keep resolving the *published*
+        configuration its runs used — and must keep doing so after hundreds of
+        ordinary publications push its evidence far outside every former
+        window. Substituting the unpublished Draft candidate would present
+        configuration that was never Active as the removed run's history.
+        """
+
+        self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition(name="Published historical name")},
+        )
+        # An open successor Draft with an unpublished name for the same ID.
+        active = self.managed.active()
+        assert active is not None
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        definitions = document["automationTaskDefinitions"]
+        definitions[0]["name"] = "NEVER PUBLISHED draft name"
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        self.request("POST", BASE, {**self.authority(), "object": _definition("publisher")})
+        for index in range(300):
+            status, _body = self.request(
+                "PUT",
+                f"{BASE}/publisher",
+                {
+                    **self.authority(),
+                    "object": {"id": "publisher", "name": f"Ordinary publication {index}"},
+                },
+            )
+            self.assertEqual(status, 200)
+
+        status, detail = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly"
+        )
+        self.assertEqual(status, 200, detail)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+        self.assertEqual(detail["definition"]["historicalState"], "removed")
+        self.assertEqual(detail["definition"]["name"], "Published historical name")
+        self.assertNotEqual(detail["definition"]["name"], "NEVER PUBLISHED draft name")
 
     def test_fractional_interval_round_trips(self) -> None:
         """P1-4 regression: the backend supports fractional interval seconds;

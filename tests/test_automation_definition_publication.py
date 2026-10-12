@@ -22,6 +22,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -36,6 +37,7 @@ from mediaflow.application.unattended_execution import UnattendedExecutionGrantS
 from mediaflow.domain.configuration_management import (
     AutomationDefinitionSaveError,
     ConfigurationVersionConflict,
+    RuntimeSnapshotUnavailable,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -118,6 +120,42 @@ def definition(definition_id: str, **overrides) -> dict:
     }
     value.update(overrides)
     return value
+
+
+def _occurrence(
+    definition_id: str,
+    *,
+    revision_id: str,
+    version: int,
+    digest: str,
+    fingerprint: str | None,
+    occurrence_id: str = "occurrence-nightly",
+):
+    """One durable occurrence row pinning an exact published revision."""
+
+    from mediaflow.domain.automation import AutomationDefinitionOccurrence, AutomationTaskRunMode
+
+    return AutomationDefinitionOccurrence(
+        occurrence_id,
+        definition_id,
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 1, tzinfo=UTC),
+        "job-nightly",
+        fingerprint,
+        1,
+        revision_id,
+        version,
+        digest,
+        AutomationTaskRunMode.SCAN_ONLY,
+        "source",
+        None,
+        10,
+        "emitted",
+        "scheduled",
+        "no operator action is required",
+        "task-nightly",
+        None,
+    )
 
 
 class AutomationPublicationTests(unittest.TestCase):
@@ -669,6 +707,218 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertNotEqual(historical["revisionStatus"], "active")
         # A definition that never existed has no historical evidence.
         self.assertIsNone(self.commands.historical_definition("never-existed"))
+
+    def test_historical_definition_survives_more_publications_than_every_window(
+        self,
+    ) -> None:
+        """P1 regression: retained history is not a bounded recent window.
+
+        The removed definition's publication proof is durable and exact, so
+        hundreds of later ordinary focused publications of another definition —
+        far beyond every former bounded revision/activation scan (200 revisions,
+        500 activation audits, 200 ever-published audits) — must not hide it.
+        Absence from a window is not absence from durable history.
+
+        No occurrence pin exists here, so this exercises the cursor-walked
+        activation ledger: the walk must page past the 500-audit mark rather
+        than stop at a bounded first page.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("publisher", name="Ordinary publisher"))
+        # 520 ordinary focused publications: past the former 200-revision and
+        # 200/500-activation windows that used to lose the removed definition.
+        for index in range(520):
+            self.save(
+                {"id": "publisher", "name": f"Ordinary publication {index}"},
+                object_id="publisher",
+            )
+        historical = self.commands.historical_definition("nightly")
+        self.assertIsNotNone(historical)
+        self.assertEqual(historical["definition"]["name"], "Published historical name")
+        self.assertEqual(historical["definition"]["id"], "nightly")
+        self.assertNotEqual(historical["revisionStatus"], "active")
+        # The published-versus-Draft distinction still holds at this distance.
+        self.assertIsNone(self.commands.historical_definition("never-existed"))
+
+    def test_historical_definition_uses_the_exact_occurrence_pin_beyond_the_window(
+        self,
+    ) -> None:
+        """P1 regression: an occurrence pin resolves its exact published revision.
+
+        The retained occurrence records the revision identity its run consumed.
+        Even when the activation ledger cannot be walked at all *and* the
+        pinned revision is far outside any bounded recent revision window, the
+        exact pin still resolves the historical name the run used.
+        """
+
+        self.save(
+            definition(
+                "nightly",
+                name="Published historical name",
+                mode="scan-and-plan",
+                sourceScope="incoming/season-01",
+                itemLimit=17,
+            )
+        )
+        active = self.managed.active()
+        assert active is not None
+        occurrence = _occurrence(
+            "nightly",
+            revision_id=active.revision_id,
+            version=active.version,
+            digest=active.digest,
+            fingerprint=self._definition_value("nightly").definition_fingerprint,
+        )
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("publisher"))
+        # Push the pinned revision far outside any bounded revision window.
+        for index in range(300):
+            self.save(
+                {"id": "publisher", "name": f"Ordinary publication {index}"},
+                object_id="publisher",
+            )
+        # Hide the ledger entirely: only the exact occurrence pin can resolve
+        # the history, proving it depends on no window and no ledger scan.
+        with (
+            patch.object(type(self.repository), "list_command_audits_before", None),
+            patch.object(type(self.repository), "latest_command_audit_sequence", None),
+        ):
+            historical = self.commands.historical_definition("nightly", occurrence=occurrence)
+        self.assertIsNotNone(historical)
+        self.assertEqual(historical["definition"]["name"], "Published historical name")
+        self.assertEqual(historical["definition"]["mode"], "scan-and-plan")
+        self.assertEqual(historical["definition"]["sourceScope"], "incoming/season-01")
+        self.assertEqual(historical["definition"]["itemLimit"], 17)
+        self.assertEqual(historical["revision"]["revisionId"], active.revision_id)
+        self.assertEqual(historical["revision"]["version"], active.version)
+
+    def test_historical_definition_does_not_fallback_from_a_contradictory_occurrence_pin(
+        self,
+    ) -> None:
+        """A corrupt exact pin is unavailable, never replaced by older history.
+
+        The occurrence claims the removal revision as the context for
+        ``nightly``, but that revision does not contain ``nightly``. The older
+        activation does contain it, yet using that older snapshot would silently
+        misrepresent which published configuration the occurrence consumed.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        published_definition = self._definition_value("nightly")
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        pinned_revision = self.managed.active()
+        assert pinned_revision is not None
+        # Supersede the pinned revision so the history resolver takes its
+        # retained-history path, while preserving its exact ID/version/digest.
+        self.save(definition("publisher"))
+        occurrence = _occurrence(
+            "nightly",
+            revision_id=pinned_revision.revision_id,
+            version=pinned_revision.version,
+            digest=pinned_revision.digest,
+            fingerprint=published_definition.definition_fingerprint,
+        )
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.historical_definition("nightly", occurrence=occurrence)
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_historical_definition_reports_unavailable_instead_of_absent_evidence(
+        self,
+    ) -> None:
+        """P1 regression: an incomplete read is unavailability, never a 404.
+
+        When the durable activation ledger cannot be walked, the historical read
+        must raise the bounded unavailable state rather than returning ``None``,
+        which the API would otherwise turn into a false 404 and a substituted
+        Draft candidate.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+
+        def failing_before(*args, **kwargs):
+            raise RuntimeError("simulated truncating activation read failure")
+
+        def failing_latest():
+            raise RuntimeError("simulated truncating activation read failure")
+
+        with (
+            patch.object(type(self.repository), "list_command_audits_before", failing_before),
+            patch.object(type(self.repository), "latest_command_audit_sequence", failing_latest),
+        ):
+            with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+                self.commands.historical_definition("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+        # The real readers resolve the same read truthfully.
+        self.assertIsNotNone(self.commands.historical_definition("nightly"))
+
+    def test_historical_definition_rejects_activation_rows_without_cursor_evidence(
+        self,
+    ) -> None:
+        """A short page with a missing sequence cannot prove the ledger ended."""
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        real_reader = self.repository.list_command_audits_before
+
+        def missing_sequence(_repository, actions, *, before_sequence, limit=50):
+            page = real_reader(
+                actions,
+                before_sequence=before_sequence,
+                limit=limit,
+            )
+            if not page:
+                return page
+            return (replace(page[0], sequence=None), *page[1:])
+
+        with patch.object(type(self.repository), "list_command_audits_before", missing_sequence):
+            with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+                self.commands.historical_definition("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_published_state_resolves_beyond_the_window_without_substituting_a_draft(
+        self,
+    ) -> None:
+        """P1 regression: the published-versus-Draft distinction is window-free.
+
+        A removed definition stays labelled historical and a Draft-only
+        candidate stays draft-only even after hundreds of later publications,
+        and an incomplete evidence read raises rather than releasing the Draft.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("publisher"))
+        for index in range(250):
+            self.save(
+                {"id": "publisher", "name": f"Ordinary publication {index}"},
+                object_id="publisher",
+            )
+        active = self.managed.active()
+        assert active is not None
+        self.assertTrue(self.commands.definition_was_published("nightly"))
+        self.assertFalse(self.commands.definition_was_published("publisher-draft-only"))
+        # A Draft-only candidate created through the real Draft authority is
+        # still reported unpublished at this distance.
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        document[AUTOMATION_DEFINITION_SECTION].append(definition("draft-only-candidate"))
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        self.assertFalse(self.commands.definition_was_published("draft-only-candidate"))
 
     def test_copy_intent_resolves_committed_copy_from_durable_evidence(self) -> None:
         """P1-5 regression: a Copy whose response was lost must reconcile.
