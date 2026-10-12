@@ -369,6 +369,9 @@ try {
   evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
     entry.url.includes('/files/discoveries'),
   );
+  evidence.discoveryFinalizations = evidence.mutatingRequests.filter((entry) =>
+    /\/discoveries\/[^/]+\/finalize$/.test(entry.url),
+  );
   evidence.executionRequests = evidence.mutatingRequests.filter(
     (entry) => entry.url.includes('/previews') || entry.url.includes('/execute'),
   );
@@ -391,8 +394,14 @@ try {
       JSON.stringify(evidence.executionRequests),
   );
   require_(
+    evidence.discoveryFinalizations.length === 1 &&
+      evidence.discoveryFinalizations[0].url.includes(`/discoveries/${mixedDiscoveryId}/finalize`),
+    'the mixed discovery did not issue exactly one Freeze: ' +
+      JSON.stringify(evidence.discoveryFinalizations),
+  );
+  require_(
     evidence.discoveryAdmissions.length + evidence.reviewedChoices.length +
-      evidence.executionRequests.length ===
+      evidence.discoveryFinalizations.length + evidence.executionRequests.length ===
       evidence.mutatingRequests.length,
     `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
