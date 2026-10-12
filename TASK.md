@@ -486,6 +486,7 @@ Next: SAME TASK FIX LOOP
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
 
+
 ## Developer Completion Report — 2026-10-12 (fix loop 4)
 
 ```text
@@ -761,3 +762,135 @@ insufficient when the next stage independently chooses policy; verify the actual
 successful final plan's source coverage. Merge this with the previous policy-applicability candidate.
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+## B Review Result — e307cbbfa817 / report 3fd8f93f6df4
+
+Independent review on 2026-10-12. Reviewed Task Base
+`ab94ce53189b5a9f16e7614cd011480a42d91e79` through executable checkpoint
+`e307cbbfa817f6a67bcabadf77648c544e905569`; submission HEAD
+`3fd8f93f6df4aa4b03960abe2ead1ddfd0bf2e75` changes only `TASK.md` after that checkpoint.
+The committed amended Slice remains authority; governance passes. The latest correction reuses
+the real manual default-choice behavior and changes only the two application files, regression
+tests and Task record reported above. Prior review history and all pre-existing user/private files
+are preserved. Mandatory guidance read earlier is unchanged; current Slice/Task, workflow, B
+experience and actual implementation/tests were rechecked.
+
+**Previous attachment blocker: corrected.** B independently reran all eight production-path probes
+and the successful exact Preview handoff. Both the main video and Trailer remain represented under
+the unchanged default A choice, with zero discovery/Preview Storage mutations. Request-ID binding,
+disabled/mixed policies, orphan and reciprocal same-stem ownership also pass these probes.
+
+B's current independent evidence:
+`.git/validation-evidence/3fd8f93f6df4aa4b03960abe2ead1ddfd0bf2e75/b-review44-9/evidence-index.md`.
+Full Python: 2,429 tests / 7 external-environment skips / OK, 438.757 s. Full Web: 1,102 tests /
+74 files / PASS. Governance, Ruff format/check, compileall, dependency/config validation, Web
+format/lint/typecheck/build and exact candidate-wheel smoke pass. Actual published nonzero
+stability passes with separated real-time observations. An independent old-schema-45 rehearsal
+seeds history using the real Task-Base executable, then migrates/reopens current code twice:
+duplicate discovery history, frozen intent, historical file-only intent/Preview/Result, original
+pins and source/target bytes are preserved. Initial migration-harness projection-key mistakes and
+their corrected repeat are retained. B verified all 75 Developer artifact hashes against the
+reported candidate, with no mismatches. Developer's current Playwright, Operations/direct-Files,
+standard Python/Docker browser and Docker release/upgrade evidence is readable and matched;
+those gates were not independently repeated here. This rejecting review does not claim a completed
+Slice-final gate. Native additional partial/recovery scenarios were not reached after the blocker
+below. The seven external service/endurance skips, Vite chunk warning and existing ResourceWarnings/
+jsdom notices remain disclosed; they are not this review's blocker.
+
+```text
+Decision: FIX REQUIRED
+P0/P1 blockers: 1
+Slice Required Outcomes all satisfied: NO — RO-6 remains incomplete
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — Legal long paths disappear at the native manual-intent handoff (Task AC4/AC7;
+  RO-6 exact sources and required Web/API surfaces, Slice acceptance 27/29).** Through real
+  managed publication, authenticated API, Local Storage, Worker and built Chromium UI, select a
+  folder containing two files with the same legal 179-character basename, one at a legal
+  1222-character relative path. Native discovery completes with both exact paths; native Freeze
+  creates an intent whose persisted sources also retain both exact paths. The intent GET, however,
+  publishes the long item's `source.path` as `[redacted-path]`, and the actual intent page shows
+  that marker instead of its directory. The operator cannot verify that item's exact location
+  before Preview. No secret, absolute root, endpoint, manual type change or execution is involved.
+  **Cause/evidence:** `operations_lifecycle.py:1302` sends the source identity through
+  `manual_safety.py:126`, whose existing 512-character public identity bound rejects this supported
+  relative path. Discovery/manual-domain support was widened without aligning this downstream
+  projection. The supplied long-path regression stops at discovery list/detail; it never freezes
+  the long source or reads its native intent. `native-long-stage.json`,
+  `native-long-durable-receipt.json`, `native-long-intent-body.txt` and inspected
+  `native-long-intent.png` prove the exact discovery/durable source versus public/native marker.
+  All three diagnostic runs preserve the failure. Content hashes are unchanged, executable
+  tasks/jobs are zero, and target media are absent: this is a review-identity failure, not proved
+  file loss or execution of a wrong file.
+  **Correction:** align the supported, bounded Storage-relative source identity through the
+  native manual-intent and exact Preview handoff. Reuse the existing identity/projection behavior;
+  preserve exact supported names and retain credential/absolute-root/private-endpoint redaction
+  and bounded untrusted evidence. Do not disable global safety redaction or substitute raw internal
+  execution identifiers. Add a meaningful production/native regression that actually freezes the
+  legal long path and verifies its public and visible identity through the reviewed handoff,
+  rather than asserting only discovery or repository state. Preserve the now-passing attachment,
+  request-ID, bounds, migration, pinning and zero-mutation protections.
+
+**Complexity reassessment:** this is the downstream identity-bound mismatch in the already required
+A44-9 journey, not a new business goal. The reduced Contract remains feasible; no material A
+rescope is established. Continue Task 44.9 with the same ID/Base/Goal/Scope/acceptance and High/T4.
+RO-1 through RO-5 have no newly established blocker; RO-6 and its manual Web/API handoff remain
+incomplete. Create no next Task or Closure Packet and do not change Slice/Roadmap/requirements.
+
+Reusable lesson candidate for A's eventual closure: when a supported identity bound changes,
+verify the final public projection and native review surface; exact persistence and an earlier
+detail page alone do not establish the user can review that identity. No experience file is
+updated during this fix loop.
+
+NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+## Developer Completion Report — 2026-10-12 (fix loop 5)
+
+Status: READY FOR B REVIEW
+Task: 44.9 — High / T4
+Task Base: `ab94ce53189b5a9f16e7614cd011480a42d91e79`
+Addressed B Review: `3fd8f93f6df4aa4b03960abe2ead1ddfd0bf2e75` — FIX REQUIRED
+Executable checkpoint / candidate: `7a010b33832cbab2b6fb09d1d797625eb7b3708d`
+
+Fixed B's P1 finding: a supported 1222-character ResourceLibrary-relative source identity now
+survives the 4096-byte path boundary through durable manual intent and Preview projections while
+absolute roots, private endpoints, credentials and evidence digests remain redacted. Intent and
+Preview Web normalizers now preserve the same bounded identity exactly, including boundary
+whitespace. Discovery, intent and Preview pages wrap long filenames and paths so the operator can
+review the full identity without horizontal page overflow.
+
+The checkpoint adds a Local/SQLite API regression that discovers the exact long file, freezes an
+intent, reads its exact source path, saves the reviewed Choice and creates a zero-mutation exact
+Preview. It verifies that source and target Storage record no writes. Web normalizer tests cover the
+long path, leading/trailing whitespace and over-bound rejection. The native Chromium proof drives
+the built Web journey through actual Local Storage, Worker discovery and Freeze, checks exact API
+and visible intent identity, and records `zeroMutation=true`. Its separate ordinary execution case
+remains explicitly confirmed and uses OrganizerExecutor.
+
+All assigned T4 gates passed on the executable candidate: Python **2430 passed / 7 skipped**; Web
+**1106 passed / 74 files**; default Playwright **246 passed**; Operations Python E2E **21 passed**;
+direct Files Python E2E **10 passed**. Ruff format/check, compileall, pip check, both configuration
+validations, Web format/lint/typecheck/build, exact-wheel smoke, Docker release-security smoke,
+Docker upgrade/recovery smoke, native discovery/browser proof and Docker production-image browser
+proof also passed. The wheel SHA-256 is
+`5e3523c8827e158c0510c12e652a9d9a937656f921c6f06f2e90a5ced62067e7`.
+
+The seven skips are dedicated real SMB, S3 and OpenList acceptance environments and isolated Local,
+SMB, OpenList and S3 endurance profiles unavailable in this environment. Persistence/schema was
+not changed by this correction, so the conditional schema-45 seed/rehearsal requirement did not
+apply; full migration tests and schema-45 wheel smoke passed, and the Docker upgrade/recovery gate
+used the real schema-38 Task Base image. Existing Python SQLite/temp-directory `ResourceWarning`s,
+Vitest jsdom notices and the Vite chunk-size warning remain visible in the logs. No other T4 gap is
+known.
+
+Evidence index and raw logs, first failures, screenshots and hashes:
+`.git/validation-evidence/7a010b33832cbab2b6fb09d1d797625eb7b3708d/task44-9/t4-fix-loop-5-20261012-long-identity/evidence-index.md`.
+The four pre-existing untracked `docs/pics/*.png` files remain untouched; no `config/alist.json`,
+Slice, Roadmap, requirements or experience document was changed. No Slice PASS/closure is claimed.
+
+Reusable lesson candidate for A's eventual closure: validate a supported identity through storage,
+projection, Web normalization and rendered layout; exact durable data alone does not prove the
+operator can review it. No experience file is updated during this fix loop.
+
+NEXT ACTION: B INDEPENDENTLY REVIEWS THIS TASK CHECKPOINT
