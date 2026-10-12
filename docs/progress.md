@@ -9,7 +9,7 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on
-`slice/43-resumed-after-44`, integrating accepted Slice 44 with preserved unfinished work under
+local `main`, integrating accepted Slice 44 with preserved unfinished work under
 the current Slice 44-era governance. [SLICE.md](../SLICE.md) retains the original Base and business
 boundary; [TASK.md](../TASK.md) retains Task 43.1 **FIX REQUIRED** and the unresolved P1, with the
 same Task correction loop next. Detailed implementation and review history remains in Git.

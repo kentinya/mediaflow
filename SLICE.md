@@ -13,7 +13,7 @@ Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: b364a04d1c916ed327e3e8f470dc05e413ad80e6
 Development Hold: LIFTED BY USER — 2026-10-12
 Contract Revision: 2026-10-12 — current Slice 44 governance; original business scope and Base retained
-Working Branch: slice/43-resumed-after-44
+Working Branch: main
 Risk: High
 Final Test Level: T4
 Next Action: DEVELOPER CONTINUES TASK 43.1 SAME FIX LOOP WHEN DIRECTED
@@ -46,9 +46,9 @@ accepted closures and deferrals remain historical facts.
 | Integrated source / A activation | `28eb41997e1bac1cffef13896bc769ba7ffcfd6d` |
 | Latest independent B reassessment | `39a6a40e4a66de508a331c2d83d17d65578c08cc:TASK.md` — FIX REQUIRED |
 
-The working branch combines accepted Slice 44 with the preserved unfinished implementation without
-rewriting either source branch. The Implementation Head field identifies the last Developer report;
-its unaccepted status is unchanged. The integrated source retains runtime schema 45, canonical
+At the user's request, local `main` now contains accepted Slice 44 and the resumed unfinished Slice 43.
+The source and preservation branches remain available. The Implementation Head field identifies
+the last Developer report; its unaccepted status is unchanged. The integrated source retains runtime schema 45, canonical
 MediaLibrary-plus-path classification and explicit legacy conversion, page-local Rules tests and
 separate complete-flow checks, both-library file operations/navigation, and bounded ResourceLibrary
 folder/mixed Organize. The resumption checkpoint adds no Run-once behavior and changes no recovery

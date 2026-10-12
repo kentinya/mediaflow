@@ -34,9 +34,9 @@ only in [the development workflow](development-workflow.md).
 ## Current boundary
 
 Slice 43 is ACTIVE under [SLICE.md](../SLICE.md), resumed at the user's explicit request after
-accepted Slice 44. Branch `slice/43-resumed-after-44` combines that accepted baseline with the
-preserved unfinished work. The original Slice Base and business boundary remain intact; resumption
-is not acceptance. Current development uses the Slice 44-era governance documents and Slice/Task
+accepted Slice 44. Local `main` now combines that accepted baseline with the preserved unfinished
+work; the source and preservation branches remain available. The original Slice Base and business
+boundary remain intact; resumption is not acceptance. Current development uses the Slice 44-era governance documents and Slice/Task
 rules. [TASK.md](../TASK.md) owns the current Task plan and review; Git retains prior review rounds.
 
 Slice 44 remains PASS / CLOSED, with its accepted six-outcome boundary and exceptional-discovery
