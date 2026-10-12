@@ -328,39 +328,73 @@ High/T4 gates and obligations remain intact.
 
 ### Changed Files
 
-No new corrected candidate has been submitted. The last Developer implementation is
-`b364a04d1c916ed327e3e8f470dc05e413ad80e6`; its detailed report remains in the Git snapshots above.
+- `mediaflow/application/automation_workspace_commands.py`
+- `tests/test_automation_definition_publication.py`
+- `tests/test_v2_automation_lifecycle.py`
+- `web/tests/e2e/automation.spec.ts`
 
 ### Implemented
 
-Prior lifecycle implementation remains unaccepted with the retained-history P1 unresolved. This
-current document reconciliation implements no product change and does not adopt old completion claims.
+Removed the arbitrary recent-revision and recent-audit windows from retained Automation history
+resolution. An occurrence now resolves its exact pinned published revision by identity, version and
+digest, verifies the historical definition fingerprint and never substitutes a different revision.
+Without an occurrence pin, the resolver walks the durable activation ledger newest-first with its
+monotonic sequence cursor until it proves the ledger ended. Invalid, contradictory, missing or
+incomplete evidence reports the existing actionable unavailable state; it cannot become a false
+absence or expose an unpublished Draft. Definition state and its projection are derived from the
+same evidence read. Added regressions beyond the old windows, including API/browser history after
+runtime reopen. The ordinary Create link is verified to open the native lifecycle journey while the
+legacy editor remains testable as an explicit deep link.
+
+No schema, migration, Slice, Roadmap, Progress or architecture change was made.
 
 ### Tests and Results
 
-No new Developer candidate evidence or T4 completion report exists. The baseline/reproduction index
-above records B's latest independent findings; the next candidate must supply its own assigned gates.
+The corrected candidate's full regression passed: `.venv/bin/python -m unittest discover -s tests`
+ran 2,501 tests with 7 declared real-service/endurance skips; `npm --prefix web run test -- run`
+passed 1,138 tests across 76 files. Browser checks passed 246 default E2E tests, 10 real-Python
+Automation lifecycle tests, 21 real-Python Operations inventory tests and 1 Unicode-principal
+real-Python test.
+
+Ruff format/check, Python compileall and pip check, Web typecheck/lint/format/build, both example
+configuration validations, governance, `git diff --check`, and the expected no-FFmpeg dependency
+search all passed. The first default E2E run exposed a stale assertion expecting the old `/new`
+destination; that assertion now checks the lifecycle route and the full browser suite passes. Both
+the initial failure and corrected run are retained.
+
+The committed-candidate Docker release security smoke built and inspected the image and Compose
+topology, then **failed** while waiting for the isolated four-service stack to become healthy. The
+scheduler reported `sqlite3.OperationalError: database or disk is full`; `/` had 0 bytes available
+and was 100% full. Docker reported 50.85 GB of build cache, 9.098 GB reclaimable. The isolated test
+stack was cleaned automatically; shared Docker cache was left intact. This gate is recorded as FAIL,
+not PASS or SKIP. Full commands, counts, skips, artifact hashes and raw logs are in
+`.git/validation-evidence/70ca531965044ef6414c8ac93cb4d5d204b61cbd/task43.1-fix-20261012/INDEX.md`.
 
 ### Decisions
 
-Correction stays in Task 43.1 with its original Base, Goal/Scope/acceptance and High/T4.
+Correction stays in Task 43.1 with its original Base, Goal/scope/acceptance and High/T4. The
+candidate makes no schema change and preserves published-history versus Draft-only distinction.
 
 ### Remaining In-Slice Work
 
-Resolve this Task's P1, then B reevaluates all Slice Required Outcomes after Task PASS. Run once,
-consolidated inventory/metrics/history and runtime settings adoption remain outside this Task.
+B must review the corrected candidate and its Docker gate limitation. After any Task PASS, B
+reevaluates all Slice Required Outcomes. Run once, consolidated inventory/metrics/history and
+runtime settings adoption remain outside this Task.
 
 ### Risks / Deviations
 
-Historical reports are reachable in Git; none is a current READY/PASS or complete corrected-candidate
-claim. Current unknown, failed or unavailable gates must be recorded on the new candidate.
+The Docker release security smoke remains an environment failure caused by a full root filesystem.
+The exact source candidate, image identity, available-space observation and test logs are retained in
+the local evidence index. The four pre-existing untracked PNGs have unchanged hashes and remain
+unstaged. `config/alist.json` remains ignored, absent, unstaged and uncommitted.
 
 ### Checkpoint
 
 ```text
-Latest Developer Head SHA: b364a04d1c916ed327e3e8f470dc05e413ad80e6
-New corrected candidate: NONE
-Latest acceptance: FIX REQUIRED
+Implementation checkpoint SHA: 70ca531965044ef6414c8ac93cb4d5d204b61cbd
+Corrected candidate: SUBMITTED
+Developer handoff: READY FOR B REVIEW
+Developer does not claim Task PASS or Slice completion.
 ```
 
 ## B Review Result
