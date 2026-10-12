@@ -1961,33 +1961,39 @@ P1 Blockers:
   explicit files inside mixed discovery as well as walked files; the reviewed
   manifest, primary count and frozen intent must agree without duplicate sidecar
   primary authority. Keep orphan/disabled-policy semantics, confinement and bounds.
-- A44-15 — RO-1 exact supported entry type at the last mutation boundary,
-  acceptance 2/4 and the observed-source-change safety invariant:
-  evidence for a confirmed FILE without a fingerprint passes the Executor's
-  fresh observation when the entry is now SYMLINK or OTHER with the same size
-  and modification time. Four metadata-port probes (Rename/Delete × both types)
-  return SUCCESS and invoke the mutating Storage method. The type comparison
-  distinguishes DIRECTORY from everything else rather than requiring FILE.
-  Required correction: reject observable unsupported/type-changed entries before
-  mutation across the applicable shared direct-command/transfer boundaries on
-  both library kinds. Preserve optional fingerprints, zero-content-read metadata
-  checks, independent outcomes and the ordinary refresh/reobserve recovery path.
 ```
 
 The [review report](docs/reviews/slice-44-final-review-20261012.md) records reproductions,
-source locations, evidence limits and the correction outcomes. These are current ordinary
-correctness and mutation-safety defects inside the existing Contract, not new capabilities or
-optional proof requests. No Material Contract Change or additional recovery promise is selected.
+source locations, evidence limits and the correction outcome. A44-14 is a confirmed ordinary
+correctness defect inside the existing Contract. No Material Contract Change or additional
+recovery promise is selected.
 Retain the original Base, RO/Surfaces, Safety Invariants, acceptance, bounds and Explicitly Deferred.
 The user-approved safe-stop/new-discovery alternative remains sufficient for deferred exceptional
 recovery; prior P2 copy/assertion issues do not independently prevent PASS.
+
+### Severity reassessment — A44-15 / 2026-10-12
+
+After the user asked about actual occurrence probability, A checked all four current Storage
+adapters. The simulated Executor defect remains reproducible, but its current production
+reachability is not demonstrated: Local supplies an inode/ctime fingerprint; OpenList and S3
+stat project FILE/DIRECTORY; the production SMB stat also projects FILE/DIRECTORY even though
+its listing can report SYMLINK. The original no-fingerprint SYMLINK/OTHER observation came from
+an injected Storage port. It proves a defensive-check gap, not a current native incident or a
+high-frequency failure. There are no operational statistics or real-adapter reproductions here.
+
+A44-15 is therefore **P2 / NON-BLOCKING**, superseding its original P1 classification in
+`58e3334ec71f6c26de1651770263b805bc1e55e3`. A may reassess severity if a concrete current
+adapter path/effect is demonstrated; no adapter redesign or extra recovery mechanism is selected
+preemptively. A simple exact-type defensive check is a recommendation, not a required correction
+Task outcome. Existing exact-type safety requirements are unchanged. The Slice remains
+FIX REQUIRED because of A44-14 alone; B must not turn this P2 into an acceptance blocker.
 
 ### Validation and evidence
 
 - A independently inspected the complete Base..Head changed-file inventory (153 files), required
   journeys and cross-module behavior, and checked the current B handoff against the executable.
-  RO-1 and RO-6 are blocked by the two confirmed P1s; no additional blocker is asserted for
-  RO-2 through RO-5. B Task PASS is retained as history, not substituted for Slice acceptance.
+  RO-6 is blocked by A44-14; no additional current P1 is asserted for RO-1 through RO-5.
+  B Task PASS is retained as history, not substituted for Slice acceptance.
 - Fresh unchanged discovery regressions: PASS, 110 tests, 24.391 test seconds, no skips or
   failures. Both additional negative probes reproduce defects and exit 1 on the required safety/
   association assertion; they are not product PASS. Mixed discovery uses real managed
@@ -1998,7 +2004,7 @@ recovery; prior P2 copy/assertion issues do not independently prevent PASS.
   native/Docker, wheel, migration and security records were inspected with their provenance and
   disclosed failures. Their green results do not cover or refute the two new cases. A did not
   rerun the remaining full suites, browser/Docker, packaging or migration gates after proving
-  blockers; workflow §6 permits a rejecting review at this point. Required final gates must
+  A44-14; workflow §6 permits a rejecting review at this point. Required final gates must
   cover the corrected candidate before PASS. Seven dedicated external/endurance profiles remain
   SKIP/UNAVAILABLE; no production-service acceptance is inferred.
 - Local raw evidence, exact commands/exit codes/source SHA and initial input hashes are retained
@@ -2008,7 +2014,7 @@ recovery; prior P2 copy/assertion issues do not independently prevent PASS.
 - Governance passed on the submitted ACTIVE/no-active-Task handoff. As in the previous A review,
   the existing guard rejects the workflow-required FIX REQUIRED/no-active-Task transition.
   Its post-checkpoint result is retained explicitly; A does not invent B's Task, hide the review
-  status or implement a guard change. This is a known governance inconsistency, not a third
+  status or implement a guard change. This is a known governance inconsistency, not another
   product blocker. B owns the focused correction Task and its legal handoff.
 - This checkpoint changes only A review/handoff documentation. Existing TASK changes, B's
   untracked Closure Packet and user images remain preserved and unstaged. There is no closure

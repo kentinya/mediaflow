@@ -1,6 +1,7 @@
 # Slice 44 — A Final Review / 2026-10-12
 
-**Decision: FIX REQUIRED.** No P0 found; two confirmed P1 blockers remain in RO-1/RO-6.
+**Decision: FIX REQUIRED.** No P0 found; A44-14 is the remaining P1 blocker in RO-6.
+A44-15 is P2 / NON-BLOCKING after the current-adapter reachability reassessment below.
 
 | Authority | Value |
 |---|---|
@@ -12,8 +13,8 @@
 
 The complete Base..Head range contains 153 changed files. Report and executable Heads differ
 only in `TASK.md`. This is Slice Final Review after B's Task 44.9 PASS, not another Task review.
-The user-approved smaller exceptional-recovery promise is the acceptance authority. Neither
-blocker requires rescoping, a new engine or a stronger recovery promise. Prior Task PASS,
+The user-approved smaller exceptional-recovery promise is the acceptance authority. The required
+correction needs no rescoping, new engine or stronger recovery promise. Prior Task PASS,
 rejected reviews and the recovery-rescope decision remain historical facts.
 
 ## P1 / A44-14 — Mixed discovery freezes an associated Trailer as a primary
@@ -62,9 +63,9 @@ frozen intent agree; orphan/disabled-policy behavior, bounded scope and separate
 execution authority remain intact. This corrects the retained A44-12 obligation for a missed
 selection entrance; it does not select a general Extras engine.
 
-## P1 / A44-15 — Unsupported entry types pass the final Rename/Delete fence
+## P2 / A44-15 — Defensive exact-type check gap in the simulated Executor scenario
 
-**Required outcome:** RO-1; acceptance 2/4; exact supported type revalidation and observed-source
+**Applicable contract:** RO-1; acceptance 2/4; exact supported type revalidation and observed-source
 change safety on both library kinds. Optional fingerprints do not remove the type check.
 
 Ground confirmed FILE evidence with no fingerprint, size 8 and a fixed modification time.
@@ -95,11 +96,33 @@ Rename/Delete Storage mutation. This is an observable authority/type change, bey
 limitation that indistinguishable metadata cannot prove byte identity. No real data loss is
 claimed, and no mandatory fingerprint or content hashing is requested.
 
-**Correction outcome:** the final boundary requires the exact supported admitted entry type and
-refuses SYMLINK/OTHER/type changes before mutation. Applicable shared command/transfer behavior
-remains consistent on ResourceLibrary and MediaLibrary. Preserve optional-fingerprint behavior,
-metadata-only checks, directory child-removal semantics, independent results and actionable
-refresh/reobserve recovery.
+### Actual likelihood and severity reassessment — 2026-10-12
+
+The user asked whether this happens often in real use. A examined the current adapters:
+
+| Current adapter | Relevant behavior | What it establishes |
+|---|---|---|
+| Local | Every stat entry supplies inode/ctime fingerprint (`local_storage.py:124`). | The original no-fingerprint scenario is not the normal Local observation; a changed fingerprint is rejected. |
+| OpenList | Client/domain stat has a directory boolean and projects FILE/DIRECTORY (`openlist_storage.py:455`). | No SYMLINK/OTHER observation reaches this helper through the current projection. |
+| S3/R2 | Object and prefix stat project FILE/DIRECTORY (`s3_storage.py:417`). | The original SYMLINK/OTHER combination is not reproduced by this adapter. |
+| SMB | Production stat uses isdir to project FILE/DIRECTORY (`smb_storage.py:565`); listing can separately report SYMLINK. | The injected fresh SYMLINK/OTHER stat is not a demonstrated production-client observation. |
+
+The four original cases prove the helper's behavior when those synthetic conditions are supplied.
+They do not measure occurrence frequency or prove an actual supported-adapter mutation path.
+No real-adapter reproduction or production incident is established. Other limitations in how an
+adapter observes links would require their own grounded assessment; they are not proved by this
+probe or selected for a speculative refactor here.
+
+The original **P1 severity was insufficiently grounded**. A reclassifies A44-15 as **P2 /
+NON-BLOCKING**, superseding the initial classification in
+`58e3334ec71f6c26de1651770263b805bc1e55e3` while retaining the original reproduction and history.
+It cannot independently prevent Slice PASS. A44-14 remains the sole confirmed P1 in this review.
+No numerical probability is claimed and no current adapter is declared universally type-safe.
+
+**Non-blocking recommendation:** require the exact supported type in the shared defensive check,
+retaining optional fingerprints and metadata-only behavior. This does not require extra operator
+confirmation, a new recovery mechanism or an adapter redesign. The existing safety Contract is
+unchanged; a concrete current-adapter path/effect can justify later severity reassessment.
 
 ## Verification and handoff
 
@@ -109,8 +132,8 @@ refresh/reobserve recovery.
   a passing product gate.
 - B's fresh full Python **2431 run / 7 skipped / OK**, full Web **74 files / 1106 passed**,
   native/Docker, migration, wheel and security evidence is readable. A checked the packet and
-  original receipts/provenance; those green gates miss the confirmed cases above. A did not
-  independently repeat the remaining expensive gates after proving blockers (workflow §6).
+  original receipts/provenance; those green gates miss A44-14 and the simulated A44-15 gap. A did
+  not independently repeat the remaining expensive gates after proving A44-14 (workflow §6).
   Corrected candidates still require the applicable final T4 gates before PASS.
 - Seven external/endurance profiles remain SKIP/UNAVAILABLE. Existing P2 wording/assertion issues
   and the explicitly deferred exceptional-recovery enhancements do not independently block PASS.
@@ -121,7 +144,7 @@ refresh/reobserve recovery.
 - Governance passes before the A status change. The existing checker rejects FIX REQUIRED with
   the truthful no-active-Task handoff, contrary to the workflow's required transition; the actual
   post-checkpoint failure is retained. A does not fabricate a Task or change the guard. This
-  previously recorded governance inconsistency is separate from the two product blockers.
+  previously recorded governance inconsistency is separate from the product blocker.
 - Only A review documentation is checkpointed. The pre-existing TASK edit, B Closure Packet and
   user images remain intact and unstaged. No implementation, closure reconciliation, CURRENT
   promotion, frozen Slice 43 change, next Slice or push occurs.
