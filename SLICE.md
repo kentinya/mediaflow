@@ -12,14 +12,14 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: 7e2ab801eaef25b083640813375a49f536ae202f
+Implementation Head: 5ec0f3fdfa81b28bc12384e65b595a0f917dc562
 Contract Revision: 2026-10-11 — PARTIAL / RESCOPE: user-approved discovery recovery reduction; safety and original Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: DEVELOPER IMPLEMENTS REVISED TASK 44.9; B REVIEWS THE IMPLEMENTATION
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ```
 
 ## Authority and sequencing
@@ -1273,7 +1273,7 @@ must remain truthful and safe. Domain injection alone cannot prove real managed 
 The revised Task defines staged T4 gates; deferred seamless-recovery cases are not closure blockers
 unless they reveal a still-required outcome or safety failure. No code-size/test-count target is added.
 
-## Closure Packet
+## Prior Closure Packet — Task 44.8 / 2026-10-11
 
 This is the correction-loop handoff after Task 44.8 PASS on 2026-10-11. Prior submission/rejection
 records remain in Git, retained evidence and A's reviews below. This returns the corrected candidate
@@ -1889,7 +1889,7 @@ PASS and B's Closure Packet remain historical, not A acceptance. No closure reco
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
 
-## A Final Review
+## Prior A Final Review — 2026-10-11 / user-approved recovery rescope
 
 ```text
 Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..7e2ab801eaef25b083640813375a49f536ae202f
@@ -1929,3 +1929,90 @@ Contract as follows; a changed recovery expectation is not a fixed implementatio
 
 RO-1 through RO-5 and frozen Slice 43 are unchanged. No implementation, new runtime validation,
 B review, Closure Reconciliation or next-Slice selection occurs in this Contract decision.
+
+## Closure Packet
+
+B's [current Closure Packet](docs/reviews/slice-44-closure-packet-20261012.md) follows Task 44.9
+PASS and submits the complete Slice range for A. Its report Head is
+`5ec0f3fdfa81b28bc12384e65b595a0f917dc562`; executable Head is
+`b4a14e0284b66597baf306a95224fc1dabf60033`. Their only difference is `TASK.md`.
+The packet and B's subsequent no-active-Task handoff were already present in the working tree
+when A started; A preserves them without silently including them in this review checkpoint.
+B's COMPLETE assessments are readiness claims, superseded for acceptance by the decision below.
+Earlier Closure Packets and reviews remain historical evidence.
+
+## A Final Review
+
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..5ec0f3fdfa81b28bc12384e65b595a0f917dc562
+Decision: FIX REQUIRED
+Decision Date: 2026-10-12
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+Review Scope: complete Slice RO-1 through RO-6 under the checkpointed recovery rescope
+P0 Blockers: none found
+P1 Blockers:
+- A44-14 — RO-6 mixed-selection attachment association, acceptance 27/28:
+  with the published attachment policy enabled, selecting Movies freezes one
+  primary Film.2001.mkv and associates Film.2001-trailer.mp4. Selecting the same
+  directory's empty Other folder plus those two files instead completes with
+  two primaries and Finalize creates two independent intent items, including the
+  Trailer. This is the native batch selection shape, not an unsupported API scope.
+  Required correction: preserve the existing main/attachment semantics for
+  explicit files inside mixed discovery as well as walked files; the reviewed
+  manifest, primary count and frozen intent must agree without duplicate sidecar
+  primary authority. Keep orphan/disabled-policy semantics, confinement and bounds.
+- A44-15 — RO-1 exact supported entry type at the last mutation boundary,
+  acceptance 2/4 and the observed-source-change safety invariant:
+  evidence for a confirmed FILE without a fingerprint passes the Executor's
+  fresh observation when the entry is now SYMLINK or OTHER with the same size
+  and modification time. Four metadata-port probes (Rename/Delete × both types)
+  return SUCCESS and invoke the mutating Storage method. The type comparison
+  distinguishes DIRECTORY from everything else rather than requiring FILE.
+  Required correction: reject observable unsupported/type-changed entries before
+  mutation across the applicable shared direct-command/transfer boundaries on
+  both library kinds. Preserve optional fingerprints, zero-content-read metadata
+  checks, independent outcomes and the ordinary refresh/reobserve recovery path.
+```
+
+The [review report](docs/reviews/slice-44-final-review-20261012.md) records reproductions,
+source locations, evidence limits and the correction outcomes. These are current ordinary
+correctness and mutation-safety defects inside the existing Contract, not new capabilities or
+optional proof requests. No Material Contract Change or additional recovery promise is selected.
+Retain the original Base, RO/Surfaces, Safety Invariants, acceptance, bounds and Explicitly Deferred.
+The user-approved safe-stop/new-discovery alternative remains sufficient for deferred exceptional
+recovery; prior P2 copy/assertion issues do not independently prevent PASS.
+
+### Validation and evidence
+
+- A independently inspected the complete Base..Head changed-file inventory (153 files), required
+  journeys and cross-module behavior, and checked the current B handoff against the executable.
+  RO-1 and RO-6 are blocked by the two confirmed P1s; no additional blocker is asserted for
+  RO-2 through RO-5. B Task PASS is retained as history, not substituted for Slice acceptance.
+- Fresh unchanged discovery regressions: PASS, 110 tests, 24.391 test seconds, no skips or
+  failures. Both additional negative probes reproduce defects and exit 1 on the required safety/
+  association assertion; they are not product PASS. Mixed discovery uses real managed
+  configuration, Local Storage, SQLite, authenticated API and the discovery runner, and creates
+  zero media effects/execution Tasks. Entry-type probes use the real OrganizerExecutor and an
+  explicitly synthetic Storage port; the four recorded effects are fake calls, not real media.
+- B's readable fresh full Python (2431 run / 7 skipped / OK), full Web (74 files / 1106 passed),
+  native/Docker, wheel, migration and security records were inspected with their provenance and
+  disclosed failures. Their green results do not cover or refute the two new cases. A did not
+  rerun the remaining full suites, browser/Docker, packaging or migration gates after proving
+  blockers; workflow §6 permits a rejecting review at this point. Required final gates must
+  cover the corrected candidate before PASS. Seven dedicated external/endurance profiles remain
+  SKIP/UNAVAILABLE; no production-service acceptance is inferred.
+- Local raw evidence, exact commands/exit codes/source SHA and initial input hashes are retained
+  in .git/validation-evidence/5ec0f3fdfa81b28bc12384e65b595a0f917dc562/a-final-20261012/.
+  The mixed-probe's initial HTTP-status harness mistake is disclosed separately; the corrected
+  probe expects the documented 202 and changes no product code or existing assertions.
+- Governance passed on the submitted ACTIVE/no-active-Task handoff. As in the previous A review,
+  the existing guard rejects the workflow-required FIX REQUIRED/no-active-Task transition.
+  Its post-checkpoint result is retained explicitly; A does not invent B's Task, hide the review
+  status or implement a guard change. This is a known governance inconsistency, not a third
+  product blocker. B owns the focused correction Task and its legal handoff.
+- This checkpoint changes only A review/handoff documentation. Existing TASK changes, B's
+  untracked Closure Packet and user images remain preserved and unstaged. There is no closure
+  reconciliation, CURRENT delivery promotion, Roadmap/Progress closure, frozen Slice 43 change,
+  implementation, next-Slice selection or push.
+
+NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
