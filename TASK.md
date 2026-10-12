@@ -242,8 +242,6 @@ receipts are historical evidence, not acceptance of new implementation or deferr
 - Unrelated configuration/Rules/direct-file/layout redesign, optional P2/P3 cleanup, Contract/Base/
   Deferred changes, historical review rewriting, Slice closure, deployment or push.
 
-## Developer Completion Report
-
 ### Fix loop 2 for B's FIX REQUIRED (2026-10-12)
 
 B rejected candidate `0d9bb21` with two P1 defects. Both were incomplete reuse of semantics that
@@ -396,7 +394,7 @@ Local commit only; not pushed.
 ```
 
 
-## B Review Result
+## Prior B Review Result — 0d9bb218432e
 
 Review date: 2026-10-11. Reviewed the immutable Task Base..corrected executable candidate below.
 Workspace Head `b9d38f9e477906595abafe8a137bd4ccc2a48755` differs from executable candidate
@@ -487,3 +485,133 @@ Next: SAME TASK FIX LOOP
   51-associated-Trailer coverage and the existing 100/101-primary refusal.
 
 NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+
+## B Review Result — 74126160d7f8
+
+Review date: 2026-10-11. Independent B review of the immutable Task Base..
+`74126160d7f8a6b08bac293e9262dbf04ef5e790` executable candidate. Report checkpoint
+`d1cdd4e38912861521e35ca6e6951bc4b2b10981` differs only in `TASK.md`; executable,
+test, configuration and build inputs match. Governance passed before review and again before
+recording this decision. The committed amended Slice remains the scope authority.
+Independent evidence index:
+`.git/validation-evidence/d1cdd4e38912861521e35ca6e6951bc4b2b10981/b-review44-9/review-index.json`.
+
+Independent results: Python discovery/provider-manifest/persistence/activation regression **141
+run, 0 failures, 0 skips**; Web discovery/request-ID/StorageFiles regression **63 passed in 3
+files**; fresh production Web build passed. Managed-runtime/Local/SQLite/authenticated-API probes
+ran **7 tests: 4 passed, 3 semantic failures in the two defect groups below, 0 skips**, with zero
+Storage mutations. The four passing probes cover ancestor exclusions, orphan Trailer, disabled
+Trailer and reciprocal same-stem videos. Real built-Web/Chromium/subprocess-Python API verification
+also passed the previously failing activation-before-admission/lost-response scenario: one browser
+POST, navigation to actual admission `11243a56-d36e-4f3a-a4dc-8d753a2f90d1`, not prior admission
+`db651aed-eb8e-4b7d-b626-234cc98bfdb0`, and zero execution tasks. Durable receipts and the actual
+screenshot were inspected. An intermediate browser harness used a conditional heading as its
+wait target and timed out; its original logs are retained. Correcting that selector and repeating
+the same product scenario passed; this was a harness failure, not an additional product blocker.
+
+Developer's indexed logs under `74126160.../task44-9/run-1/` report a serial Python pytest run
+with **2415 passed / 7 skipped**, Web **1102 passed / 74 files**, and other T4 gates. These are
+reported results, not independent acceptance of every gate. The index does not establish all
+command/runtime/lock/build identities or preserve the reported initial concurrent failures; the
+Python log uses pytest while the assigned final command is unittest discovery. Before PASS, the
+corrected candidate still needs the unchanged complete checkpoint plan and verifiable matching
+raw evidence, including first failures and exact repeats. No test-plan substitution is authorized
+by this review. Remaining expensive T4 gates and Slice Final were not rerun after independently
+proving blockers, as permitted by the workflow's early-rejection rule.
+
+```text
+Reviewed: ab94ce53189b5a9f16e7614cd011480a42d91e79..74126160d7f8a6b08bac293e9262dbf04ef5e790
+Report checkpoint: d1cdd4e38912861521e35ca6e6951bc4b2b10981
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO — RO-6 remains incomplete
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — An unrelated RecognitionType's attachment policy silently removes a source
+  (Task AC2/AC4/AC5/AC7; RO-6, Slice acceptance 27–29/32).** A valid managed configuration binds
+  RecognitionType A to OrganizePolicy A with attachments disabled, and B to Policy B with Trailer
+  attachments enabled. Its published recognition rule maps `Movies/` sources to A. The selected
+  folder contains `Film.2001.mkv` and `Film.2001-trailer.mp4`. The production loader confirms
+  A's disabled policy; the existing production `AttachmentDiscovery` under that policy finds no
+  attachments. Nevertheless, discovery reports completed with only the main video, zero excluded
+  entries and both findings labelled eligible primary. Finalize succeeds and freezes only the
+  main video with default RecognitionType A / OrganizePolicy A. The Trailer reaches neither an
+  independent intent item nor A's attachment set; it silently disappears from the ordinary journey.
+  `mediaflow/application/media_discovery.py:1464` unions all enabled types' attachment policies;
+  `_attachment_owners` at line 1512 applies that union to every owner, rather than proving the
+  owner's applicable policy. Sharing the matcher does not prove shared policy semantics.
+  Evidence: `production_probes.py` test
+  `test_mixed_policy_demotion_keeps_sources_that_selected_policy_does_not_attach`, its raw log,
+  published/runtime policy values and frozen-intent receipt. No injected attachment policy,
+  FileIndex authority, metadata service or Storage mutation is used.
+  **Correction:** preserve every eligible source unless attachment association with a retained
+  primary under its applicable pinned policy is established. When it cannot be established,
+  retain sources or expose a truthful actionable ambiguity within the existing journey. Do not
+  demote through another type's policy. Reuse existing recognition/policy/attachment behavior;
+  no new attachment engine or live metadata lookup during discovery is required. Cover mixed
+  enabled/disabled policies through actual managed publication/loading and exact intent/Preview
+  handoff, while retaining orphan, reciprocal same-stem, paging, 51-Trailer and primary-limit proof.
+- **P1 — Request identity can certify a different submitted scope or ResourceLibrary
+  (Task AC1/AC7; RO-6, Slice acceptance 30/31 and actor/binding/scope invariants).** Through the
+  authenticated API, admit valid scope `First` with a UUID `requestId`, then submit `Second` using
+  that same UUID. The API returns 202 and the original discovery whose scope is `First`. A second
+  independent probe submits the same UUID and relative folder to another valid ResourceLibrary
+  with a different actual Storage root; it returns 202 and the original library's discovery.
+  This is deterministic invalid-input handling, not a hypothetical random UUID collision. The
+  echoed UUID is now the Web's proof of admission, yet it does not prove the submitted intent.
+  `mediaflow/application/media_discovery.py:253` returns request-ID reconciliation before checking
+  its scope/library compatibility; `_reconcile_admission_request` at line 346 looks up only
+  actor plus ID. Thus different selected media can be certified as the current request's record.
+  Evidence: `production_probes.py` tests
+  `test_request_identity_reuse_with_different_scope_is_rejected` and
+  `test_request_identity_reuse_with_different_library_is_rejected`; both raw receipts show the
+  different submitted context, original returned ID/context and zero mutations.
+  **Correction:** bind a supplied request identity to its immutable submitted library and canonical
+  scope; reject incompatible reuse with an actionable conflict rather than return a success for
+  another intent. Preserve genuine original-request recovery across subsequent Active/root changes
+  without comparing it to a new Active pin or silently repinning it. Keep actor isolation,
+  equivalent-scope admission and deliberate successor semantics. Add production-path invalid-reuse
+  regressions and retain the passing native before/after-activation lost-response checks. A general
+  guaranteed cross-activation recovery framework remains outside the reduced obligation.
+
+**Global complexity reassessment:** the reduced Contract remains feasible despite the repeated
+correction history. These blockers concern actual policy applicability and request-to-intent
+binding in existing paths; they do not require an A Contract change, a new framework or separate
+per-defect Tasks. Keep Task ID/Base/Goal/Scope/acceptance/Test Level unchanged and correct Task 44.9.
+RO-1 through RO-5 have no newly established blocker in this review; this is not fresh final
+acceptance of them. RO-6 is incomplete, so no new Task, Slice Final, Closure Packet or closure
+declaration is appropriate yet. Preserve the prior review and all unrelated/private/user artifacts.
+
+Reusable experience candidates for A's eventual Slice closure: production attachment proof must
+use the owner's applicable pinned policy, not merely the production matcher; a request identifier
+proves association only when its immutable intent binding is checked. Do not turn these candidates
+into permanent guidance or extra scope during this Task fix loop.
+
+NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP
+
+## Developer Completion Report
+
+### Developer implementation report — 2026-10-12
+
+```text
+Status: READY FOR B REVIEW
+Task: 44.9
+Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
+Implementation Head: 83b00f0986bc24f017417b5618256dac3622160a
+Difficulty / Test Level: High / T4
+```
+
+Fixed the two P1 findings in B's 2026-10-11 review. Discovery now resolves an owner's attachment policy through the pinned recognition rules and retains the source when that policy cannot be proved from discovery's local evidence. A type's attachment settings can no longer absorb another type's eligible source. Admission now atomically checks request-ID and open-scope identities with SQLite `BEGIN IMMEDIATE`; request-ID readback is bound to the original ResourceLibrary and canonical submitted scope, is checked before current Active/root resolution for genuine retries, and returns an actionable conflict or unresolved state instead of guessing when IDs are reused or historically ambiguous.
+
+The implementation checkpoint contains only `mediaflow/application/media_discovery.py`, `mediaflow/infrastructure/sqlite_runtime.py`, and `tests/test_media_discovery.py`. Regressions cover mixed enabled/disabled attachment policies through managed configuration, API, Worker, exact intent and Preview; cross-connection equivalent admissions; request-ID reuse across scopes/libraries; changed-root retries; and ambiguous legacy IDs. Discovery/Preview probes recorded zero Storage mutations; the browser proofs exercised separately confirmed execution through the existing OrganizerExecutor path.
+
+The assigned T4 gates are complete. The clean full Python rerun passed 2,428 tests with 7 skips (dedicated real OpenList/SMB/S3 acceptance environments and isolated Local/SMB/OpenList/S3 endurance profiles were unavailable). The first full Python run recorded one failure in the unrelated Rules workspace concurrent-save test; its isolated candidate and Task Base runs passed, and a second full run without other test jobs passed. The clean full Web rerun passed 1,102 tests across 74 files; the full Playwright suite passed 246 tests, the Python Operations inventory suite passed 21, and the Python direct-Files suite passed 10. Ruff, compileall, dependency/config validation, wheel smoke, Web format/lint/typecheck/build, both Docker deployment proofs, and native/Docker discovery browser proofs passed. The first concurrent Web unit run had one unrelated Rules deep-link timeout; the isolated candidate and Task Base runs and the later full Web rerun passed. These first-run results and their reproductions are retained for B's assessment, not silently discarded.
+
+Evidence index and complete logs: `.git/validation-evidence/83b00f0986bc24f017417b5618256dac3622160a/task44-9/t4-fix-loop-4-20261011/evidence-index.md`. The exact wheel SHA-256 is `0f3b03d208b67d4406e314bb3456cac4ef68480cf36181e83c46f952964a083b`; source/archive, Web asset, Docker image, input and screenshot hashes are recorded alongside it. The pre-existing wheel in `dist/task44-9` was preserved by building the candidate into a SHA-specific directory.
+
+The build retains its Vite chunk-size warning and tests emit existing SQLite/temp-directory and jsdom notices. The Docker browser proof's default artifact directory cleared stale generated PNGs under `/tmp/mediaflow-task44-6-docker-discovery-proof`; the new artifacts are retained in the indexed evidence directory. The four untracked `docs/pics/*.png` files remain untouched, and `config/alist.json` was neither modified nor committed. No Slice, Roadmap or requirement boundary was changed, and no Slice PASS/closure is claimed.
+
+```text
+Next Action: B INDEPENDENT TASK REVIEW
+```
