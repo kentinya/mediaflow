@@ -251,11 +251,42 @@ npm --prefix web run lint
 npm --prefix web run format:check
 npm --prefix web run build
 npm --prefix web run test:e2e
-npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-principal-identity.python.spec.ts
+npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts
+npm --prefix web run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
 .venv/bin/python scripts/check_governance.py
 git diff --check
 sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png
 ```
+
+### Resumption execution stages — B, 2026-10-12
+
+The three real-Python commands above replace the obsolete combined default-config invocation.
+Automation lifecycle publishes new Active revisions and therefore needs its existing isolated
+port/config; the Unicode-principal journey needs its existing configured Unicode identity and
+separate port. The Operations inventory keeps its default isolated assembly. This changes command
+selection only: every required journey, ID/Base/Goal/Scope/acceptance and High/T4 remain unchanged.
+
+- **Development/correction feedback:** first reproduce and correct the retained-history P1, then
+  run the changed focused application/API/Web cases and directly affected historical-context,
+  publication/reconciliation, grant and occurrence regressions. Cover history beyond both recent
+  windows, restart, exact published identity, no-occurrence history, unpublished Draft exclusion and
+  unavailable/incomplete evidence without new work or authority. Retain real API/browser coverage.
+- **Final corrected candidate:** execute all assigned focused/integration and T4 checkpoint gates
+  above on the new executable candidate; do not reuse this resumption's runtime evidence after
+  source/tests/harness/dependency/config/artifact changes. Schema45 is inherited accepted Slice 44
+  baseline; this reassessment introduces no migration. Any new migration still requires the stated
+  additive rehearsal and preservation gates, including the affected current-baseline upgrade.
+- **B independent review:** verify exact candidate/input/artifact identity and original evidence;
+  independently drive removed-definition detail/occurrence/grant history beyond the former windows
+  and across restart, preserving historical context and task/authority links. Repeat only missing,
+  incompatible or contradicted gates; an independently proven P1 permits rejection before expensive
+  remaining gates, never PASS with an incomplete T4 candidate.
+
+The A resumption integration checks and the independent B reassessment below establish an actual
+integrated baseline and reproduce the blocker. They are neither the corrected candidate's complete
+T4 evidence nor Slice-final acceptance. Four pre-existing untracked PNGs, including
+`docs/pics/整理规则需修复.png`, and ignored/untracked/unstaged `config/alist.json` remain preserved.
 
 Real-Python browser evidence drives typed create → Save → actual Active readback, edit/copy/toggle,
 stale/denied/unknown recovery, removal and retained history. Also drive exact Preview → explicit grant
@@ -1437,3 +1468,102 @@ Next: SAME TASK FIX LOOP
   unpublished-Draft exclusion and read-only behavior, and do not enlarge limits or add another
   recovery engine. Verify the real API/browser removed-history journey beyond both current
   windows and across restart, with exact historical identity and retained run/authority links.
+
+## B Resumption Reassessment — 2026-10-12
+
+```text
+Reviewed integrated source: 28eb41997e1bac1cffef13896bc769ba7ffcfd6d
+Original Task Base: 79544d9aba697036405b06054c0c56a740281bab
+Preserved rejected Developer checkpoint: b364a04d1c916ed327e3e8f470dc05e413ad80e6
+Decision: FIX REQUIRED
+Same Task continuation: YES — Task 43.1, unchanged Goal/Scope/AC, High/T4
+New integration blockers identified: NONE in this reassessment; not full T4 acceptance
+Slice Required Outcomes all satisfied: NO
+Next: DEVELOPER CONTINUES TASK 43.1 SAME FIX LOOP WHEN DIRECTED
+```
+
+### Authority, integration and evidence reuse
+
+Read the recovered ACTIVE Contract, original Task and latest B review, workflow/B experience and
+applicable requirements/product/architecture. Governance passes on the checkpointed activation.
+The original Slice/Task Bases remain reachable; neither preservation nor accepted history is
+rewritten. The merge's accepted Slice 44 parent is inherited baseline, not additional Task scope.
+No new Task, acceptance reset, Slice closure or implementation is authorized by this reassessment.
+
+Inspected the integrated configuration/API/SQLite/harness/frontend boundaries and retained historical
+resolution. `automation_workspace_commands.py` is byte-identical to the rejected `b364a04` version:
+the 200-revision, 500-activation and 200-ever-published windows remain. SQLite already provides exact
+`get_revision`, revision-scoped audits and a complete sequenced command-audit reader. Accepted
+runtime schema45, canonical MediaLibrary-plus-path classification, Rules object-local analysis and
+bounded Files discovery remain the inherited implementation, rather than a competing Automation
+engine. No integration change requires a new Task or A RESCOPE on the evidence inspected.
+
+Independently verified all 594 A-run source/test/harness/frontend input hashes against actual HEAD,
+the committed tree and A's manifest; Python 3.13.5, Node v22.19.0, npm 10.9.3, Web lockfile and the
+served built artifact also match. Inspected A's original raw logs and matching command receipts:
+442 Python integration tests, Web 80 + 119 tests and 10 real-Python lifecycle browser tests pass;
+Python format/lint/compile and Web typecheck/lint/format/build receipts pass. The initial A audit-count
+mistake (10 expected receipts versus 11 actual) and its corrected post-commit audit remain disclosed.
+The accepted-line preservation audit records 140 unchanged Slice 44-only paths and all 10 shared
+executable patches retaining the original Slice 43 additions/removals. These integration results are
+reused as baseline evidence only; they do not establish complete T4, corrected-candidate or Slice
+acceptance. No full regression, Docker/Compose, packaging or upgrade gate was rerun by B after the
+known blocker was proven; none is reported PASS on that basis.
+
+### Fresh independent production-path reproduction
+
+Evidence directory (repository-local, ignored; not remotely published):
+`.git/validation-evidence/28eb41997e1bac1cffef13896bc769ba7ffcfd6d/b-reassess43-20261012/`.
+Its index retains exact commands, input/artifact identity, dependency/runtime facts, raw logs,
+script hashes, API documents, SQLite proof and browser traces/screenshots. Old `/tmp` review logs
+are historical references only and are not counted as fresh evidence.
+
+B ran the retained `reproduce-history.py` with `.venv/bin/python` from repository root. It starts
+the unchanged supported `scripts/operations_inventory_harness.py` on isolated port 4197 with a new
+temporary Local-backed SQLite/configuration fixture. All lifecycle publications use authenticated
+real HTTP/application commands; Scheduler emission uses the harness's production Scheduler assembly.
+The current matching built Web is served by real Python, with headless Chromium, no retries and a
+1536 x 1024 viewport. No private configuration, production media or external service is used.
+
+- Create/enable `b-resume-history` in scan-only mode; the real Scheduler emits its occurrence.
+  Create an independent publisher, then remove the historical definition through focused DELETE
+  (200). V2 detail/occurrences and V1 detail/grant immediately return 200. The browser displays the
+  occurrence and its pinned revision, bound and Job link.
+- Publish 505 ordinary focused authenticated edits of the other definition, all 200. All four
+  historical API routes now return 404. The same browser deep link displays `Record not found`.
+- Close/reopen the actual SQLite/runtime/API through the supported restart control. The four routes
+  still return 404; the fresh browser connection still displays `Record not found`.
+- Independently query the fixture SQLite read-only: one occurrence remains with exact revision
+  `97b70ae5-2603-4ee4-a1e3-76021c80a220`, matching persisted digest, superseded published revision,
+  original name `B resume historical published name` and one activation audit naming that revision.
+  The missing history is a resolution failure; neither occurrence nor publication evidence was
+  deleted. The harness's `occurrenceTotal` counts its fixed fixture ID only and is not used for this
+  independently named definition's count.
+
+Fresh reproduction exits 0 in 46.713 seconds because it asserts and proves the existing defect;
+this is **P1 REPRODUCED**, not a passing product acceptance test. Inspected the actual before/after
+browser screenshots: usable occurrence/Job navigation becomes the not-found panel with only return
+and refresh actions. The process is terminated after evidence capture. Current source inputs and
+served artifacts remain unchanged; user PNGs and private-file tracking/ignore state are preserved.
+
+### Same-Task continuation conditions and complexity
+
+The existing **P1 remains blocking AC-T5/T6 and RO-2** on the integrated production candidate. Continue
+Task 43.1's fix loop with its original High/T4 plan. The existing durable pin and publication ledger
+are sufficient authority; the intervening accepted implementation does not justify another store,
+recovery engine, configuration cache, expanded history-retention scope or a new Task.
+
+Resolve pinned historical context by the exact durable revision and its publication proof; verify
+its recorded identity rather than substituting a recent revision, today's definition or an open
+Draft. For no-occurrence/legacy history, use complete targeted or correctly paged durable evidence;
+absence from a recent window is not absence from history. Distinguish unavailable/incomplete
+evidence from a true missing or never-published definition and keep read paths bounded and free of
+work, Provider calls, grants and media mutation. Enlarging any of the window constants is not a fix.
+
+The corrected candidate must prove native API/Web retained-history readability beyond both former
+windows and across runtime restart, exact historical identity and usable run/authority links, with
+unpublished Drafts excluded and missing/corrupt/unavailable evidence actionable. Preserve current
+publication/copy reconciliation, grant/revocation, new/old admitted pins, RBAC, OrganizerExecutor-only
+mutation and accepted Slice 44 behaviors; then satisfy the complete assigned T4 checkpoint plan.
+This reassessment changes only the explicit command-selection/stage facts in Required Tests and
+records the current result. Developer correction remains for subsequent implementation direction.
