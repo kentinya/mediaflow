@@ -7,14 +7,14 @@ the committed [Slice 44](SLICE.md). Implementation reads
 ```text
 Task ID: 44.10
 Parent Slice: 44
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: 78d43114b475c9f82a1bae88654cb1fc2277e391
 Difficulty: Medium
 Test Level: T4
 Planner / Reviewer: B
 Contract Authority: 78d43114b475c9f82a1bae88654cb1fc2277e391:SLICE.md
 Blocking Finding: P1 / A44-14
-Next Action: DEVELOPER IMPLEMENTS THIS TASK
+Next Action: B INDEPENDENTLY REVIEWS THIS TASK
 ```
 
 ## Goal
@@ -247,32 +247,43 @@ assigned T4 gates. External-service/endurance unavailability remains explicit SK
 
 ## Developer Completion Report
 
-IN PROGRESS — A44-14 correction is implemented; final T4 gates are running.
+READY FOR B REVIEW — A44-14 is implemented at executable candidate
+`fa91a231ff58b99a496f608757fccaffedb0f74c`; this report-only Task update is its handoff
+successor. No Task PASS or Slice closure is claimed.
 
-Changed files: `mediaflow/application/media_discovery.py`,
-`tests/test_media_discovery.py`, and the existing real-Python/Docker browser proof scripts. Explicit
-regular files now join the exact observed same-directory set used by the production attachment
-matcher before primary counting/freeze. Walked and explicit observations deduplicate by exact
-ResourceLibrary-relative path; ordinary pages and directories still use their existing bounded
-walk and matching rules. The managed Local/SQLite/authenticated-API regression covers folder-only
-and mixed selection, reversed explicit order, frozen main-only intent membership and exact
-zero-mutation Trailer Preview. Both native browser proofs now exercise the actual Files mixed
-selection through Preview and separately confirmed execution.
+Explicitly observed regular files now join the exact same-directory observation set passed to the
+production attachment matcher before primary counting and freeze. Exact ResourceLibrary-relative
+paths deduplicate between direct selections and walked pages, preserving order independence,
+bounded behavior and genuine stability re-observation. The managed Local/SQLite/authenticated API
+regression covers folder-only and mixed selection, reversed explicit order, one frozen main item,
+and exact zero-mutation Trailer Preview. Native and Docker browser proofs carry the real Files
+mixed selection through separately confirmed execution.
 
-Feedback to date: the new regression failed on Task Base with two primaries (main plus Trailer)
-and passes on the working candidate. The focused discovery, intent, Preview and execution suites
-passed (123 and 56 tests); focused Web tests passed 61 cases. A first concurrent full Web run had
-four unrelated RulesWorkspacePage failures under resource contention (1 navigation lookup and 3
-five-second timeouts); those four cases passed independently on Task Base and this candidate.
-A solo full Web run and the remaining T4 gates are in progress. The first full Python run passed
-2,432 tests with 7 skips, before the final additional reverse-order frozen-intent assertions;
-the full Python gate will be rerun on the final candidate. See the indexed logs under
-`.git/validation-evidence/78d43114b475c9f82a1bae88654cb1fc2277e391/task44-10-*/`.
+Final T4 results: Python `unittest discover` PASS, 2,432 tests in 443.985 seconds, 7 existing
+environment-gated skips; Web unit/E2E, format, lint, typecheck and build PASS using the unchanged
+Web inputs and audited asset hashes; real-Python browser proof PASS (15 browser cases); final
+Docker production proof PASS (9 browser cases, 4 discovery cases, exact main/Trailer Preview and
+confirmed durable execution with replay refused); Docker release-security smoke PASS. Governance,
+Ruff format/lint, compileall, pip check, both config validations, no-FFmpeg/FFprobe audit,
+`git diff --check`, wheel build/install/database smoke all PASS. Final wheel smoke reports schema
+45 and no migration required. Detailed commands, hashes, logs, screenshots, reused-input audit,
+and first diagnostic attempts are indexed at
+`.git/validation-evidence/fa91a231ff58b99a496f608757fccaffedb0f74c/task44-10/evidence-index.md`.
 
-No schema/persistence, configuration, frontend, dependency, or architecture change was needed.
-No migration rehearsal is triggered. Remaining work is to finish the assigned T4 gates, record
-their actual results, create the implementation checkpoint, and submit READY FOR B REVIEW; no
-Task or Slice PASS is claimed here.
+The exact new regression was independently reproduced on Task Base (expected FAIL: two primaries)
+and passes on the final candidate. Earlier concurrent Web failures were diagnosed as resource
+contention and passed independently at Base and candidate. The initial cold Docker health timeout
+also passed its full readiness smoke on Task Base; no gate or timeout was waived. Intermediate
+Docker proof harness issues were corrected, final proof/security gates used distinct fresh images,
+and the final full Python suite completed after the final visible-execution assertion was added.
+
+The full Python run emitted existing SQLite/temp-directory `ResourceWarning` messages and worker
+heartbeat warnings. The seven skips are existing environment-gated external-service/endurance
+cases; no product assertion was skipped. The Web build reports its existing large-chunk advisory.
+No schema, persistence, config, Web source, dependency or architecture change was needed. Existing
+untracked user PNGs and B Closure Packet were preserved; `config/alist.json` was untouched. The
+implementation checkpoint sequence and complete evidence are in the evidence index. The Task is
+ready for B to independently review Base..Head and decide its review result.
 
 ## B Review Result
 
