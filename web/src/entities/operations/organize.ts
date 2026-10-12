@@ -17,6 +17,7 @@ import {
   normalizeBoundedCount,
   normalizeBoundedText,
   normalizeEnum,
+  normalizeOptionalIdentityText,
   normalizeOptionalText,
   normalizeTextArray,
   readRecord,
@@ -27,6 +28,7 @@ import {
   type ActionTransportContract,
 } from "./action-transport";
 import { normalizeManualPreview, type ManualPreviewModel } from "./preview";
+import { MAX_DISCOVERY_PATH } from "./discovery";
 
 export const ORGANIZE_INTENT_STATUSES = ["open", "cancelled"] as const;
 export type OrganizeIntentStatus = (typeof ORGANIZE_INTENT_STATUSES)[number];
@@ -482,6 +484,21 @@ function optionalText(
   }
 }
 
+function optionalIdentityPath(
+  source: Record<string, unknown>,
+  field: string,
+): string | null {
+  try {
+    return normalizeOptionalIdentityText(
+      source[field],
+      field,
+      MAX_DISCOVERY_PATH,
+    );
+  } catch {
+    return fail(field);
+  }
+}
+
 function flag(source: Record<string, unknown>, field: string): boolean {
   try {
     return normalizeBoolean(source[field], field);
@@ -684,7 +701,7 @@ function normalizeIntentItem(value: unknown): OrganizeIntentItemModel {
     sourceFileId: optionalText(rawSource, "fileId"),
     sourceStorageId: optionalText(rawSource, "storageId"),
     resourceLibraryId: optionalText(rawSource, "resourceLibraryId"),
-    sourcePath: optionalText(rawSource, "path"),
+    sourcePath: optionalIdentityPath(rawSource, "path"),
     filename: optionalText(rawSource, "filename"),
     extension: optionalText(rawSource, "extension"),
     occurrenceState: optionalText(rawSource, "occurrenceState"),

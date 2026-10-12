@@ -579,7 +579,13 @@ def _bounded_identifier_list(
     return bounded
 
 
-def _bounded_operator_document(value: object, *, guard_routes: bool = True) -> object:
+def _bounded_operator_document(
+    value: object,
+    *,
+    guard_routes: bool = True,
+    preserve_manual_source_paths: bool = False,
+    source_identity: bool = False,
+) -> object:
     """Recursively prove one produced operator document is secret-free.
 
     The projections above are explicit allowlists, so this walk is a safety
@@ -594,12 +600,25 @@ def _bounded_operator_document(value: object, *, guard_routes: bool = True) -> o
         for key, item in value.items():
             if not isinstance(key, str) or _FORBIDDEN_OPERATOR_KEY.search(key):
                 continue
+            if preserve_manual_source_paths and source_identity and key == "path":
+                document[key] = _bounded_manual_source_path(item)
+                continue
             document[key] = _bounded_operator_document(
-                item, guard_routes=guard_routes and key not in _OPERATOR_ROUTE_KEYS
+                item,
+                guard_routes=guard_routes and key not in _OPERATOR_ROUTE_KEYS,
+                preserve_manual_source_paths=preserve_manual_source_paths,
+                source_identity=preserve_manual_source_paths and key == "source",
             )
         return document
     if isinstance(value, list | tuple):
-        return [_bounded_operator_document(item, guard_routes=guard_routes) for item in value]
+        return [
+            _bounded_operator_document(
+                item,
+                guard_routes=guard_routes,
+                preserve_manual_source_paths=preserve_manual_source_paths,
+            )
+            for item in value
+        ]
     if isinstance(value, str):
         if not value:
             return value
@@ -624,6 +643,23 @@ def _bounded_identity_path(value: object | None) -> str | None:
     """
 
     return _domain_bounded_identity_path(value)
+
+
+def _bounded_manual_source_path(value: object | None) -> str | None:
+    """Keep one safe Storage-relative source identity exact through the guard.
+
+    Manual intent/Preview projections first pass paths through the shared
+    Storage-relative identity boundary.  This final recursive guard normally
+    caps every string at 512 characters; rechecking the field here preserves
+    the path-specific 4096-byte contract without widening other text fields.
+    """
+
+    path = _bounded_identity_path(value)
+    if path is None or path == "[redacted-path]":
+        return path
+    if _contains_evidence_digest_shape(path) or _contains_evidence_credential_shape(path):
+        return _REDACTED_EVIDENCE
+    return path
 
 
 def task_operator_document(task: PersistentTask) -> dict[str, object]:
@@ -1117,7 +1153,7 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
             if isinstance(item, dict)
         ],
     }
-    return _bounded_operator_document(bounded)
+    return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
 
 
 def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[str, object]:
@@ -1215,7 +1251,7 @@ def manual_intent_operator_document(document: dict[str, object]) -> dict[str, ob
             if isinstance(item, dict)
         ],
     }
-    return _bounded_operator_document(bounded)
+    return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
 
 
 def _bounded_recognition_option_list(value: object) -> list[dict[str, object]]:

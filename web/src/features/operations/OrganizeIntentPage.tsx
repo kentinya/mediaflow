@@ -174,12 +174,12 @@ function ChoiceEditor({
 
   return (
     <section className="mf-count-section">
-      <h3>{item.filename ?? item.itemId}</h3>
+      <h3 className="mf-exact-identity">{item.filename ?? item.itemId}</h3>
       <dl>
         <dt>来源身份</dt>
         <dd>{safeValue(item.sourceFileId)}</dd>
         <dt>Storage 相对路径</dt>
-        <dd>{safeValue(item.sourcePath)}</dd>
+        <dd className="mf-exact-identity">{safeValue(item.sourcePath)}</dd>
         <dt>资源库 / Storage</dt>
         <dd>
           {safeValue(item.resourceLibraryId)} /{" "}

@@ -271,6 +271,30 @@ describe("normalizeManualPreview", () => {
 });
 
 describe("normalizeManualPreviewItem", () => {
+  it("preserves a supported long source path and boundary whitespace exactly", () => {
+    const longPath =
+      "LongFolder/" +
+      [...Array(6)].map(() => "D".repeat(171)).join("/") +
+      "/" +
+      "L".repeat(175) +
+      ".mkv";
+    expect(longPath).toHaveLength(1222);
+    const item = firstItem(previewPayload());
+    (item["source"] as Json)["path"] = longPath;
+    expect(normalizeManualPreviewItem(item).sourcePath).toBe(longPath);
+
+    (item["source"] as Json)["path"] = " Leading/Trailing name .mkv ";
+    expect(normalizeManualPreviewItem(item).sourcePath).toBe(
+      " Leading/Trailing name .mkv ",
+    );
+  });
+
+  it("rejects source paths beyond the supported identity bound", () => {
+    const item = firstItem(previewPayload());
+    (item["source"] as Json)["path"] = "a".repeat(4097);
+    expect(() => normalizeManualPreviewItem(item)).toThrow();
+  });
+
   it("normalizes one real API preview item", () => {
     const item = normalizeManualPreviewItem(firstItem(previewPayload()));
     expect(item.recognitionType).toBe("A");

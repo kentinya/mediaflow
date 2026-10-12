@@ -54,6 +54,18 @@ export function normalizeIdentityText(
   return exact;
 }
 
+/** An optional exact identity value with its own path/name bound. */
+export function normalizeOptionalIdentityText(
+  value: unknown,
+  field: string,
+  maxLength: number = MAX_TEXT_LENGTH,
+): string | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  return normalizeIdentityText(value, field, maxLength);
+}
+
 export function normalizeBoundedCount(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     fail(field);

@@ -29,9 +29,10 @@ _EVIDENCE_PATH_SHAPES = (
 #: safe, Storage-relative identity.
 _IDENTITY_PATH_REDACTION = "[redacted-path]"
 
-#: The bound on one published identity value.  It mirrors the bounded
-#: operator-text limit so one value has exactly one public form.
-_MAX_IDENTITY_TEXT = 512
+#: The bound on one published Storage-relative identity.  ResourceLibrary
+#: selection/discovery paths are bounded to 4096 UTF-8 bytes; a tighter
+#: operator-text bound would hide a valid source identity after Freeze.
+_MAX_IDENTITY_PATH_BYTES = 4096
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)(\b(?:api[_-]?keys?|password|passwd|secret|tokens?|authorization|cookies?)\b"
@@ -116,11 +117,17 @@ def bounded_identity_path(value: object | None) -> str | None:
 
     if not isinstance(value, str):
         return _IDENTITY_PATH_REDACTION if value is not None else None
-    text = value.strip()
+    # A Storage identity is exact data.  Do not trim legal leading/trailing
+    # filename whitespace while projecting it for an operator.
+    text = value
+    try:
+        encoded_length = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        return _IDENTITY_PATH_REDACTION
     segments = text.replace("\\", "/").split("/")
     if (
-        not text
-        or len(text) > _MAX_IDENTITY_TEXT
+        not text.strip()
+        or encoded_length > _MAX_IDENTITY_PATH_BYTES
         or text.startswith(("/", "\\", "~"))
         or re.match(r"^[A-Za-z]:", text) is not None
         or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None

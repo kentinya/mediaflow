@@ -421,7 +421,7 @@ class _JourneyFixtureMixin:
         response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
         return int(statuses[0].split()[0]), json.loads(response)
 
-    def _create_reviewed_intent(self, value):
+    def _create_reviewed_intent(self, value, *, file_id=None):
         """Create one file-scoped intent and pin the RecognitionType C choices."""
 
         status, intent = self._request(
@@ -430,7 +430,7 @@ class _JourneyFixtureMixin:
             "POST",
             {
                 "scopeKind": "file",
-                "fileId": value.file_id,
+                "fileId": value.file_id if file_id is None else file_id,
                 "resourceLibraryId": "library",
             },
         )
@@ -488,6 +488,60 @@ class _JourneyFixtureMixin:
 
 class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     # --- the journey -------------------------------------------------------
+
+    def test_long_source_path_survives_intent_and_preview_projection(self) -> None:
+        long_name = "L" * 175 + ".mkv"
+        long_path = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + long_name
+        short_path = f"LongFolder/{long_name}"
+        self.assertEqual(1222, len(long_path))
+
+        with self.journey(names=(short_path, long_path)) as value:
+            long_record = next(
+                record
+                for record in value.index.list_by_resource_library("library")
+                if record.path == long_path
+            )
+            status, intent = self._request(
+                value,
+                "/api/v1/operations/organize/intents",
+                "POST",
+                {
+                    "scopeKind": "file",
+                    "fileId": long_record.file_id,
+                    "resourceLibraryId": "library",
+                },
+            )
+            self.assertEqual(201, status, intent)
+            self.assertEqual([long_path], [item["source"]["path"] for item in intent["items"]])
+
+            status, detail = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual(long_path, detail["items"][0]["source"]["path"])
+
+            item = detail["items"][0]
+            status, reviewed = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": detail["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, reviewed)
+            preview = self._create_preview(value, reviewed)
+            self.assertEqual(long_path, preview["items"][0]["source"]["path"])
+            self.assertTrue(preview["zeroMutation"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_web_journey_admits_one_execution_and_the_worker_completes_it(self) -> None:
         with self.journey() as value:

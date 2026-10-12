@@ -122,7 +122,7 @@ function ItemFindings({ item }: { readonly item: ManualPreviewItemModel }) {
         {item.current ? "" : "（历史记录或已阻止）"}
       </dd>
       <dt>来源</dt>
-      <dd>
+      <dd className="mf-exact-identity">
         {safeValue(item.sourceStorageId)}:{safeValue(item.sourcePath)}
       </dd>
       <dt>识别类型</dt>

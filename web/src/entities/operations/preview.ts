@@ -21,10 +21,12 @@ import {
   normalizeBoundedCount,
   normalizeBoundedText,
   normalizeEnum,
+  normalizeOptionalIdentityText,
   normalizeOptionalText,
   normalizeTextArray,
   readRecord,
 } from "../shared/normalize";
+import { MAX_DISCOVERY_PATH } from "./discovery";
 
 export const PREVIEW_STATUSES = [
   "previewed",
@@ -355,6 +357,21 @@ function optionalText(
 ): string | null {
   try {
     return normalizeOptionalText(source[field], field);
+  } catch {
+    return fail();
+  }
+}
+
+function optionalIdentityPath(
+  source: Record<string, unknown>,
+  field: string,
+): string | null {
+  try {
+    return normalizeOptionalIdentityText(
+      source[field],
+      field,
+      MAX_DISCOVERY_PATH,
+    );
   } catch {
     return fail();
   }
@@ -967,7 +984,7 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
       nextAction: optionalText(source, "nextAction"),
       failure: normalizePreviewFailure(source["failure"]),
       sourceStorageId: optionalText(sourceRecord, "storageId"),
-      sourcePath: optionalText(sourceRecord, "path"),
+      sourcePath: optionalIdentityPath(sourceRecord, "path"),
       sourceFilename: optionalText(sourceRecord, "filename"),
       resourceLibraryId: optionalText(sourceRecord, "resourceLibraryId"),
       ...findings,

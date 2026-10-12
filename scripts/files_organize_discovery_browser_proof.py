@@ -54,7 +54,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 PORT = int(os.environ.get("MF_PROOF_PORT", "8791"))
 BASE = f"http://127.0.0.1:{PORT}"
 TOKEN = "discovery-proof-operator-token"
-ARTIFACT_ROOT = ROOT / ".git" / "validation-evidence" / "_discovery-proof" / "browser"
+ARTIFACT_ROOT = Path(
+    os.environ.get(
+        "MF_DISCOVERY_PROOF_ARTIFACTS",
+        str(ROOT / ".git" / "validation-evidence" / "_discovery-proof" / "browser"),
+    )
+)
 
 #: Controlled synthetic scope names the acceptance matrix needs.
 FOLDER = "电影"
@@ -70,6 +75,14 @@ EXECUTION_FOLDER = "执行范围"
 EXECUTION_FILE = "Execution.2004.mkv"
 EXECUTION_RELATIVE = f"{EXECUTION_FOLDER}/{EXECUTION_FILE}"
 EXECUTION_TARGET = "Movies/其他电影/Execution (2004) [tmdbid-909]/Execution (2004).mkv"
+# A native long-path handoff case with two identical legal filenames.  The
+# second source is within the 4096-byte Storage-relative path bound but exceeds
+# the generic 512-character operator-text bound.
+LONG_FOLDER = "LongFolder"
+LONG_NAME = "L" * 175 + ".mkv"
+LONG_SHORT_PATH = f"{LONG_FOLDER}/{LONG_NAME}"
+LONG_PATH = f"{LONG_FOLDER}/" + "/".join(["D" * 171] * 6) + f"/{LONG_NAME}"
+LONG_PATHS = (LONG_SHORT_PATH, LONG_PATH)
 #: The controlled safety-depth scope: eligible media below the Task's own
 #: 32-level safety bound, with the configured library depth unset.
 MASS_FOLDER = "mass"
@@ -127,6 +140,10 @@ def seed_tree(root: Path) -> None:
     EXECUTION_FOLDER = "执行范围"
     (source / EXECUTION_FOLDER).mkdir(parents=True, exist_ok=True)
     (source / EXECUTION_FOLDER / "Execution.2004.mkv").write_bytes(b"synthetic execution media")
+    for relative in LONG_PATHS:
+        long_source = source / relative
+        long_source.parent.mkdir(parents=True, exist_ok=True)
+        long_source.write_bytes(b"synthetic long-path media")
     # The 101-source budget case: exactly one source beyond the admitted
     # primary bound, all ordinary legal media.
     mass = source / MASS_FOLDER
@@ -924,6 +941,13 @@ def main() -> int:
                 "MF_PROOF_BASE": BASE,
                 "MF_PROOF_TOKEN": TOKEN,
                 "MF_PROOF_ARTIFACTS": str(ARTIFACT_ROOT),
+                "MF_PROOF_CONFIG": str(configuration_path),
+                "MF_PROOF_CLI": str(ROOT / ".venv" / "bin" / "mediaflow"),
+                "MF_PROOF_ROOT": str(ROOT),
+                "MF_PROOF_LONG_PATHS": json.dumps(
+                    {"folder": LONG_FOLDER, "paths": LONG_PATHS, "longPath": LONG_PATH},
+                    ensure_ascii=False,
+                ),
                 "MF_PROOF_EXECUTION_INTENT": intent_id,
                 "MF_PROOF_SCOPE": json.dumps(
                     {
@@ -1141,12 +1165,17 @@ def main() -> int:
 
 BROWSER_PROOF = r"""
 import { chromium } from 'playwright';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const BASE = process.env.MF_PROOF_BASE;
 const TOKEN = process.env.MF_PROOF_TOKEN;
 const ARTIFACTS = process.env.MF_PROOF_ARTIFACTS;
+const CLI = process.env.MF_PROOF_CLI;
+const CONFIG = process.env.MF_PROOF_CONFIG;
+const ROOT = process.env.MF_PROOF_ROOT;
+const LONG = JSON.parse(process.env.MF_PROOF_LONG_PATHS);
 const SCOPE = JSON.parse(process.env.MF_PROOF_SCOPE);
 const evidence = { passes: [], mutatingRequests: [] };
 const requests = [];
@@ -1170,6 +1199,15 @@ try {
       await field.fill(TOKEN);
       await page.getByRole('button', { name: 'Connect' }).click();
     }
+  };
+
+  const api = async (url) => {
+    const response = await fetch(`${BASE}${url}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    const document = await response.json();
+    require_(response.status === 200, `GET ${url} failed: ${JSON.stringify(document)}`);
+    return document;
   };
 
   const shoot = async (name) => {
@@ -1289,6 +1327,147 @@ try {
     screenshot: await shoot('operations-discovery-readback'),
   });
 
+  // -- long exact source identity through native Freeze ------------------
+  // Two files share the same legal 179-character basename; the second has a
+  // 1222-character Storage-relative path. The real Worker completes the
+  // admitted selection while the built Files page waits, then the operator
+  // explicitly freezes and reviews the exact intent.
+  const discoveryRoute = async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    const submission = route.request().postDataJSON();
+    if (!submission.paths?.includes(LONG.folder)) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const admitted = await response.json();
+    require_(response.status() === 202, `long-path admission failed: ${JSON.stringify(admitted)}`);
+    let state;
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      state = await api(`/api/v1/operations/organize/discoveries/${admitted.discoveryId}`);
+      if (!['queued', 'running'].includes(state.status)) break;
+      execFileSync(CLI, ['--config', CONFIG, 'worker', 'run-next'], {
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          MEDIAFLOW_API_TOKEN: TOKEN,
+          MEDIAFLOW_UI_V2_ASSET_ROOT: path.join(ROOT, 'web', 'dist'),
+        },
+      });
+    }
+    state = await api(`/api/v1/operations/organize/discoveries/${admitted.discoveryId}`);
+    require_(
+      state.status === 'completed',
+      `long-path discovery did not complete: ${JSON.stringify(state)}`,
+    );
+    const discoveredPaths = state.sources.map((source) => source.path).sort();
+    require_(
+      JSON.stringify(discoveredPaths) === JSON.stringify([...LONG.paths].sort()),
+      `the exact long-path discovery sources changed: ${JSON.stringify(discoveredPaths)}`,
+    );
+    await route.fulfill({ response });
+  };
+  const discoveryRoutePattern = '**/api/v1/resource-libraries/source/files/discoveries';
+  await page.route(discoveryRoutePattern, discoveryRoute);
+  await connect('/ui-v2/resourcelib/files');
+  await page.getByRole('table').waitFor();
+  await page
+    .getByRole('row', { name: new RegExp(LONG.folder) })
+    .getByRole('checkbox')
+    .check();
+  await page.getByRole('button', { name: '批量整理' }).click();
+  await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).waitFor();
+  const longDiscoveryId = page.url().match(/\/discovery\/([^?]+)/)?.[1];
+  require_(Boolean(longDiscoveryId), `native discovery URL had no identity: ${page.url()}`);
+  const longDiscovery = await api(
+    `/api/v1/operations/organize/discoveries/${longDiscoveryId}`,
+  );
+  const longPathDiscoveryText = await page.getByRole('main').innerText();
+  require_(
+    longPathDiscoveryText.includes(LONG.longPath),
+    'native discovery detail did not show the exact long source path',
+  );
+  const discoveryPathLines = await page
+    .getByRole('region', { name: '已发现来源' })
+    .getByText(LONG.longPath, { exact: true })
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getClientRects().length;
+    });
+  require_(discoveryPathLines > 1, 'the native discovery path did not wrap for review');
+  require_(
+    JSON.stringify(longDiscovery.sources.map((source) => source.path).sort()) ===
+      JSON.stringify([...LONG.paths].sort()),
+    `native discovery readback lost a source: ${JSON.stringify(longDiscovery.sources)}`,
+  );
+  evidence.passes.push({
+    case: 'long-path-discovery',
+    screenshot: await shoot('long-path-discovery'),
+  });
+  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).click();
+  await page.waitForURL(/\/operations\/organize\/intent\//);
+  try {
+    await page.getByRole('heading', { name: '整理意图', exact: true }).waitFor();
+  } catch (error) {
+    const diagnosticText = await page
+      .getByRole('main')
+      .innerText()
+      .catch(() => 'main unavailable');
+    await shoot('long-path-intent-heading-failure');
+    throw new Error(
+      `native long-path intent did not render its heading at ${page.url()}: ` +
+        `${diagnosticText}\n${error}`,
+    );
+  }
+  const longIntentId = page.url().match(/\/intent\/([^?]+)/)?.[1];
+  require_(Boolean(longIntentId), `native intent URL had no identity: ${page.url()}`);
+  const longIntent = await api(`/api/v1/operations/organize/intents/${longIntentId}`);
+  const intentPaths = longIntent.items.map((item) => item.source.path).sort();
+  require_(
+    JSON.stringify(intentPaths) === JSON.stringify([...LONG.paths].sort()),
+    `Freeze did not preserve the exact long source identities: ${JSON.stringify(intentPaths)}`,
+  );
+  const longIntentText = await page.getByRole('main').innerText();
+  require_(
+    longIntentText.includes(LONG.longPath) && !longIntentText.includes('[redacted-path]'),
+    'the native manual intent hid or changed a reviewed Storage-relative path',
+  );
+  for (const sourcePath of LONG.paths) {
+    require_(
+      (await page.getByRole('main').getByText(sourcePath, { exact: true }).count()) === 1,
+      `the native intent did not render exact path text: ${sourcePath}`,
+    );
+  }
+  const intentPathLines = await page
+    .getByRole('main')
+    .getByText(LONG.longPath, { exact: true })
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getClientRects().length;
+    });
+  require_(intentPathLines > 1, 'the native manual intent path did not wrap for review');
+  evidence.longPathHandoff = {
+    discoveryId: longDiscoveryId,
+    intentId: longIntentId,
+    basenameLength: LONG.longPath.split('/').at(-1).length,
+    pathLength: LONG.longPath.length,
+    sourcePaths: intentPaths,
+    visibleExactly: true,
+    zeroMutation: longIntent.zeroMutation === true,
+  };
+  require_(longIntent.zeroMutation === true, 'the frozen intent lost zero-mutation state');
+  evidence.passes.push({
+    case: 'long-path-native-intent-handoff',
+    screenshot: await shoot('long-path-intent'),
+  });
+  await page.unroute(discoveryRoutePattern, discoveryRoute);
+
   // -- native reviewed choices -> exact Preview -> confirmed Execute -------
   // The harness has admitted and frozen one dedicated execution discovery and
   // recorded the reviewed Choice (its metadata identity is grounded in durable
@@ -1349,19 +1528,23 @@ try {
   });
 
   // Every non-GET request in the readback portion of this journey is one
-  // bounded discovery admission; the execution leg adds exactly one Preview
-  // and one confirmed Execute, and nothing else mutates media.
+  // bounded discovery admission or explicit Freeze; the execution leg adds
+  // exactly one Preview and one confirmed Execute.
   evidence.mutatingRequests = requests.filter(
     (entry) => entry.method !== 'GET' && entry.method !== 'HEAD',
   );
   evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
     entry.url.includes('/files/discoveries'),
   );
+  evidence.discoveryFinalizations = evidence.mutatingRequests.filter((entry) =>
+    /\/discoveries\/[^/]+\/finalize/.test(entry.url),
+  );
   evidence.executionRequests = evidence.mutatingRequests.filter(
     (entry) => entry.url.includes('/previews') || entry.url.includes('/execute'),
   );
   require_(
-    evidence.discoveryAdmissions.length + evidence.executionRequests.length ===
+    evidence.discoveryAdmissions.length + evidence.discoveryFinalizations.length +
+      evidence.executionRequests.length ===
       evidence.mutatingRequests.length,
     `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );

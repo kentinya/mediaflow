@@ -856,6 +856,11 @@ body {
   gap: 4px;
 }
 
+.mf-exact-identity {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .mf-count-card {
   background: var(--panel);
   border: 1px solid var(--line);

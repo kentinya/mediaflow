@@ -1761,10 +1761,20 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
             searchable_identity_text,
         )
 
+        long_path = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + "L" * 175 + ".mkv"
+        self.assertEqual(1222, len(long_path))
+        self.assertEqual(long_path, bounded_identity_path(long_path))
+        self.assertEqual(long_path, searchable_identity_text(long_path))
+        whitespace_path = " Leading/Trailing name .mkv "
+        self.assertEqual(whitespace_path, bounded_identity_path(whitespace_path))
+        self.assertEqual("[redacted-path]", bounded_identity_path("é" * 2049))
+
         matrix = (
             None,
             "",
             "Movies/2024",
+            long_path,
+            whitespace_path,
             "Unified media source",
             "/srv/private-host/root",
             "\\\\server\\share\\file.mkv",
@@ -1772,6 +1782,7 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
             "Archive api_key=INVENTORYPROBE-SECRET",
             "Bearer secret.mkv",
             "a" * 600,
+            "a" * 4097,
         )
         for value in matrix:
             with self.subTest(value=value):

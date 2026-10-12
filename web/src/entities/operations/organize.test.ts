@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fixture from "./__fixtures__/manual-operations.json";
 import {
   normalizeOrganizeAction,
+  normalizeOrganizeIntent,
   normalizeOrganizePreview,
   OrganizeNormalizationError,
 } from "./organize";
@@ -51,6 +52,52 @@ function previewDocument(): Json {
   action["path"] = "/api/v1/operations/organize/previews/preview-1/execute";
   return value;
 }
+
+function intentDocument(): Json {
+  const value = JSON.parse(JSON.stringify(documents["organizeIntent"])) as Json;
+  value["intentId"] = "intent-1";
+  const actions = value["actions"] as Json;
+  for (const actionName of ["choice", "preview"] as const) {
+    const action = actions[actionName] as Json;
+    action["path"] = (action["path"] as string).replace("<uuid>", "intent-1");
+  }
+  const item = (value["items"] as Json[])[0]!;
+  item["itemId"] = "item-1";
+  return value;
+}
+
+describe("normalizeOrganizeIntent source identity", () => {
+  it("preserves a supported long path and boundary whitespace exactly", () => {
+    const longPath =
+      "LongFolder/" +
+      [...Array(6)].map(() => "D".repeat(171)).join("/") +
+      "/" +
+      "L".repeat(175) +
+      ".mkv";
+    expect(longPath).toHaveLength(1222);
+    const value = intentDocument();
+    const item = (value["items"] as Json[])[0]!;
+    const source = item["source"] as Json;
+    source["path"] = longPath;
+
+    const model = normalizeOrganizeIntent(value);
+    expect(model.items[0]?.sourcePath).toBe(longPath);
+
+    source["path"] = " Leading/Trailing name .mkv ";
+    expect(normalizeOrganizeIntent(value).items[0]?.sourcePath).toBe(
+      " Leading/Trailing name .mkv ",
+    );
+  });
+
+  it("rejects paths beyond the supported identity bound", () => {
+    const value = intentDocument();
+    const item = (value["items"] as Json[])[0]!;
+    (item["source"] as Json)["path"] = "a".repeat(4097);
+    expect(() => normalizeOrganizeIntent(value)).toThrow(
+      OrganizeNormalizationError,
+    );
+  });
+});
 
 describe("normalizeOrganizeAction route binding", () => {
   it("rejects a non-URI-safe object identity and its matching execute route", () => {

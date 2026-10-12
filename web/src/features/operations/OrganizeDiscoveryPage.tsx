@@ -293,7 +293,7 @@ export function OrganizeDiscoveryPage() {
                   {model.selection.scopes.map((scope) => (
                     <li key={scope.path}>
                       {scope.kind === "directory" ? "文件夹 " : "文件 "}
-                      <code>{scope.path}</code>
+                      <code className="mf-exact-identity">{scope.path}</code>
                     </li>
                   ))}
                 </ul>
@@ -332,7 +332,11 @@ export function OrganizeDiscoveryPage() {
                         {item.examplePath !== null ? (
                           <>
                             {" "}
-                            （例如 <code>{item.examplePath}</code>）
+                            （例如{" "}
+                            <code className="mf-exact-identity">
+                              {item.examplePath}
+                            </code>
+                            ）
                           </>
                         ) : null}
                       </li>
@@ -349,7 +353,7 @@ export function OrganizeDiscoveryPage() {
                   <ul>
                     {model.sources.map((source) => (
                       <li key={source.path}>
-                        <code>{source.path}</code>
+                        <code className="mf-exact-identity">{source.path}</code>
                       </li>
                     ))}
                   </ul>
@@ -363,8 +367,10 @@ export function OrganizeDiscoveryPage() {
                     {model.progress.findings.map((finding, index) => (
                       <li key={`${finding.kind}:${finding.path}:${index}`}>
                         {label(FINDING_LABELS, finding.kind)}{" "}
-                        <code>{finding.path}</code> —{" "}
-                        {label(REASON_LABELS, finding.reason)}
+                        <code className="mf-exact-identity">
+                          {finding.path}
+                        </code>{" "}
+                        — {label(REASON_LABELS, finding.reason)}
                       </li>
                     ))}
                   </ul>
