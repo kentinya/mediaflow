@@ -971,7 +971,11 @@ class MediaDiscoveryService:
         # Preview does, and it is applied as soon as a directory is finished so
         # a matching sidecar can never inflate the primary count mid-walk.
         directory_entries: list[tuple[str, int, StorageEntry]] = []
-        observed_file_entries: list[tuple[str, int, StorageEntry]] = []
+        # Every exact regular-file observation participating in this pass,
+        # including an explicitly selected file that the API stats directly.
+        # Keying by ResourceLibrary-relative path makes overlap between direct
+        # selection and a later directory page idempotent.
+        observed_file_entries: dict[str, tuple[str, int, StorageEntry]] = {}
 
         def bump(reason_value: str, path: str) -> None:
             existing = reasons.get(reason_value)
@@ -1005,8 +1009,8 @@ class MediaDiscoveryService:
                 )
             )
 
-        def observe(relative: str, depth: int, entry: StorageEntry | None):
-            """Classify and observe one candidate; returns the updated counters."""
+        def observe(relative: str, depth: int, entry: StorageEntry | None) -> StorageEntry | None:
+            """Observe one candidate and return its exact file entry for association."""
 
             nonlocal counters, observation_degraded
             observed_candidates.add(relative)
@@ -1026,7 +1030,7 @@ class MediaDiscoveryService:
                     # explicitly review the known subset, never be told the
                     # whole admitted scope was discovered.
                     observation_degraded = True
-                    return
+                    return None
                 if self._admit_stat_entry(entry, relative, library) is None:
                     # A provider ``stat`` that answers for a different path than
                     # the one requested is never normalized into authority.
@@ -1040,13 +1044,13 @@ class MediaDiscoveryService:
                     )
                     counters = replace(counters, error_entries=counters.error_entries + 1)
                     sources.pop(relative, None)
-                    return
+                    return None
             if entry.entry_type is StorageEntryType.SYMLINK:
                 bump(_REASON_SYMLINK, relative)
                 note(DiscoveryFindingKind.EXCLUDED, relative, _REASON_SYMLINK, entry, depth)
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                 sources.pop(relative, None)
-                return
+                return None
             if entry.entry_type is not StorageEntryType.FILE:
                 bump(_REASON_UNSUPPORTED_TYPE, relative)
                 note(
@@ -1054,7 +1058,7 @@ class MediaDiscoveryService:
                 )
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                 sources.pop(relative, None)
-                return
+                return None
             verdict = classify_entry(library, relative, entry)
             if verdict is not ScanEntryVerdict.CANDIDATE:
                 why = {
@@ -1071,14 +1075,19 @@ class MediaDiscoveryService:
                 note(DiscoveryFindingKind.EXCLUDED, relative, why, entry, depth)
                 counters = replace(counters, excluded_entries=counters.excluded_entries + 1)
                 sources.pop(relative, None)
-                return
+                # The real Preview attachment matcher reads the same directory
+                # entries even when a file is excluded as an independent
+                # source. Keep this exact observed entry available to that
+                # matcher; it can never become a source because it is absent
+                # from ``sources``.
+                return entry
             observed = source_fingerprint(library.storage_id, library.library_id, entry)
             if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
                 bump(_REASON_UNREADABLE, relative)
                 note(DiscoveryFindingKind.ERROR, relative, _REASON_UNREADABLE, entry, depth)
                 counters = replace(counters, error_entries=counters.error_entries + 1)
                 sources.pop(relative, None)
-                return
+                return entry
             now = self._clock()
             prior = previous.get(relative)
             verdict = stability_verdict(
@@ -1154,6 +1163,35 @@ class MediaDiscoveryService:
                 # cannot survive merely because its path was seen before.
                 sources.pop(relative, None)
 
+            return entry
+
+        def demote_observed_attachment_groups(directories: set[str] | None = None) -> None:
+            """Apply the production matcher to each exact observed directory.
+
+            A mixed selection can contain files observed by ``stat`` alongside
+            files from a walked directory. Grouping the complete observed set
+            before checking the primary bound lets those two entrances share
+            the same association, while never listing an unselected directory.
+            """
+
+            grouped: dict[str, dict[str, tuple[str, int, StorageEntry]]] = {}
+            for relative, item in observed_file_entries.items():
+                directory = relative.rsplit("/", 1)[0] if "/" in relative else ""
+                if directories is not None and directory not in directories:
+                    continue
+                grouped.setdefault(directory, {})[relative] = item
+            for directory in sorted(grouped):
+                entries = [grouped[directory][path] for path in sorted(grouped[directory])]
+                self._demote_attachments(
+                    runtime,
+                    library,
+                    entries,
+                    sources,
+                    snapshot_id=discovery.snapshot_id,
+                    snapshot_digest=discovery.snapshot_digest,
+                )
+
+        explicit_files_associated = False
         while not stop:
             if heartbeat is not None and not heartbeat():
                 # The lease was taken over by another Worker.  The old owner
@@ -1182,14 +1220,24 @@ class MediaDiscoveryService:
                 status = DiscoveryStatus.PARTIAL_SUCCESS
                 break
             if pending_files:
-                observe(pending_files.pop(0), 0, None)
-                if self._over_primary_limit(sources, bump, note):
-                    incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
-                    refuse(incomplete)
-                    status = DiscoveryStatus.PARTIAL_SUCCESS
-                    break
+                relative = pending_files.pop(0)
+                observed_entry = observe(relative, 0, None)
+                if observed_entry is not None:
+                    observed_file_entries.setdefault(relative, (relative, 0, observed_entry))
                 continue
             if active_directory is None:
+                if not explicit_files_associated:
+                    explicit_directories = {
+                        relative.rsplit("/", 1)[0] if "/" in relative else ""
+                        for relative in observed_file_entries
+                    }
+                    demote_observed_attachment_groups(explicit_directories)
+                    explicit_files_associated = True
+                    if self._over_primary_limit(sources, bump, note):
+                        incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
+                        refuse(incomplete)
+                        status = DiscoveryStatus.PARTIAL_SUCCESS
+                        break
                 # The previous directory is fully walked (or was abandoned):
                 # apply the production attachment association over its real
                 # observed entries, so a *proven* sidecar is never counted as an
@@ -1197,14 +1245,11 @@ class MediaDiscoveryService:
                 # against the true primary set, never against candidates that
                 # the existing association is about to demote.
                 if directory_entries:
-                    self._demote_attachments(
-                        runtime,
-                        library,
-                        directory_entries,
-                        sources,
-                        snapshot_id=discovery.snapshot_id,
-                        snapshot_digest=discovery.snapshot_digest,
-                    )
+                    walked_directories = {
+                        relative.rsplit("/", 1)[0] if "/" in relative else ""
+                        for relative, _, _ in directory_entries
+                    }
+                    demote_observed_attachment_groups(walked_directories)
                     directory_entries = []
                     if self._over_primary_limit(sources, bump, note):
                         incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
@@ -1342,7 +1387,7 @@ class MediaDiscoveryService:
                     pending_directories.append(relative)
                     continue
                 directory_entries.append((relative, depth, raw))
-                observed_file_entries.append((relative, depth, raw))
+                observed_file_entries.setdefault(relative, (relative, depth, raw))
                 # Every ordinary file is observed first.  A sidecar is only
                 # *demoted* afterwards, and only when the production attachment
                 # matcher proves it belongs to an admitted main file: a suffix
@@ -1387,7 +1432,7 @@ class MediaDiscoveryService:
         self._demote_attachments(
             runtime,
             library,
-            observed_file_entries,
+            list(observed_file_entries.values()),
             sources,
             snapshot_id=discovery.snapshot_id,
             snapshot_digest=discovery.snapshot_digest,

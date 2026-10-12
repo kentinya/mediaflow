@@ -1,3 +1,308 @@
+# Task 44.10 — Preserve attachment association through mixed-selection Organize
+
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the committed [Slice 44](SLICE.md). Implementation reads
+[Developer's experience](docs/agent-experience/developer-implementation-role.md).
+
+```text
+Task ID: 44.10
+Parent Slice: 44
+Status: IN PROGRESS
+Task Base: 78d43114b475c9f82a1bae88654cb1fc2277e391
+Difficulty: Medium
+Test Level: T4
+Planner / Reviewer: B
+Contract Authority: 78d43114b475c9f82a1bae88654cb1fc2277e391:SLICE.md
+Blocking Finding: P1 / A44-14
+Next Action: DEVELOPER IMPLEMENTS THIS TASK
+```
+
+## Goal
+
+Complete RO-6's existing mixed-selection journey: when an operator selects folders together with
+a main video and its matching enabled Trailer attachment, discovery and the frozen manual intent
+contain one primary media item; the exact Preview associates the Trailer with that primary, and
+only a separate explicit execution confirmation can organize their reviewed effects.
+
+This is one correction inside the current Slice, principally acceptance 27/28 and the retained
+attachment/bounds/authority requirements. Applicable stable requirements include REQ-ATT-001/003,
+REQ-ORG-003/004/007/008, REQ-SCAN-002/003, UX-001 through UX-007 and V2-UX-001/002/003.
+
+## Why This Task Exists / Legal Planning Decision
+
+A's current final review leaves A44-14 as the sole P1. A44-15 is P2 / NON-BLOCKING and is excluded
+from this Task. Task 44.9 remains historically PASS; its B readiness assessment did not close the
+Slice and is superseded for Slice acceptance by A's whole-range rejection. Workflow §§3/10 require
+one focused correction Task after that rejection, rather than reopening completed Tasks or
+inventing another Slice. Base and the six-outcome Contract remain unchanged.
+
+Actual code: `MediaDiscoveryService._advance` processes `pending_files` using `observe(..., None)`
+but only walked entries populate the existing attachment-association collections. The same
+published policy consequently demotes a walked Trailer but freezes an explicitly selected
+Trailer as an independent primary inside mixed discovery. Native Files submits exactly this
+shape whenever any selected eligible entry is a directory. Existing tests cover walked/page
+association, orphan/disabled-policy cases and default manual choice; they miss this entrance.
+
+The A reproduction is readable in
+[the final review](docs/reviews/slice-44-final-review-20261012.md) and
+`.git/validation-evidence/5ec0f3fdfa81b28bc12384e65b595a0f917dc562/a-final-20261012/`.
+Selecting `Movies` yields one primary/intent item; selecting `Movies/Other` (empty),
+`Movies/Film.2001.mkv` and `Movies/Film.2001-trailer.mp4` yields two despite enabled attachments.
+
+**Sizing reassessment:** the existing matcher, pinned default-choice resolution, Worker, manifest
+and manual Preview/execution journey are already present. This correction completes their shared
+selection semantics and does not justify another engine or dividing observation/count/handoff into
+separate Tasks. Although the Slice has exceeded the usual Task-count heuristic through earlier
+correction loops, this is one genuine unmet outcome, not P2 cleanup or a test-count quota.
+Medium reflects the bounded reuse opportunity; T4 remains mandatory because the change affects
+the primary source manifest, material limits and exact core organizing handoff (Slice final gate).
+
+**Governance:** the planning preflight actually ran and rejected FIX REQUIRED plus the truthful
+no-active-Task handoff. The committed Slice explicitly records this checker/workflow inconsistency
+and hands focused correction planning to B. B follows the sole-authority workflow, writes the
+missing legitimate PLANNED Task, then reruns the unchanged checker before Developer handoff.
+Do not change Slice status, fabricate a passed check or implement a guard change. Evidence is
+retained in `.git/validation-evidence/78d43114b475c9f82a1bae88654cb1fc2277e391/b-plan44-10/`.
+
+## Operator Journey
+
+- **Entry:** ResourceLibrary Files list/grid, current-directory multi-selection and Organize;
+  Operations creation/return continues to use the same existing Files journey.
+- **Visible state:** exact selected paths, bounded progress/findings, one main-media count and
+  frozen item; then exact source/target/Trailer attachment in the existing Preview.
+- **Action:** start discovery, inspect/finalize the sources, complete existing choices/Preview,
+  then separately confirm the reviewed execution. No new checkbox or confirmation is added.
+- **Success:** the main media and associated Trailer follow one reviewed primary plan; results
+  and return context remain inspectable through the existing Files/Operations surfaces.
+- **Failure:** an unavailable/excluded/unstable owner cannot silently absorb another source;
+  preserve its finding and the existing orphan/partial/known-subset semantics. Material refusal,
+  conflict, changed source or unavailable pin cannot become an executable truncated prefix.
+- **Recovery:** use existing truthful findings, deliberate known-subset review or smaller/new
+  discovery; ordinary cooperative controls retain their safety. Successful or uncertain media
+  effects are never replayed automatically.
+
+## Implementation Scope
+
+1. Include supported explicitly observed files in the existing association behavior for their
+   actual admitted same-directory owners, using the exact pinned default manual choice/policy
+   consumed by the later intent/Preview. Preserve real path/name/type/stability evidence.
+2. Reconcile primary counting and frozen manifest/intent membership with that association. Reuse
+   `AttachmentDiscovery`, `_attachment_policies_by_source` and existing bounded machinery where
+   appropriate; no extension/suffix-only substitute or assumption that every Trailer is an extra.
+3. Preserve explicit/walked overlap deduplication, paging/order independence, normal bounded
+   Worker steps and genuine stability re-observation. Do not enumerate unselected directories
+   merely to repair mixed selection or enlarge primary scope. Exact cursor-perfect exceptional
+   recovery remains deferred; no new persistence mechanism is mandated.
+4. Keep the existing API/Web state and exact Preview/execution behavior consistent. Product
+   changes to API/Web/Worker/persistence are permitted only when necessary for this correction;
+   meaningful regression/native proof is required even if application code alone is sufficient.
+
+Retain current budgets: 100 submitted scopes, 100 true primaries, 10,000 visited entries,
+1,000 distinct directories, 2,000 page fetches, 100 entries/page, safety depth 32 and 600 active
+seconds/attempt, together with existing name/path/evidence bounds. Preserve monotonic material
+refusals, atomically fenced publication/Finalize, exact pins, permissions and no implicit authority.
+Discovery calls no media-content/MetadataProvider/mutation ports; Preview remains zero mutation;
+only OrganizerExecutor executes separately confirmed effects.
+
+Likely areas: `mediaflow/application/media_discovery.py`, existing attachment/default-choice
+helpers and discovery/manual-organize tests; existing native discovery proof fixtures/scripts.
+Helper design and whether any durable-state adjustment is necessary remain Developer choices.
+No schema or migration is presumed. If a necessary adjustment exceeds this boundary, return to B
+for reassessment before implementation; material Contract changes still belong to A.
+
+## Acceptance Criteria
+
+| ID | Required observable result |
+|---|---|
+| AC1 — Actual mixed association | Under actual managed published/loaded enabled policy, A's same-directory fixture produces one main source/count and one frozen intent item for both folder selection and native mixed selection. The Trailer is never another primary item. Verify authenticated API and actual Files list/grid selection; reversing explicit selection/provider page order cannot change the retained primary set. |
+| AC2 — Existing policy semantics | Explicit files use the retained owner's actual pinned default manual policy, with the same matcher as Preview. Orphan Trailer, excluded/unavailable/unadmitted owner, disabled attachments/trailers and another type's enabled policy retain existing appropriate primary/partial semantics. No eligible item disappears based solely on its filename or another owner's policy. |
+| AC3 — Bounded truthful manifest | Explicit/walked overlaps, paging and normal Worker progress/re-observation preserve independent evidence, deduplication and association. Existing 51 main+51 Trailer and 100/101 true-primary regressions pass; material limits/refusals remain durable and block Finalize rather than creating a silent first-N executable subset. Do not raise budgets to conceal candidates counted as primaries. |
+| AC4 — Complete native handoff | Native mixed selection shows one main item through discovery/freeze. With a valid locally grounded offline identity, exact Preview displays the main and its Trailer attachment under the same policy; a separately confirmed temporary Local execution performs only those reviewed effects once, yields inspectable results and preserves return context. Discovery/Finalize/Preview create no media effects or execution work. Existing file-only/folder-only/multiple-folder and MediaLibrary isolation remain correct. |
+| AC5 — Failure and authority | Existing unchanged/missing/changed-source, denied/unsafe scope, independent partial read failure, pin isolation, stale-owner/control, atomic one-intent Finalize, conflicts and completed/uncertain-effect non-replay remain covered and passing. Preserve original names/recognition context and C remaining C with A policies. If persistence evolves, real old discovery/frozen/file-only history remains readable with unchanged identities/pins/authority through upgrade/reopen. |
+| AC6 — Coherent evidence | Submit the bounded correction, meaningful regressions and the assigned T4 gates on the actual candidate, with indexed raw results and disclosed gaps. Existing assertions/retries/timeouts/skips are not weakened to obtain PASS. Keep all unrelated/private/frozen/user work intact. No Task PASS or Slice closure is implied by this plan. |
+
+## Required Tests
+
+### Development and correction feedback
+
+First add a regression for A44-14 using the existing managed Local/SQLite/authenticated API fixture.
+Inspect the real frozen intent, not just a count/helper return. Extend only necessary related cases
+for AC2/AC3, including explicit-owner/Trailer evidence and Preview attachment membership. Use
+temporary roots, fakes/local services and locally grounded offline identity; no real TMDB/media.
+
+Repository root:
+
+```bash
+.venv/bin/python scripts/check_governance.py
+.venv/bin/python -m unittest tests.test_media_discovery tests.test_media_discovery_provider_manifest tests.test_attachments
+.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution
+```
+
+The first group covers mixed/walked association, default choices, confinement/filter/stability,
+bounds/controls/refusals; the second covers exact frozen membership, attachment Preview and
+separate execution/no replay. Run changed/new modules as well. From `web/`:
+
+```bash
+npm run test -- --run src/entities/operations/discovery.test.ts src/features/operations/OrganizeDiscoveryPage.test.tsx src/features/library/StorageFilesPage.test.tsx
+```
+
+These preserve count/state/actions, mixed list/grid selection and unchanged input/return behavior.
+Extend the existing real-Python native proof with the actual same-directory main/Trailer/empty-folder
+case and exact Preview/confirmed execution; its current mixed case only combines unrelated media.
+Reuse the existing proof journey rather than create a separate browser framework.
+
+### Final checkpoint gates
+
+Run complete Python/Web and quality gates on the final executable/test/harness candidate. A full
+run covering focused cases needs no redundant final rerun. The Task and immediate Slice-final
+preparation may share one verified same-candidate gate run; B still verifies critical behavior
+independently and reevaluates every Slice outcome before submitting its Closure Packet.
+
+Repository root:
+
+```bash
+.venv/bin/python scripts/check_governance.py
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/python -m compileall -q mediaflow tests scripts
+.venv/bin/python -m pip check
+.venv/bin/mediaflow --config config/strategy.example.json config validate
+.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate
+.venv/bin/python -m pip wheel . --no-deps -w dist/task44-10
+.venv/bin/python scripts/files_organize_discovery_browser_proof.py
+.venv/bin/python scripts/docker_files_organize_discovery_browser_proof.py
+.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-10-security
+git diff --check
+```
+
+Smoke-test the single exact wheel produced above with
+`.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel-path>`; retain its digest/module audit.
+Real-Python and Docker browser proofs run after Web build and must include AC4 on current code.
+Docker proof builds from the actual committed candidate; retain source/image/served-asset hashes.
+Use isolated projects/volumes/ports and fresh per-run image tags, including a distinct B rerun tag;
+never overwrite a different run's evidence image. Security gate covers permissions/redaction and
+separate authorized effects. Preserve no-FFmpeg/FFprobe/dependency and staged-secret checks.
+
+From `web/`:
+
+```bash
+npm run test -- --run
+npm run format:check
+npm run lint
+npm run typecheck
+npm run build
+npm run test:e2e
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts
+```
+
+These cover shared frontend/inventory/direct-file regressions and preserve RO-1 through RO-5.
+Do not relabel old executable-candidate tests as fresh. Unchanged visual assets may retain earlier
+RO-2/RO-5 image/measurement proof only with explicit input/asset identity and current built-artifact
+audit; changed layout/assets require the affected original viewport matrix again.
+
+If schema/persistence/compatibility or historical hydration changes, extend affected migration/
+reopen tests and run `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` plus an
+actual prior schema-45 seeded discovery/frozen/file-only history rehearsal with current code.
+If those inputs are unchanged, state why the existing migration proof is unaffected and preserve
+historical-readback regressions; do not manufacture a schema change to satisfy a test plan.
+
+### B independent verification / stop rule
+
+Review actual Task Base..submitted Head, current committed Slice and candidate evidence. Independently
+reproduce the exact managed mixed selection, inspect count/frozen item/default policy/Trailer Preview,
+and inspect a real native list/grid selection and separately confirmed temporary effect/no replay.
+Verify a negative association case and existing bounds/refusals/atomic-Finalize behavior. Reuse
+matching readable Developer/CI gates across roles only after checking the complete relevant inputs;
+missing, contradicted or changed evidence needs fresh affected gates. Document-only successors
+require governance/diff checks and proof executable/test/harness/build/configuration inputs match.
+
+After PASS, answer whether all six Required Outcomes and nine Required Surfaces are satisfied.
+If YES, complete/verify the current Slice-final T4 evidence and submit one fresh Closure Packet to
+A with the original Slice Base and corrected Head. Stop creating Tasks. A44-15, other P2 copy/
+assertion issues and already deferred exceptional-recovery enhancements cannot justify another
+Task or prevent that handoff. B does not edit the Slice/Roadmap or declare final PASS/CLOSED.
+
+### Evidence and rerun rules
+
+Retain one indexed candidate/run under `.git/validation-evidence/<tested-full-sha>/task44-10/`
+or readable CI through A's final decision. Record exact source/dirty manifest, commands/cwd,
+runtime/locks/published fixture/pins/Worker settings, artifact hashes, actual counts/durations,
+raw logs/images/receipts, first failures and exact repeats, reuse and missing/unavailable gates.
+Changed executable/test/harness/configuration/served inputs need fresh affected evidence and final
+assigned T4 gates. External-service/endurance unavailability remains explicit SKIP/UNAVAILABLE.
+
+## Non-goals
+
+- A44-15 exact-type defensive-check P2; direct-command/provider redesign or extra fingerprints.
+- New attachment/Extras matcher, queue/workflow engine, generalized recovery or unbounded scans.
+- Increasing limits, FileIndex source authority, media-content reads/Provider calls in discovery,
+  automatic execution/overwrite/delete/fallback or completed/uncertain-effect replay.
+- New Rules/classification/layout capability, MediaLibrary Organize, frozen Slice 43 implementation,
+  deferred seamless crash/cursor/legacy repair or unrelated refactors.
+- Slice/requirements/Roadmap/CURRENT promotion, closure or next-Slice selection.
+- User images/private config/live deployment/media/services. Do not stage or modify the existing
+  untracked B Closure Packet or user PNGs in this Task; retain the prior Task record below.
+
+## Developer Completion Report
+
+IN PROGRESS — A44-14 correction is implemented; final T4 gates are running.
+
+Changed files: `mediaflow/application/media_discovery.py`,
+`tests/test_media_discovery.py`, and the existing real-Python/Docker browser proof scripts. Explicit
+regular files now join the exact observed same-directory set used by the production attachment
+matcher before primary counting/freeze. Walked and explicit observations deduplicate by exact
+ResourceLibrary-relative path; ordinary pages and directories still use their existing bounded
+walk and matching rules. The managed Local/SQLite/authenticated-API regression covers folder-only
+and mixed selection, reversed explicit order, frozen main-only intent membership and exact
+zero-mutation Trailer Preview. Both native browser proofs now exercise the actual Files mixed
+selection through Preview and separately confirmed execution.
+
+Feedback to date: the new regression failed on Task Base with two primaries (main plus Trailer)
+and passes on the working candidate. The focused discovery, intent, Preview and execution suites
+passed (123 and 56 tests); focused Web tests passed 61 cases. A first concurrent full Web run had
+four unrelated RulesWorkspacePage failures under resource contention (1 navigation lookup and 3
+five-second timeouts); those four cases passed independently on Task Base and this candidate.
+A solo full Web run and the remaining T4 gates are in progress. The first full Python run passed
+2,432 tests with 7 skips, before the final additional reverse-order frozen-intent assertions;
+the full Python gate will be rerun on the final candidate. See the indexed logs under
+`.git/validation-evidence/78d43114b475c9f82a1bae88654cb1fc2277e391/task44-10-*/`.
+
+No schema/persistence, configuration, frontend, dependency, or architecture change was needed.
+No migration rehearsal is triggered. Remaining work is to finish the assigned T4 gates, record
+their actual results, create the implementation checkpoint, and submit READY FOR B REVIEW; no
+Task or Slice PASS is claimed here.
+
+## B Review Result
+
+```text
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: NO — A44-14 requires correction
+Next: DEVELOPER IMPLEMENTS THIS TASK
+```
+
+## Prior Task 44.9 — exact preserved historical handoff
+
+The complete pre-existing Task 44.9 content follows unchanged. Its no-active notice and Slice-ready
+assessment describe the earlier handoff; the active Task and next action are 44.10 above. A's
+current rejection supersedes the old Slice-readiness claim while preserving B's Task PASS history.
+
+---
+
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task 44.9: **PASS** — B reviewed executable `b4a14e0284b66597baf306a95224fc1dabf60033`
+submitted at `5ec0f3fdfa81b28bc12384e65b595a0f917dc562`. All Slice outcomes are satisfied;
+no implementation remains authorized by this completed Task.
+
+Next Action: **SLICE READY FOR A REVIEW** — A performs the full Slice review.
+The completed Task contract, reports and B review remain below for that review. This notice does
+not close the Slice or authorize selecting its successor.
+
+---
+
 # Task 44.9 — Complete ordinary folder Organize with safe discovery restart
 
 This Task follows [the development workflow](docs/development-workflow.md) and
@@ -6,7 +311,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and
 ```text
 Task ID: 44.9
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
 Difficulty: High
 Test Level: T4
@@ -1057,3 +1362,63 @@ public projection and its search counterpart, then verify the historical record 
 inventory and selected-detail journey.
 
 NEXT ACTION: B INDEPENDENTLY REVIEWS THIS TASK CHECKPOINT
+
+## B Review Result — b4a14e0284b6 / report 5ec0f3fdfa81
+
+Decision: **PASS**. Reviewed Task Base `ab94ce53189b5a9f16e7614cd011480a42d91e79`
+through executable `b4a14e0284b66597baf306a95224fc1dabf60033`, submitted at
+`5ec0f3fdfa81b28bc12384e65b595a0f917dc562`. The successor changes only this report;
+runtime, tests, dependencies and configuration match the tested candidate. The committed ACTIVE
+Contract, Task ID/Base/Goal/Scope/acceptance and High/T4 assignment remain unchanged.
+
+The historical Operations P1 is corrected at its shared-boundary cause. Run scopes and their
+searchable form retain the original bounded/redacted projection; the 4096-byte exact projection
+is confined to Manual Organize source paths. B independently seeded a real schema-38 database
+using archived production code, upgraded it with the candidate and opened both its native
+Operations inventory and selected-run detail. Both render successfully; the original 1222-character
+scope remains durable, media stays unchanged and no execution authority is added. Native long
+source identities remain exact through discovery/Freeze/intent, and successful Preview retains
+the actual selected attachment policy. No current P0/P1 Task blocker remains.
+
+B independently verified actual published filtering/default-choice/attachment consumption,
+request-identity scope/library refusal, a genuinely elapsed nonzero stability interval, changed-root
+lost-response binding, long names, independent partial-file/subset review, safe stopped attempts
+and explicit new discovery. Real old schema-45 history, duplicate records, frozen/file-only
+intents/Previews/results and pins survive upgrade and two reopens unchanged. Current full Python
+regression covers atomic equivalent admission/Finalize, 51 main/Trailer association, paging,
+100/101 primary bounds, command readiness, ownership/control/refusal and C-to-A-policy behavior.
+
+Slice-final validation on this executable candidate:
+
+- Python: **2431 run / 7 environment skips / OK**, 509.389 test seconds; Web: **1106 passed /
+  74 files**, 449.62 seconds. Neither full run changes assertions, retries or timeouts.
+- Governance, Python quality/configuration checks and Web format/lint/typecheck/build: PASS.
+- Native browser: 13 cases plus separate confirmed execution and no replay; additional native
+  long-path/partial-error/new-discovery and legacy inventory/detail probes: PASS.
+- Production Docker Files geometry: 22 measured passes / 48 screenshots, both library kinds,
+  list/grid and all four required viewports; selected screenshots visually inspected. PASS.
+- Exact clean wheel: all 163 modules match, no extras/missing modules, fresh smoke PASS.
+  Serial Docker release-security: PASS, unchanged assertions and timeouts; its 163 Python modules
+  and four built Web assets match. Actual schema-38/schema-45 migration/reopen probes: PASS.
+- Matching, readable candidate evidence reused after source/archive/lock/build audit: complete
+  Playwright 246, real-Python Operations 21 and Direct Files 10, Docker upgrade/recovery and
+  dependency audit. This reuse does not replace B's fresh Slice-level full regression above.
+
+Evidence index:
+`.git/validation-evidence/5ec0f3fdfa81b28bc12384e65b595a0f917dc562/b-review44-9/evidence-index.md`.
+It retains first harness/setup failures, the interrupted Web static-check attempt, two Docker
+health-wait failures (captured checks exceeded 3 seconds), and the unchanged serial security PASS.
+The first security script unexpectedly rebuilt an existing test-image tag; the original manifest
+and failed restoration attempt remain recorded, and both replacement/final images were audited.
+No failed or interrupted attempt is counted as PASS. Seven unavailable real-service/endurance
+profiles and existing ResourceWarning/jsdom/Vite notices remain disclosed.
+
+**Are all current Slice Required Outcomes satisfied? YES.** RO-1 through RO-5 retain their delivered
+native journeys with current regressions; RO-6 now satisfies the amended ordinary-flow, history,
+failure/recovery and safety acceptance. All nine Required Surfaces were rechecked. Do not create
+another Task. The single current handoff is
+[Slice 44 Closure Packet](docs/reviews/slice-44-closure-packet-20261012.md).
+
+Next Action: **SLICE READY FOR A REVIEW**. A reviews the original Slice Base through the submitted
+Head and owns reconciliation and any Slice PASS/CLOSED decision. B has not changed Slice, Roadmap,
+stable requirements, private configuration or the four pre-existing untracked user images.

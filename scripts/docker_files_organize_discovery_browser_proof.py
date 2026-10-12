@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated Docker acceptance: production-served bounded folder discovery (44.6).
+"""Isolated Docker acceptance: production-served bounded folder discovery (44.10).
 
 This harness builds the candidate image from the exact committed checkout,
 starts the real four-service Compose topology against temporary configuration,
@@ -53,7 +53,7 @@ SERVICES = {"api", "worker", "scheduler", "notification-worker"}
 ARTIFACT_ROOT = Path(
     os.environ.get(
         "MF_DOCKER_DISCOVERY_ARTIFACTS",
-        "/tmp/mediaflow-task44-6-docker-discovery-proof",
+        "/tmp/mediaflow-task44-10-docker-discovery-proof",
     )
 )
 
@@ -67,12 +67,18 @@ UNSUPPORTED = "notes.txt"
 #: (eligible media below the Task's own 32-level bound).
 MASS_FOLDER = "mass"
 DEEP_FOLDER = "deep"
-#: The dedicated confirmed-execution scope: one ordinary source the reviewed
-#: exact Preview moves through the production OrganizerExecutor.
+#: The dedicated confirmed-execution scope: a selected empty folder, main file
+#: and matching Trailer exercise the real mixed-selection handoff end to end.
 EXECUTION_FOLDER = "执行范围"
+EXECUTION_EMPTY_FOLDER = f"{EXECUTION_FOLDER}/Other"
 EXECUTION_FILE = "Execution.2004.mkv"
 EXECUTION_RELATIVE = f"{EXECUTION_FOLDER}/{EXECUTION_FILE}"
+EXECUTION_TRAILER_FILE = "Execution.2004-trailer.mp4"
+EXECUTION_TRAILER_RELATIVE = f"{EXECUTION_FOLDER}/{EXECUTION_TRAILER_FILE}"
 EXECUTION_TARGET = "Movies/其他电影/Execution (2004) [tmdbid-909]/Execution (2004).mkv"
+EXECUTION_TRAILER_TARGET = (
+    "Movies/其他电影/Execution (2004) [tmdbid-909]/Execution (2004)-trailer.mp4"
+)
 
 BROWSER_PROOF = r"""
 import { chromium } from 'playwright';
@@ -89,6 +95,15 @@ const requests = [];
 function require_(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+const api = async (url) => {
+  const response = await fetch(`${BASE}${url}`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
+  const document = await response.json();
+  require_(response.status === 200, `GET ${url} failed: ${JSON.stringify(document)}`);
+  return document;
+};
 
 const browser = await chromium.launch();
 try {
@@ -153,12 +168,109 @@ try {
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
   evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
 
+  // The native mixed leg selects a folder, its same-directory main video and
+  // matching Trailer, then verifies one primary before Freeze.
+  await connect('/ui-v2/resourcelib/files');
+  await page.getByRole('table').waitFor();
+  await page
+    .getByRole('row', { name: new RegExp(SCOPE.executionFolder) })
+    .getByRole('button', { name: SCOPE.executionFolder })
+    .click();
+  await page.getByRole('row', { name: /Other/ }).waitFor();
+  await page.getByRole('row', { name: /Other/ }).getByRole('checkbox').check();
+  await page
+    .getByRole('row', { name: new RegExp(SCOPE.executionFile.replaceAll('.', '\\.')) })
+    .getByRole('checkbox')
+    .check();
+  await page
+    .getByRole('row', { name: new RegExp(SCOPE.executionTrailerFile.replaceAll('.', '\\.')) })
+    .getByRole('checkbox')
+    .check();
+  evidence.passes.push({
+    case: 'same-directory-mixed-selection',
+    screenshot: await shoot('same-directory-mixed-selection'),
+  });
+  await page.getByRole('button', { name: '批量整理' }).click();
+  await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).waitFor();
+  const mixedDiscoveryUrl = page.url();
+  require_(
+    /returnTo=files&returnResourceLibraryId=/.test(mixedDiscoveryUrl),
+    'mixed discovery lost its Files return context: ' + mixedDiscoveryUrl,
+  );
+  const mixedDiscoveryId = mixedDiscoveryUrl.match(/\/discovery\/([^?]+)/)?.[1];
+  require_(Boolean(mixedDiscoveryId), 'mixed discovery has no identity: ' + mixedDiscoveryUrl);
+  const mixedDiscovery = await api(
+    '/api/v1/operations/organize/discoveries/' + mixedDiscoveryId,
+  );
+  const mixedText = await page.getByRole('main').innerText();
+  require_(
+    /可整理来源\s*1/.test(mixedText) && mixedText.includes(SCOPE.executionMain),
+    'native mixed discovery did not show one main source: ' + mixedText.slice(0, 1200),
+  );
+  require_(
+    mixedDiscovery.primarySourceCount === 1 &&
+      JSON.stringify(mixedDiscovery.sources.map((source) => source.path)) ===
+        JSON.stringify([SCOPE.executionMain]),
+    'mixed discovery did not preserve one primary: ' + JSON.stringify(mixedDiscovery),
+  );
+  evidence.passes.push({
+    case: 'same-directory-mixed-discovery',
+    screenshot: await shoot('same-directory-mixed-discovery'),
+  });
+  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).click();
+  await page.waitForURL(/\/operations\/organize\/intent\//);
+  const mixedIntentId = page.url().match(/\/intent\/([^?]+)/)?.[1];
+  require_(Boolean(mixedIntentId), 'mixed Freeze did not open an intent: ' + page.url());
+  const mixedIntent = await api('/api/v1/operations/organize/intents/' + mixedIntentId);
+  require_(
+    mixedIntent.items.length === 1 &&
+      mixedIntent.items[0].source.path === SCOPE.executionMain,
+    'Freeze did not preserve one exact main source: ' + JSON.stringify(mixedIntent),
+  );
+  require_(
+    /returnTo=files&returnResourceLibraryId=/.test(page.url()),
+    'the mixed intent lost its Files return context: ' + page.url(),
+  );
+  const mixedItem = mixedIntent.items[0];
+  const choiceResponse = await page.evaluate(async (payload) => {
+    const response = await fetch(payload.url, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + payload.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload.body),
+    });
+    return { status: response.status, document: await response.json() };
+  }, {
+    url: BASE + '/api/v1/operations/organize/intents/' + mixedIntentId +
+      '/items/' + mixedItem.itemId + '/choice',
+    token: TOKEN,
+    body: {
+      expectedVersion: mixedIntent.version,
+      expectedItemVersion: mixedItem.version,
+      recognitionTypeId: 'A',
+      metadata: {
+        provider: 'tmdb',
+        providerId: '909',
+        mediaType: 'movie',
+        title: 'Execution',
+      },
+    },
+  });
+  require_(
+    choiceResponse.status === 200,
+    'source-grounded offline Choice failed: ' + JSON.stringify(choiceResponse.document),
+  );
+  await connect(page.url().slice(BASE.length));
+
   // -- native reviewed choices -> exact Preview -> confirmed Execute -------
   // The harness admitted and froze one dedicated execution discovery and
   // recorded the reviewed Choice (grounded in durable source-linked evidence).
   // The browser drives the ordinary manual journey and makes exactly one
   // explicit Execute confirmation; it never handles a token or digest.
-  const executionIntentId = process.env.MF_PROOF_EXECUTION_INTENT;
+  const executionIntentId = mixedIntentId;
   await connect(`/ui-v2/operations/organize/intent/${executionIntentId}`);
   await page.getByText('Execution.2004.mkv').first().waitFor();
   const intentText = await page.getByRole('main').innerText();
@@ -171,7 +283,16 @@ try {
   const previewButton = page.getByRole('button', { name: '生成精确预览' });
   await previewButton.waitFor();
   evidence.passes.push({ case: 'intent-choice', screenshot: await shoot('intent-choice') });
+  const previewResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === 'POST' && /\/previews?$/.test(response.url()),
+  );
   await previewButton.click();
+  const previewResponse = await previewResponsePromise;
+  const previewDocument = await previewResponse.json();
+  require_(
+    previewResponse.status() === 201,
+    'exact Preview failed: ' + JSON.stringify(previewDocument),
+  );
   await page.getByRole('heading', { name: '整理预览' }).waitFor();
   const previewText = await page.getByRole('main').innerText();
   require_(
@@ -179,9 +300,29 @@ try {
     'the exact Preview did not advertise zero mutation',
   );
   require_(
-    /Movies\/其他电影\/Execution \(2004\)/.test(previewText),
-    'the exact Preview did not show the exact destination',
+    /Movies\/其他电影\/Execution \(2004\)/.test(previewText) &&
+      previewText.includes(SCOPE.executionTrailerFile),
+    'the exact Preview did not show its main destination and Trailer attachment',
   );
+  const previewItem = previewDocument.items?.[0];
+  require_(
+    previewItem?.source?.path === SCOPE.executionMain &&
+      JSON.stringify((previewItem.plan?.attachments ?? []).map((attachment) => [
+        attachment.type,
+        attachment.source?.path,
+      ])) === JSON.stringify([['trailer', SCOPE.executionTrailer]]),
+    'exact Preview did not associate the selected Trailer: ' + JSON.stringify(previewDocument),
+  );
+  evidence.mixedAttachment = {
+    discoveryId: mixedDiscoveryId,
+    intentId: mixedIntentId,
+    choiceVersion: choiceResponse.document.version,
+    previewId: previewDocument.previewId,
+    primarySourceCount: mixedDiscovery.primarySourceCount,
+    sourcePaths: mixedDiscovery.sources.map((source) => source.path),
+    attachmentSource: SCOPE.executionTrailer,
+    returnContextPreserved: true,
+  };
   evidence.passes.push({ case: 'exact-preview', screenshot: await shoot('exact-preview') });
   const executeButton = page.getByRole('button', { name: '确认执行所选条目' });
   await executeButton.waitFor();
@@ -199,8 +340,8 @@ try {
     }`,
   );
   evidence.passes.push({
-    case: 'confirmed-execution',
-    screenshot: await shoot('confirmed-execution'),
+    case: 'mixed-confirmed-execution',
+    screenshot: await shoot('mixed-confirmed-execution'),
   });
 
   // Every non-GET request is one bounded discovery admission, one Choice, one
@@ -214,8 +355,27 @@ try {
   evidence.executionRequests = evidence.mutatingRequests.filter(
     (entry) => entry.url.includes('/previews') || entry.url.includes('/execute'),
   );
+  evidence.reviewedChoices = evidence.mutatingRequests.filter((entry) =>
+    /\/items\/[^/]+\/choice$/.test(entry.url),
+  );
   require_(
-    evidence.discoveryAdmissions.length + evidence.executionRequests.length ===
+    evidence.reviewedChoices.length === 1 &&
+      evidence.reviewedChoices[0].url.includes(`/intents/${mixedIntentId}/items/`),
+    'the mixed intent did not receive exactly one reviewed Choice: ' +
+      JSON.stringify(evidence.reviewedChoices),
+  );
+  require_(
+    evidence.executionRequests.length === 2 &&
+      evidence.executionRequests.filter((entry) =>
+        entry.url.includes(`/intents/${mixedIntentId}/previews`),
+      ).length === 1 &&
+      evidence.executionRequests.filter((entry) => entry.url.includes('/execute')).length === 1,
+    'the mixed journey did not issue exactly one Preview and one confirmed Execute: ' +
+      JSON.stringify(evidence.executionRequests),
+  );
+  require_(
+    evidence.discoveryAdmissions.length + evidence.reviewedChoices.length +
+      evidence.executionRequests.length ===
       evidence.mutatingRequests.length,
     `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
@@ -240,8 +400,9 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     (source_root / SECOND_FOLDER).mkdir(parents=True, exist_ok=True)
     (source_root / SECOND_FOLDER / "Extra.2003.mkv").write_bytes(b"synthetic discovery media")
     (source_root / MIXED_FILE).write_bytes(b"synthetic discovery media")
-    (source_root / EXECUTION_FOLDER).mkdir(parents=True, exist_ok=True)
-    (source_root / EXECUTION_FOLDER / EXECUTION_FILE).write_bytes(b"synthetic execution media")
+    (source_root / EXECUTION_EMPTY_FOLDER).mkdir(parents=True, exist_ok=True)
+    (source_root / EXECUTION_RELATIVE).write_bytes(b"synthetic execution media")
+    (source_root / EXECUTION_TRAILER_RELATIVE).write_bytes(b"synthetic execution trailer")
     mass = source_root / MASS_FOLDER
     mass.mkdir(parents=True, exist_ok=True)
     for index in range(101):
@@ -291,6 +452,9 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     document["resourceLibraries"][0]["extensions"] = ["mkv", "mp4"]
     document["resourceLibraries"][0]["maxDepth"] = None
     document["mediaLibraries"][0]["rootPath"] = "Movies"
+    policy_a = next(policy for policy in document["organizePolicies"] if policy["id"] == "A")
+    policy_a["attachments"]["enabled"] = True
+    policy_a["attachments"]["trailers"] = True
     # The ordinary MOVE journey deletes its verified source, so this isolated
     # temporary deployment declares the source Storage writable — exactly like
     # a real deployment whose ResourceLibrary Storage permits Move.  The
@@ -453,8 +617,10 @@ def _execution_state(source_root: Path, target_root: Path) -> dict:
     """Read-only state of the execution source and its planned destination."""
 
     return {
-        "sourceExists": (source_root / EXECUTION_RELATIVE).is_file(),
-        "targetExists": (target_root / EXECUTION_TARGET).is_file(),
+        "sourceMainExists": (source_root / EXECUTION_RELATIVE).is_file(),
+        "sourceTrailerExists": (source_root / EXECUTION_TRAILER_RELATIVE).is_file(),
+        "targetMainExists": (target_root / EXECUTION_TARGET).is_file(),
+        "targetTrailerExists": (target_root / EXECUTION_TRAILER_TARGET).is_file(),
     }
 
 
@@ -711,65 +877,17 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 f"{len(runs['items'])} run rows include every admitted discovery"
             )
 
-            # Confirmed execution (AC1/AC5): one dedicated frozen discovery
-            # feeds the existing manual journey; the production Worker and
-            # OrganizerExecutor complete the exact reviewed item.
+            # Ground the offline identity, then let Chromium select, discover,
+            # Freeze, Preview and separately confirm this exact mixed scope.
             before_execution = _execution_state(source_root, target_root)
-            if not before_execution["sourceExists"] or before_execution["targetExists"]:
+            if (
+                not before_execution["sourceMainExists"]
+                or not before_execution["sourceTrailerExists"]
+                or before_execution["targetMainExists"]
+                or before_execution["targetTrailerExists"]
+            ):
                 raise RuntimeError(f"the execution fixture was not pristine: {before_execution}")
-            status, execution_target = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/resource-libraries/{library_id}/files/discoveries",
-                {"paths": [EXECUTION_FOLDER]},
-            )
-            if status != 202:
-                raise RuntimeError(f"execution admission failed: {status} {execution_target}")
-            execution_discovery = settle(base, api_token, execution_target["discoveryId"])
-            if execution_discovery["status"] != "completed" or [
-                value["path"] for value in execution_discovery["sources"]
-            ] != [EXECUTION_RELATIVE]:
-                raise RuntimeError(f"the execution discovery was not exact: {execution_discovery}")
-            status, execution_frozen = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/operations/organize/discoveries/"
-                f"{execution_discovery['discoveryId']}/finalize",
-                {"expectedVersion": execution_discovery["version"]},
-            )
-            if status != 201 or not execution_frozen.get("intentId"):
-                raise RuntimeError(f"execution finalize failed: {status} {execution_frozen}")
-            execution_intent_id = execution_frozen["intentId"]
             seed_source_linked_result(command, environment)
-            _, intent_document = api(
-                base,
-                api_token,
-                "GET",
-                f"/api/v1/operations/organize/intents/{execution_intent_id}",
-            )
-            intent_item = intent_document["items"][0]
-            status, chosen = api(
-                base,
-                api_token,
-                "POST",
-                f"/api/v1/operations/organize/intents/{execution_intent_id}"
-                f"/items/{intent_item['itemId']}/choice",
-                {
-                    "expectedVersion": intent_document["version"],
-                    "expectedItemVersion": intent_item["version"],
-                    "recognitionTypeId": "A",
-                    "metadata": {
-                        "provider": "tmdb",
-                        "providerId": "909",
-                        "mediaType": "movie",
-                        "title": "Execution",
-                    },
-                },
-            )
-            if status != 200:
-                raise RuntimeError(f"the reviewed Choice was not recorded: {status} {chosen}")
 
             result = subprocess.run(
                 ["node", "--input-type=module", "-e", BROWSER_PROOF],
@@ -779,9 +897,18 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     "MF_PROOF_BASE": base,
                     "MF_PROOF_TOKEN": api_token,
                     "MF_PROOF_ARTIFACTS": str(ARTIFACT_ROOT),
-                    "MF_PROOF_EXECUTION_INTENT": execution_intent_id,
                     "MF_PROOF_SCOPE": json.dumps(
-                        {"folder": FOLDER, "file": MIXED_FILE, "secondFolder": SECOND_FOLDER},
+                        {
+                            "folder": FOLDER,
+                            "file": MIXED_FILE,
+                            "secondFolder": SECOND_FOLDER,
+                            "executionFolder": EXECUTION_FOLDER,
+                            "executionEmptyFolder": EXECUTION_EMPTY_FOLDER,
+                            "executionFile": EXECUTION_FILE,
+                            "executionMain": EXECUTION_RELATIVE,
+                            "executionTrailerFile": EXECUTION_TRAILER_FILE,
+                            "executionTrailer": EXECUTION_TRAILER_RELATIVE,
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -793,9 +920,55 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     f"docker discovery browser journey failed:\n{result.stdout}\n{result.stderr}"
                 )
             print("   " + result.stdout.strip().splitlines()[-1])
+            evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
+            mixed_attachment = evidence.get("mixedAttachment") or {}
+            execution_intent_id = mixed_attachment.get("intentId")
+            chosen_version = mixed_attachment.get("choiceVersion")
+            execution_discovery_id = mixed_attachment.get("discoveryId")
+            preview_id = mixed_attachment.get("previewId")
+            if (
+                not execution_intent_id
+                or chosen_version is None
+                or not execution_discovery_id
+                or not preview_id
+            ):
+                raise RuntimeError(
+                    f"native mixed attachment evidence is incomplete: {mixed_attachment}"
+                )
+            execution_discovery = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/organize/discoveries/{execution_discovery_id}",
+            )[1]
+            if execution_discovery.get("primarySourceCount") != 1 or [
+                value["path"] for value in execution_discovery.get("sources", [])
+            ] != [EXECUTION_RELATIVE]:
+                raise RuntimeError(
+                    f"native mixed discovery admitted the wrong source: {execution_discovery}"
+                )
+            preview_document = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/organize/previews/{preview_id}",
+            )[1]
+            preview_item = (preview_document.get("items") or [{}])[0]
+            preview_plan = preview_item.get("plan") or {}
+            attachment_plans = preview_plan.get("attachments") or []
+            if (
+                preview_item.get("source", {}).get("path") != EXECUTION_RELATIVE
+                or [
+                    (attachment.get("type"), attachment.get("source", {}).get("path"))
+                    for attachment in attachment_plans
+                ]
+                != [("trailer", EXECUTION_TRAILER_RELATIVE)]
+                or preview_plan.get("zeroMutation") is not True
+            ):
+                raise RuntimeError(f"the exact Preview did not retain its Trailer: {preview_item}")
 
-            # The browser's one confirmation admitted the exact reviewed item;
-            # the production Worker completes it and the file effect is exact.
+            # The browser's one confirmation admits the reviewed main and
+            # associated Trailer; the production Worker executes both effects.
             _, executions = api(
                 base,
                 api_token,
@@ -810,7 +983,12 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             if execution_task.get("status") != "completed":
                 raise RuntimeError(f"the confirmed execution did not complete: {execution_task}")
             after_execution = _execution_state(source_root, target_root)
-            if after_execution != {"sourceExists": False, "targetExists": True}:
+            if after_execution != {
+                "sourceMainExists": False,
+                "sourceTrailerExists": False,
+                "targetMainExists": True,
+                "targetTrailerExists": True,
+            }:
                 raise RuntimeError(
                     f"the confirmed execution did not produce its exact effect: {after_execution}"
                 )
@@ -821,7 +999,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 api_token,
                 "POST",
                 f"/api/v1/operations/organize/intents/{execution_intent_id}/previews",
-                {"expectedVersion": chosen["version"]},
+                {"expectedVersion": chosen_version},
             )
             if replay.get("error", {}).get("code") != "source_missing":
                 raise RuntimeError(f"a re-Preview was not refused truthfully: {replay}")
@@ -837,13 +1015,11 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                     f"the completed execution lost its item outcome: {execution_items}"
                 )
             print(
-                "   confirmed execution: production Worker moved "
-                f"{EXECUTION_RELATIVE} to its exact target; no replay"
+                "   confirmed execution: production Worker moved the main and Trailer "
+                "to their exact targets; no replay"
             )
-
-            evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
             matrix = {
-                "task": "44.6",
+                "task": "44.10",
                 "slice": "44",
                 "requiredOutcome": "RO-6",
                 "acceptance": "isolated-docker-production-assets",
@@ -872,10 +1048,15 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 "frozenIntentId": frozen["intentId"],
                 "confirmedExecution": {
                     "intentId": execution_intent_id,
+                    "discoveryId": execution_discovery_id,
+                    "previewId": preview_id,
                     "taskId": execution_task_id,
                     "sourcePath": EXECUTION_RELATIVE,
                     "targetPath": EXECUTION_TARGET,
-                    "sourceMoved": after_execution == {"sourceExists": False, "targetExists": True},
+                    "attachmentPath": EXECUTION_TRAILER_RELATIVE,
+                    "attachmentTargetPath": EXECUTION_TRAILER_TARGET,
+                    "sourceMoved": after_execution["sourceMainExists"] is False
+                    and after_execution["sourceTrailerExists"] is False,
                     "taskStatus": execution_task.get("status"),
                     "replayRefusal": replay.get("error", {}).get("code"),
                 },
@@ -923,7 +1104,7 @@ def main() -> int:
         print("UNAVAILABLE: the built V2 artifact is missing; run `npm --prefix web run build`")
         return 1
     sha = candidate_sha()
-    image = arguments.image or f"mediaflow:task44-6-discovery-{sha[:12]}"
+    image = arguments.image or f"mediaflow:task44-10-discovery-{sha[:12]}"
     if not image_exists(image):
         build_candidate_image(image)
     suffix = f"{os.getpid()}-{int(time.time())}"

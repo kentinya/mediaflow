@@ -296,6 +296,7 @@ class _DiscoveryFixture(unittest.TestCase):
         budgets: DiscoveryBudgets | None = None,
         second_library: bool = False,
         attachments: bool = False,
+        metadata_query_type: str | None = None,
     ):
 
         document = self.document(
@@ -305,6 +306,9 @@ class _DiscoveryFixture(unittest.TestCase):
             second_library=second_library,
             attachments=attachments,
         )
+        if metadata_query_type is not None:
+            for policy in document.get("metadataPolicies", []):
+                policy["mediaQueryType"] = metadata_query_type
         source = _RecordingStorage(LocalStorage("source", self.source_root))
         target = _RecordingStorage(LocalStorage("target", self.target_root))
         storages = {"source": source, "target": target}
@@ -3806,6 +3810,198 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual((), value.repository.list_media_discoveries())
 
     # -- P1: real attachment association, not a filename shortcut ---------
+
+    def test_mixed_explicit_selection_preserves_trailer_association_through_preview(self) -> None:
+        """A44-14: explicit files and a selected empty folder share one association set.
+
+        The native Files page submits this mixed shape when a directory is
+        selected with individual files. A matching Trailer must follow its
+        admitted main source under that source's pinned default policy,
+        regardless of explicit selection order, then remain visible as an
+        attachment in the existing zero-mutation Preview.
+        """
+
+        from mediaflow.domain.task_persistence import (
+            PersistentResultRecord,
+            PersistentTask,
+            PersistentTaskStatus,
+        )
+
+        relative_main = "Movies/Film.2001.mkv"
+        relative_trailer = "Movies/Film.2001-trailer.mp4"
+        self.media(relative_main)
+        self.media(relative_trailer)
+        self.media(relative_main, second=True)
+        self.media(relative_trailer, second=True)
+        (self.source_root / "Movies" / "Other").mkdir(parents=True)
+        (self.second_root / "Movies" / "Other").mkdir(parents=True)
+
+        with self.journey(
+            attachments=True, second_library=True, metadata_query_type="none"
+        ) as value:
+            policy_a = next(
+                policy
+                for policy in value.configuration.strategy.recognition_type_policies
+                if policy.recognition_type_id == "A"
+            )
+            self.assertTrue(policy_a.organize_policy.attachments.enabled)
+            self.assertTrue(policy_a.organize_policy.attachments.trailers)
+
+            _, folder_admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            folder_settled = self.run_discovery(value)
+            self.assertEqual("completed", folder_settled["status"], folder_settled)
+            self.assertEqual(1, folder_settled["progress"]["primarySources"], folder_settled)
+            self.assertEqual(
+                [relative_main],
+                [item["path"] for item in folder_settled["sources"]],
+                folder_settled,
+            )
+            status, folder_frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{folder_admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": folder_settled["version"]},
+            )
+            self.assertEqual(201, status, folder_frozen)
+            folder_intent = value.repository.get_manual_intent(folder_frozen["intentId"])
+            self.assertEqual([relative_main], [item.source.path for item in folder_intent.items])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+            selections = (
+                ("library", ["Movies/Other", relative_main, relative_trailer]),
+                ("library2", [relative_trailer, relative_main, "Movies/Other"]),
+            )
+            settled_by_library = {}
+            for library_id, paths in selections:
+                status, admitted = self.request(
+                    value,
+                    f"/api/v1/resource-libraries/{library_id}/files/discoveries",
+                    "POST",
+                    {"paths": paths},
+                )
+                self.assertEqual(202, status, admitted)
+                settled = self.run_discovery(value)
+                self.assertEqual("completed", settled["status"], settled)
+                self.assertEqual(1, settled["progress"]["primarySources"], settled)
+                self.assertEqual(
+                    [relative_main],
+                    [item["path"] for item in settled["sources"]],
+                    settled,
+                )
+                settled_by_library[library_id] = (admitted, settled)
+
+            admitted, settled = settled_by_library["library"]
+            reverse_admitted, reverse_settled = settled_by_library["library2"]
+            status, reverse_frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{reverse_admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": reverse_settled["version"]},
+            )
+            self.assertEqual(201, status, reverse_frozen)
+            reverse_intent = value.repository.get_manual_intent(reverse_frozen["intentId"])
+            self.assertEqual([relative_main], [item.source.path for item in reverse_intent.items])
+            self.assertEqual(
+                {"A"}, {item.choice.recognition_type_id for item in reverse_intent.items}
+            )
+
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual([relative_main], [item.source.path for item in intent.items])
+            self.assertEqual({"A"}, {item.choice.recognition_type_id for item in intent.items})
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+            # Ground one valid offline metadata identity so Preview can produce
+            # the exact plan without contacting a MetadataProvider.
+            item = intent.items[0]
+            now = value.clock()
+            task_id = "mixed-trailer-preview-proof"
+            value.repository.create_task(
+                PersistentTask(
+                    task_id,
+                    "preview",
+                    PersistentTaskStatus.COMPLETED,
+                    False,
+                    now,
+                    now,
+                )
+            )
+            value.repository.append_result(
+                PersistentResultRecord(
+                    "mixed-trailer-preview-result",
+                    task_id,
+                    "mixed-trailer-preview-item",
+                    "source",
+                    relative_main,
+                    "target",
+                    "Movies/Film (2001)/Film (2001).mkv",
+                    "A",
+                    "tmdb",
+                    "909",
+                    "A",
+                    "A",
+                    "A",
+                    "A",
+                    "MOVE",
+                    "dry_run",
+                    now,
+                    title="Film",
+                )
+            )
+            status, _choice = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent.intent_id}/items/{item.item_id}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent.version,
+                    "expectedItemVersion": item.version,
+                    "recognitionTypeId": "A",
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "909",
+                        "mediaType": "movie",
+                        "title": "Film",
+                    },
+                },
+            )
+            self.assertEqual(200, status)
+            tasks_before_preview = tuple(value.repository.list_tasks())
+            intent = value.repository.get_manual_intent(intent.intent_id)
+            status, preview = self.request(
+                value,
+                f"/api/v1/manual-intents/{intent.intent_id}/preview",
+                "POST",
+                {"expectedVersion": intent.version},
+            )
+            self.assertEqual(201, status, preview)
+            self.assertEqual("previewed", preview["status"], preview)
+            preview_item = preview["items"][0]
+            self.assertEqual(relative_main, preview_item["source"]["path"])
+            self.assertEqual(
+                [("trailer", relative_trailer)],
+                [
+                    (attachment["type"], attachment["source"]["path"])
+                    for attachment in preview_item["plan"]["attachments"]
+                ],
+            )
+            self.assertEqual(tasks_before_preview, tuple(value.repository.list_tasks()))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_an_orphan_trailer_is_a_truthful_primary(self) -> None:
         """B-P1/AC4/AC5: a trailer with no associated main file is not dropped.
