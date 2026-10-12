@@ -129,8 +129,7 @@ class ManualOrganizeIntentService:
         intent_id = str(uuid4())
         items: list[ManualIntentItem] = []
         for position, record in enumerate(records):
-            choice = self._default_choice(record, snapshot)
-            self._validate_choice(choice, snapshot, record)
+            choice = self.default_choice_for_source(record, snapshot)
             try:
                 source = ManualSourceIdentity.from_file_record(record)
             except ValueError as error:
@@ -282,8 +281,7 @@ class ManualOrganizeIntentService:
         intent_id = str(uuid4())
         items: list[ManualIntentItem] = []
         for position, source in enumerate(values):
-            choice = self._default_choice(source, snapshot)
-            self._validate_choice(choice, snapshot, source)
+            choice = self.default_choice_for_source(source, snapshot)
             items.append(
                 ManualIntentItem(
                     str(uuid4()),
@@ -1090,6 +1088,34 @@ class ManualOrganizeIntentService:
             selected_type.classification_policy_id,
             selected_type.organize_policy_id,
         )
+
+    def default_choice_for_source(
+        self, source, snapshot: ManualConfigurationSnapshot
+    ) -> ManualChoice:
+        """Return the same validated default choice used for a persisted intent item."""
+
+        choice = self._default_choice(source, snapshot)
+        self._validate_choice(choice, snapshot, source)
+        return choice
+
+    def default_choice_for_runtime_source(
+        self,
+        source: ManualSourceIdentity,
+        runtime,
+        *,
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> ManualChoice:
+        """Resolve a Storage source's default choice under an already pinned runtime.
+
+        Discovery uses this read-only projection before it associates attachments.
+        It must make that decision using the same default the later manual intent
+        will consume, without substituting the RecognitionRule's output type for
+        the operator's still-editable choice.
+        """
+
+        snapshot = self._snapshot_from_runtime(runtime, snapshot_id, snapshot_digest)
+        return self.default_choice_for_source(source, snapshot)
 
     @staticmethod
     def _choice_from_patch(current: ManualChoice, patch: dict[str, object]) -> ManualChoice:

@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and
 ```text
 Task ID: 44.9
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: ab94ce53189b5a9f16e7614cd011480a42d91e79
 Difficulty: High
 Test Level: T4
@@ -615,3 +615,94 @@ The build retains its Vite chunk-size warning and tests emit existing SQLite/tem
 ```text
 Next Action: B INDEPENDENT TASK REVIEW
 ```
+
+## B Review Result — 83b00f0986bc
+
+Review date: 2026-10-12. Reviewed immutable Task Base
+`ab94ce53189b5a9f16e7614cd011480a42d91e79` through executable candidate
+`83b00f0986bc24f017417b5618256dac3622160a`. Report Head
+`0b1077324d36117c374d410b87db1ce1feedfd1c` changes only `TASK.md`; executable,
+test, configuration and build inputs match. Governance passed. The amended committed Slice,
+workflow and other mandatory guidance are unchanged from the preceding independent review;
+current Contract/Task/workflow/B guidance and relevant product boundaries were rechecked.
+The latest executable correction is confined to discovery, SQLite admission and discovery tests.
+Independent evidence:
+`.git/validation-evidence/0b1077324d36117c374d410b87db1ce1feedfd1c/b-review44-9/review-index.json`.
+
+Independent Python discovery/provider-manifest/persistence/activation regression: **147 run,
+0 failures, 0 skips**. The seven prior production-path probes now pass, including mixed A-owner
+policy retention and request-ID scope/library conflicts. Adding a B-owner/default-choice handoff
+probe gives **8 run, 7 passed, 1 semantic failure**. A separate metadata-ready exact Preview
+probe reproduces the same defect (**1 run, 1 semantic failure**). Both use actual managed
+publication/loading, authenticated API, temporary Local/SQLite and the real discovery/intent/
+Preview services, with zero Storage mutations. The latter uses an offline MetadataPolicy and
+source-linked durable preview-mode Result through the production repository to ground a valid
+metadata choice; it grants no execution authority and calls no external Provider. Its plan is
+`previewed`, not merely an unavailable/blocked analysis response.
+
+Fresh Web build passed. Real built-Web/Chromium/subprocess-API lost-response verification passed
+with activation before admission: one browser POST, actual admission
+`2b0a7baf-2377-4562-b952-dc6bf7a34e24`, no navigation to prior record
+`49747fbf-814a-4613-a1a3-843353694b0d`, zero execution tasks. Durable receipts and the actual
+screenshot were inspected. Raw preliminary probe failures are retained and identified in the
+evidence index: unsupported timing runner, ungrounded optional metadata year and an incorrect
+expected Preview enum were harness issues; the final corrected probe still fails source coverage.
+
+Developer raw full-suite logs report unittest **2428 run / 7 skipped / OK** and Web **1102
+passed / 74 files** on serial reruns. The evidence index now names required commands and input/
+artifact identities, and retains the first Python failure plus isolated candidate/Base runs.
+It explicitly says the first Web failure log was not retained. An isolated Base PASS does not
+establish that an initial candidate failure is pre-existing. These are evidence limitations to
+resolve before PASS, not additional semantic P1 findings. Under the workflow's early-rejection
+rule, remaining expensive T4 gates and Slice Final were not independently rerun after the proven
+blocker. The unchanged full checkpoint plan and verifiable candidate evidence remain required.
+
+```text
+Reviewed: ab94ce53189b5a9f16e7614cd011480a42d91e79..83b00f0986bc24f017417b5618256dac3622160a
+Report checkpoint: 0b1077324d36117c374d410b87db1ce1feedfd1c
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO — RO-6 remains incomplete
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — Discovery's attachment policy does not survive the actual intent/Preview handoff
+  (Task AC2/AC4/AC5/AC7; RO-6, acceptance 27/28/31/32).** A valid published configuration has A
+  attachments disabled and B Trailer attachments enabled; its path rule maps `Movies/` to B.
+  The folder contains `Film.2001.mkv` and `Film.2001-trailer.mp4`. Discovery correctly recognizes
+  the owner as B, then removes the Trailer and reports completed with only the main video and
+  zero exclusions. Finalize uses the unchanged `prepare_from_sources` behavior: for these new
+  unindexed sources the default intent choice is A. The operator leaves that displayed type
+  unchanged and supplies a valid source-linked metadata identity. Actual exact Preview succeeds
+  under A, with `organizePolicyId=A`, an empty attachment list and only the main video's source.
+  The Trailer is neither an independent frozen source nor a reviewed attachment. It remains on
+  Storage but silently misses the folder-organize journey. No manual type change, unknown response,
+  invalid configuration or unavailable Provider is needed to trigger this ordinary case.
+  **Cause/evidence:** `media_discovery.py:1593` proves the rule engine's type, while
+  `manual_organize.py:285/1065` selects the default manual type independently, and
+  `manual_organize_preview.py:2269` forces that manual choice into the actual pipeline. The new
+  fixture's path rule maps its attachment cases to A, which makes these policies agree in those
+  tests but does not prove handoff for other types. `production_probes.py` and
+  `preview_policy_probe.py` retain exact configured policy, frozen-choice and successful Preview
+  receipts; `ready-preview-receipt.json` records only `Movies/Film.2001.mkv` represented, no
+  attachments and zero Storage mutations.
+  **Correction:** make the attachment association used to suppress a source consistent with the
+  policy actually consumed by the resulting manual intent and exact Preview. A rule-engine result
+  alone is not proof of a later manual choice. Reuse existing policy/choice/handoff behavior;
+  preserve sources or expose actionable ambiguity if that association cannot be established.
+  Do not silently force a different operator choice, alter RecognitionType identity or add a new
+  pipeline. Add mixed-policy non-default-type handoff coverage through a successfully planned
+  Preview, retain operator choice/review semantics, and preserve the now-passing request-ID,
+  orphan/same-stem/disabled-Trailer, paging, 51-Trailer and 100/101-primary protections.
+
+**Complexity reassessment and stop rule:** this is the remaining cross-stage root of the previous
+attachment outcome, not an independent business goal or a reason for another per-defect Task.
+The reduced Contract remains feasible; no material A rescope is established. Keep Task 44.9's
+ID/Base/Goal/Scope/acceptance/High/T4 unchanged. RO-1 through RO-5 have no newly established blocker
+here, but RO-6 is incomplete; create no next Task and prepare no Closure Packet or Slice closure.
+Only `TASK.md` records this review; user/private files and A-owned authority documents are preserved.
+
+Reusable lesson candidate for eventual A closure: proving the configured policy in one stage is
+insufficient when the next stage independently chooses policy; verify the actual handoff and the
+successful final plan's source coverage. Merge this with the previous policy-applicability candidate.
+
+NEXT ACTION: DEVELOPER FIXES CURRENT TASK — SAME TASK FIX LOOP

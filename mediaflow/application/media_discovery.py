@@ -31,8 +31,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery
-from mediaflow.application.media_parser import MediaParserService
-from mediaflow.application.recognition import RecognitionRuleEngine
 from mediaflow.application.scan_filters import (
     ObservedSource,
     PrunedAncestorReason,
@@ -85,14 +83,6 @@ from mediaflow.domain.media_discovery import (
     is_settlement_status,
 )
 from mediaflow.domain.organizer import StorageLocation
-from mediaflow.domain.parser import FileContext
-from mediaflow.domain.recognition import (
-    AtomicCondition,
-    ConditionField,
-    LogicalCondition,
-    RecognitionContext,
-    RecognitionStatus,
-)
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
@@ -1207,7 +1197,14 @@ class MediaDiscoveryService:
                 # against the true primary set, never against candidates that
                 # the existing association is about to demote.
                 if directory_entries:
-                    self._demote_attachments(runtime, library, directory_entries, sources)
+                    self._demote_attachments(
+                        runtime,
+                        library,
+                        directory_entries,
+                        sources,
+                        snapshot_id=discovery.snapshot_id,
+                        snapshot_digest=discovery.snapshot_digest,
+                    )
                     directory_entries = []
                     if self._over_primary_limit(sources, bump, note):
                         incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
@@ -1379,8 +1376,22 @@ class MediaDiscoveryService:
             active_cursor = None
             seen_cursors = []
 
-        self._demote_attachments(runtime, library, directory_entries, sources)
-        self._demote_attachments(runtime, library, observed_file_entries, sources)
+        self._demote_attachments(
+            runtime,
+            library,
+            directory_entries,
+            sources,
+            snapshot_id=discovery.snapshot_id,
+            snapshot_digest=discovery.snapshot_digest,
+        )
+        self._demote_attachments(
+            runtime,
+            library,
+            observed_file_entries,
+            sources,
+            snapshot_id=discovery.snapshot_id,
+            snapshot_digest=discovery.snapshot_digest,
+        )
         # A directory abandoned mid-page by an unrelated safety break may have
         # left the manifest over the primary bound; the durable manifest is
         # always trimmed to the exact bound and reported as a material refusal,
@@ -1518,82 +1529,45 @@ class MediaDiscoveryService:
             note(DiscoveryFindingKind.TRUNCATED, path, "primary_source_limit_exceeded", None, 0)
         return True
 
-    @staticmethod
-    def _stable_attachment_rule(condition) -> bool:
-        """Whether recognition uses only pinned path and entry metadata.
-
-        Discovery does not read NFO or other file content. It may select an
-        owner's attachment policy only when the configured recognition rules
-        depend on facts discovery already observed. If any enabled rule uses
-        parsed metadata or tags, Preview may choose a different type after its
-        normal parser stages, so discovery leaves the source as a primary.
-        """
-
-        if isinstance(condition, AtomicCondition):
-            return condition.field in {
-                ConditionField.FILENAME,
-                ConditionField.PATH,
-                ConditionField.DIRECTORY,
-                ConditionField.EXTENSION,
-                ConditionField.RESOURCE_LIBRARY_ID,
-            }
-        if isinstance(condition, LogicalCondition):
-            return all(
-                MediaDiscoveryService._stable_attachment_rule(child) for child in condition.children
-            )
-        return False
-
     def _attachment_policies_by_source(
         self,
         runtime,
-        library,
-        entries: list[tuple[str, int, StorageEntry]],
         sources: Mapping[str, dict[str, object]],
+        *,
+        snapshot_id: str,
+        snapshot_digest: str,
     ) -> dict[str, object]:
-        """Resolve each admitted primary's exact pinned attachment policy.
+        """Resolve each source's actual default manual choice under its pin.
 
-        The owner RecognitionType is obtained from the production rule engine
-        over exact ResourceLibrary-relative paths. Unrecognized, ambiguous or
-        content-sensitive cases have no proven applicable policy and are kept
-        as primary sources.
+        Discovery is followed by an editable manual intent. A RecognitionRule
+        result alone does not prove the choice that intent or its Preview will
+        consume, so only the existing default-choice behavior may authorize
+        source demotion here. If that choice cannot be proven, every source is
+        kept as an independent primary for later operator review.
         """
 
         strategy = getattr(runtime, "strategy", None)
-        if strategy is None:
+        resolver = getattr(self._intent_service, "default_choice_for_runtime_source", None)
+        if strategy is None or not callable(resolver):
             return {}
-        rules = tuple(rule for rule in strategy.recognition_rules if rule.enabled)
-        if not rules or any(not self._stable_attachment_rule(rule.condition) for rule in rules):
-            return {}
-        engine = RecognitionRuleEngine(strategy.recognition_types, strategy.recognition_rules)
-        parser = MediaParserService()
         type_policies = {
             policy.recognition_type_id: policy
             for policy in strategy.recognition_type_policies
             if policy.enabled and policy.recognition_type.enabled
         }
-        entry_by_path = {relative: entry for relative, _depth, entry in entries}
         resolved: dict[str, object] = {}
         for relative in sorted(sources):
-            entry = entry_by_path.get(relative)
-            if entry is None:
+            try:
+                source = ManualSourceIdentity.from_document(sources[relative])
+                choice = resolver(
+                    source,
+                    runtime,
+                    snapshot_id=snapshot_id,
+                    snapshot_digest=snapshot_digest,
+                )
+            except (ManualIntentError, ValueError):
                 continue
-            parts = relative.split("/")
-            parent_path = "/".join(parts[:-1])
-            context = FileContext(
-                library.storage_id,
-                library.library_id,
-                relative,
-                entry.name,
-                tuple(parts[:-1]),
-                entry_extension(entry),
-                parent_path,
-                entry.size,
-                entry.modified_at,
-            )
-            recognition = engine.recognize(RecognitionContext(context, parser.parse(context)))
-            if recognition.status is not RecognitionStatus.MATCHED:
-                continue
-            type_policy = type_policies.get(recognition.recognition_type_id)
+            type_policy = type_policies.get(choice.recognition_type_id)
             if type_policy is None:
                 continue
             attachments = getattr(type_policy.organize_policy, "attachments", None)
@@ -1706,6 +1680,9 @@ class MediaDiscoveryService:
         library,
         entries: list[tuple[str, int, StorageEntry]],
         sources: dict[str, dict[str, object]],
+        *,
+        snapshot_id: str,
+        snapshot_digest: str,
     ) -> None:
         """Drop every observed video that is an attachment of a *retained* primary.
 
@@ -1744,11 +1721,15 @@ class MediaDiscoveryService:
 
         if not entries or not sources:
             return
-        # Resolve each potential owner's policy once from the exact pinned
-        # RecognitionType. The association relation is then a property of the
-        # real directory and that policy, not of which sources survive demotion.
+        # Resolve each potential owner's policy once from the exact default
+        # manual choice under the pinned runtime. The association relation is
+        # then a property of the real directory and the same policy Preview
+        # consumes when the operator leaves that editable choice unchanged.
         attachment_policies = self._attachment_policies_by_source(
-            runtime, library, entries, sources
+            runtime,
+            sources,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
         )
         candidates = {
             relative: self._attachment_owners(

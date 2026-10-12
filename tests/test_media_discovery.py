@@ -4162,6 +4162,156 @@ class A44BReviewCorrections(_DiscoveryFixture):
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.repository.list_tasks())
 
+    def test_nondefault_rule_type_keeps_sources_through_the_manual_default_preview(self) -> None:
+        """A discovery rule cannot hide a source from the later manual default choice.
+
+        The folder rule recognizes B and B enables Trailer attachments, but the
+        existing manual-intent journey still defaults a new unindexed source to
+        A. Discovery must preserve the Trailer as an ordinary reviewed source;
+        the exact Preview then plans both sources under the unchanged A choice.
+        """
+
+        from mediaflow.domain.task_persistence import (
+            PersistentResultRecord,
+            PersistentTask,
+            PersistentTaskStatus,
+        )
+
+        self.media("Movies/Film.2001.mkv")
+        self.media("Movies/Film.2001-trailer.mp4")
+        document = self.document(attachments=True)
+        for policy in document["organizePolicies"]:
+            policy["attachments"]["enabled"] = policy["id"] == "B"
+        for policy in document["metadataPolicies"]:
+            policy["mediaQueryType"] = "none"
+        document["recognitionRules"] = [
+            {
+                "id": "movie-folder-b",
+                "name": "Movie folder B",
+                "priority": 100,
+                "score": 100,
+                "stopOnMatch": True,
+                "condition": {
+                    "field": "path",
+                    "operator": "contains",
+                    "value": "Movies/",
+                },
+                "outputRecognitionType": "B",
+            }
+        ]
+        with self.journey() as value:
+            _revision, runtime = self._production_journey(document)
+            policies = {
+                policy.recognition_type_id: policy.organize_policy.attachments
+                for policy in runtime.strategy.recognition_type_policies
+            }
+            self.assertFalse(policies["A"].enabled)
+            self.assertTrue(policies["B"].enabled)
+            value.discovery._runtime_resolver = lambda _sid, _digest: runtime
+            status, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Movies"]},
+            )
+            self.assertEqual(202, status, admitted)
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            expected = {"Movies/Film.2001.mkv", "Movies/Film.2001-trailer.mp4"}
+            self.assertEqual(expected, {item["path"] for item in settled["sources"]})
+            self.assertEqual(2, settled["progress"]["primarySources"], settled)
+
+            status, frozen = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}/finalize",
+                "POST",
+                {"expectedVersion": settled["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            intent = value.repository.get_manual_intent(frozen["intentId"])
+            self.assertEqual(expected, {item.source.path for item in intent.items})
+            self.assertEqual({"A"}, {item.choice.recognition_type_id for item in intent.items})
+            self.assertIn(
+                "B",
+                {item.type_id for item in intent.options.recognition_types},
+                "the non-default type remains available for explicit operator review",
+            )
+
+            # Ground the same valid metadata identity for both source-linked
+            # Preview choices, as a completed offline result would, without
+            # admitting execution authority or contacting a Provider.
+            now = value.clock()
+            for index, item in enumerate(intent.items):
+                task_id = f"preview-proof-task-{index}"
+                value.repository.create_task(
+                    PersistentTask(
+                        task_id,
+                        "preview",
+                        PersistentTaskStatus.COMPLETED,
+                        False,
+                        now,
+                        now,
+                    )
+                )
+                value.repository.append_result(
+                    PersistentResultRecord(
+                        f"preview-proof-result-{index}",
+                        task_id,
+                        f"preview-proof-item-{index}",
+                        "source",
+                        item.source.path,
+                        "target",
+                        f"Movies/Film (2001)/Film {index}.mkv",
+                        "A",
+                        "tmdb",
+                        "909",
+                        "A",
+                        "A",
+                        "A",
+                        "A",
+                        "MOVE",
+                        "dry_run",
+                        now,
+                        title="Film",
+                    )
+                )
+            for item in intent.items:
+                status, _choice = self.request(
+                    value,
+                    f"/api/v1/operations/organize/intents/{intent.intent_id}/items/{item.item_id}/choice",
+                    "POST",
+                    {
+                        "expectedVersion": intent.version,
+                        "expectedItemVersion": item.version,
+                        "recognitionTypeId": "A",
+                        "metadata": {
+                            "provider": "tmdb",
+                            "providerId": "909",
+                            "mediaType": "movie",
+                            "title": "Film",
+                        },
+                    },
+                )
+                self.assertEqual(200, status)
+                intent = value.repository.get_manual_intent(intent.intent_id)
+
+            status, preview = self.request(
+                value,
+                f"/api/v1/manual-intents/{intent.intent_id}/preview",
+                "POST",
+                {"expectedVersion": intent.version},
+            )
+            self.assertEqual(201, status, preview)
+            self.assertEqual("previewed", preview["status"], preview)
+            self.assertEqual(expected, {item["source"]["path"] for item in preview["items"]})
+            self.assertTrue(all(item["status"] == "previewed" for item in preview["items"]))
+            main = next(
+                item for item in preview["items"] if item["source"]["path"].endswith(".mkv")
+            )
+            self.assertEqual([], main["plan"]["attachments"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
     # -- P1: genuine original-admission proof for a lost response ---------
 
     def test_a_retried_request_reconciles_to_its_own_admission_under_a_new_pin(self) -> None:
