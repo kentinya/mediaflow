@@ -1016,10 +1016,20 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             if (
                 preview_item.get("source", {}).get("path") != EXECUTION_RELATIVE
                 or [
-                    (attachment.get("type"), attachment.get("source", {}).get("path"))
+                    (
+                        attachment.get("type"),
+                        attachment.get("storageId"),
+                        attachment.get("filename"),
+                    )
                     for attachment in attachment_plans
                 ]
-                != [("trailer", EXECUTION_TRAILER_RELATIVE)]
+                != [
+                    (
+                        "trailer",
+                        "media-target",
+                        Path(EXECUTION_TRAILER_TARGET).name,
+                    )
+                ]
                 or preview_plan.get("zeroMutation") is not True
             ):
                 raise RuntimeError(f"the exact Preview did not retain its Trailer: {preview_item}")
