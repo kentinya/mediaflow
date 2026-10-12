@@ -44,6 +44,9 @@ from mediaflow.domain.manual_safety import (
     bounded_identity_path as _domain_bounded_identity_path,
 )
 from mediaflow.domain.manual_safety import (
+    bounded_manual_source_path as _domain_bounded_manual_source_path,
+)
+from mediaflow.domain.manual_safety import (
     contains_evidence_path_shape as _contains_evidence_path_shape,
 )
 from mediaflow.domain.manual_safety import (
@@ -648,13 +651,12 @@ def _bounded_identity_path(value: object | None) -> str | None:
 def _bounded_manual_source_path(value: object | None) -> str | None:
     """Keep one safe Storage-relative source identity exact through the guard.
 
-    Manual intent/Preview projections first pass paths through the shared
-    Storage-relative identity boundary.  This final recursive guard normally
-    caps every string at 512 characters; rechecking the field here preserves
-    the path-specific 4096-byte contract without widening other text fields.
+    Manual source paths use their ResourceLibrary path bound. Operations run
+    scopes and repository search continue to use the narrower shared identity
+    boundary, so one long manual source cannot widen unrelated projections.
     """
 
-    path = _bounded_identity_path(value)
+    path = _domain_bounded_manual_source_path(value)
     if path is None or path == "[redacted-path]":
         return path
     if _contains_evidence_digest_shape(path) or _contains_evidence_credential_shape(path):
@@ -1166,7 +1168,7 @@ def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[
     the redaction boundary.
     """
 
-    return _bounded_operator_document(document)
+    return _bounded_operator_document(document, preserve_manual_source_paths=True)
 
 
 def manual_step_error_document(error: object, *, fallback_code: str = "manual_organize_rejected"):
@@ -1335,7 +1337,7 @@ def _manual_intent_item_operator(item: dict[str, object]) -> dict[str, object]:
             "fileId": _bounded_identifier(source.get("fileId")),
             "storageId": _bounded_identifier(source.get("storageId")),
             "resourceLibraryId": _bounded_identifier(source.get("resourceLibraryId")),
-            "path": _bounded_identity_path(source.get("path")),
+            "path": _bounded_manual_source_path(source.get("path")),
             "filename": _bounded_location(source.get("filename"), segments=1),
             "extension": _bounded_evidence_text(source.get("extension"), limit=32),
             "size": _bounded_number(source.get("size")),
@@ -1559,7 +1561,7 @@ def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
             "fileId": _bounded_identifier(source.get("fileId")),
             "storageId": _bounded_identifier(source.get("storageId")),
             "resourceLibraryId": _bounded_identifier(source.get("resourceLibraryId")),
-            "path": _bounded_identity_path(source.get("path")),
+            "path": _bounded_manual_source_path(source.get("path")),
             "filename": _bounded_location(source.get("filename"), segments=1),
             "extension": _bounded_evidence_text(source.get("extension"), limit=32),
             "size": _bounded_number(source.get("size")),
@@ -2634,6 +2636,12 @@ def bounded_identity_path(value: object | None) -> str | None:
     """Public alias for the fail-closed Storage-relative identity projection."""
 
     return _bounded_identity_path(value)
+
+
+def bounded_manual_source_path(value: object | None) -> str | None:
+    """Public alias for a bounded exact Manual Organize source identity."""
+
+    return _bounded_manual_source_path(value)
 
 
 # -- Selected-run detail: progress, records and item evidence (RO-3) --------

@@ -29,10 +29,12 @@ _EVIDENCE_PATH_SHAPES = (
 #: safe, Storage-relative identity.
 _IDENTITY_PATH_REDACTION = "[redacted-path]"
 
-#: The bound on one published Storage-relative identity.  ResourceLibrary
-#: selection/discovery paths are bounded to 4096 UTF-8 bytes; a tighter
-#: operator-text bound would hide a valid source identity after Freeze.
-_MAX_IDENTITY_PATH_BYTES = 4096
+#: Operations run scopes and the text derived from them share the original
+#: bounded public/search identity limit. Manual Organize source paths use the
+#: separate ResourceLibrary-relative path bound below.
+_MAX_IDENTITY_PATH_CHARS = 512
+_MAX_MANUAL_SOURCE_PATH_BYTES = 4096
+_MAX_MANUAL_SOURCE_PATH_CHARS = 4096
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)(\b(?:api[_-]?keys?|password|passwd|secret|tokens?|authorization|cookies?)\b"
@@ -99,8 +101,41 @@ def contains_evidence_path_shape(text: str) -> bool:
     return any(pattern.search(text) is not None for pattern in _EVIDENCE_PATH_SHAPES)
 
 
+def _bounded_storage_relative_path(
+    value: object | None,
+    *,
+    max_characters: int,
+    max_bytes: int | None = None,
+) -> str | None:
+    """Validate a Storage-relative path under one caller-specific bound."""
+
+    if not isinstance(value, str):
+        return _IDENTITY_PATH_REDACTION if value is not None else None
+    # A Storage identity is exact data. Do not trim legal leading/trailing
+    # filename whitespace while projecting it for an operator.
+    text = value
+    try:
+        encoded_length = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        return _IDENTITY_PATH_REDACTION
+    segments = text.replace("\\", "/").split("/")
+    if (
+        not text.strip()
+        or len(text) > max_characters
+        or (max_bytes is not None and encoded_length > max_bytes)
+        or text.startswith(("/", "\\", "~"))
+        or re.match(r"^[A-Za-z]:", text) is not None
+        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None
+        or ".." in segments
+        or redact_manual_text(text) != text
+        or contains_evidence_path_shape(text)
+    ):
+        return _IDENTITY_PATH_REDACTION
+    return text
+
+
 def bounded_identity_path(value: object | None) -> str | None:
-    """Project a persisted Storage-relative identity or fail closed.
+    """Project one bounded persisted identity or fail closed.
 
     The Operations projection assumes source/destination identities are
     Storage-relative, but a legacy or externally written row can hold an
@@ -115,28 +150,22 @@ def bounded_identity_path(value: object | None) -> str | None:
     projection hides can never still be matched by a repository search.
     """
 
-    if not isinstance(value, str):
-        return _IDENTITY_PATH_REDACTION if value is not None else None
-    # A Storage identity is exact data.  Do not trim legal leading/trailing
-    # filename whitespace while projecting it for an operator.
-    text = value
-    try:
-        encoded_length = len(text.encode("utf-8"))
-    except UnicodeEncodeError:
-        return _IDENTITY_PATH_REDACTION
-    segments = text.replace("\\", "/").split("/")
-    if (
-        not text.strip()
-        or encoded_length > _MAX_IDENTITY_PATH_BYTES
-        or text.startswith(("/", "\\", "~"))
-        or re.match(r"^[A-Za-z]:", text) is not None
-        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None
-        or ".." in segments
-        or redact_manual_text(text) != text
-        or contains_evidence_path_shape(text)
-    ):
-        return _IDENTITY_PATH_REDACTION
-    return text
+    return _bounded_storage_relative_path(value, max_characters=_MAX_IDENTITY_PATH_CHARS)
+
+
+def bounded_manual_source_path(value: object | None) -> str | None:
+    """Project one exact, bounded Manual Organize source path.
+
+    This narrower boundary preserves legal ResourceLibrary-relative source
+    identities through discovery, Freeze, intent and Preview. It does not
+    widen Operations run scopes or their matching searchable text.
+    """
+
+    return _bounded_storage_relative_path(
+        value,
+        max_characters=_MAX_MANUAL_SOURCE_PATH_CHARS,
+        max_bytes=_MAX_MANUAL_SOURCE_PATH_BYTES,
+    )
 
 
 def searchable_identity_text(value: object | None) -> str | None:

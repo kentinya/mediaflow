@@ -60,6 +60,7 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
+    bounded_manual_source_path,
     is_files_worker_task_command,
     job_lifecycle_document,
     job_operator_document,
@@ -10918,7 +10919,7 @@ class MediaFlowApi:
                         "fileId": file_id,
                         "resourceLibraryId": resource_library_id,
                         "storageId": getattr(record, "storage_id", None),
-                        "path": bounded_identity_path(getattr(record, "path", None)),
+                        "path": bounded_manual_source_path(getattr(record, "path", None)),
                         "filename": getattr(record, "filename", None),
                         "sizeBytes": getattr(record, "size", None),
                         "occurrenceState": getattr(

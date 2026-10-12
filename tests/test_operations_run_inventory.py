@@ -1747,6 +1747,48 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
         self.assertEqual(1, found["total"])
         self.assertEqual("hostile-scope-task", found["items"][0]["run_id"])
 
+    def test_long_legacy_scope_does_not_break_the_native_inventory_contract(self) -> None:
+        """Long historical scopes stay readable and safely hidden from output/search."""
+
+        long_scope = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + "L" * 175 + ".mkv"
+        self.assertEqual(1222, len(long_scope))
+        self.repository.create_task(
+            task(
+                "legacy-long-scope-task",
+                command="scan",
+                rank=0,
+                scope_path=long_scope,
+            )
+        )
+        self.repository.create_task(task("visible-neighbor", command="scan", rank=1))
+
+        code, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(200, code)
+        self.assertEqual(2, page["total"])
+        by_id = {item["run_id"]: item for item in page["items"]}
+        self.assertEqual("[redacted-path]", by_id["legacy-long-scope-task"]["source_scope"])
+        self.assertIn("visible-neighbor", by_id)
+
+        # The legacy row remains openable by its public run identity, while
+        # its hidden long scope contributes no searchable text.
+        code, selected, _ = request(
+            self.api, "GET", "/api/v1/operations/runs/legacy-long-scope-task"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual("[redacted-path]", selected["source_scope"])
+        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=LLLLLLLL")
+        self.assertEqual(200, code)
+        self.assertEqual(0, found["total"])
+        code, found, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query="q=legacy-long-scope-task",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(1, found["total"])
+        self.assertEqual("legacy-long-scope-task", found["items"][0]["run_id"])
+
     def test_searchable_text_is_exactly_the_published_form(self) -> None:
         """Search input equals published output, value by value.
 
@@ -1758,15 +1800,27 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
 
         from mediaflow.domain.manual_safety import (
             bounded_identity_path,
+            bounded_manual_source_path,
             searchable_identity_text,
         )
 
         long_path = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + "L" * 175 + ".mkv"
         self.assertEqual(1222, len(long_path))
-        self.assertEqual(long_path, bounded_identity_path(long_path))
-        self.assertEqual(long_path, searchable_identity_text(long_path))
+        self.assertEqual("[redacted-path]", bounded_identity_path(long_path))
+        self.assertIsNone(searchable_identity_text(long_path))
+        self.assertEqual(long_path, bounded_manual_source_path(long_path))
         whitespace_path = " Leading/Trailing name .mkv "
         self.assertEqual(whitespace_path, bounded_identity_path(whitespace_path))
+        self.assertEqual(whitespace_path, bounded_manual_source_path(whitespace_path))
+        self.assertEqual("[redacted-path]", bounded_manual_source_path("x" * 4097))
+        self.assertEqual(
+            "[redacted-path]",
+            bounded_manual_source_path("/srv/private-host/" + "x" * 1300),
+        )
+        self.assertEqual(
+            "[redacted-path]",
+            bounded_manual_source_path("Archive api_key=MANUAL-SOURCE-SECRET"),
+        )
         self.assertEqual("[redacted-path]", bounded_identity_path("é" * 2049))
 
         matrix = (
