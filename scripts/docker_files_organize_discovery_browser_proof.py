@@ -105,6 +105,17 @@ const api = async (url) => {
   return document;
 };
 
+const settleDiscovery = async (discoveryId) => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const document = await api(
+      '/api/v1/operations/organize/discoveries/' + discoveryId,
+    );
+    if (!['queued', 'running'].includes(document.status)) return document;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('the Docker Worker did not finish the mixed discovery');
+};
+
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: { width: 1536, height: 1024 } });
@@ -192,7 +203,6 @@ try {
   });
   await page.getByRole('button', { name: '批量整理' }).click();
   await page.getByRole('heading', { name: '整理发现' }).waitFor();
-  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).waitFor();
   const mixedDiscoveryUrl = page.url();
   require_(
     /returnTo=files&returnResourceLibraryId=/.test(mixedDiscoveryUrl),
@@ -200,9 +210,13 @@ try {
   );
   const mixedDiscoveryId = mixedDiscoveryUrl.match(/\/discovery\/([^?]+)/)?.[1];
   require_(Boolean(mixedDiscoveryId), 'mixed discovery has no identity: ' + mixedDiscoveryUrl);
-  const mixedDiscovery = await api(
-    '/api/v1/operations/organize/discoveries/' + mixedDiscoveryId,
+  const mixedDiscovery = await settleDiscovery(mixedDiscoveryId);
+  require_(
+    mixedDiscovery.status === 'completed',
+    'Docker mixed discovery did not complete: ' + JSON.stringify(mixedDiscovery),
   );
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).waitFor();
   const mixedText = await page.getByRole('main').innerText();
   require_(
     /可整理来源\s*1/.test(mixedText) && mixedText.includes(SCOPE.executionMain),
@@ -301,17 +315,20 @@ try {
   );
   require_(
     /Movies\/其他电影\/Execution \(2004\)/.test(previewText) &&
-      previewText.includes(SCOPE.executionTrailerFile),
-    'the exact Preview did not show its main destination and Trailer attachment',
+      /\btrailer\b/i.test(previewText),
+    'the exact Preview did not show its main destination and Trailer attachment type',
   );
   const previewItem = previewDocument.items?.[0];
   require_(
     previewItem?.source?.path === SCOPE.executionMain &&
       JSON.stringify((previewItem.plan?.attachments ?? []).map((attachment) => [
         attachment.type,
-        attachment.source?.path,
-      ])) === JSON.stringify([['trailer', SCOPE.executionTrailer]]),
-    'exact Preview did not associate the selected Trailer: ' + JSON.stringify(previewDocument),
+        attachment.storageId,
+        attachment.filename,
+      ])) === JSON.stringify([
+        ['trailer', 'media-target', SCOPE.executionTrailerTarget.split('/').at(-1)],
+      ]),
+    'exact Preview did not plan the selected Trailer target: ' + JSON.stringify(previewDocument),
   );
   evidence.mixedAttachment = {
     discoveryId: mixedDiscoveryId,
@@ -593,6 +610,26 @@ print(json.dumps({"seeded": True}))
 """.replace("__RELATIVE__", EXECUTION_RELATIVE).replace("__TARGET__", EXECUTION_TARGET)
 
 
+READ_ATTACHMENT_EFFECTS = r"""
+import json
+import sqlite3
+import sys
+
+with sqlite3.connect("/data/mediaflow.sqlite3") as connection:
+    rows = connection.execute(
+        "SELECT effect.action, effect.source_storage_id, effect.source_path, "
+        "effect.destination_storage_id, effect.destination_path, effect.verified "
+        "FROM manual_execution_effects AS effect "
+        "JOIN manual_execution_items AS item "
+        "ON item.execution_item_id=effect.execution_item_id "
+        "WHERE item.task_id=? AND effect.action LIKE 'ATTACHMENT:%' "
+        "ORDER BY effect.sequence",
+        (sys.argv[1],),
+    ).fetchall()
+print(json.dumps(rows))
+"""
+
+
 def seed_source_linked_result(command: list[str], environment: dict[str, str]) -> None:
     """Run the production persistence seeding inside the running api container."""
 
@@ -600,6 +637,16 @@ def seed_source_linked_result(command: list[str], environment: dict[str, str]) -
         [*command, "exec", "-T", "api", "python", "-c", SEED_SOURCE_LINKED_RESULT],
         environment=environment,
     )
+
+
+def attachment_effects(command: list[str], environment: dict[str, str], task_id: str) -> list:
+    """Read the exact verified Trailer source and target from Docker's durable result."""
+
+    result = run_docker(
+        [*command, "exec", "-T", "api", "python", "-c", READ_ATTACHMENT_EFFECTS, task_id],
+        environment=environment,
+    )
+    return json.loads(result.stdout)
 
 
 def wait_for_execution(base: str, token: str, task_id: str, *, attempts: int = 60) -> dict:
@@ -908,6 +955,7 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                             "executionMain": EXECUTION_RELATIVE,
                             "executionTrailerFile": EXECUTION_TRAILER_FILE,
                             "executionTrailer": EXECUTION_TRAILER_RELATIVE,
+                            "executionTrailerTarget": EXECUTION_TRAILER_TARGET,
                         },
                         ensure_ascii=False,
                     ),
@@ -1013,6 +1061,21 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             if not execution_item_rows or execution_item_rows[0].get("status") != "success":
                 raise RuntimeError(
                     f"the completed execution lost its item outcome: {execution_items}"
+                )
+            attachment_result = attachment_effects(command, environment, execution_task_id)
+            if attachment_result != [
+                [
+                    f"ATTACHMENT:trailer:{EXECUTION_TRAILER_RELATIVE}",
+                    "source-storage",
+                    EXECUTION_TRAILER_RELATIVE,
+                    "media-target",
+                    EXECUTION_TRAILER_TARGET,
+                    1,
+                ]
+            ]:
+                raise RuntimeError(
+                    "the durable Docker result did not verify the exact Trailer source and "
+                    f"target: {attachment_result}"
                 )
             print(
                 "   confirmed execution: production Worker moved the main and Trailer "
