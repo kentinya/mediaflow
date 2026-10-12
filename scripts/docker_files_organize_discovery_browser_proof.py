@@ -356,10 +356,39 @@ try {
       executionText.slice(0, 500)
     }`,
   );
+  let executionTaskId = null;
+  let completedTask = null;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const executions = await api(
+      '/api/v1/operations/organize/executions?intentId=' +
+        encodeURIComponent(mixedIntentId) + '&limit=50',
+    );
+    const rows = executions.items ?? [];
+    if (rows.length === 1 && rows[0].taskId) {
+      executionTaskId = rows[0].taskId;
+      completedTask = await api('/api/v1/tasks/' + executionTaskId);
+      if (completedTask.status === 'completed') break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  require_(
+    executionTaskId !== null && completedTask?.status === 'completed',
+    'the confirmed execution Worker did not complete successfully: ' +
+      JSON.stringify({ executionTaskId, completedTask }),
+  );
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('main').getByText(/已验证完成\s*1/).waitFor();
+  const completedExecutionText = await page.getByRole('main').innerText();
+  require_(
+    /已验证完成\s*1/.test(completedExecutionText) && /失败\s*0/.test(completedExecutionText),
+    'the refreshed execution page did not show the completed successful outcome: ' +
+      completedExecutionText.slice(0, 1000),
+  );
   evidence.passes.push({
     case: 'mixed-confirmed-execution',
     screenshot: await shoot('mixed-confirmed-execution'),
   });
+  evidence.completedTaskStatus = completedTask.status;
 
   // Every non-GET request is one bounded discovery admission, one Choice, one
   // Preview or the one confirmed Execute; nothing else mutates media.
