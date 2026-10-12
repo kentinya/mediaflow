@@ -197,11 +197,21 @@ runtime consumers and atomically publishes the successor. There is no separate o
 Save-Draft/Validate/Activate step. Reference-protected removal deletes no media, historical snapshot
 or Result; copy defaults disabled only for object kinds supporting enabled state.
 
-Tests/previews explicitly stage an exact non-Active candidate. Nested recognition conditions and
-binding selection use the production engines; C remains C under A policy reuse. Naming and
-Classification produce safe components/MediaLibrary-relative destinations, and Organize explanation
-confers no execution authority. Offline tests do not call Providers; explicit live Metadata tests
-use the configured TMDB abstraction. No analysis mutates Storage or starts media work.
+Family-local tests stage the exact non-Active submitted candidate and validate only that object
+and necessary references. RecognitionType definition needs no binding/sample; RecognitionRule
+reports real bounded condition truth without downstream policies. Binding/Metadata/Naming/
+Classification/Organize use their relevant inputs and production engines; C remains C under A
+policy reuse. Local offline tests call neither Providers nor media Storage. Overview separately
+checks the exact Active complete flow, labels supplied synthetic identity and reports missing stages;
+explicit live Metadata uses the configured Provider abstraction. Analysis starts no media work and
+grants no activation/execution authority; Save still checks the whole successor.
+
+New Classification rules use `mediaLibraryId` plus safe `path`; final composition adds no library
+name/ID prefix. A labelled legacy `library/path` rule keeps old semantics until explicit checked
+conversion with destination-impact acknowledgement. Conversion preserves `path` without silently
+adding a legacy label; historical snapshots/Previews/Tasks/grants retain their original semantics.
+ResourceLibrary include/exclude/depth/stability configuration is consumed from the same pinned
+runtime by manual folder/mixed discovery and Scanner, with genuine elapsed size observations.
 
 Known Save rejection preserves prior Active and correctable input. Read current authority before
 reapplying a stale change; verify unknown outcomes before another explicit submission. Failed
@@ -384,7 +394,7 @@ authority and does not replace checked activation evidence.
 
 The implementation currently declares:
 
-- runtime SQLite schema: `34` in `mediaflow/infrastructure/sqlite_runtime.py`;
+- runtime SQLite schema: `45` in `mediaflow/infrastructure/sqlite_runtime.py`;
 - configuration-management SQLite schema: `10` in
   `mediaflow/infrastructure/sqlite_configuration_management.py`;
 - managed configuration document schema: `1` in

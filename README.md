@@ -56,6 +56,12 @@ See [release boundaries and validation](docs/release.md) and [deployment](docs/d
 
 `main` is the V2 development trunk (`2.0.0.dev0`) for Operator Web Architecture & UX Modernization.
 V2 is not yet a released product line. The Python `/api/v1/*` authority and V1 `/ui` remain available.
+Slice 44's accepted improvements cover ordinary maintenance on both library kinds, Rules forms
+and family-local tests with a separate complete-flow check, MediaLibrary-plus-path classification
+with explicit legacy conversion, long-name navigation/toolbars, and bounded ResourceLibrary
+folder/mixed organization through exact Preview and separate execution confirmation. Exceptional
+discovery interruption can safely stop with explicit new discovery; seamless recovery for every
+crash/control/activation combination remains deferred. Slice 43 remains user-frozen.
 
 [Roadmap](docs/roadmap.md) owns large-Slice priority/status; [Progress](docs/progress.md) records
 accepted closures and their Base/Head. [SLICE.md](SLICE.md) and [TASK.md](TASK.md) own current

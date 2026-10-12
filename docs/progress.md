@@ -8,14 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 44 — **Existing V2 Pages Functional Improvements** — is the current unclosed development
-boundary under [`SLICE.md`](../SLICE.md), with RO-1 through RO-6 selected, including bounded
-ResourceLibrary folder/mixed-selection organization. Other page contents are deferred. Root
-[`SLICE.md`](../SLICE.md) and [`TASK.md`](../TASK.md) hold the current correction and implementation
-state; this pointer makes no Task acceptance or Slice-closure claim. The
-working branch `slice/44-page-improvements` starts from the accepted Slice 42
-closure and excludes the unaccepted Slice 43 implementation. Slice 43 is user-frozen on
-`frozen/slice-43-2026-10-07`, retaining its original Base, Task review and unresolved blockers.
+Slice 44 — **Existing V2 Pages Functional Improvements** — is **PASS / CLOSED** after A's complete
+Base..Implementation Head review. All six Required Outcomes and nine Required Surfaces are accepted
+under the user-approved discovery recovery rescope. [`TASK.md`](../TASK.md) has no active
+implementation; A selects the next large Slice only in a separate action. Closure is repository-
+local; no push or release is claimed. The working branch `slice/44-page-improvements` starts from
+accepted Slice 42 and excludes unaccepted Slice 43 implementation. Slice 43 remains user-frozen on
+`frozen/slice-43-2026-10-07`, with original Base, Task review and unresolved blockers retained.
 Suspension is not closure; Slice 42 and all earlier closure-ledger entries remain unchanged.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
@@ -44,6 +43,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 44 — Existing V2 Pages Functional Improvements | PASS / CLOSED | `853973dbbf8289fa2ad40657033e94e870a690e4` | `8be263ea778df08aa374e9433f138a218c1d4af9` | A Final Review PASS / CLOSED — 2026-10-12 | Shared ordinary maintenance with optional fingerprints and durable Delete on both library kinds; reference-aligned Rules forms and object-local tests/separate complete flow; MediaLibrary-plus-path classification with explicit legacy conversion; long-name list/grid navigation/toolbars; bounded ResourceLibrary folder/mixed discovery through frozen primary/attachment Preview and confirmed execution | Seamless exceptional discovery crash/control/activation/legacy continuity, frozen Slice 43, unselected pages/providers, Upload/Download, MediaLibrary Organize, larger/split manifests, implicit destructive authority and automatic uncertain replay; other Contract deferrals unchanged |
 | 42 — V2 Operations and Tasks Workspace | PASS / CLOSED | `ffee77348cebcb05e356c8111c5861ed64ca0388` | `ce3fc2a3e70d40279fa725b5d7dc838d11123980` | A Final Review PASS / CLOSED — 2026-10-06 | Native unified task center, authoritative queries/counts and historical progress/evidence, live-file exact organize return, cooperative controls, durable safe Web continuation and task-linked single/bounded decision and analysis recovery | Global Review/cross-task bulk, history retention/deletion, unbounded or MediaLibrary organize, arbitrary historical Reprocess, Automation/Notifications redesign, new authority/providers, uncertain replay, universal rollback and V1 retirement; other Contract deferrals unchanged |
 | 41 — V2 Organizing Rules Workspace | PASS / CLOSED | `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` | `8433319168272ecf7ccde017afc36525e8c62ea0` | A Final Review PASS / CLOSED — 2026-09-30 | Native V2 Rules graph workspace, typed editors, reference-safe lifecycle, exact-candidate zero-mutation analysis, one-Save checked publication and Settings readiness/recovery with preserved RecognitionType identity | Provider switching/new providers, Review/Recovery redesign, media execution from Rules, new rule/naming/classification domains, bulk/diff/rollback, V1 retirement/auth redesign and other unchanged Contract deferrals |
 | 40 — V2 Settings and Empty-Baseline Startup | PASS / CLOSED | `d814b7c1c6819e79271245a1126f53aca6aeaf69` | `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` | A Final Review PASS / CLOSED — 2026-09-28 | Native V2 Settings and first-Draft lifecycle, legal empty-business Active, conditional publication, incremental successors, command readiness, media-free startup and resident service adoption without restart | Wholesale policy/Recognition/Review/Recovery migration, V1 cutover, generated onboarding defaults, new identity/Secret Store/deployment mutation, scheduler/queue redesign, new providers/commands and automatic uncertain replay |

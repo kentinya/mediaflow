@@ -1,3 +1,13 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+Slice 44 is **PASS / CLOSED** after A's complete original Base..Implementation Head review.
+Task 44.10's B PASS and the preceding completed/rejected reports below are retained as historical
+evidence, with their original ranges, results and handoff state. They authorize no new implementation.
+
+Next Action: A SELECTS THE NEXT LARGE SLICE
+
+---
+
 # Task 44.10 — Preserve attachment association through mixed-selection Organize
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
@@ -7,14 +17,14 @@ the committed [Slice 44](SLICE.md). Implementation reads
 ```text
 Task ID: 44.10
 Parent Slice: 44
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 78d43114b475c9f82a1bae88654cb1fc2277e391
 Difficulty: Medium
 Test Level: T4
 Planner / Reviewer: B
 Contract Authority: 78d43114b475c9f82a1bae88654cb1fc2277e391:SLICE.md
 Blocking Finding: P1 / A44-14
-Next Action: B INDEPENDENTLY REVIEWS THIS TASK
+Next Action: A REVIEWS THE COMPLETE SLICE BASE..HEAD
 ```
 
 ## Goal
@@ -176,6 +186,14 @@ Repository root:
 git diff --check
 ```
 
+**B packaging validation clarification — 2026-10-12:** the Developer root-build wheel contains
+removed upload/download modules from a retained build tree. That artifact is rejected. The
+same wheel gate is rerun against a clean `git archive` of submitted HEAD, using the existing
+venv Python and `pip wheel --no-deps --wheel-dir <isolated-output> <clean-archive-source>`,
+then the unchanged exact-wheel smoke below. Full module equality with the committed candidate
+is required. This changes the build input location only; Task ID/Base/Goal/Scope/acceptance and
+Medium/T4 remain unchanged. B's verified replacement digest is recorded in the review result.
+
 Smoke-test the single exact wheel produced above with
 `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel-path>`; retain its digest/module audit.
 Real-Python and Docker browser proofs run after Web build and must include AC4 on current code.
@@ -285,14 +303,74 @@ untracked user PNGs and B Closure Packet were preserved; `config/alist.json` was
 implementation checkpoint sequence and complete evidence are in the evidence index. The Task is
 ready for B to independently review Base..Head and decide its review result.
 
-## B Review Result
+## B Review Result — 2026-10-12
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: NO — A44-14 requires correction
-Next: DEVELOPER IMPLEMENTS THIS TASK
+Reviewed Range: 78d43114b475c9f82a1bae88654cb1fc2277e391..8be263ea778df08aa374e9433f138a218c1d4af9
+Executable: fa91a231ff58b99a496f608757fccaffedb0f74c
+Decision: PASS
+Current P0/P1 Task blockers: NONE
+Slice Required Outcomes all satisfied: YES — RO-1 through RO-6
+Slice Required Surfaces all satisfied: YES — all nine
+Next: SLICE READY FOR A REVIEW; STOP TASK PLANNING
 ```
+
+B reviewed the entire actual Task range: one production discovery correction, its managed
+regression, two strengthened browser proofs and Task documentation. Submitted Head differs from
+the executable only in TASK.md. Committed Slice/requirements/architecture/roadmap, Task Base,
+Medium/T4, bounds, authority and user-approved recovery deferrals remain unchanged.
+
+A44-14 is corrected at the shared observation boundary. B reran A's unchanged real managed
+Local/SQLite/authenticated API reproduction: folder and mixed selections both discover/freeze
+one main, with zero media mutations. Fresh native browser proof covers actual mixed Files
+selection, main-only Freeze, pinned default policy, exact Trailer Preview, separate confirmation,
+verified durable main/Trailer effects, no replay, explicit successor and grid folder action.
+Six real published-policy negative probes preserve disabled attachment/Trailer settings, another
+policy's enabled settings, an unselected owner, removed-owner partial state and source_excluded
+409 under the exact loaded configuration. No filename-only loss or unselected-parent enumeration
+was introduced. Full regression retains paging, 51 main/Trailer pairs, 100/101 true primaries,
+monotonic refusals, atomic Finalize, controls/ownership, pins, conflicts and C remaining C.
+
+Fresh B Slice-final Python: **2432 run / 7 existing environment skips / OK**, 444.629 test
+seconds (446.497 process seconds). Fresh full Web: **74 files / 1106 passed**, 421.32 suite
+seconds (422.567 process seconds). Native browser: **15 stages / 4 discovery cases**, PASS.
+Fresh Ruff format/check, compileall, pip check, two config validations, range diff and forbidden
+dependency checks PASS. These same-candidate runs satisfy final Task and Slice regression.
+
+Readable original Web static/build and E2E evidence (246 default / 21 Python Operations /
+10 Direct Files) is reused after unchanged source/lock/config/asset audit. Final Docker discovery
+(9 stages / 4 cases, completed verified execution) and release-security logs are reused only
+after B independently verified each distinct image's exact 163 Python modules and four Web files.
+Unchanged RO-2/RO-5 visuals and actual schema-38/schema-45 historical upgrade/reopen evidence
+are retained with explicit compatible-input checks; current source/lock/assets match and no
+schema/persistence/history-format change occurred in this Task. Screenshots were inspected.
+
+**Packaging evidence correction:** Developer's wheel has two stale upload/download modules,
+so its claimed PASS is not accepted as exact-candidate packaging evidence. B rebuilt from a
+clean committed archive, verified all 163 modules with no extra/missing/changed module, and ran
+the unchanged install/database smoke successfully. Replacement wheel SHA-256:
+`a31c10560b9afbd0145ea6748301886964d08bb2d6b8c00083057cc522094853`.
+No implementation fix or changed safety assertion was needed.
+
+Existing warnings/skips and first failures are retained. A diagnostic negative probe initially
+used a fixture that stripped the configured exclude; loading the real pinned document proves
+the expected refusal. An initial wheel command resolved the venv symlink to system Python
+without pip; the corrected venv invocation passed. Neither failed attempt counts as PASS.
+Developer's contention attribution remains an inference; a passing Base health run alone does
+not prove its earlier timeout was pre-existing. Final unchanged candidate gates pass.
+
+RO-1 through RO-5 and every required surface were reevaluated against the Contract, current
+regressions and unaffected original evidence; RO-6 now meets the current ordinary-flow/safety
+outcomes. A44-15 remains P2; wording/optional-proof ideas do not create another Task.
+B submits one fresh [Closure Packet](docs/reviews/slice-44-closure-packet-20261012-task44-10.md)
+for A's original Slice Base..corrected Head review, without changing A-owned status or declaring
+Slice PASS/CLOSED. The known checker/workflow conflict for FIX REQUIRED plus no-active Task
+is recorded by the post-review check; no passed result or active implementation is fabricated.
+
+Evidence: `.git/validation-evidence/8be263ea778df08aa374e9433f138a218c1d4af9/b-review44-10/evidence-index.md`.
+Prior Task 44.9 handoff, user PNGs, old packet, private config and frozen Slice 43 are preserved.
+This review and packet are local documentation changes; no standalone review checkpoint or push
+is created. A owns the subsequent closure reconciliation and role-experience update.
 
 ## Prior Task 44.9 — exact preserved historical handoff
 

@@ -12,15 +12,20 @@ define the activated boundary; unspecified improvements remain outside this Cont
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: PASS / CLOSED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: 5ec0f3fdfa81b28bc12384e65b595a0f917dc562
+Implementation Head: 8be263ea778df08aa374e9433f138a218c1d4af9
 Contract Revision: 2026-10-11 — PARTIAL / RESCOPE: user-approved discovery recovery reduction; safety and original Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for the complete RO-1 through RO-6 boundary
-Next Action: B PLANS ONE FOCUSED CORRECTION TASK
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
+
+Closure Date: 2026-10-12. The six-outcome Contract, its original Base and the user-approved recovery
+rescope are retained. The authority/activation/baseline notes and prior review sections below
+record their historical states; the final A Review and Closure Reconciliation at the end govern
+current acceptance. No next Slice is selected in this checkpoint.
 
 ## Authority and sequencing
 
@@ -1930,9 +1935,9 @@ Contract as follows; a changed recovery expectation is not a fixed implementatio
 RO-1 through RO-5 and frozen Slice 43 are unchanged. No implementation, new runtime validation,
 B review, Closure Reconciliation or next-Slice selection occurs in this Contract decision.
 
-## Closure Packet
+## Prior Closure Packet — after Task 44.9
 
-B's [current Closure Packet](docs/reviews/slice-44-closure-packet-20261012.md) follows Task 44.9
+B's [then-current Closure Packet](docs/reviews/slice-44-closure-packet-20261012.md) follows Task 44.9
 PASS and submits the complete Slice range for A. Its report Head is
 `5ec0f3fdfa81b28bc12384e65b595a0f917dc562`; executable Head is
 `b4a14e0284b66597baf306a95224fc1dabf60033`. Their only difference is `TASK.md`.
@@ -1941,7 +1946,7 @@ when A started; A preserves them without silently including them in this review 
 B's COMPLETE assessments are readiness claims, superseded for acceptance by the decision below.
 Earlier Closure Packets and reviews remain historical evidence.
 
-## A Final Review
+## Prior A Final Review — after Task 44.9
 
 ```text
 Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..5ec0f3fdfa81b28bc12384e65b595a0f917dc562
@@ -2022,3 +2027,78 @@ FIX REQUIRED because of A44-14 alone; B must not turn this P2 into an acceptance
   implementation, next-Slice selection or push.
 
 NEXT ACTION: B PLANS ONE FOCUSED CORRECTION TASK
+
+## Closure Packet — after Task 44.10
+
+B's [current Closure Packet](docs/reviews/slice-44-closure-packet-20261012-task44-10.md) submits
+report Head `8be263ea778df08aa374e9433f138a218c1d4af9`, executable
+`fa91a231ff58b99a496f608757fccaffedb0f74c`, under committed Contract authority
+`78d43114b475c9f82a1bae88654cb1fc2277e391:SLICE.md`. The report successor changes only TASK.md.
+A preserves B's completed review/no-active handoff and both pre-existing packets as history in this
+closure checkpoint. User PNGs remain outside it. B readiness is supported by A's review below.
+
+## A Final Review
+
+```text
+Reviewed Range: 853973dbbf8289fa2ad40657033e94e870a690e4..8be263ea778df08aa374e9433f138a218c1d4af9
+Decision: PASS
+Decision Date: 2026-10-12
+Reviewer: A — Slice Owner / Architect / Final Reviewer
+Review Scope: complete Slice RO-1 through RO-6 and all nine Required Surfaces
+Contract: user-approved 2026-10-11 recovery rescope; original Base retained
+P0 Blockers: none found
+P1 Blockers: none found
+```
+
+The [final report](docs/reviews/slice-44-final-review-20261012-task44-10.md) records the whole-range
+assessment, independent reproduction/negative tests, original readable evidence and artifact/input
+identity. A44-14 is resolved: folder and mixed discovery each freeze one main, the exact Preview
+associates its Trailer, and separately confirmed Worker execution verifies both reviewed effects
+once. Disabled/orphan/other-policy/removed/excluded-owner semantics remain covered. A44-15 retains
+its current-adapter P2 reassessment; no concrete native incident was added. Prior P2 wording and
+optional assertions do not block acceptance. No Material Contract Change is made at closure.
+
+- A audited the 154-file original Base..Head inventory and cross-module requirements, journeys,
+  authority, configuration compatibility, discovery controls/atomic handoff and mutation boundaries.
+  The prior whole-range review remains applicable outside the five-file Task 44.10 correction.
+- Fresh A original mixed probe and six negative-policy/owner cases PASS with zero media effects.
+  Fresh focused Python PASS: 403 tests, 79.429 test seconds. Fresh native browser proof PASS:
+  15 stages/four discovery cases plus exact main/Trailer Preview, separate Worker effects and
+  replay refusal. Its discovery Worker is driven by the real CLI; resident service proof is Docker.
+- Fresh B full Python 2432 run / 7 skips / OK and full Web 74 files / 1106 passed were inspected.
+  Original static/build, default E2E 246, Direct Files 10 and Operations 21 are reused only with
+  verified unchanged inputs/readable logs. Production Docker discovery/security, old-schema/reopen
+  and both-library four-viewport evidence retain their audited identities and limits.
+- A independently byte-compared the clean source archive and exact 163-module wheel, and read-only
+  hashed both distinct Docker images: exactly 163 current modules/four assets each. Developer's
+  stale-module wheel is rejected; only B's clean replacement is accepted. A's first audit used the
+  removed Docker source directory and failed equality; corrected installed-module lookup passes.
+- Seven dedicated external-service/endurance profiles remain SKIP/UNAVAILABLE. Existing warnings,
+  first harness/resource failures, bounded provider uncertainty and exceptional-recovery deferrals
+  remain disclosed; no production-service certification, push or release is inferred.
+
+Local A evidence is retained in
+.git/validation-evidence/8be263ea778df08aa374e9433f138a218c1d4af9/a-final44-10-20261012/;
+B's indexed original evidence remains at the sibling b-review44-10/ directory. The report records
+which evidence is fresh, reused, failed or unavailable rather than inferring PASS from totals.
+
+## Closure Reconciliation
+
+Status: **PASS / CLOSED**. All six Required Outcomes and all nine Required Surfaces are complete
+within this Contract. The reviewed product range stops at the Implementation Head above; this
+checkpoint records facts and history only, with no application/test/provider/configuration change.
+
+- Roadmap marks 44 closed; Progress adds one compact closure-ledger row with original Base/Head and
+  deferrals. Accepted prior closures and frozen Slice 43 remain unchanged.
+- Requirements/V2 stable IDs and frozen V1 meanings are preserved. Product Experience/Architecture,
+  README and configuration guidance describe delivered local analysis, Rules/forms, classification
+  compatibility, optional metadata fences, durable Delete, long paths and bounded discovery; runtime
+  schema is correctly recorded as 45. Deferred seamless recovery is not promoted to delivery.
+- TASK.md is NO ACTIVE IMPLEMENTATION TASK. B's prior review content and both packets are retained;
+  role experience receives brief reusable lessons without new scope or lifecycle rules.
+- The known FIX REQUIRED/no-active-Task checker conflict was recorded at entry; the factual
+  PASS / CLOSED transition is checkpointed before the unchanged HEAD-authoritative governance check.
+  Exact manifest/diff, stable IDs, source hashes, private-config exclusion, user PNGs and frozen
+  Slice 43 are checked at closure. Evidence/results are local; no push, deployment or next Slice.
+
+NEXT ACTION: A SELECTS THE NEXT LARGE SLICE

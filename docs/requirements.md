@@ -696,8 +696,27 @@ mutation 自动重放。除业务状态只读反馈和 Organize 终态同步外�
 配置、Preview 和其他页面功能不得新增 FileIndex 依赖。跨 Storage Move 必须明确显示为
 Copy→校验→删除源；校验失败不得删除源，部分结果必须逐项可见且不得自动重放。
 
-规范化用户旅程及验收解释见 `docs/product-experience.md`。本章节描述截至 Slice 42 的已交付 CURRENT
-能力；未在此处或“当前实现基线”明确列出的后续目标不得描述为已实现。
+规范化用户旅程及验收解释见 `docs/product-experience.md`。上述基线及下列 Slice 44 增量为已交付
+CURRENT；未明确列出的后续目标不得描述为已实现。
+
+#### **V2 已交付增量 — 现有页面改进（Slice 44）**
+
+- ResourceLibrary / MediaLibrary 普通维护采用同一行为与各自库类型权限；指纹可选，但服务端已观察
+  的指纹仍绑定。Rename / Delete 元数据校验不读取选中文件内容；批量/长 Delete 持久化独立结果，
+  未知变更不自动重放。文本编辑保留有界内容摘要；跨 Storage Move 仍为 Copy→摘要验证→Delete。
+- Rules 八区导航、当前区搜索、完整列表、显式 Add/copy 抽屉和专用 Edit 表单保留一次 checked Save。
+  默认测试仅分析当前候选及必要依赖；Overview 单独完整流程检查。离线局部测试零 Provider / Storage
+  I/O，结果不替代全图发布、完整规划或执行授权。
+- 新分类使用 MediaLibrary + 安全 `path`，不追加库显示名/ID；旧 `library/path` 显式转换并保留原路径，
+  历史快照、Preview、Task 和授权继续沿用其原语义。
+- 两类库的 list/grid 长名称、空白和路径身份保持精确；完整名称可查看，面包屑有界滚动、工具栏重排。
+- ResourceLibrary 文件夹/混合选择经有界后台发现、冻结主文件清单、既有 exact Preview 和单独确认执行；
+  主文件/Trailer 关联、真实稳定观察、隔离读错、控制/归属 fence 和一次原子 Freeze 已交付。
+  仍保留 100 主文件界限；特殊中断不能证明续跑时安全停止并显式新发现。任意崩溃/控制组合、旧记录和
+  激活变化下的无缝恢复仍延期，不能猜新根/重新 pin 或自动重放。MediaLibrary Organize、Upload/Download、
+  冻结的 Slice 43 和未选择页面不在此次交付范围。
+
+这些事实不重写已发布 V1 基线或稳定 REQ/UX/V2 ID；范围、验证及延期索引见 `docs/progress.md`。
 
 ### **V1 当前实现基线（已发布）**
 

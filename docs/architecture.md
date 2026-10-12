@@ -369,10 +369,11 @@ validates the complete document, runs applicable checks and atomically activates
 does not perform separate Save-Draft, Validate or Activate actions. Entry/read/search/filter/
 navigation creates no Draft or work.
 
-An explicit Test/Preview stages a bounded page-scoped candidate and exact evidence through
-`RulesWorkspaceCommandService.stage_preview_candidate`, so existing revision-bound engines remain
-reusable. That state is visibly non-Active and excludes unrelated general-configuration Draft
-changes. Save constructs its own focused successor and runs the shared applicable evidence before
+The current family-local test stages the exact non-Active submitted object through
+`RulesWorkspaceCommandService.stage_analysis_candidate` and uses `RulesObjectAnalysisService`.
+The compatibility full-test path retains `stage_preview_candidate`; Overview exposes a separate
+complete-flow check. These paths exclude unrelated general-configuration Draft changes. Save
+constructs its own focused successor and runs the shared applicable evidence before
 checked activation; preview success does not grant publication or execution authority.
 
 The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
@@ -434,53 +435,39 @@ API/navigation and Python static entry. Only the exact allowlisted edit route tr
 final ID as identity data; unknown dotted assets and traversal still fail closed. Failed impact
 reads remain unavailable evidence rather than fabricated reference counts.
 
-## TARGET — Object-scoped Rules analysis and complete-flow separation (Slice 44)
+## CURRENT — Object-scoped Rules analysis and complete-flow separation
 
-The existing Rules panel uses shared whole-runtime strategy analysis for RecognitionType and
-RecognitionRule tests. Candidate staging performs composed-document validation; strategy analysis
-parses the path, evaluates configured recognition and resolves the matched type's policy binding.
-A matched rule without that binding therefore raises a policy-resolution error before useful local
-evidence is returned. This CURRENT coupling is the selected RO-4 target in [SLICE.md](../SLICE.md);
-no object-analysis split is claimed as implemented.
+Family-local Web tests use `RulesObjectAnalysisService` and the authenticated
+`/api/v1/operations/rules/analysis/{family}` routes. `stage_analysis_candidate` captures the submitted
+object in a non-Active revision from the exact observed Active identity; object field/identity and
+necessary-reference validation precedes analysis. It does not require a whole-runtime load merely
+to test one object. Results bind family, candidate/revision/digest, purpose, sample and context;
+relevant edits or Active changes invalidate freshness. Python retains RBAC, audit, concurrency and
+policy authority. Analysis changes no Active pointer and creates no executable work.
 
-The target application boundary captures the exact submitted candidate and configuration context,
-validates that object and its necessary references, and dispatches a bounded analysis for its
-family. It reuses production normalization, Parser, condition evaluation, binding resolver,
-Metadata policy validation, Naming/Classification engines and Organize policy semantics. Python
-remains authoritative; neither React nor a test-specific alternate matching algorithm decides
-conditions, output types, enabled state or policy identity.
+RecognitionType definition needs no sample or downstream binding. Optional associated-rule
+analysis uses only its bounded relevant set; absent rules are inapplicable. RecognitionRule reuses
+production Parser/condition evaluation, reports bounded expected/actual condition truth including
+non-match, and stops before downstream policy resolution. It does not force a type or claim that
+one rule wins global competition. Binding analysis checks its type, uniqueness and four references.
+Offline Metadata checks its own settings without Provider construction or credentials; explicit
+live testing uses that candidate policy through the Provider port. Typed Naming and Classification
+samples reuse the pure production engines; Classification validates its own destination references.
+Organize explains effects, permissions and required capabilities without fabricating observed
+physical readiness. Local offline analysis performs zero Provider and media Storage I/O.
 
-RecognitionType definition analysis invokes no rule matcher unless associated-rule testing is
-explicit. RecognitionRule analysis supplies only the submitted rule and relevant type/context to
-the shared engine, records bounded condition/group truth including non-matches, and stops before
-downstream resolution. Associated-rule tests use the exact bounded relevant set and never claim
-victory over unrelated competing types. Complete-flow analysis retains global priority/score/
-stop/ambiguity behavior. No test manufactures a match by forcing RecognitionType.
+Rules Overview's separately labelled `完整流程检查` uses the exact current Active and the shared
+complete pipeline, including real recognition competition and policy resolution. It reports
+missing prerequisites and labels supplied offline synthetic identity; explicit live Metadata
+intent remains separate. Necessary destination observations are bounded read-only Storage calls.
+Save still independently validates the whole successor and applicable publication evidence before
+atomic activation. Local evidence grants neither publication nor execution. Historical full-test
+API behavior/evidence, immutable snapshots and admitted Task/Job/Automation pins retain their
+original scope. No alternate domain evaluator, runtime authority or Storage mutator is introduced.
 
-Binding analysis resolves its four references without invoking their processing engines. Offline
-Metadata analyzes settings without Provider construction or credential-dependent success; explicit
-live analysis uses the selected candidate policy directly through the Provider port. Naming and
-Classification consume typed samples independently; Classification still validates its destination
-references and uses the applicable legacy/revised path contract. Organize definition explanation
-does not need a binding/destination and cannot assert unobserved physical readiness. Local offline
-analysis makes no Provider or Storage calls and creates no executable Task/Job.
-
-Candidate/evidence persistence may reuse managed repositories, but a whole-runtime load/validation
-is not an admission requirement for an independent object test. An unrelated incomplete/invalid
-policy cannot invalidate that local analysis. RBAC, exact observed authority, object identity,
-field allowlists, relevant reference checks, bounded secret-free evidence and stale/concurrent
-fences remain mandatory. Evidence binds purpose, object/candidate, sample and configuration context;
-currentness changes on relevant edits or Active changes. Browser state never becomes authority.
-
-A separately labelled native complete-flow entry reuses existing Strategy Test/DryRun/Planner
-behavior, validates its actual processing prerequisites and reports unavailable stages. Offline
-synthetic identity is never a verified Provider match; live testing remains explicit. Destination
-observations use existing bounded read-only Storage ports. Neither local nor complete analysis
-grants execution. Save independently validates the whole successor and applicable publication
-evidence before atomic activation; local evidence cannot replace complete-flow/publication gates.
-Compatibility retains old full-test API behavior and the original scope of historical evidence,
-immutable revisions and Task/Job pins. No parallel runtime authority or weakened mutation gate is
-introduced; OrganizerExecutor remains the sole Storage mutator.
+The eight-section Rules presentation has a family-scoped header search, complete inventories,
+explicit Add/copy drawers and full-page Edit with purpose-built forms. Styles are scoped to Rules;
+shared shell navigation/authentication and other business routes retain their behavior.
 
 ## Persistence
 
@@ -488,7 +475,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `44`, configuration-management schema `10` and
+The implementation currently declares runtime schema `45`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -632,47 +619,44 @@ Scan and Preview remain DryRun/zero-mutation operations. Organize requires expli
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
-## TARGET — Slice 44 ordinary bounded folder discovery and safe restart
+## CURRENT — Bounded folder discovery and safe restart
 
-This is the user-approved smaller RO-6 target, not a CURRENT delivery claim. The candidate already
-contains a dedicated discovery domain/service/Worker, SQLite records, shared pure filters and frozen
-manual-intent handoff. The consolidated audit remains evidence of unimplemented defects; root
-`SLICE.md` records the subsequent PARTIAL / RESCOPE and current acceptance. RO-1 through RO-5,
-required native surfaces, the 100-primary bound and all mutation safety are unchanged.
+ResourceLibrary Files list/grid and Operations admit folder or mixed selections to
+`MediaDiscoveryService`, the resident discovery Worker and additive SQLite discovery/observation
+records. Admission pins actor, library kind/ID, Storage/root and immutable configuration; it
+reconciles equivalent open scopes independently of recent-list windows. Native status/progress,
+findings, exclusions, waiting/read errors and cooperative controls precede explicit Freeze into the
+existing manual intent, exact Preview and separately confirmed OrganizerExecutor execution.
+MediaLibrary is not an organizing source. Discovery neither uses FileIndex for authority nor
+calls Providers or mutates media.
 
-Use one metadata-only background discovery followed by the existing immutable manual intent,
-exact Preview and separately confirmed OrganizerExecutor execution. Reuse the resident Worker,
-repository, filtering and attachment association; introduce no queue, Scheduler, supervisor,
-general workflow engine, FileIndex admission authority or alternate execution lifecycle.
+The concrete bounds are 100 selected scopes, 100 primary sources, 10,000 visited entries,
+1,000 directories, 2,000 page fetches, 100 entries per page, safety depth 32 and 600 active seconds.
+Provider entries/cursors and exact relative paths are confined and deduplicated; metadata calls
+stay outside SQLite write transactions. The pinned production configuration loader and shared
+pure filters apply extension/include/exclude/depth/stability rules to every selection entrance.
+Size stability is re-observed after real elapsed time; waiting releases the claim until its due
+observation rather than consuming idle budgets or busy-looping. Explicit and walked regular-file
+observations share the existing same-directory attachment matcher under the retained main's actual
+pinned default manual policy before counting/freeze. Trailers remain attachments across selection,
+paging and Preview; no parent directory outside the admitted scope is enumerated to associate them.
 
-- Atomically reconcile equivalent open actor/library/Storage/pin-bound scope, independently of
-  recent-list windows. Lost-response readback must prove the original admission; if it cannot,
-  show unresolved admission and native Operations inspection. Never guess a newer root/pin or
-  automatically resubmit. Guaranteed seamless correlation through simultaneous activation changes
-  is deferred; existing reliable correlation can be retained.
-- Discovery remains bounded and publishes truthful durable state/findings. Count directories,
-  pages, entries and active work separately. Storage calls stay outside write transactions. Claims,
-  controls, material refusals and atomic one-intent Finalize remain authoritative.
-- Real managed publication/runtime mapping applies pinned root-relative filters and genuine
-  age/mtime/size observations to every selection entrance. Waiting cannot busy-loop, exhaust idle
-  budgets or starve resident work. Re-observe eligible sources after the required interval; if
-  evidence is lost, wait again or stop truthfully. No new persistent per-page scheduling framework
-  is required. Associated Trailer videos remain attachments across paging/manual handoff.
-- Normal acknowledged Pause/Continue and cancellation remain supported. If a crash, control race
-  or incompatible old discovery prevents provable continuation, preserve durable history/findings,
-  fence/settle the unfrozen attempt and offer explicit new discovery. Precise cursor/unpublished-work
-  continuity and automatic repair/resumption of every legacy duplicate are deferred. Frozen work,
-  old execution pins and completed/uncertain media effects never gain scope/authority or replay.
-- Application/API and typed Web agree on exact supported names/paths, completeness, isolated errors,
-  discovery-command readiness and permitted recovery. A legal long-name failure cannot strand a
-  batch; a read failure is incomplete and permits only explicit known-subset review.
+Ownership/version fences preserve accepted controls and reject stale-owner publication. Material
+entry/depth/time/primary refusals remain durable and cannot expose an executable first-N prefix.
+Isolated read errors preserve known sources for explicitly acknowledged subset review. Finalize
+atomically creates one linked intent with its discovery transition; repeated/concurrent calls
+cannot orphan or duplicate authority. Legal long source paths retain exact identity through the
+manual handoff while run/search projections remain bounded.
 
-Persistence changes require actual old-schema migration/reopen proof of preserved history, a
-representative interrupted discovery and frozen/file-only intents/Previews/results/pins. Unsupported
-unfinished discovery may stop with a native explanation and deliberate new-discovery path; do not
-delete/guess-merge history or silently repin old work. Reuse existing useful mechanisms rather than
-rewrite them solely for a preferred state-machine shape. T4 remains assigned for managed Active
-configuration, concurrency, persistence and the exact execution handoff; no runtime PASS is claimed.
+Normal acknowledged Pause/Continue and cancellation are supported. If a crash/control race or
+incompatible old record prevents provable continuation of unfrozen discovery, native recovery
+preserves history/findings, settles/fences that attempt and offers deliberate distinct new
+discovery. Lost admission responses recover a proved original request or remain unresolved with
+Operations inspection; they never guess a newer root/pin or automatically resubmit. Guaranteed
+seamless continuity across activation changes, every legacy duplicate and arbitrary crash/control
+combinations remains deferred. Frozen pins and completed/uncertain media effects are never repinned
+or automatically replayed. Actual schema-38→45 and old schema-45 migration/reopen evidence retains
+frozen/file-only/discovery history; unsupported unfinished work has the safe-stop/new-discovery path.
 
 ## Automation and unattended execution
 
@@ -937,26 +921,26 @@ Live Storage is authoritative before and after each command. FileIndex may be re
 stale display feedback, but it never admits the command; reconciliation failure is recorded and
 must never replay a completed or uncertain mutation.
 
-Rename and Delete are fenced by the provider's own verifiable entry identity (Local:
-`inode` + `ctime`; S3/R2: the object validator) together with the observed entry type, size and
-`mtime`. Evidence issuance, command admission, Delete confirmation and the executor's last safe
-boundary all re-read metadata only, so their cost never scales with file size and no entry content
-is read to authorize or verify these two mutations. A provider that publishes no verifiable entry
-identity (SMB, OpenList) fails closed with `files_direct_entry_identity_unavailable` before any Task
-or Storage mutation instead of falling back to size, `mtime`, a content prefix or a full read. The
-bounded allowlisted text Read/Write keeps its separate loaded-version digest fence, which is capped
-by the bounded text size limit.
+Rename and Delete use metadata-only server-observed evidence on both ResourceLibrary and
+MediaLibrary routes. Provider fingerprints are optional; an observed fingerprint remains binding
+and cannot disappear or change. Bounded text editing retains its separate loaded-version content
+digest, capped at 512 KiB. Cross-Storage Move retains explicit Copy→digest verification→Delete-source
+semantics; failed verification preserves the source. The current evidence and durable Delete
+boundary is described below.
 
 ## CURRENT — Slice 44 RO-1 metadata fences and durable Delete
 
-The current ordinary maintenance contract relaxes the older mandatory-provider-identity rule
-above. Rename and confirmed Delete bind the exact library kind/ID, Storage/root, relative path and
+Rename and confirmed Delete bind the exact library kind/ID, Storage/root, relative path and
 immutable configuration snapshot to server-observed type, size and modification time; the
 provider fingerprint is optional. When observed, a fingerprint remains binding and cannot vanish
 or change. Evidence and confirmation reads use metadata only and never read selected file bytes or
 run FULL Hash. This permits SMB/OpenList-like providers to support these operations while
 acknowledging indistinguishable replacement and external check-to-write windows as limits of the
 available provider observations.
+
+Both library pages preserve exact long names/whitespace in list/grid navigation, provide full-name
+hover/focus disclosure and bounded breadcrumb scrolling, and reflow controls below long paths
+without overlapping entries. Display truncation never rewrites path authority.
 
 Long and batch Delete persists the exact flattened confirmed scope, one TaskItem per entry and its
 effect certainty in the existing `files_transfers` claim/lease/mutation-fence table. The resident

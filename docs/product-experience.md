@@ -268,6 +268,17 @@ must become readable after the correction without a database edit, delete/recrea
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 
+### CURRENT — Classification destination compatibility
+
+New Classification rules select a MediaLibrary and one safe relative `path`. Destination preview
+and runtime compose `MediaLibrary.rootPath + path + Naming.directory + Naming.filename` without
+adding the library display name or ID. Legacy `library/path` rules retain their old composition
+and are visibly labelled. An explicit conversion selects the destination library, preserves the
+existing path and acknowledges the changed destination; it never silently prefixes an old label.
+Save publishes a checked successor; old snapshots, Previews, Tasks and scheduled grants retain
+their original semantics and authority. Invalid/stale conversion leaves prior Active in use and
+keeps input available for correction and a fresh preview.
+
 ### CURRENT — V2 organizing rules workspace (Slice 41)
 
 Slice 41 delivers this native Web journey over the existing managed configuration and policy
@@ -309,9 +320,10 @@ The supplied `策略绑定.png`, `识别类型.png`, `识别规则.png`, `元数
 `分类规则.png` images define business relationship, full-width inventory composition, create-drawer
 form style and visual language. Their sample IDs, names, counts, priorities, conditions, templates,
 targets and status values are illustrative only, and pixel-identical reproduction is not required.
-The default page state is the complete inventory; the reference editor panel is opened only through
-an explicit Add action, while existing Edit is a separate explicit full-page state. The production
-rule engine remains authoritative:
+The eight sections share a header whose search is scoped to the current family. The default page
+state is the complete inventory; explicit Add/copy opens a drawer, while existing Edit is a
+separate full-page state. Purpose-built forms retain a single checked Save and correctable failures.
+The production rule engine remains authoritative:
 priority/score/ambiguity/`stopOnMatch` are not replaced by visual list order; one enabled binding is
 allowed per RecognitionType; Classification selects a MediaLibrary plus safe relative path; Movie
 and TV naming retain their actual template families.
@@ -322,12 +334,12 @@ Preview never renames, Classification Preview never creates/moves and Organize a
 Preview never grants execution. RecognitionType identity remains independent: C stays C when it
 uses policies associated with A.
 
-### TARGET — Object-scoped Rules tests and separate complete-flow checks (Slice 44)
+### CURRENT — Object-scoped Rules tests and separate complete-flow checks
 
-This is the selected RO-4 journey in [SLICE.md](../SLICE.md), not a CURRENT delivery claim or a
-change to the accepted Slice 41 record. Local testing answers whether the object being edited
-behaves as intended; complete-flow analysis answers whether the configured graph can produce an
-organize plan. Save retains full successor validation, applicable checks and atomic activation.
+Local testing answers whether the object being edited behaves as intended; Overview's separate
+complete-flow analysis checks the exact current Active graph through shared production planning.
+Save retains full successor validation, applicable checks and atomic activation. Submitted local
+candidates remain non-Active, and accepted earlier delivery records retain their historical scope.
 
 - **Goal/entry:** test the current Add/copy/Edit candidate in its family-specific `测试与预览`
   section; deliberately open `完整流程检查` from Rules Overview for combined analysis.
@@ -390,7 +402,9 @@ organize-status feedback; FileIndex remains available only for bounded post-muta
 and separate indexed routes, never as physical listing or execution authority. Exact entry names,
 breadcrumb paths and the current directory path preserve Storage identity, including boundary
 whitespace, and the UI visibly disambiguates that whitespace. Viewing it does not recursively scan
-Storage or create work merely by viewing it.
+Storage or create work merely by viewing it. Both library pages preserve these names in list/grid, expose the full name on hover/focus and keep breadcrumbs
+within a scrollable bound. Long paths cause toolbar controls to reflow without overlapping content;
+display shortening never changes the selected path.
 
 ### Journey
 
@@ -441,6 +455,21 @@ Storage or create work merely by viewing it.
   require organize recognition, metadata, naming/classification, Preview or execution-token
   ceremony, but retain mandatory mutation invariants. Generic Storage reads remain confined and
   zero-mutation.
+
+### CURRENT — Shared ordinary maintenance on both library kinds
+
+ResourceLibrary Files and MediaLibrary Files share the ordinary maintenance behavior above with
+kind-specific authority; equal IDs never exchange evidence or scope. Rename/Delete require no
+Provider fingerprint to exist, but a fingerprint observed by the server remains binding. Exact
+kind/library/Storage/root/pin/path and type/size/modification evidence are rechecked without reading
+selected file bytes. Indistinguishable replacements and external check-to-write windows remain
+limits of provider observations. Text Edit uses its separate bounded loaded-content digest.
+
+Delete shows the bounded current scope/impact and asks once for permanent-effect intent. Long/batch
+work uses durable per-item Task results and cooperative controls. Unknown admission is read back
+through its retained request identity; known safe continuation preserves the reviewed scope, while
+uncertain effects require inspection and are never automatically replayed. Cross-Storage Move is
+explicit Copy→digest verification→Delete source, with partial states and recovery shown per item.
 
 ### Add ResourceLibrary from Files
 
@@ -556,13 +585,15 @@ RBAC, revalidation, bounded authority, limits, audit, conflict handling and no a
 uncertain effects remain mandatory. Older FileIndex-backed operation routes remain compatibility
 surfaces outside this Files-originated journey.
 
-### TARGET — Slice 44 bounded folder organization with safe discovery restart
+### CURRENT — Bounded folder organization with safe discovery restart
 
 The operator selects folders/files on ResourceLibrary Files or enters from Operations, deliberately
 starts bounded discovery, sees exact scope/pinned context, progress, exclusions, waiting and read
 errors, then reviews the frozen sources through existing exact Preview and separately confirms
-execution. MediaLibrary remains outside organizing-source scope; the first delivery retains the
-100-primary bound, main/attachment semantics and genuine configured stability.
+execution. MediaLibrary remains outside organizing-source scope. List/grid support the journey with
+at most 100 selected scopes and 100 primary sources; actual pinned filters, depth and elapsed stability
+apply. Matching enabled Trailers are attached to the retained main rather than frozen as separate
+primaries, including explicit files in mixed selections.
 
 Normal cooperative Pause/Continue and cancel remain available. If unfrozen discovery is interrupted
 and safe continuation cannot be proved, show the failed/stopped stage, retained findings and zero
@@ -577,11 +608,12 @@ every old duplicate/interrupted discovery and arbitrary control/crash combinatio
 deferred by the user-approved PARTIAL / RESCOPE in root `SLICE.md`. This reduces discovery recovery
 promises without claiming the old promises shipped or changing stable product recovery targets.
 
-Legal long names and ordinary configuration/read/paging/attachment/readiness defects still require
-correction. Read failures preserve unaffected findings and allow only an explicitly reviewed known
-subset; material bounds cannot expose an executable first-N prefix. Exact Preview permissions,
-source checks, independent outcomes and completed/uncertain-effect non-replay remain mandatory.
-This is TARGET behavior, not Slice acceptance or a CURRENT delivery update.
+Exact legal long names survive discovery and manual handoff. Read failures preserve unaffected
+findings and allow only an explicitly reviewed known subset; material bounds cannot expose an
+executable first-N prefix. Repeated/concurrent Freeze converges on one linked intent. Exact Preview
+permissions, source checks, independent outcomes and completed/uncertain-effect non-replay remain
+mandatory. Durable discovery status and controls are also available in the unified Operations
+inventory, with command-specific Worker readiness and a return to Files.
 
 ## Manual operations and file lifecycle
 
