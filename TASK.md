@@ -861,6 +861,14 @@ one-shot execution → linked Operations origin journey and the Unicode/concurre
 recovery cases), `test_v2_automation_run_once` (16), plus the combined automation and
 `test_migration_rehearsal`/`test_upgrade_preflight` runs — all OK.
 
+**Linked recovery proven in the browser.** Beyond the unit-level origin assertions, the
+browser journey now reads the real unified Operations projection through
+`/__harness__/operations-origin-state` after the one-shot execution and asserts that the
+executed run carries `originKind = definition-run-once` and the frozen
+`originDefinitionId`. That closes the "frozen manifest → exact manual Preview → one-shot
+execution → linked recovery" chain end to end through real SQLite/Worker code rather than
+a fixture assertion.
+
 **Visual inspection.** The narrow (375×720) and wide (1440×900) screenshots of the durable
 analysis page, the linked exact Preview and the execution outcome were opened and
 inspected, not merely asserted. That inspection found a real defect — the two return links

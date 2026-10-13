@@ -307,8 +307,22 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   expect(workerBody.status).toBe("completed");
   expect(workerBody.taskId).toBeTruthy();
 
-  // Operations reaches the same durable run with the definition origin, and
-  // the frozen manifest is still the immutable reviewed one.
+  // Operations reaches the *same* durable run, carrying the frozen definition
+  // origin — not a dummy Job and not a read-time guess from today's Active
+  // configuration.  This is the linked-recovery proof for the manual journey.
+  const origin = await page.request.get(
+    `/__harness__/operations-origin-state?taskId=${workerBody.taskId}`,
+  );
+  const originBody = (await origin.json()) as {
+    found?: boolean;
+    originKind?: string | null;
+    originDefinitionId?: string | null;
+  };
+  expect(originBody.found).toBe(true);
+  expect(originBody.originKind).toBe("definition-run-once");
+  expect(originBody.originDefinitionId).toBe(DEFINITION_ID);
+
+  // The frozen manifest is still the immutable reviewed one after execution.
   const afterExecution = await runOnceState(page, discoveryId);
   expect(afterExecution.frozen).toBe(true);
   expect(afterExecution.intentId).toBe(manifest.intentId);

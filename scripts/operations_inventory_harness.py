@@ -1018,6 +1018,34 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
+def operations_origin_state(state: AppState, *, task_id: str) -> dict[str, object]:
+    """Report the durable definition origin of one executed Operations run.
+
+    Reads the real unified Operations projection the operator's own list uses,
+    so the browser journey can prove that Automation history and Operations
+    reach the *same* durable run with the frozen definition origin, rather than
+    a dummy Job or a read-time guess from today's Active configuration.
+    """
+
+    if not task_id:
+        return {"found": False}
+    try:
+        overviews = state.repository.list_operations_runs(limit=50)
+    except Exception:
+        return {"found": False}
+    for overview in overviews:
+        if overview.task_id != task_id:
+            continue
+        return {
+            "found": True,
+            "taskId": overview.task_id,
+            "originKind": overview.origin_kind,
+            "originDefinitionId": overview.origin_definition_id,
+            "originDefinitionName": overview.origin_definition_name,
+        }
+    return {"found": False}
+
+
 class _PreMutationFailureExecutor:
     """A local test seam that records one known-zero-effect execution failure."""
 
@@ -2570,6 +2598,10 @@ def application(environ, start_response):
             document = stale_task_item_batch_selection(STATE)
         elif path == "/__harness__/task-item-recovery-batch-state" and method == "GET":
             document = task_item_recovery_batch_state(STATE)
+        elif path == "/__harness__/operations-origin-state" and method == "GET":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            task_id = (query.get("taskId") or [""])[0]
+            document = operations_origin_state(STATE, task_id=task_id)
         elif path == "/__harness__/manual-file-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             requested_file = (query.get("file") or ["Three.2003.mkv"])[0]
