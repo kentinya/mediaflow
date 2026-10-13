@@ -16,7 +16,7 @@ Contract Revision: 2026-10-13 — automatic organization only; Run once discover
 Working Branch: main
 Risk: High
 Final Test Level: T4
-Next Action: B REASSESSES UNSTARTED TASK 43.2 AFTER CONTRACT CHECKPOINT
+Next Action: DEVELOPER IMPLEMENTS ADJUSTED TASK 43.2 WHEN DIRECTED
 ```
 
 ## Authority and current state
@@ -442,9 +442,10 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task 43.1 is B PASS; the unstarted Task 43.2 is temporarily inactive pending B's
-reassessment of this checkpointed automatic-discovery Contract. Its prior plan is preserved at
-`16eaac00fd38fba6b0bac812dcbd734fe9cf882b:TASK.md`, with implementation NOT STARTED.
+Not submitted. Task 43.1 is B PASS; Task 43.2 is legally adjusted and PLANNED against the
+automatic-discovery Contract checkpoint `9d4eec52b5196cb323171454c48c055b41256ebc`, with
+implementation NOT STARTED. Its prior plan remains at
+`16eaac00fd38fba6b0bac812dcbd734fe9cf882b:TASK.md`.
 The earlier conversion/compatibility plan is superseded, not delivered.
 Automatic-organization-only behavior and other Required Outcomes remain unfinished.
 No Slice readiness or closure is claimed.
