@@ -30,17 +30,18 @@ RO-1, RO-3 or RO-7 complete.
 ## Why This Task Exists
 
 The original coherent unit is the native definition lifecycle across managed configuration,
-application, persistence, API and Web. Its latest Developer implementation checkpoint
-`b364a04d1c916ed327e3e8f470dc05e413ad80e6` remains unaccepted. A resumed Slice 43 and integrated
-accepted Slice 44 at `28eb41997e1bac1cffef13896bc769ba7ffcfd6d`; no corrected Developer candidate has
-been submitted since that recovery. Task identity, original Base and business scope are unchanged.
+application, persistence, API and Web. A resumed Slice 43 and integrated accepted Slice 44 at
+`28eb41997e1bac1cffef13896bc769ba7ffcfd6d`. Developer submitted the correction at
+`70ca531965044ef6414c8ac93cb4d5d204b61cbd`, with a report-only successor at
+`0c96acfa29baa8bfe1401ad12129a3e435a7658f`. Task identity, original Base and business scope are unchanged.
 
-The current blocker is retained-history resolution: after a definition is removed, recent-window
-searches eventually hide its durable occurrence, pin and publication evidence from required API/Web
-routes. B reproduced this on the integrated production assembly after 505 ordinary publications and
-runtime reopen. The existing exact revision/publication and sequenced ledger readers are sufficient
-for correction inside this same Task. Current schema45 and accepted Slice 44 behaviors are inherited
-baseline; no new recovery engine, A RESCOPE or next Task is needed for this defect.
+B independently confirms that the former retained-history window defect is corrected after 505
+ordinary publications and runtime/API reopen, including the real browser. The current P1 is in the
+same history-resolution journey: a structurally corrupt published revision is treated as absence,
+allowing an unpublished same-ID Draft to replace the removed definition's history or yielding false
+404s. The mandatory Docker release-security gate also remains failed under disk exhaustion. Continue
+the same Task correction loop. Current schema45 and accepted Slice 44 behaviors are inherited
+baseline; no new recovery engine, A RESCOPE or next Task is needed.
 
 Detailed planning, rejected implementation and review history remains reachable at
 `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`; the independent resumption assessment is retained at
@@ -201,6 +202,15 @@ semantics. The retained B reproducer asserts the existing 404 defect; use its sc
 then assert readable history rather than treating that reproducer's exit 0 as product acceptance.
 Use real API/SQLite/browser feedback for the affected surface, with temporary Local/fake services.
 
+Latest B correction coverage: without an occurrence pin, corrupt the removed definition's actual
+published SQLite revision while retaining its positive activation audit and a same-ID unpublished
+Draft. Malformed definition sections, contradiction between audit and revision, and invalid document
+digest must produce the actionable unavailable state, never Draft substitution, older-context
+substitution or false absence. Verify intact history, genuine absence and Draft-only recovery remain
+distinct; cover the affected V2 lifecycle/detail/occurrences and V1 detail/grant routes after reopen.
+This clarifies the already assigned corrupt-evidence coverage; Task ID/Base/Goal/Scope/acceptance and
+High/T4 remain unchanged. Resolve this P1 before complete corrected-candidate checkpoint gates.
+
 ### Final checkpoint gates
 
 These assigned focused/integration cases cover publication, compatibility, Active authority, RBAC,
@@ -331,44 +341,67 @@ High/T4 gates and obligations remain intact.
 - `mediaflow/application/automation_workspace_commands.py`
 - `tests/test_automation_definition_publication.py`
 - `tests/test_v2_automation_lifecycle.py`
-- `web/tests/e2e/automation.spec.ts`
+- `web/src/features/operations/AutomationLifecyclePage.test.tsx`
+- `web/tests/e2e/automation-lifecycle.python.spec.ts`
+- `scripts/operations_inventory_harness.py`
 
 ### Implemented
 
-Removed the arbitrary recent-revision and recent-audit windows from retained Automation history
-resolution. An occurrence now resolves its exact pinned published revision by identity, version and
-digest, verifies the historical definition fingerprint and never substitutes a different revision.
-Without an occurrence pin, the resolver walks the durable activation ledger newest-first with its
-monotonic sequence cursor until it proves the ledger ended. Invalid, contradictory, missing or
-incomplete evidence reports the existing actionable unavailable state; it cannot become a false
-absence or expose an unpublished Draft. Definition state and its projection are derived from the
-same evidence read. Added regressions beyond the old windows, including API/browser history after
-runtime reopen. The ordinary Create link is verified to open the native lifecycle journey while the
-legacy editor remains testable as an explicit deep link.
+Corrected the P1 B reproduced in the retained-history journey. Resolution now verifies each
+published revision's own integrity before trusting it: supported document schema, a document that
+still matches its persisted digest, and a definition section that is the array of bounded objects
+the managed contract requires. A structurally corrupt document or section, a digest mismatch, or an
+activation audit that positively names a definition its verified document no longer carries is
+unreadable, contradictory evidence. The read reports the existing actionable
+`historical_evidence_unavailable` state instead of substituting an unpublished same-ID Draft, older
+context or a false absence. The resolved revision and its definition now come from that same
+verified evidence read, so the lifecycle state can no longer fall through to `draft-only` after an
+unreadable published revision. Intact retained history, genuine absence and Draft-only recovery stay
+distinct.
+
+Added application regressions for a corrupt published section, a corrupt occurrence-pinned revision,
+a payload/digest mismatch, an invalid stored digest, audit-versus-document contradiction, and the
+intact/absent/Draft-only distinction. Added API regressions covering every affected V1/V2
+detail/grant/occurrences/lifecycle route, with and without a same-ID Draft, and across a runtime/API
+reopen. Added a Web component regression and a real-Python browser journey driven by two new isolated
+harness control routes that open a real unpublished successor Draft and corrupt every retained
+published revision for the definition.
 
 No schema, migration, Slice, Roadmap, Progress or architecture change was made.
 
 ### Tests and Results
 
-The corrected candidate's full regression passed: `.venv/bin/python -m unittest discover -s tests`
-ran 2,501 tests with 7 declared real-service/endurance skips; `npm --prefix web run test -- run`
-passed 1,138 tests across 76 files. Browser checks passed 246 default E2E tests, 10 real-Python
-Automation lifecycle tests, 21 real-Python Operations inventory tests and 1 Unicode-principal
-real-Python test.
+All final gates passed on implementation checkpoint `7b9bc83fd2f14271f594924895b976ca3a02af0e`:
 
-Ruff format/check, Python compileall and pip check, Web typecheck/lint/format/build, both example
-configuration validations, governance, `git diff --check`, and the expected no-FFmpeg dependency
-search all passed. The first default E2E run exposed a stale assertion expecting the old `/new`
-destination; that assertion now checks the lifecycle route and the full browser suite passes. Both
-the initial failure and corrected run are retained.
+- `.venv/bin/python -m unittest discover -s tests` — Ran 2,511, OK, 7 declared real-service/endurance
+  skips.
+- `npm --prefix web run test -- run` — 76 files, 1,139 tests passed.
+- Browser: 246 default E2E, 11 real-Python Automation lifecycle (including the new corrupt-evidence
+  journey), 21 real-Python Operations inventory and 1 Unicode-principal real-Python test passed.
+- **Docker release security smoke passed** — "Release-security smoke acceptance passed." The former
+  disk-exhaustion blocker no longer reproduces; `/dev/sda1` reported ~56 GB available and the
+  isolated four-service stack reached healthy. It now runs with a workspace-local `TMPDIR` because
+  the Docker daemon cannot see this host's service-private `/tmp` (recorded in `environment.log`).
+- Ruff format/check, compileall, pip check, both example configuration validations, governance,
+  `git diff --check`, the expected no-FFmpeg search, and Web typecheck/lint/format:check/build all
+  passed.
 
-The committed-candidate Docker release security smoke built and inspected the image and Compose
-topology, then **failed** while waiting for the isolated four-service stack to become healthy. The
-scheduler reported `sqlite3.OperationalError: database or disk is full`; `/` had 0 bytes available
-and was 100% full. Docker reported 50.85 GB of build cache, 9.098 GB reclaimable. The isolated test
-stack was cleaned automatically; shared Docker cache was left intact. This gate is recorded as FAIL,
-not PASS or SKIP. Full commands, counts, skips, artifact hashes and raw logs are in
-`.git/validation-evidence/70ca531965044ef6414c8ac93cb4d5d204b61cbd/task43.1-fix-20261012/INDEX.md`.
+B's own reproducer was re-run against this candidate: every affected route now answers 503
+`configuration_unavailable` / `reason=historical_evidence_unavailable` with no Draft substitution and
+no false 404. The script's final assertion encodes the old defect and therefore exits 1 as expected.
+
+The new regressions were also run against the predecessor product source in a detached worktree to
+prove they detect the defect rather than merely pass: `tests.test_v2_automation_lifecycle` failed with
+21 failures (200 + `draft-only` on V2, 404 on V1) and
+`tests.test_automation_definition_publication` failed with 10 failures
+(`RuntimeSnapshotUnavailable` not raised). Both pass on this candidate.
+
+A first final-gate attempt ran all heavy suites concurrently and produced environment-only failures
+(a Docker bind path, a shared Playwright artifact directory and Vitest 5000 ms timeouts in unrelated
+files). Causes, superseded results and isolated re-verification are retained in
+`contended-first-attempt.log`; the passing logs are the gate evidence. Coverage was not reduced.
+Full commands, counts, skips, hashes and raw logs are in
+`.git/validation-evidence/7b9bc83fd2f14271f594924895b976ca3a02af0e/task43.1-fix2-20261013/INDEX.md`.
 
 ### Decisions
 
@@ -377,21 +410,22 @@ candidate makes no schema change and preserves published-history versus Draft-on
 
 ### Remaining In-Slice Work
 
-B must review the corrected candidate and its Docker gate limitation. After any Task PASS, B
-reevaluates all Slice Required Outcomes. Run once, consolidated inventory/metrics/history and
-runtime settings adoption remain outside this Task.
+B must review the corrected candidate. After any Task PASS, B reevaluates all Slice Required
+Outcomes. Run once, consolidated inventory/metrics/history and runtime settings adoption remain
+outside this Task.
 
 ### Risks / Deviations
 
-The Docker release security smoke remains an environment failure caused by a full root filesystem.
-The exact source candidate, image identity, available-space observation and test logs are retained in
-the local evidence index. The four pre-existing untracked PNGs have unchanged hashes and remain
+The Docker gate now passes; its earlier failure is superseded and retained only as history. Two
+environment constraints affect how the gates must be invoked and are recorded rather than hidden: the
+Docker daemon sees only workspace-local bind paths, and Playwright suites must not share
+`web/test-results` concurrently. The four pre-existing untracked PNGs have unchanged hashes and remain
 unstaged. `config/alist.json` remains ignored, absent, unstaged and uncommitted.
 
 ### Checkpoint
 
 ```text
-Implementation checkpoint SHA: 70ca531965044ef6414c8ac93cb4d5d204b61cbd
+Implementation checkpoint SHA: 7b9bc83fd2f14271f594924895b976ca3a02af0e
 Corrected candidate: SUBMITTED
 Developer handoff: READY FOR B REVIEW
 Developer does not claim Task PASS or Slice completion.
@@ -400,29 +434,74 @@ Developer does not claim Task PASS or Slice completion.
 ## B Review Result
 
 ```text
-Reviewed: 28eb41997e1bac1cffef13896bc769ba7ffcfd6d
+Reviewed implementation: 70ca531965044ef6414c8ac93cb4d5d204b61cbd
+Reviewed report-only successor: 0c96acfa29baa8bfe1401ad12129a3e435a7658f
+Task range: 79544d9aba697036405b06054c0c56a740281bab..70ca531965044ef6414c8ac93cb4d5d204b61cbd
+Current correction: 70ca531^..70ca531; accepted Slice 44 integration is inherited baseline
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-**P1 — Removed-definition history becomes unreachable after ordinary subsequent publications
-(AC-T5/T6; RO-2).** B independently used the real supported Python API/SQLite/Local/Scheduler harness
-and matching built Web: removal initially leaves V2 detail/occurrences and V1 detail/grant routes
-readable (200); 505 ordinary authenticated focused publications of another definition all succeed
-(200), then those historical routes return 404. Runtime/API/SQLite reopen retains the 404, and the
-browser shows `Record not found`. Read-only SQLite proves the occurrence, exact superseded pinned
-revision/digest, original historical name and activation publication audit are still present.
-The existing resolver incorrectly treats absence from 200 recent revisions, 500 activation audits or
-200 ever-published audits as absence from durable history.
+**P1 — Corrupt published history becomes false absence or an unpublished Draft (AC-T5/T6/T7;
+RO-2/RO-7).** In `automation_workspace_commands.py`, `_definition_item` returns `None` for a malformed
+definition section. The no-occurrence activation-ledger branch then skips that revision even when its
+activation audit positively names the definition; exhaustion returns available-but-absent. It also
+does not verify the historical document against its persisted digest. `_stored_definition_state` and
+the V2 API resolution can consequently release the open Draft instead of reporting unavailable
+published evidence.
 
-Use the existing exact durable revision and publication proof, or complete targeted/cursor reads when
-no pin exists. Preserve published-versus-Draft distinction and actionable unavailable/incomplete
-states; never substitute current or unrelated identity. Do not enlarge windows or add a recovery
-engine. Verify the corrected native journey beyond both former windows and across reopen, preserve
-all authority/safety/accepted-baseline behavior and meet complete assigned T4 before PASS.
+B independently reproduced with real managed publication, temporary SQLite/Local and `MediaFlowApi`:
+create `nightly`, retain a same-ID open Draft named `NEVER PUBLISHED B draft`, remove the definition,
+then corrupt only the superseded published revision's `automationTaskDefinitions` section. Keep
+the original activation audit, revision ID and stored digest intact. Before corruption, V2 detail
+returns the published historical name. After corruption, V2 detail and lifecycle edit return 200
+with the unpublished Draft name and `draft-only`; V1 detail and grant return 404. This is an
+unavailable/contradictory evidence state, not proof of non-publication. No production media or
+configuration was used or changed.
 
-Latest B reassessment checkpoint: `39a6a40e4a66de508a331c2d83d17d65578c08cc` (documentation only).
-Same Task continuation is valid; no new integration blocker was identified in that assessment.
-The reproducer's exit 0 means **P1 REPRODUCED**, not product PASS. No new corrected Developer checkpoint,
-Task PASS, next Task or Slice completion is claimed; Developer continues the same Task when directed.
+Correction must distinguish unreadable/corrupt evidence from proven absence, validate the relevant
+historical document/pin integrity and reject audit/revision contradictions. Preserve genuine
+Draft-only recovery and window-free intact-history reads. Use existing readers and error semantics;
+do not add another history/recovery engine or broaden this Task. Cover the affected API/Web failure
+and recovery paths, including no occurrence, same-ID Draft and reopen.
+
+**Required validation remains incomplete (AC-T8).** Developer's candidate Docker release-security
+smoke exited 1 at four-service health startup. Its original gate log records the health timeout;
+Developer's retained report attributes it to Scheduler SQLite `database or disk is full`, but a
+separate original container log for that error was not retained in the inspected evidence directory.
+B independently observes root filesystem 100% used with 0 available to non-root processes.
+This is a verification blocker, not evidence of a new product defect. The assigned gate remains
+required on the corrected candidate in an adequate isolated environment. Shared Docker caches and
+unrelated files were preserved; B did not repeat the expensive smoke under the same disk constraint.
+
+Subsequent user-authorized Docker cleanup on 2026-10-13 removed unused build cache and images;
+root available space is now 57GB. All existing containers/data volumes were retained, and the four
+existing MediaFlow services subsequently report healthy. The original failed smoke remains recorded;
+the corrected candidate still needs its assigned gate, rebuilding any pruned release image.
+
+**Verified progress and evidence.** B matched 582 tracked code/test/harness/package inputs to the
+implementation checkpoint and verified that its report successor changes only TASK.md. The current
+correction touches exactly the four Developer-reported files, with no schema change. Developer's
+original logs record Python 2,501 / 7 skips, Web 1,138, default browser 246, native Automation 10,
+Operations 21 and Unicode-principal 1; these are reported gate results, not a complete acceptance
+claim while the required smoke fails and the reproduced P1 remains.
+
+B's fresh supported HTTP/SQLite/Local/Scheduler/browser run makes 505 ordinary focused publications:
+all four retained-history routes remain 200 before/after runtime/API reopen. Browser traces and the
+inspected restart screenshot show readable occurrences with the original pinned revision and linked
+Job. The former window blocker is resolved. Three independent focused tests also pass (36.078s):
+520-publication history without an occurrence, published-versus-Draft distinction, and unreadable
+ledger yielding 503. The corruption reproducer exits 0 by asserting **P1 REPRODUCED**, not product PASS.
+Candidate evidence is retained locally at
+`.git/validation-evidence/70ca531965044ef6414c8ac93cb4d5d204b61cbd/b-review43.1-20261012/INDEX.md`.
+Temporary fixtures use `/dev/shm` to avoid root-disk exhaustion; production configuration is untouched.
+Governance/whitespace and four original PNG hashes are checked; all PNGs remain untracked/unstaged,
+and `config/alist.json` remains ignored, absent and untracked.
+
+Same Task continuation remains valid with unchanged ID/Base/Goal/Scope/AC and High/T4. Resolve this
+P1, then meet the complete corrected-candidate checkpoint plan, including the failed Docker gate,
+before resubmission. B rejects early under the workflow's proven-P1 rule; no additional full-suite,
+native lifecycle, packaging or Slice-final run was made in this review. No Task PASS, replacement
+Task, Closure Packet or Slice readiness is claimed. RO-2 remains incomplete; inventory/metrics,
+Run once, consolidated records and actual resident-settings adoption also remain in-Slice work.
