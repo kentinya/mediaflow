@@ -4,11 +4,14 @@ This Task follows [the development workflow](docs/development-workflow.md) and t
 [`SLICE.md`](SLICE.md). Read [B's experience](docs/agent-experience/task-planner-reviewer.md) for
 planning/review and [Developer's experience](docs/agent-experience/developer-implementation-role.md)
 for implementation. A retains the Slice boundary and final-review authority.
+Before starting or resuming corrections, follow the workflow's
+[Developer experience check](docs/development-workflow.md#developer--implementation-role), then record
+actual application in the next Completion Report's `Decisions` without rewriting the prior report.
 
 ```text
 Task ID: 43.2
 Parent Slice: 43
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
 Difficulty: High
 Test Level: T4
@@ -654,8 +657,299 @@ Gates: full Python 2559 OK (skipped=7); ruff/format/compileall/pip-check/CLI cle
 ## B Review Result
 
 ```text
-Reviewed: none
-Decision: PENDING
+Reviewed Range: 9d4eec52b5196cb323171454c48c055b41256ebc..f03149cc33d89fa82c55751ea3518bc121d5adee
+Implementation checkpoint: f03149cc33d89fa82c55751ea3518bc121d5adee
+Report-only successor: 000415a564dfec7cdd9442ff213ed002f6d3ca14
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: DEVELOPER CORRECTS THE SAME TASK 43.2
+Difficulty / Test Level: High / T4 (unchanged)
+Evidence: .git/validation-evidence/f03149cc33d89fa82c55751ea3518bc121d5adee/b-review43.2-20261013/INDEX.md
+```
+
+### Independent review — 2026-10-13
+
+B reviewed the submitted implementation and report against committed `HEAD:SLICE.md` after
+governance PASS. The implementation commit's parent is `aa2335e`; earlier changes from the Task
+Base include authorized A Contract and B planning documents, not Developer scope expansion.
+`f03149c..000415a` changes only `TASK.md`, so the review checkout has the submitted executable
+content. The stale PLANNED header and earlier NOT STARTED planning assessment are superseded by
+this review; the Developer report above remains the original submitted claim, not B acceptance.
+Task ID, Base, Goal, Scope, acceptance and Required Tests remain unchanged.
+
+The automatic-discovery foundation, historical-mode decoding and additive origin persistence are
+useful implementation, but the required operator journey and admission boundaries are incomplete.
+The following are Task blockers, all within the existing Contract:
+
+| ID / Severity | Actual finding and acceptance affected | Required correction in this Task |
+|---|---|---|
+| B43.2-1 / P1 | `AutomationRunOnceService.finalize` creates a **manual** Preview. `AutomationRunOncePage.tsx` navigates that ID to the **definition/unattended** Preview route, whose API reads a different repository. Real Python/browser create -> Run once -> Worker discovery -> Freeze reaches `Record not found`; both Preview and items GETs return 404. The same Preview is readable through the manual-organize API. The assigned browser spec asserts the URL and frozen database record but never verifies rendered Preview or executes it. AC-T1/T6, RO-4 and Slice AC-6/7/8 fail. | Complete the native frozen-manifest -> actual exact manual Preview -> separate one-shot confirmation -> resident execution -> linked Operations/result/recovery journey. Keep scheduled grant/revoke separate. Assert rendered evidence, actual execution, unchanged schedule/grant and one mixed-item recovery in the real browser path. Show frozen status only after the durable freeze; the current ready banner says `来源清单已冻结` while `frozen=false` and `intentId=null`. |
+| B43.2-2 / P1 | `automation_task_definition_preview.py:create` is unchanged except historical-mode fixtures: it discovers, calls the Provider/pipeline and persists only after all analysis completes. A controlled blocked analysis shows `createReturned=false` and **zero durable Preview rows** while work is running. Run-once finalize also calls `ManualOrganizePreviewService.create` inline in the HTTP request. Durable discovery/stability controls do not make metadata/planning analysis durable or cancellable. AC-T3 and RO-3 fail. | Admit expensive definition Preview and manual exact analysis promptly to existing durable Worker machinery, expose progress and safe controls during analysis, and retain exact pins/evidence. Prove admission before the slow external call completes, readback/reopen and cooperative cancellation without media mutation; completed persisted results alone are insufficient. |
+| B43.2-3 / P1 | Definition-bound Run once reuses generic Files discovery's read-failure subset semantics. `_assert_complete`, `_actions` and generic finalize allow `partial_success/read_failure` when there is no budget refusal. A real Local walk with one unreadable subtree retains one source, advertises Finalize and successfully freezes an intent/Preview. Task scope explicitly says incomplete enumeration/**read failures** cannot finalize an executable manifest. AC-T2, RO-4 and Slice AC-6 fail. | Refuse incomplete definition-derived manifests at the shared authority boundary, including direct generic-discovery finalize of a definition-origin record; preserve findings and offer scope correction/publication/fresh discovery. Preserve the accepted standalone Files explicitly reviewed subset behavior. Test both entry surfaces, restart and mixed failures so no incomplete Automation prefix acquires an intent. |
+| B43.2-4 / P1 | `admit_definition_run_once` rejects `itemLimit > 100` before reading Storage, and `definition_run_once_available` repeats that restriction. With ceiling **250 and only one eligible file**, API returns 409 `discovery_overflow` with zero Storage reads. The Contract requires applying `min(ceiling,100)` to the **actual manifest**, not rejecting a legal definition ceiling. New tests currently enforce the incorrect refusal. AC-T2, RO-4 and Slice AC-6 fail. | Admit bounded discovery with effective limit 100 for ceilings above 100; permit complete manifests at/below the bound, including empty scope. Refuse only actual overflow or inability to prove completeness. Correct the tests for ceilings below/equal/above 100 and actual counts below/equal/above the effective bound without relaxing first-N refusal. |
+| B43.2-5 / P1 | Run-once POST accepts only an optional request ID, and the lifecycle action creates a fresh ID on every click with no retained/reconciled unknown intent. There is no observed-definition/configuration fence. Independent API/SQLite reproduction observes Scope A, publishes Scope B, then receives **202 admitting Scope B** from the same stale action; supplying expected revision/digest is rejected with 400. Request-ID lookup cannot compensate for an unsent original binding. AC-T2/T4 and RO-4 fail. | Bind new admission to the observed exact published definition/configuration, reject changed/stale bindings, and retain the original principal-scoped request context through response loss/reload before any deliberate repeat. Read back the proved original request without guessing from a latest/list window; unchanged concurrent requests converge and changed bindings with the same ID refuse. Cover before/after publication, completed/cancelled prior discovery and Unicode reconnect isolation through API and native Web. |
+| B43.2-6 / P1 | Create/edit/copy still render a `Run mode` `<select>` in `AutomationLifecyclePage.tsx`; the real create journey has one selector with one option, and the new browser test requires that selector. Compatibility New/Edit forms also retain selects. The Contract and V2-AUTO-002/009 expressly require **no mode selector**. AC-T9 and revised RO-2 fail. | Render fixed automatic-organization intent in all affected create/edit/copy surfaces, with bounded unsupported-history/correction guidance. Historical decoding remains read-only; remove mode-selection assertions and prove selector/conversion absence without deleting history or standalone Scan/Preview capabilities. |
+| B43.2-7 / P1 validation blocker | AC-T8 is not established. The evidence index calls `wheel-manifest.txt` PASS/no stray artifacts, but its original log ends with **`AssertionError: wheels differ`** and lists unexpected packaged files; no corrected manifest result is indexed. The submitted upgrade smoke proves **schema38 -> 46**, and the wheel smoke **46 -> 46**; neither supplies the assigned genuine **Slice Base schema44 -> candidate** and **Task Base schema45 -> candidate** seeded upgrade/reopen rehearsals. The index identifies only a working tree over Base, without an exact tested-content mapping/runtime/dependency/build identity. | Correct the report/index truthfully, retain first failures, and provide the complete corrected executable candidate's assigned T4 gates and verifiable source/artifact identity. Rehearse actual immutable Base sources with preserved rows/pins/grants/audits/due state and unsupported old work. Supply a clean matching wheel manifest and smoke result; isolate build inputs while preserving unrelated workspace files. The existing 38-profile smoke and unit schema-marker coverage remain useful but cannot replace these rehearsals. |
+
+### Verification actually performed and limits
+
+- Governance PASS before review; repository/index writable, branch `main`, checkout
+  `000415a564dfec7cdd9442ff213ed002f6d3ca14`. Pre-existing tracked worktree was clean; four untracked
+  user PNGs remain unchanged/unstaged. Both Automation reference checksums match the Contract;
+  `config/alist.json` remains ignored and untracked.
+- Independent `.venv/bin/python -m unittest tests.test_automation_run_once
+  tests.test_v2_automation_run_once tests.test_automation_task_definition_preview`: **61 tests,
+  OK**, 8.458s. These passes do not cover or disprove the reproduced blockers.
+- Independent `probe.py`: reproduced actual one-file/250 ceiling refusal, incomplete read-failure
+  freeze, manual-vs-definition Preview 404/200, and no durable definition Preview during blocked
+  analysis. `admission-probe.py`: reproduced A -> B silent repinning and refusal of an expected pin.
+  All external media/provider ports use temporary Local/synthetic fixtures; no production data.
+- Independent `npm --prefix web run build`: exit 0. Chromium over the real Python/SQLite/Local/
+  synthetic-provider harness reproduced disabled create -> Run once without file picking -> Worker
+  discovery -> freeze -> **404**. Inspected actual 1440px and 390px screenshots and retained trace.
+  The unfrozen ready banner and retained one-option mode selector were also observed.
+- Inspected Developer raw full-Python log (2559 tests, skipped=7), automation browser log
+  (14 passed), wheel manifest/smoke and upgrade logs. The browser assertions stop before the broken
+  Preview content/execution; the manifest contradicts its PASS claim. No broad gate is accepted
+  merely from the completion narrative or test count.
+- Early P1 rejection follows workflow §6: B did **not** rerun full Python/Web, the complete browser/
+  process matrix, wheel/Docker or upgrade rehearsals, and did not complete the remaining independent
+  scheduled/mixed-item/Unicode/cancellation journeys. The corrected candidate still owes the complete
+  unchanged T4 plan and independent critical verification before PASS. Local evidence is retained
+  through A review and is not claimed remotely reachable. Reviewer probe setup mistakes and their
+  original logs/traces are disclosed in the evidence index.
+
+### Slice reassessment and handoff
+
+**All Required Outcomes / Required Surfaces satisfied: NO.** RO-2 fixed-mode surface, RO-3 durable
+analysis and RO-4 exact manual journey remain blocked as above; the Task-owned RO-5/RO-7 links and
+failure/recovery must be verified through successful actual execution after correction. Task 43.1's
+accepted publication/history foundation remains intact; Task 43.2 has no B PASS. RO-1 inventory/
+statistics, cross-definition RO-5 history and RO-6 consumer settings remain the already identified
+later work, with corresponding Web/API/resident surfaces incomplete.
+
+Continue **the same Task 43.2**, starting with failing cases and affected regressions, then complete
+its final T4 candidate gates. No next Task or Closure Packet is authorized by this review. The
+Contract is sufficient for these corrections; no A rescope or requirement change is requested.
+B leaves `SLICE.md`, Roadmap, Progress, stable requirements and role experience documents unchanged;
+A retains final Base..Head review and Slice closure authority.
+
+## Developer Fix-Round Completion Report — 2026-10-14
+
+### Scope of this round
+
+This round corrects the seven blockers B recorded against the previous checkpoint
+(`B43.2-1` … `B43.2-7`) inside the unchanged Task 43.2 Contract. No Slice boundary,
+Roadmap entry, stable requirement, role-experience document or prior report section
+was rewritten; the sections above are preserved verbatim.
+
+### Changed Files
+
+Implementation checkpoint `996256d319efc0f946f4bb10c57570a15c1bf12f`, report/visual
+successor `9d67f4d0a04ed85b2cdfbdd2825595483773df27` (submitted candidate), both direct
+descendants of Task Base `9d4eec52b5196cb323171454c48c055b41256ebc`.
+
+**Added**
+
+- `mediaflow/domain/preview_analysis.py` — `PreviewAnalysis`, kind/status/progress,
+  bounded errors (`PreviewAnalysisError/Conflict/Unavailable/OwnershipLost`).
+- `mediaflow/application/preview_analysis.py` — `PreviewAnalysisService`
+  (`admit_definition`, `admit_manual`, `get`, `list`, `request_pause/cancel`, `resume`,
+  `claim_and_run`, `run_claimed`) and `PreviewAnalysisWorker`.
+- `tests/test_preview_analysis.py`; `scripts/schema_upgrade_rehearsal.py`;
+  `scripts/wheel_manifest_check.py`.
+- Web: `entities/operations/preview-analysis.ts` (+ test),
+  `features/operations/preview-analysis-query.ts`, `features/operations/PreviewAnalysisPage.tsx`
+  (+ test).
+
+**Changed (backend)**
+
+- `mediaflow/domain/media_discovery.py` — `INCOMPLETE_MANIFEST_REASONS` and
+  `discovery_manifest_incomplete()` (superset of the refusal predicate, including
+  `READ_FAILURE`/`CANCELLED`).
+- `mediaflow/application/media_discovery.py` — removed the up-front `discovery_overflow`
+  refusal for ceilings above the bound (the effective bound is `min(ceiling, 100)` applied
+  to the *actual* manifest); added the strict `discovery_incomplete_manifest` refusal at
+  `finalize` for definition-bound runs; added the admission fences
+  (`expected_definition_fingerprint`, `expected_revision_*`) and
+  `_assert_reconciliation_binding`, which refuses reusing a request identity with a
+  *different* binding; added `find_by_request_id`.
+- `mediaflow/application/automation_run_once.py` — `_assert_complete` uses
+  `discovery_manifest_incomplete` (code `discovery_overflow` when budget-limited, else
+  `discovery_incomplete_manifest`); new `"frozen"` phase exposed on the document;
+  `admit` accepts the fence; `bind_analysis_service`; `finalize` returns
+  `(frozen, preview, analysis)` and defers to `admit_manual` when the analysis service is
+  bound.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `SCHEMA_VERSION` **46 → 47**, additive
+  `preview_analyses` table + indexes and its repository methods.
+- `mediaflow/application/automation.py`, `mediaflow/final_cli.py`,
+  `mediaflow/interfaces/service_api.py`, `automation_task_definition_preview.py`,
+  `manual_organize_preview.py`, `automation_workspace_commands.py` — Worker composition,
+  admission pins, the durable-analysis routes and the run-once reconciliation read.
+- `scripts/operations_inventory_harness.py` — preview-analysis worker/state routes and a
+  source-media restore control.
+- `scripts/docker_upgrade_recovery_smoke_test.py` — `--base-sha`/`--base-schema`, and the
+  candidate's expected schema read from its own `SCHEMA_VERSION`.
+- Schema-marker tests updated 46 → 47; `tests/test_automation_run_once.py`,
+  `tests/test_v2_automation_run_once.py` extended.
+
+**Changed (web)** — durable-analysis entity/query/page and route, both Preview triggers
+rewired to durable admission, `frozen` phase, mode-selector removal, run-once fence +
+principal-scoped retained intent with explicit reconciliation, and the e2e specs/fake
+server for the new flow.
+
+### Implemented — blocker by blocker
+
+- **B43.2-1 / -2 (durable exact analysis, prompt admission, safe cancellation).** The
+  expensive exact analysis is now a first-class durable object. `finalize` admits it and
+  returns its identity immediately; the resident `PreviewAnalysisWorker` runs the
+  *existing* exact-Preview service and links the resulting zero-mutation Preview. Progress
+  is bounded and durable across restart, and pause/resume/cancel are cooperative, version-
+  fenced and never mutate Storage.
+- **B43.2-3 (manifest completeness).** A ceiling above the bound is no longer refused
+  before the walk: the effective bound is `min(ceiling, 100)` applied to the actual
+  manifest, so a small scope with a large ceiling is legal. Freezing a *definition-bound*
+  manifest still requires a proved-complete walk; an incomplete walk (budget reached,
+  read failure or cancellation) refuses with `discovery_overflow` or
+  `discovery_incomplete_manifest` and offers narrowing, never a first-N freeze.
+- **B43.2-4 / -5 (admission binding and request recovery).** Admission is fenced by the
+  observed published definition fingerprint and the observed Active revision
+  id/version/digest; a changed or stale binding is refused instead of silently re-pinned.
+  Reusing an admission request identity with a *different* binding now refuses
+  (`definition_stale` / `configuration_stale` / `admission_request_conflict`) rather than
+  returning the original admission as if it matched the new request — the specific gap
+  the previous round left open. Unchanged concurrent duplicates still converge on one
+  durable run. The Web retains the principal-scoped unknown Run-once intent across reload
+  and reconciles it by its own request id before offering a resubmission.
+- **B43.2-6 (mode removal / web).** The mode selector is gone from create/edit/copy;
+  recorded removed modes render as unsupported history with an explicit correction
+  confirmation. Both Preview triggers now admit durable analysis, and the analysis page
+  links the exact Preview through the router so the `/ui-v2` basepath is preserved.
+- **B43.2-7 (T4 evidence).** Genuine immutable-Base rehearsals and a clean manifest are
+  supplied — see below.
+
+### Tests and Results
+
+Candidate `9d67f4d0a04ed85b2cdfbdd2825595483773df27`. Evidence index:
+`.git/validation-evidence/task43.2-fix-20261013/EVIDENCE-INDEX.md`, with every raw log
+beside it.
+
+| Gate | Result |
+|---|---|
+| **Full Python (T4)** | **PASS — 2578 tests, OK (skipped=7), 672s** |
+| Web unit | PASS — 79 files / 1164 tests |
+| Web typecheck / lint / format / build | PASS |
+| Node e2e | PASS — 246 passed |
+| **Assigned automation browser** | **PASS — 14 passed** |
+| Inventory browser | PASS — 21 passed |
+| Unicode-principal browser | PASS — 1 passed |
+| Wheel manifest (plain and isolated build inputs) | PASS — `"ok": true`, 0 stray entries |
+| Wheel smoke | PASS — schema 47, migration NO |
+| **Schema rehearsal — Slice Base 44 → 47** | **PASS — 87 assertions, 0 failed, 0 skipped** |
+| **Schema rehearsal — Task Base 45 → 47** | **PASS — 100 assertions, 0 failed, 0 skipped** |
+| **Docker upgrade/recovery — Slice Base 44 → 47** | **PASS** |
+| **Docker upgrade/recovery — Task Base 45 → 47** | **PASS** |
+| Docker release security | PASS |
+| Ruff lint / format / compileall / pip-check / CLI validate ×2 | PASS |
+| Governance / `git diff --check` | PASS |
+| Reference image checksums | PASS — both match `SLICE.md` exactly |
+| No FFmpeg/FFprobe | PASS — exit 1, no matches |
+
+**Development-phase focused runs** (before the frozen candidate): `test_preview_analysis`
+(6), `test_automation_run_once` (39, including the new full freeze → exact Preview →
+one-shot execution → linked Operations origin journey and the Unicode/concurrency
+recovery cases), `test_v2_automation_run_once` (16), plus the combined automation and
+`test_migration_rehearsal`/`test_upgrade_preflight` runs — all OK.
+
+**Visual inspection.** The narrow (375×720) and wide (1440×900) screenshots of the durable
+analysis page, the linked exact Preview and the execution outcome were opened and
+inspected, not merely asserted. That inspection found a real defect — the two return links
+rendered as one run-together string — which was fixed by applying the existing
+`mf-actions` action-row class in `9d67f4d` and re-captured.
+
+### Decisions
+
+* **Reused the existing exact-Preview service rather than writing a second analyser.** The
+  new subsystem is only durable admission, lease/claim, bounded progress and safe control;
+  the analysis itself, its zero-mutation guarantee and its Preview identity are the
+  already-accepted ones. This keeps one analysis implementation and one Preview surface.
+* **Made the analysis deferred rather than inline by default.** A long walk must not hold
+  an HTTP request; `finalize` therefore returns a durable identity and the resident Worker
+  does the work. The inline path is preserved and still exercised when no analysis service
+  is bound (`test_finalize_runs_inline_when_no_analysis_service_is_bound`).
+* **Chose a strict, explicit refusal over a silent re-pin.** A changed definition/Active
+  and a reused request identity with a different binding are both proved and refused with a
+  named code and a next action, because silently returning the original admission would
+  misreport what the caller actually asked for.
+* **Applied the effective bound to the real manifest instead of refusing up front.** This
+  is what the Contract's "fewer-than/exactly/over min(ceiling, 100)" coverage requires; the
+  safety property (never freeze an unproved or truncated manifest) is preserved by the
+  completeness check at freeze time.
+* **Isolated the wheel build inputs instead of touching the user's `build/` tree.** The
+  stale gitignored staging directory is a pre-existing repository defect; staging from
+  `git ls-files` proves the packaged set without moving, modifying or deleting any
+  workspace file, which is exactly the reviewer's "isolate build inputs while preserving
+  unrelated workspace files".
+* **Read the candidate's schema from its own constant** in the Docker smoke rather than a
+  literal, so the next additive bump cannot silently invalidate the gate.
+* **Developer experience check applied.** Before coding, the affected surfaces were
+  re-derived from `docs/development-workflow.md` §6 and the Developer role experience: the
+  failing/affected cases were run first, the schema-version markers and the
+  `ProcessingWorkerService.runtime_schema_version` app-layer default were updated together
+  with `SCHEMA_VERSION` so the Worker can never disagree with the store, and every claim in
+  this report is tied to a raw log or an inspected artifact.
+
+### Remaining In-Slice Work
+
+None for this Task. RO-4, the revised RO-2 fixed-mode portion, the durable-analysis
+journey of RO-3, and the definition-local manual-origin/outcome/recovery portions of
+RO-5/RO-7 are delivered. B decides whether the Slice's Required Outcomes are now
+satisfied and whether any further Task is warranted.
+
+### Risks / Deviations
+
+* **Pre-existing, load-sensitive failure handed to B (not self-waived).**
+  `tests.test_v2_rules_workspace_commands.RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+  intermittently fails with `['rules_destination_check_failed']` under heavy CPU
+  contention. The test file and the entire failing code path are **byte-identical at the
+  Task Base** (`git diff --quiet 9d4eec5 HEAD -- <files>` is clean), the race reproduces at
+  the Task Base in an isolated worktree (3/25 under load vs 1/25 on the candidate under
+  load), and it passes 40/40 unloaded. Full details and commands:
+  `.git/validation-evidence/task43.2-fix-20261013/preexisting-flake-rules-race.md`. Fixing
+  it would mean widening another subsystem's allowed retry-safe error set, which is outside
+  this Task's boundary.
+* **Retained first failures.** The previous round's original failing logs remain in
+  `.git/validation-evidence/task43.2-dev/`; this round's first full-suite run (which
+  surfaced the pre-existing flake) is preserved as `dev-full-python.log` beside the final
+  green `dev-full-python-final.log`. The first Node e2e run of this round failed 2 tests
+  because a concurrent `npm run build` replaced hashed assets mid-run, and a later run
+  failed 8 because two Playwright invocations shared one `test-results` directory; both
+  were local command-overlap artifacts and the clean single-invocation run is the indexed
+  evidence.
+* **Local-only artifacts.** Docker smokes ran on this host with a workspace-local
+  `TMPDIR=/root/mediaflow/.dsh-docker-tmp`; they require a reachable Docker daemon. All
+  evidence is local and is not claimed remotely reachable.
+* No unresolved product defect is known in the delivered scope.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA (tested candidate): 9d67f4d0a04ed85b2cdfbdd2825595483773df27
+Report-only successor: this commit, whose diff over the tested candidate touches
+       only TASK.md and .gitignore (zero product/test/script/artifact changes),
+       so every gate above still describes the exact tested content.
+Implementation SHA: 996256d319efc0f946f4bb10c57570a15c1bf12f
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Schema: 47 (was 46 at Task Base)
+Evidence: .git/validation-evidence/task43.2-fix-20261013/EVIDENCE-INDEX.md
+Gates: full Python 2578 OK (skipped=7); web 1164 unit + typecheck/lint/format/build;
+       e2e node 246, automation 14, inventory 21, unicode 1;
+       wheel manifest (plain + isolated inputs) PASS, wheel smoke schema 47;
+       schema rehearsals 44->47 (87) and 45->47 (100) with 0 failed/0 skipped;
+       docker security + upgrade/recovery (38->47, 44->47, 45->47) PASS;
+       governance PASS; git diff --check clean; reference image checksums match;
+       no ffmpeg/ffprobe.
+Open item for B: pre-existing load-sensitive Rules destination-check race
+       (reproduced at Task Base; not self-waived).
 ```

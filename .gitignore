@@ -13,6 +13,8 @@ dist/
 htmlcov/
 
 # Local environments and editor settings
+# Workspace-local TMPDIR for Docker smokes whose daemon cannot see host /tmp.
+.dsh-docker-tmp/
 .venv/
 venv/
 .env
