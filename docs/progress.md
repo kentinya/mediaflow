@@ -13,7 +13,7 @@ local `main`, integrating accepted Slice 44 with preserved unfinished work under
 the current Slice 44-era governance. [SLICE.md](../SLICE.md) retains the original Base and records
 the user's clarified 2026-10-13 automatic-organization-only amendment: the other two Automation
 modes are removed entirely, without conversion or compatible execution. Task 43.1 is **B PASS**;
-[TASK.md](../TASK.md) owns Task 43.2 replanning after this clarified Contract checkpoint.
+[TASK.md](../TASK.md) owns the replanned, unstarted Task 43.2 under this clarified Contract checkpoint.
 The mode removal, durable Preview/Run once and remaining Slice outcomes
 are not delivered or finally accepted. Detailed implementation and review history remains in Git.
 

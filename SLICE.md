@@ -16,7 +16,7 @@ Contract Revision: 2026-10-13 — automatic organization only; other modes remov
 Working Branch: main
 Risk: High
 Final Test Level: T4
-Next Action: B REPLANS UNSTARTED TASK 43.2 AGAINST CHECKPOINTED AUTOMATION-ONLY CONTRACT
+Next Action: DEVELOPER IMPLEMENTS REPLANNED TASK 43.2 WHEN DIRECTED
 ```
 
 ## Authority and current state
@@ -428,8 +428,9 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task 43.1 is B PASS; the unstarted Task 43.2 requires replanning after this clarified
-Contract checkpoint. The earlier conversion/compatibility plan is superseded, not delivered.
+Not submitted. Task 43.1 is B PASS; Task 43.2 is replanned and PLANNED against clarified Contract
+checkpoint `0f17234a046801d6abce7280e469bec2471bf0e8`, with implementation NOT STARTED.
+The earlier conversion/compatibility plan is superseded, not delivered.
 Automatic-organization-only behavior and other Required Outcomes remain unfinished.
 No Slice readiness or closure is claimed.
 
