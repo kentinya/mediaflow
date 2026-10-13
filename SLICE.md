@@ -16,7 +16,7 @@ Contract Revision: 2026-10-13 — user-approved single-mode Automation; original
 Working Branch: main
 Risk: High
 Final Test Level: T4
-Next Action: B REPLANS UNSTARTED TASK 43.2 AGAINST CHECKPOINTED SINGLE-MODE CONTRACT
+Next Action: DEVELOPER IMPLEMENTS PLANNED TASK 43.2 WHEN DIRECTED
 ```
 
 ## Authority and current state
@@ -424,8 +424,9 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task 43.1 is B PASS; the unstarted Task 43.2 must be replanned against this
-checkpointed Contract. The single-mode transition and other Required Outcomes remain unfinished.
+Not submitted. Task 43.1 is B PASS; Task 43.2 is replanned and PLANNED against the single-mode
+Contract checkpoint `dfd64505fd4344d4d99d1b0ad0a3e07d92fbca33`. Its implementation has not started.
+The single-mode transition and other Required Outcomes remain unfinished.
 No Slice readiness or closure is claimed.
 
 ## A Final Review
