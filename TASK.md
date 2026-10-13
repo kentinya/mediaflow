@@ -30,6 +30,62 @@ Traceability: UX-001–010, V2-AUTO-002/003/004/006/009, REQ-TASK-001/005/007/00
 REQ-SCHED-001/002/003/005/006/007, REQ-SAFE-008 and the existing manual execution/recovery invariants.
 The explicit REQ-SCHED-001/002 and V2-AUTO-009 amendment removes the two unwanted Automation modes.
 
+## Remaining Slice Work — B reassessment, 2026-10-13
+
+Authority is the committed automatic-organization-only Contract. B inspected repository checkpoint
+`68f26a6ce057a159c781dde08a8d049761a96b85`, actual source and affected existing tests after governance
+PASS. Since Task 43.1's accepted product candidate, the tracked diff contains only eight Markdown
+documents: mode removal, durable Preview/Run once, consolidated workspace and consumer adoption
+are still implementation gaps. This reassessment creates no new product requirement or Slice.
+
+### Accepted foundations and reuse
+
+Task 43.1 is B PASS for native definition create/edit/copy/enable/disable/remove, focused checked
+publication and integrity-aware retained history. Its previous mode selector is superseded by the
+new Contract and remains to be removed. Existing exact Preview/grants, Scheduler occurrences,
+Worker claims, manual discovery/one-shot execution and native Operations per-item recovery are
+reuse foundations; their presence does not complete the remaining combined operator journeys.
+
+### Three coherent remaining work areas, in order
+
+| Work area | Complete user result | Outcome coverage / state |
+|---|---|---|
+| **1. Automatic organization, durable Preview and Run once — active Task 43.2** | Remove both unwanted Automation modes across all affected boundaries, without conversion/compatible execution. Create/manage an automatic definition, obtain durable exact zero-mutation Preview, grant/revoke scheduled authority or deliberately run one bounded reviewed selection, and reach durable progress/results/recovery without changing the schedule. | Revised RO-2, remaining RO-3 and RO-4; definition-local manual links in RO-5 and applicable RO-7. PLANNED / NOT STARTED, High / T4. |
+| **2. Automation inventory, unified records and truthful statistics** | Reach every definition through server search/filter/sort/paging; see next/latest run and real full-population monthly cards. Find scheduled/manual runs together, retain historical context, distinguish admission from item outcomes, and open existing Operations result/control/recovery with return context. | Remaining RO-1 and RO-5 plus applicable RO-7. Incomplete; later coherent work area, not an active Task. |
+| **3. Global engine settings and actual consumer adoption** | Save the four supported fields through focused checked publication; actual resident Worker/Scheduler safely adopt polling changes without routine restart. Show target versus adopted/override/pending/stale consumer values, with honest capacity and stale-observation meanings. | RO-6, settings part of RO-1 and applicable RO-7. Incomplete; later coherent work area, not an active Task. |
+
+Only Task 43.2 is authorized as the active implementation unit. After its PASS, B reassesses the
+entire Slice and plans the next unit from actual remaining code/results; the two later rows are
+sequencing/size assessments, not advance Task scopes, IDs or acceptance declarations. Permission,
+failure/recovery, safety, native Web/API parity and necessary migration/packaging tests belong to
+each affected journey. Do not create separate Tasks for individual fields, test cases or layers.
+
+### Required Outcomes and surfaces reconciliation
+
+| Outcome | Current conclusion |
+|---|---|
+| RO-1 | Incomplete: current bounded card list can truncate definitions; complete workspace, query reachability and monthly statistics remain. |
+| RO-2 | Publication/lifecycle/history foundation B PASS; automatic-only values/forms/branches and unsupported old-work handling remain in Task 43.2. |
+| RO-3 | Existing Preview/grant/scheduled core is reusable; definition Preview still discovers/analyzes synchronously before returning. Durable work and the complete revised native journey remain in Task 43.2. |
+| RO-4 | Incomplete: no definition-bound Run-once journey or durable manual definition-origin admission. Task 43.2 owns it. |
+| RO-5 | Definition-local scheduled history and native Operations recovery exist; manual links/local recovery belong to Task 43.2, consolidated scheduled/manual queries/results to work area 2. |
+| RO-6 | Four engine fields and API-local consumption evidence exist; focused Automation settings and actual process polling adoption/readback remain in work area 3. ResidentLoop still sleeps on its captured startup value. |
+| RO-7 | Existing shared authority is preserved; validate and complete new failure/context/compatibility paths across all three work areas, with the explicit removed-mode exception. |
+
+Required surfaces map to these same areas: the shared Web workspace to all three; typed API and
+configuration/admission/Worker/persistence to their corresponding journeys; actual resident consumer
+adoption/readback to area 3; Operations and Settings/ResourceLibrary/Rules return links to areas 1–3;
+existing-route handling and necessary additive migration to the area changing that behavior.
+An internal service, API echo or standalone backend test does not complete a promised Web surface.
+
+### Final validation and A handoff
+
+After every Task PASS, check all Required Outcomes/surfaces again. Once all are satisfied, stop
+creating Tasks, run the Contract's T4 Slice-final regression and applicable browser/process/upgrade/
+packaging gates, audit the original Slice Base..Implementation Head and preserved user/private
+files, and submit one Closure Packet to A. Final validation is the Slice handoff stage, not another
+feature Task. A retains final review and closure authority; this reassessment claims neither.
+
 ## Why This Task Exists
 
 B passed Task 43.1's implementation `7b9bc83fd2f14271f594924895b976ca3a02af0e` and inspected its
@@ -213,7 +269,8 @@ fixtures, never production media or private credentials.
   Unknown state remains unknown until proved; no automatic replay or double authority consumption.
 - [ ] **AC-T5 — Schedule independence:** every manual run and terminal/control/failure path preserves
   enabled state, due time and scheduled occurrence uniqueness; no grant creation/revival/revoke occurs
-  merely through Run once. Already admitted scheduled work retains its original authority semantics.
+  merely through Run once. Already admitted automatic-organization scheduled work retains its
+  original authority semantics.
 - [ ] **AC-T6 — Durable history/outcomes:** actual manual/scheduled origins and immutable historical
   context survive rename/remove/reopen; Automation definition history and Operations reach the same
   durable run/results and native per-item recovery with return context. No dummy Job/double count,
