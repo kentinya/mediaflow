@@ -513,22 +513,142 @@ and this T4 candidate's complete final gates. Disclose unavailable gates and loc
 
 ### Implemented
 
+**Amendment: automatic organization is the only Automation run mode.** `AutomationTaskRunMode` keeps
+one runnable member, `AUTOMATIC_ORGANIZATION`. The removed spellings survive only as non-runnable
+`RECORDED_SCAN_ONLY` / `RECORDED_SCAN_AND_PLAN` history values: `parse()` and every configuration,
+publication, import and admission boundary reject `scan-only` / `scan-and-plan` (and the bare
+`scan` / `preview` aliases) outright, while `decode_recorded()` is the single place that can read a
+persisted old row back. A recorded removed mode is refused fail-closed before any adapter or Task,
+records a bounded `unsupported_definition_mode` **blocked** outcome with no occurrence, no Job and
+zero Storage mutation, and stops a paused continuation instead of being converted or run
+compatibly. The form authority and the operator UI now offer exactly
+`["automatic-organization"]`.
+
+**Definition-bound Run once (RO-4).** New `AutomationRunOnceService` composes the existing bounded
+`MediaDiscovery`, the existing manual intent and the existing exact zero-mutation Preview — it
+creates no second execution path, no dummy Job, no execution authority, and never enables the
+schedule, grants/revives/consumes unattended authority or advances due state. Admission derives the
+whole scope from the saved definition (no file picker) and is prompt (202 + durable discovery id);
+the real resident `MediaDiscoveryWorker` performs the bounded, metadata-only walk. The effective
+manifest bound is `min(definition.itemLimit, 100)`; an over-bound ceiling is refused with
+`discovery_overflow` **before any Storage read** rather than silently freezing a first-N prefix, and
+reaching the definition's own smaller bound is a material refusal that blocks Finalize and offers
+narrowing. A disabled published schedule is runnable once; Draft-only definitions are not
+(404 `definition_not_found`).
+
+**Durable exact Preview and manual origin (revised RO-2, remaining RO-3, RO-5/RO-7).** Schema 46
+adds one nullable `media_discoveries.definition_origin_json` and the matching nullable
+`operations_run_display` origin columns. `DefinitionRunOnceOrigin` is secret-free display evidence
+(definition id/name/fingerprint, snapshot revision, scope, both limits, mode, admission request id).
+The unified Operations inventory derives a **manual** trigger from that origin, and the definition's
+own history lists the same run without a dummy Job or a double count, so the manual-origin link and
+definition-local outcome/recovery survive restart.
+
+**Fix found by this Task's own boundary coverage.** `MediaDiscovery._over_primary_limit` trimmed the
+manifest against the *service default* primary bound instead of the discovery's own durable admitted
+bound. A Run once whose effective bound was smaller than the manual default could therefore persist
+an over-limit manifest and fail the domain invariant (`discovery source list exceeds its admitted
+bound`) during the walk. The trim now takes the exact persisted `discovery.budgets.max_primary_sources`,
+so no admission can leave an over-limit or first-N manifest behind.
+
+**Web.** One retained mode in the create/edit/copy forms; recorded modes render as unsupported
+history rather than a selectable mode. New `AutomationRunOncePage` (progress, pause/resume/cancel,
+finalize, narrowing guidance), `run-once` entity/query/client wiring, a `运行一次` action on the
+lifecycle page, and the `operations/automation/run-once/$discoveryId` route.
+
 ### Tests and Results
 
-Record the exact tested/submitted candidate, commands/counts/durations and retained evidence index;
-include upgrade, native production/browser/Worker outcomes, first failures/repeats and any limitations.
+Tested and submitted candidate: commit `f03149cc33d89fa82c55751ea3518bc121d5adee` (working tree over
+Task Base `9d4eec52b5196cb323171454c48c055b41256ebc`). Evidence index:
+`.git/validation-evidence/task43.2-dev/EVIDENCE-INDEX.md`, with every raw log beside it.
+
+| Gate | Command | Result |
+|---|---|---|
+| Baseline (same host, pre-change) | `.venv/bin/python -m unittest discover -s tests` | PASS — 2511 tests, OK (skipped=7), 597s |
+| **Full Python (T4)** | `.venv/bin/python -m unittest discover -s tests` | **PASS — 2559 tests, OK (skipped=7), 620s** |
+| Run once (application) | `.venv/bin/python -m unittest tests.test_automation_run_once` | PASS — 31 tests |
+| Run once (V2 API) | `.venv/bin/python -m unittest tests.test_v2_automation_run_once` | PASS — 11 tests |
+| Schema 45→46 migration | `.venv/bin/python -m unittest tests.test_task_persistence` | PASS — 19 tests |
+| Discovery regression | `.venv/bin/python -m unittest tests.test_media_discovery` | PASS — 130 tests |
+| Lint / format | `.venv/bin/ruff check .` / `ruff format --check .` | PASS — clean / 372 formatted |
+| Bytecode / deps | `compileall -q mediaflow tests scripts` / `pip check` | PASS / No broken requirements |
+| CLI validate | `mediaflow --config <both examples> config validate` | PASS — both exit 0 |
+| Web unit | `npm --prefix web run test` | PASS — 1150 tests / 77 files |
+| Web quality | `typecheck` / `lint` / `format:check` / `build` | PASS — build exit 0 |
+| Node e2e | `npm --prefix web run test:e2e` | PASS — 246 tests |
+| **Assigned automation e2e** | `... --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts tests/e2e/automation-run-once.python.spec.ts` | **PASS — 14 tests** |
+| Inventory e2e | `... --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` | PASS — 21 tests |
+| Unicode principal e2e | `... --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts` | PASS — 1 test |
+| Direct-files e2e | `... --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` | PASS — 10 tests |
+| Wheel manifest + smoke | `pip wheel .` + manifest check; `scripts/wheel_smoke_test.py <wheel>` | PASS — new module present, schema 46, restore/verify PASS |
+| Docker image | `docker build -t mediaflow:task43.2-candidate .` | PASS — image runs with SCHEMA_VERSION 46 and one runnable mode |
+| Docker security smoke | `TMPDIR=<workspace-local> scripts/docker_release_security_smoke_test.py` | PASS — acceptance passed |
+| Docker upgrade/recovery smoke | `TMPDIR=<workspace-local> scripts/docker_upgrade_recovery_smoke_test.py` | PASS — schema 38→46 acceptance passed |
+| Governance / hygiene | `check_governance.py` / `git diff --check` | PASS — both exit 0 |
+| No FFmpeg/FFprobe | `grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | PASS — exit 1, no matches |
+
+**First failures and repeats (disclosed honestly).** (1) The development full run failed 33F/37E in
+the mode-removal fixtures plus already-known schema markers; those were fixed and the final full
+suite is green. (2) The Run-once e2e initially failed because the client targeted the focused
+`/operations/automation/definitions` base while only `/task-definitions` was registered, and because
+the assigned single invocation let two browser workers share one harness; the route was registered
+and the assigned config now pins `workers: 1`, after which the gate passes 14/14. (3) The
+`operations-inventory` spec is **load-sensitive and pre-existing flaky**: under CPU contention it
+failed on the identical `:1840` assertion at the *unmodified* Task Base
+(`.git/validation-evidence/task43.2-dev/pretask-base-e2e-flake.txt`), and this Task touches no
+batch-recovery source or that spec; on a settled host candidate and Base both pass 21/21 repeatedly.
+(4) One serial full-suite run failed `test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+— also reproduced at the unmodified Task Base under parallel contention
+(`pretask-base-reproduction.txt`), same `rules_destination_check_failed` allowlist gap.
+
+**Environment limitations.** The Docker daemon on this host cannot bind-mount host `/tmp`; both
+Docker smokes therefore used the workspace-local ignored
+`TMPDIR=/root/mediaflow/.dsh-docker-tmp/task43.2-final`, which the daemon can see (the same
+convention this Task records and prior Tasks used). `rg` is not installed, so the equivalent
+`grep -rn -i` search was used for the FFmpeg gate.
 
 ### Decisions
 
+* Kept the removed modes as explicit non-runnable `RECORDED_*` history values rather than deleting
+  the enum members, so retained historical evidence stays readable while every forward boundary
+  refuses them — no conversion and no compatible execution.
+* Reused the existing bounded `MediaDiscovery`, manual intent and exact Preview instead of adding a
+  Run-once-specific pipeline; Run once deliberately creates no execution authority and no dummy Job.
+* Bounded the effective manifest by `min(definition.itemLimit, 100)` and refused over-bound ceilings
+  before any Storage read, rather than truncating silently to a first-N prefix.
+* Used a nullable additive schema-46 column set (no backfill) so a prior database upgrades without
+  inventing a definition origin for legacy rows.
+* Fixed the primary-limit trim to use the discovery's own durable admitted bound, because the
+  Task's own boundary coverage proved the service-default bound could persist an over-limit manifest.
+
 ### Remaining In-Slice Work
 
+None for this Task. RO-4, the revised RO-2 fixed-mode portion, the remaining durable-analysis
+journey of RO-3, and the definition-local manual-origin/outcome/recovery portions of RO-5/RO-7 are
+delivered here; B decides whether the Slice's Required Outcomes are now all satisfied.
+
 ### Risks / Deviations
+
+* `operations-inventory.python.spec.ts` and
+  `test_v2_rules_workspace_commands.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+  are pre-existing, load-sensitive failures unrelated to this Task (both reproduced at the Task
+  Base; neither file is touched by this diff). Reported for B's judgement, not self-waived.
+* The Docker smokes required a workspace-local `TMPDIR`; on a host whose daemon can see `/tmp` the
+  plain invocation should also work.
+* No unresolved product defect is known in the delivered scope.
 
 ### Checkpoint
 
 ```text
-Status: NOT STARTED
-Head SHA: none
+Status: READY FOR B REVIEW
+Head SHA: f03149cc33d89fa82c55751ea3518bc121d5adee
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Evidence: .git/validation-evidence/task43.2-dev/EVIDENCE-INDEX.md
+Gates: full Python 2559 OK (skipped=7); ruff/format/compileall/pip-check/CLI clean;
+       web 1150 unit + typecheck/lint/format/build; e2e node 246, automation 14,
+       inventory 21, unicode 1, direct-files 10; wheel manifest+smoke PASS;
+       docker build PASS; docker security + upgrade/recovery smokes PASS;
+       governance PASS; git diff --check clean; no ffmpeg/ffprobe.
 ```
 
 ## B Review Result
