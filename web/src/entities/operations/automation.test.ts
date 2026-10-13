@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
+  AUTOMATION_RUN_MODES,
+  describeAutomationRunMode,
   normalizeAutomationAction,
   normalizeAutomationDefinition,
   normalizeAutomationDefinitionsPage,
@@ -53,7 +56,7 @@ function listDefinitionPayload(
     definitionState: "active",
     enabled: false,
     resourceLibraryId: "source",
-    mode: "scan-only",
+    mode: "automatic-organization",
     itemLimit: 5,
     sourceScope: null,
     intervalSeconds: 3600,
@@ -790,7 +793,7 @@ describe("normalizeAutomationDefinitionsPage", () => {
       definitionState: "active",
       enabled: true,
       resourceLibraryId: "source",
-      mode: "scan-only",
+      mode: "automatic-organization",
       itemLimit: 5,
       sourceScope: null,
       intervalSeconds: 3600,
@@ -862,5 +865,56 @@ describe("normalizeAutomationDefinitionsPage", () => {
       normalizeAutomationDefinition(activeDefinition, "definition")
         .definitionState,
     ).toBe("active");
+  });
+});
+
+describe("automation run-mode vocabulary", () => {
+  it("retains exactly one selectable mode", () => {
+    expect(AUTOMATION_RUN_MODES).toEqual([
+      AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
+    ]);
+    expect(AUTOMATION_AUTOMATIC_ORGANIZATION_MODE).toBe(
+      "automatic-organization",
+    );
+  });
+
+  it("reads a recorded historical mode without making the document malformed", () => {
+    // Persisted records created before the amendment still carry the removed
+    // spellings. They must stay readable as historical text — never converted,
+    // defaulted or offered — while a genuinely unknown value stays malformed.
+    for (const recorded of ["scan-only", "scan-and-plan"]) {
+      const page = normalizeAutomationDefinitionsPage(
+        definitionsPagePayload([
+          listDefinitionPayload("task-1", { mode: recorded }),
+        ]),
+      );
+      expect(page.items[0]?.document.mode).toBe(recorded);
+      expect(describeAutomationRunMode(recorded)).toBe(
+        `${recorded} (unsupported historical mode)`,
+      );
+    }
+    expect(() =>
+      normalizeAutomationDefinitionsPage(
+        definitionsPagePayload([
+          listDefinitionPayload("task-1", { mode: "scan-and-hope" }),
+        ]),
+      ),
+    ).toThrow(AutomationNormalizationError);
+  });
+
+  it("reads a recorded historical Preview run mode without converting it", () => {
+    const preview = normalizeAutomationPreview(
+      previewDocument((value) => {
+        value["runMode"] = "scan-and-plan";
+      }),
+    );
+    expect(preview.runMode).toBe("scan-and-plan");
+    expect(() =>
+      normalizeAutomationPreview(
+        previewDocument((value) => {
+          value["runMode"] = "hacked";
+        }),
+      ),
+    ).toThrow(AutomationNormalizationError);
   });
 });

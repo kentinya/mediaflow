@@ -211,6 +211,18 @@ class RunDisplayContext:
     source_scope: str | None = None
     target_scope: str | None = None
     labels: tuple[str, ...] = ()
+    #: The durable *manual definition origin* of this run, or ``None`` for an
+    #: ordinary Files/CLI run.  A definition-bound Run once records its exact
+    #: published definition identity here at admission, so Automation history
+    #: and Operations can reach the same durable run without a dummy Job, a
+    #: second queue or a read-time guess from today's Active configuration.
+    origin_definition_id: str | None = None
+    origin_definition_name: str | None = None
+    origin_kind: str | None = None
+
+    MAX_ORIGIN_ID_LENGTH = 128
+    MAX_ORIGIN_NAME_LENGTH = 120
+    MAX_ORIGIN_KIND_LENGTH = 64
 
     def __post_init__(self) -> None:
         # Display evidence is best-effort context: an overlong value is
@@ -225,6 +237,17 @@ class RunDisplayContext:
             if not isinstance(value, str):
                 raise ValueError(f"run display {field} must be text")
             stripped = value.strip()[:MAX_RUN_DISPLAY_SCOPE_LENGTH].strip()
+            object.__setattr__(self, field, stripped or None)
+        for field, value, maximum in (
+            ("origin definition ID", self.origin_definition_id, self.MAX_ORIGIN_ID_LENGTH),
+            ("origin definition name", self.origin_definition_name, self.MAX_ORIGIN_NAME_LENGTH),
+            ("origin kind", self.origin_kind, self.MAX_ORIGIN_KIND_LENGTH),
+        ):
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"run display {field} must be text")
+            stripped = value.strip()[:maximum].strip()
             object.__setattr__(self, field, stripped or None)
         if not isinstance(self.labels, (tuple, list)):
             raise ValueError("run display labels must be a tuple")

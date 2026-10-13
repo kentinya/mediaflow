@@ -47,6 +47,7 @@ describe("destination model", () => {
       "Automation Draft editor",
       "Automation Preview",
       "Automation occurrences",
+      "Automation Run once",
       "Notifications",
       "Create Webhook definition",
       "Webhook definition",

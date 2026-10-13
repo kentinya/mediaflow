@@ -13,8 +13,7 @@ from mediaflow.application.automation import (
     AutomationConfigurationUnavailable,
     AutomationWorkflowFailed,
 )
-from mediaflow.application.library_pipeline import ResourceLibraryScanner
-from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
+from mediaflow.application.media_organizer import MediaOrganizerService
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.scanner import StorageScanner, normalize_resource_root
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -26,7 +25,6 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationFailureEvidence,
     AutomationTaskDefinition,
-    AutomationTaskRunMode,
 )
 from mediaflow.domain.library import ResourceLibrary, ScanMode
 from mediaflow.domain.storage import StorageError, StorageErrorCode
@@ -41,10 +39,10 @@ HistoryFactory = Callable[[str], object]
 class DefinitionScopedExecutionService:
     """Run one Scheduler-emitted definition through existing authorities.
 
-    The service deliberately separates pure pin/scope validation from adapter
-    construction.  This keeps knowable fail-closed cases before Storage,
-    Provider, Scanner, planner, and Task construction while reusing the normal
-    ``MediaOrganizerService`` chain for scan-and-plan runs.
+    Only the single retained ``automatic-organization`` intent is runnable.  A
+    pre-amendment Job that recorded ``scan-only`` or ``scan-and-plan`` stops at
+    this boundary with an unsupported-mode explanation instead of being
+    converted or handed to a compatible scan/plan executor.
     """
 
     def __init__(
@@ -71,31 +69,47 @@ class DefinitionScopedExecutionService:
         self._logger = logger
 
     def run(self, job, cancellation_check: Callable[[], bool]) -> str:
-        """Consume a claimed definition Job and return its durable Task id."""
+        """Consume a claimed definition Job and return its durable Task id.
+
+        Only an automatic-organization definition reaches Storage, Provider or
+        Task construction.  A recorded pre-amendment mode fails closed *before*
+        any adapter or Task exists, so old queued/running work stops safely and
+        can never acquire mutation authority or a compatible executor.
+        """
 
         definition = self._resolve_definition(job)
+        if not definition.mode.is_runnable:
+            raise self._failure(
+                "unsupported_definition_mode",
+                "the pinned Automation Task Definition records a removed mode "
+                f"{definition.mode.value!r}; it cannot be converted or executed and no Task "
+                "was created",
+                False,
+                "remove or correct the unsupported definition configuration; recorded history "
+                "and completed outcomes are preserved",
+            )
         resource = self._resolve_resource_library(definition)
         scope_root = self._resolve_scope_root(resource, definition, job)
 
-        authority = None
-        if definition.mode is AutomationTaskRunMode.AUTOMATIC_ORGANIZATION:
-            if self._unattended_grants is None:
-                raise self._failure(
-                    "unattended_execution_authority_missing",
-                    "automatic organization has no separate unattended execution grant; no Task "
-                    "was created",
-                    False,
-                    "review the exact definition bounds and explicitly grant unattended execution",
-                )
-            try:
-                authority = self._unattended_grants.authorize(job, definition)
-            except UnattendedExecutionGrantError as error:
-                raise self._failure(
-                    error.code,
-                    error.durable_state,
-                    error.retry_safe,
-                    error.next_action,
-                ) from error
+        if self._unattended_grants is None:
+            raise self._failure(
+                "unattended_execution_authority_missing",
+                "automatic organization has no separate unattended execution grant; no Task "
+                "was created",
+                False,
+                "review the exact definition bounds and explicitly grant unattended execution",
+            )
+        try:
+            # Proving the exact live grant *before* any Task exists keeps a
+            # knowable fail-closed case ahead of Storage/Provider construction.
+            self._unattended_grants.authorize(job, definition)
+        except UnattendedExecutionGrantError as error:
+            raise self._failure(
+                error.code,
+                error.durable_state,
+                error.retry_safe,
+                error.next_action,
+            ) from error
 
         if cancellation_check():
             raise AutomationCancelled()
@@ -104,7 +118,7 @@ class DefinitionScopedExecutionService:
         coordinator = PersistentTaskCoordinator(self._repository, self._repository)
         task = coordinator.create(
             job.command.value,
-            execute_authorized=authority is not None,
+            execute_authorized=True,
             scope_path=scope_root,
             item_limit=definition.item_limit,
             configuration_snapshot_id=job.configuration_snapshot_id,
@@ -112,27 +126,17 @@ class DefinitionScopedExecutionService:
             require_configuration_snapshot=True,
         )
         try:
-            if definition.mode is AutomationTaskRunMode.SCAN_ONLY:
-                self._run_scan_only(
-                    coordinator,
-                    task,
-                    resource,
-                    scope_root,
-                    source_storages,
-                    cancellation_check,
-                )
-            else:
-                self._run_scan_and_plan(
-                    coordinator,
-                    task,
-                    resource,
-                    scope_root,
-                    source_storages,
-                    cancellation_check,
-                    execute=authority is not None,
-                    definition=definition,
-                    job=job,
-                )
+            self._run_scan_and_plan(
+                coordinator,
+                task,
+                resource,
+                scope_root,
+                source_storages,
+                cancellation_check,
+                execute=True,
+                definition=definition,
+                job=job,
+            )
         except AutomationCancelled:
             self._cancel_task_if_running(coordinator, task.task_id)
             raise
@@ -257,11 +261,17 @@ class DefinitionScopedExecutionService:
                 "activate the intended definition content and emit a new occurrence",
             )
         expected_mode = definition.mode
-        expected_command = {
-            AutomationTaskRunMode.SCAN_ONLY: AutomationCommand.SCAN,
-            AutomationTaskRunMode.SCAN_AND_PLAN: AutomationCommand.PREVIEW,
-            AutomationTaskRunMode.AUTOMATIC_ORGANIZATION: AutomationCommand.ORGANIZE,
-        }[expected_mode]
+        if not expected_mode.is_runnable:
+            # A recorded pre-amendment mode has no definition-bound command, so
+            # there is nothing this Job could legally execute.
+            raise self._failure(
+                "unsupported_definition_mode",
+                "definition-pinned Job records a removed Automation mode",
+                False,
+                "remove or correct the unsupported definition configuration; recorded history "
+                "is preserved",
+            )
+        expected_command = AutomationCommand.ORGANIZE
         if (
             job.run_mode != expected_mode
             or job.command != expected_command
@@ -373,52 +383,6 @@ class DefinitionScopedExecutionService:
                 "select a directory scope inside the ResourceLibrary and emit a new occurrence",
             )
         return storages
-
-    def _run_scan_only(
-        self,
-        coordinator,
-        task: PersistentTask,
-        resource: ResourceLibrary,
-        scope_root: str,
-        storages: Mapping[str, object],
-        cancellation_check: Callable[[], bool],
-    ) -> None:
-        self._require_file_index()
-        scoped = replace(resource, root_path=scope_root, scan_mode=ScanMode.INCREMENTAL)
-        cancellation = _CancellationBridge(cancellation_check)
-
-        def on_discovered(library, file) -> None:
-            if cancellation_check():
-                cancellation.cancel()
-                return
-            coordinator.record_discovered(
-                task.task_id,
-                file.storage_id,
-                library.library_id,
-                file.path,
-                f"{file.storage_id}:{file.path}",
-            )
-
-        batch = ResourceLibraryScanner(
-            StorageScanner(dict(storages), self._file_index, logger=self._logger),
-            (scoped,),
-            storages,
-        ).scan_all(
-            limit=task.item_limit,
-            on_discovered=on_discovered,
-            cancellation_check=cancellation.should_stop,
-        )
-        if cancellation_check():
-            self._cancel_task_if_running(coordinator, task.task_id)
-            raise AutomationCancelled(task.task_id)
-        if coordinator.cancellation_observed(task.task_id):
-            # A durable cooperative cancellation already owns this Task outcome.
-            raise AutomationCancelled(task.task_id)
-        if coordinator.pause_requested(task.task_id):
-            coordinator.acknowledge_pause(task.task_id)
-            return
-        errors = tuple(error for result in batch.results for error in result.errors)
-        coordinator.finish(task.task_id, MediaOrganizerBatchResult((), errors))
 
     def _run_scan_and_plan(
         self,
@@ -540,26 +504,6 @@ class DefinitionScopedExecutionService:
                 next_action,
             )
         )
-
-
-class _CancellationBridge:
-    def __init__(self, callback: Callable[[], bool]) -> None:
-        self._callback = callback
-        self._cancelled = False
-
-    @property
-    def is_cancelled(self) -> bool:
-        return self._cancelled
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def should_stop(self) -> bool:
-        if self._cancelled:
-            return True
-        if self._callback():
-            self._cancelled = True
-        return self._cancelled
 
 
 def _contains(parent: str, child: str) -> bool:

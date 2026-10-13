@@ -306,7 +306,15 @@ from mediaflow.infrastructure.file_index_schema import (
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 45
+# Schema 46 adds the additive definition-bound Run once origin: one nullable
+# ``media_discoveries.definition_origin_json`` recording the exact published
+# definition/pin/effective-bound a deliberate Run once was admitted for, and the
+# matching nullable ``operations_run_display`` origin columns so the same
+# durable run is reachable from both Automation history and Operations.  Both
+# are immutable historical/display evidence only — they create no execution
+# authority, no dummy Job and no second queue — and a legacy row simply has no
+# origin, so nothing is backfilled and no definition identity is guessed.
+SCHEMA_VERSION = 46
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -946,14 +954,18 @@ class SQLiteTaskRepository:
 
         self._connection.execute(
             "INSERT OR REPLACE INTO operations_run_display "
-            "(task_id, source_scope, target_scope, search_text, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(task_id, source_scope, target_scope, search_text, created_at, "
+            "origin_definition_id, origin_definition_name, origin_kind) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 task_id,
                 display.source_scope,
                 display.target_scope,
                 display.search_text,
                 created_at.isoformat(),
+                display.origin_definition_id,
+                display.origin_definition_name,
+                display.origin_kind,
             ),
         )
 
@@ -5505,6 +5517,15 @@ class SQLiteTaskRepository:
                    -- The bounded business-label text recorded with the
                    -- admission: library names, reviewed scope, safe labels.
                    COALESCE(display.search_text, '') AS display_search,
+                   -- The durable manual definition origin recorded with the
+                   -- admission, or NULL for an ordinary Files/CLI run.  It is
+                   -- admission-written immutable evidence: reads never derive
+                   -- it from today's Active configuration, and it makes the
+                   -- same Run-once execution reachable from both Automation
+                   -- history and Operations without a dummy Job.
+                   display.origin_definition_id AS origin_definition_id,
+                   display.origin_definition_name AS origin_definition_name,
+                   display.origin_kind AS origin_kind,
                    COALESCE(task_status.updated_at, runs.job_updated_at, runs.sort_at)
                        AS updated_at,
                    CASE
@@ -6352,8 +6373,16 @@ class SQLiteTaskRepository:
             task_id = str(task_id_value) if task_id_value else None
         schedule_id = row["schedule_id"]
         definition_id = row["definition_id"]
+        origin_definition_id = (
+            str(row["origin_definition_id"]) if row["origin_definition_id"] else None
+        )
         if definition_id or schedule_id:
             trigger = OperationsRunTrigger.SCHEDULED
+        elif origin_definition_id:
+            # A definition-bound Run once is a *manual* deliberate run: its
+            # durable admission origin is a definition, but it was not emitted
+            # by the Scheduler and it never advances or consumes due state.
+            trigger = OperationsRunTrigger.MANUAL
         elif job_id is not None:
             trigger = OperationsRunTrigger.AUTOMATION
         else:
@@ -6412,6 +6441,11 @@ class SQLiteTaskRepository:
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
             ),
             worker_id=(str(row["worker_id"]) if row["worker_id"] not in {None, ""} else None),
+            origin_definition_id=origin_definition_id,
+            origin_definition_name=(
+                str(row["origin_definition_name"]) if row["origin_definition_name"] else None
+            ),
+            origin_kind=(str(row["origin_kind"]) if row["origin_kind"] else None),
         )
 
     def claim_next_job(
@@ -6849,6 +6883,11 @@ class SQLiteTaskRepository:
                 "snapshot_missing",
                 "snapshot_not_published",
                 "snapshot_unreadable",
+                # A recorded pre-amendment mode is a knowable, pre-work refusal
+                # exactly like an invalid or mismatched definition: the
+                # occurrence is blocked rather than reported as a runtime
+                # failure, and no Task or Storage effect ever existed.
+                "unsupported_definition_mode",
                 "unattended_execution_authority_missing",
                 "unattended_execution_grant_revoked",
                 "unattended_execution_grant_definition_mismatch",
@@ -9992,7 +10031,8 @@ class SQLiteTaskRepository:
         "budgets_json, progress_json, sources_json, intent_id, frozen_at, "
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "pause_requested, cancel_requested, error, created_at, updated_at, "
-        "next_observation_at, admission_signature, admission_request_id"
+        "next_observation_at, admission_signature, admission_request_id, "
+        "definition_origin_json"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -10040,7 +10080,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?)",
+                    "?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -10110,6 +10150,61 @@ class SQLiteTaskRepository:
             if row is None:
                 return None
             return self._load_media_discovery_locked(row["discovery_id"])
+
+    def find_open_definition_run_once(
+        self,
+        *,
+        actor: str,
+        definition_id: str,
+        definition_fingerprint: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> MediaDiscovery | None:
+        """One already durable *open* Run once for this exact definition pin.
+
+        A definition-bound Run once is a distinct admission from a Files
+        folder/mixed selection, so it is looked up by its own durable origin
+        identity rather than by a synthetic scope signature.  The lookup is
+        bound to the actor, the exact definition fingerprint and the immutable
+        configuration pin, so a lost response reconciles to the original durable
+        run while a republished definition or a different principal is always a
+        new admission.  Terminal and frozen records are excluded.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("definition Run once definition ID is required")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT discovery_id, definition_origin_json FROM media_discoveries "
+                "WHERE actor=? AND definition_origin_json IS NOT NULL "
+                "AND intent_id IS NULL AND frozen_at IS NULL "
+                "AND status NOT IN (?, ?, ?, ?) "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 25",
+                (
+                    actor,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                    DiscoveryStatus.FAILED.value,
+                    DiscoveryStatus.CANCELLED.value,
+                ),
+            ).fetchall()
+            for row in rows:
+                try:
+                    origin = json.loads(row["definition_origin_json"] or "{}")
+                except ValueError:
+                    continue
+                if not isinstance(origin, dict):
+                    continue
+                if (
+                    origin.get("definitionId") == definition_id
+                    and origin.get("definitionFingerprint") == definition_fingerprint
+                    and origin.get("configurationRevisionId") == snapshot_id
+                    and origin.get("configurationRevisionDigest") == snapshot_digest
+                ):
+                    return self._load_media_discovery_locked(row["discovery_id"])
+            return None
 
     def find_media_discovery_by_request_id(
         self, *, actor: str, admission_request_id: str
@@ -10190,6 +10285,41 @@ class SQLiteTaskRepository:
             if row is None:
                 return None
             return self._load_media_discovery_locked(row["discovery_id"])
+
+    def list_definition_run_once_discoveries(
+        self, definition_id: str, *, limit: int = 100
+    ) -> tuple[MediaDiscovery, ...]:
+        """The durable manual Run once admissions recorded for one definition.
+
+        This is the durable history link that makes a definition-bound manual run
+        visible in the definition's own history next to its scheduled
+        occurrences, without a dummy Job or a second queue.  It is bound to the
+        immutable recorded definition identity, so a later rename or removal
+        cannot rewrite it.
+        """
+
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("definition Run once definition ID is required")
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("definition Run once limit must be between 1 and 500")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT discovery_id, definition_origin_json FROM media_discoveries "
+                "WHERE definition_origin_json IS NOT NULL "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            matches: list[MediaDiscovery] = []
+            for row in rows:
+                try:
+                    origin = json.loads(row["definition_origin_json"] or "{}")
+                except ValueError:
+                    continue
+                if isinstance(origin, dict) and origin.get("definitionId") == definition_id:
+                    value = self._load_media_discovery_locked(row["discovery_id"])
+                    if value is not None:
+                        matches.append(value)
+            return tuple(matches)
 
     def update_media_discovery(
         self,
@@ -10718,6 +10848,15 @@ class SQLiteTaskRepository:
             ),
             self._admission_signature(discovery),
             discovery.admission_request_id,
+            (
+                json.dumps(
+                    discovery.definition_origin.document(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if discovery.definition_origin is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -10782,6 +10921,11 @@ class SQLiteTaskRepository:
                     "updatedAt": row["updated_at"],
                     "nextObservationAt": row["next_observation_at"],
                     "admissionRequestId": row["admission_request_id"],
+                    "definitionOrigin": (
+                        json.loads(row["definition_origin_json"])
+                        if row["definition_origin_json"]
+                        else None
+                    ),
                 }
             )
         except Exception as error:
@@ -12932,6 +13076,8 @@ class SQLiteTaskRepository:
                 CREATE TABLE IF NOT EXISTS operations_run_display (
                     task_id TEXT PRIMARY KEY, source_scope TEXT, target_scope TEXT,
                     search_text TEXT, created_at TEXT NOT NULL,
+                    origin_definition_id TEXT, origin_definition_name TEXT,
+                    origin_kind TEXT,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
                 CREATE TABLE IF NOT EXISTS files_transfers (
@@ -13166,7 +13312,8 @@ class SQLiteTaskRepository:
                     error TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     next_observation_at TEXT,
-                    admission_signature TEXT, admission_request_id TEXT
+                    admission_signature TEXT, admission_request_id TEXT,
+                    definition_origin_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -13746,6 +13893,15 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN admission_request_id TEXT"
                 )
+            if "definition_origin_json" not in discovery_columns:
+                # Additive: a prior-schema (Files-originated) discovery simply has
+                # no definition origin, so it stays exactly the manual
+                # folder/mixed selection it was.  Nothing is backfilled and no
+                # definition identity is guessed; a definition-bound Run once is
+                # always a new admission.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN definition_origin_json TEXT"
+                )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
                 "ON media_discoveries(actor, admission_request_id)"
@@ -13789,6 +13945,20 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE notification_deliveries ADD COLUMN target_digest TEXT"
                 )
+            run_display_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(operations_run_display)"
+                ).fetchall()
+            }
+            for column in ("origin_definition_id", "origin_definition_name", "origin_kind"):
+                if column not in run_display_columns:
+                    # Additive: a prior-schema run simply has no recorded
+                    # definition origin.  Reads never backfill it from today's
+                    # Active configuration and never invent a definition link.
+                    self._connection.execute(
+                        f"ALTER TABLE operations_run_display ADD COLUMN {column} TEXT"
+                    )
             self._connection.execute(
                 "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)",
                 (SCHEMA_VERSION,),
@@ -15502,7 +15672,7 @@ class SQLiteTaskRepository:
             row["definition_fingerprint"],
             row["definition_version"],
             datetime.fromisoformat(row["occurrence_at"]) if row["occurrence_at"] else None,
-            AutomationTaskRunMode(row["run_mode"]) if row["run_mode"] else None,
+            (AutomationTaskRunMode.decode_recorded(row["run_mode"]) if row["run_mode"] else None),
             row["resource_library_id"],
             row["source_scope"],
             row["configuration_snapshot_version"],
@@ -15542,7 +15712,7 @@ class SQLiteTaskRepository:
             row["configuration_revision_id"],
             int(row["configuration_revision_version"]),
             row["configuration_revision_digest"],
-            AutomationTaskRunMode(row["run_mode"]),
+            AutomationTaskRunMode.decode_recorded(row["run_mode"]),
             row["resource_library_id"],
             row["source_scope"],
             int(row["item_limit"]),

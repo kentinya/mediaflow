@@ -28,6 +28,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import { describeAutomationRunMode } from "../../entities/operations/automation";
 
 function displayEnum(value: string): string {
   return value
@@ -219,7 +220,7 @@ export function AutomationDetailPage() {
                 <dt>State</dt>
                 <dd>{doc.enabled ? "enabled" : "disabled"}</dd>
                 <dt>Mode</dt>
-                <dd>{displayEnum(doc.mode)}</dd>
+                <dd>{describeAutomationRunMode(doc.mode)}</dd>
                 <dt>Schedule</dt>
                 <dd>
                   {doc.scheduleType === "interval"

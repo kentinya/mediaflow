@@ -14,6 +14,7 @@ import { automationOccurrencesQueryOptions } from "./automation-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import { describeAutomationRunMode } from "../../entities/operations/automation";
 
 function displayEnum(value: string): string {
   return value
@@ -100,7 +101,7 @@ export function AutomationOccurrencesPage() {
                 </h3>
                 <dl>
                   <dt>Run mode</dt>
-                  <dd>{displayEnum(occurrence.runMode)}</dd>
+                  <dd>{describeAutomationRunMode(occurrence.runMode)}</dd>
                   <dt>Pinned revision</dt>
                   <dd>
                     {occurrence.configurationRevisionId} (version{" "}

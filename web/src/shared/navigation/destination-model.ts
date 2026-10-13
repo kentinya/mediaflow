@@ -306,6 +306,16 @@ const childDestinationData = [
     dynamicPrefix: "/operations/automation/occurrences/" as const,
   },
   {
+    id: "operations-automation-run-once",
+    label: "Automation Run once",
+    path: "/operations/automation/run-once/$discoveryId",
+    title: "Automation Run once | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Automatic discovery and frozen manifest of one published definition, with durable progress and exact Preview.",
+    dynamicPrefix: "/operations/automation/run-once/" as const,
+  },
+  {
     id: "operations-notifications",
     label: "Notifications",
     path: "/operations/notifications",

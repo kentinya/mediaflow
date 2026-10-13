@@ -38,7 +38,149 @@ MAX_DISCOVERY_REASONS = 32
 MAX_DISCOVERY_OBSERVATIONS = 100
 MAX_DISCOVERY_REFUSALS = 16
 
+#: The existing manual/discovery primary bound.  A definition-bound Run once may
+#: only ever freeze the *smaller* of its own item ceiling and this bound, so a
+#: definition can never enlarge the manual manifest.
+MAX_DISCOVERY_PRIMARY_BOUND = MAX_DISCOVERY_PRIMARY_SOURCES
+
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
+
+
+@dataclass(frozen=True)
+class DefinitionRunOnceOrigin:
+    """The immutable definition context one manual Run once was admitted for.
+
+    This is *display and admission* evidence only.  It records which published
+    definition an operator deliberately ran once, under which immutable
+    configuration pin and bounds, so Automation history and Operations can show
+    the same durable run without inventing a second queue or a dummy Job.  It
+    grants no execution authority: the existing exact Preview and one-shot
+    execution intent remain the only mutation authority.
+    """
+
+    definition_id: str
+    definition_name: str
+    definition_fingerprint: str
+    configuration_revision_id: str
+    configuration_revision_version: int
+    configuration_revision_digest: str
+    resource_library_id: str
+    source_scope: str | None
+    definition_item_limit: int
+    effective_primary_limit: int
+    run_mode: str = "automatic-organization"
+    admission_request_id: str | None = None
+
+    MAX_NAME_LENGTH = 120
+    MAX_SCOPE_LENGTH = 1024
+
+    def __post_init__(self) -> None:
+        for label, value, maximum in (
+            ("definition ID", self.definition_id, MAX_DISCOVERY_ID_LENGTH),
+            ("definition name", self.definition_name, self.MAX_NAME_LENGTH),
+            ("definition fingerprint", self.definition_fingerprint, 64),
+            ("configuration revision ID", self.configuration_revision_id, MAX_DISCOVERY_ID_LENGTH),
+            (
+                "configuration revision digest",
+                self.configuration_revision_digest,
+                256,
+            ),
+            ("ResourceLibrary ID", self.resource_library_id, MAX_DISCOVERY_ID_LENGTH),
+            ("run mode", self.run_mode, 64),
+        ):
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or len(value) > maximum
+                or "\x00" in value
+            ):
+                raise ValueError(f"definition Run once {label} is invalid")
+        if self.source_scope is not None and (
+            not isinstance(self.source_scope, str)
+            or len(self.source_scope) > self.MAX_SCOPE_LENGTH
+            or "\x00" in self.source_scope
+        ):
+            raise ValueError("definition Run once source scope is invalid")
+        if self.admission_request_id is not None and (
+            not isinstance(self.admission_request_id, str)
+            or not _SAFE_ID.fullmatch(self.admission_request_id)
+        ):
+            raise ValueError("definition Run once admission request identity is invalid")
+        for label, value in (
+            ("configuration revision version", self.configuration_revision_version),
+            ("definition item limit", self.definition_item_limit),
+            ("effective primary limit", self.effective_primary_limit),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"definition Run once {label} must be positive")
+        if self.effective_primary_limit > self.definition_item_limit:
+            raise ValueError(
+                "definition Run once effective bound cannot exceed the definition item limit"
+            )
+        if self.effective_primary_limit > MAX_DISCOVERY_PRIMARY_BOUND:
+            raise ValueError(
+                "definition Run once effective bound cannot exceed the manual primary bound"
+            )
+        if len(self.definition_fingerprint) != 64 or not all(
+            character in "0123456789abcdef" for character in self.definition_fingerprint
+        ):
+            raise ValueError("definition Run once definition fingerprint is invalid")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "origin": "definition-run-once",
+            "definitionId": self.definition_id,
+            "definitionName": self.definition_name,
+            "definitionFingerprint": self.definition_fingerprint,
+            "configurationRevisionId": self.configuration_revision_id,
+            "configurationRevisionVersion": self.configuration_revision_version,
+            "configurationRevisionDigest": self.configuration_revision_digest,
+            "resourceLibraryId": self.resource_library_id,
+            "sourceScope": self.source_scope,
+            "definitionItemLimit": self.definition_item_limit,
+            "effectivePrimaryLimit": self.effective_primary_limit,
+            "runMode": self.run_mode,
+            "admissionRequestId": self.admission_request_id,
+        }
+
+    @classmethod
+    def from_document(cls, value: object) -> DefinitionRunOnceOrigin:
+        if not isinstance(value, dict):
+            raise ValueError("definition Run once origin is invalid")
+        return cls(
+            str(value.get("definitionId")),
+            str(value.get("definitionName")),
+            str(value.get("definitionFingerprint")),
+            str(value.get("configurationRevisionId")),
+            int(value.get("configurationRevisionVersion", 0)),
+            str(value.get("configurationRevisionDigest")),
+            str(value.get("resourceLibraryId")),
+            value.get("sourceScope") if isinstance(value.get("sourceScope"), str) else None,
+            int(value.get("definitionItemLimit", 0)),
+            int(value.get("effectivePrimaryLimit", 0)),
+            str(value.get("runMode", "automatic-organization")),
+            (
+                str(value["admissionRequestId"])
+                if isinstance(value.get("admissionRequestId"), str)
+                else None
+            ),
+        )
+
+
+def effective_primary_limit(definition_item_limit: object) -> int:
+    """The smaller of one definition's ceiling and the manual primary bound.
+
+    This is the single authority for the Run-once manifest bound, so no surface
+    can enlarge a manual manifest by raising a definition limit.
+    """
+
+    if (
+        isinstance(definition_item_limit, bool)
+        or not isinstance(definition_item_limit, int)
+        or definition_item_limit < 1
+    ):
+        raise ValueError("definition item limit must be a positive integer")
+    return min(definition_item_limit, MAX_DISCOVERY_PRIMARY_BOUND)
 
 
 class DiscoveryStatus(StrEnum):
@@ -677,6 +819,10 @@ class MediaDiscovery:
     #: and durable, so a lost response can be reconciled against the *actual*
     #: admission instead of being guessed from a rendered binding.
     admission_request_id: str | None = None
+    #: The immutable published-definition context a deliberate Run once was
+    #: admitted for, or ``None`` for an ordinary Files folder/mixed selection.
+    #: It is durable origin evidence only and grants no execution authority.
+    definition_origin: DefinitionRunOnceOrigin | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
@@ -705,6 +851,10 @@ class MediaDiscovery:
             raise ValueError("discovery observation deadline must include timezone")
         if len(self.sources) > self.budgets.max_primary_sources:
             raise ValueError("discovery source list exceeds its admitted bound")
+        if self.definition_origin is not None and not isinstance(
+            self.definition_origin, DefinitionRunOnceOrigin
+        ):
+            raise ValueError("discovery definition origin is invalid")
 
     @property
     def terminal(self) -> bool:
@@ -735,6 +885,9 @@ class MediaDiscovery:
             "primarySourceCount": len(self.sources),
             "sideEffects": "none",
             "admissionRequestId": self.admission_request_id,
+            "definitionOrigin": (
+                self.definition_origin.document() if self.definition_origin is not None else None
+            ),
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
                 if self.next_observation_at is not None
@@ -790,6 +943,11 @@ class MediaDiscovery:
             (
                 str(value["admissionRequestId"])
                 if isinstance(value.get("admissionRequestId"), str)
+                else None
+            ),
+            (
+                DefinitionRunOnceOrigin.from_document(value["definitionOrigin"])
+                if isinstance(value.get("definitionOrigin"), dict)
                 else None
             ),
         )

@@ -25,6 +25,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import { describeAutomationRunMode } from "../../entities/operations/automation";
 
 function displayEnum(value: string): string {
   return value
@@ -181,7 +182,7 @@ export function AutomationPreviewPage() {
               <h3>Scope and counts</h3>
               <dl>
                 <dt>Run mode</dt>
-                <dd>{displayEnum(preview.runMode)}</dd>
+                <dd>{describeAutomationRunMode(preview.runMode)}</dd>
                 <dt>ResourceLibrary</dt>
                 <dd>{preview.resourceLibraryId}</dd>
                 <dt>Source scope</dt>

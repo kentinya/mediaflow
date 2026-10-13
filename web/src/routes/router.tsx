@@ -37,6 +37,7 @@ import { AutomationEditorPage } from "../features/operations/AutomationEditorPag
 import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
 import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
+import { AutomationRunOncePage } from "../features/operations/AutomationRunOncePage";
 import { NotificationListPage } from "../features/operations/NotificationListPage";
 import { NotificationNewPage } from "../features/operations/NotificationNewPage";
 import { NotificationDetailPage } from "../features/operations/NotificationDetailPage";
@@ -262,6 +263,12 @@ const automationOccurrencesRoute = createRoute({
   component: AutomationOccurrencesPage,
 });
 
+const automationRunOnceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/run-once/$discoveryId",
+  component: AutomationRunOncePage,
+});
+
 const notificationListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/notifications",
@@ -357,6 +364,7 @@ const routeTree = rootRoute.addChildren([
   automationLifecycleNewRoute,
   automationPreviewRoute,
   automationOccurrencesRoute,
+  automationRunOnceRoute,
   notificationListRoute,
   notificationNewRoute,
   notificationDefinitionRoute,

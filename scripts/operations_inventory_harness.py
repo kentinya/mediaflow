@@ -1865,6 +1865,70 @@ def seed_authority_refusal(state: AppState) -> dict[str, object]:
     }
 
 
+def run_automation_run_once_worker(state: AppState) -> dict[str, object]:
+    """Advance the admitted definition-bound Run once with the real Worker.
+
+    The API only *admits* the discovery; this route is the resident
+    Processing-Worker boundary that turns it into bounded, metadata-only
+    Storage observations and freezes the manifest.  It never mutates Storage.
+    """
+
+    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+
+    service = getattr(state.api, "_media_discovery", None)
+    if service is None:
+        return {"advanced": False, "reason": "media discovery service is unavailable"}
+    worker = MediaDiscoveryWorker(service, worker_id="harness-discovery-worker")
+    latest = None
+    for _ in range(12):
+        result = worker.run_next()
+        if result is None:
+            break
+        latest = result
+        if result.terminal:
+            break
+    if latest is None:
+        return {"advanced": False, "reason": "no claimable Run-once discovery"}
+    # A freshly written source may legitimately still be inside the configured
+    # stability interval, so the honest durable outcome is reported rather than
+    # forced to a fabricated "completed".
+    return {
+        "advanced": True,
+        "discoveryId": latest.discovery_id,
+        "status": latest.status.value,
+        "primarySourceCount": len(latest.sources),
+    }
+
+
+def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str, object]:
+    """Report the durable Run-once manifest for the browser proof.
+
+    Bounded reads only: the exact frozen source paths and the durable origin.
+    No Storage, Provider or work is touched.
+    """
+
+    service = getattr(state.api, "_media_discovery", None)
+    if service is None or not discovery_id:
+        return {"found": False}
+    try:
+        discovery = service.get(discovery_id)
+    except Exception:
+        return {"found": False}
+    origin = discovery.definition_origin
+    return {
+        "found": True,
+        "discoveryId": discovery.discovery_id,
+        "status": discovery.status.value,
+        "primarySourceCount": len(discovery.sources),
+        "sources": [item.get("path") for item in discovery.sources],
+        "intentId": discovery.intent_id,
+        "frozen": discovery.frozen_at is not None,
+        "definitionId": origin.definition_id if origin is not None else None,
+        "sourceScope": origin.source_scope if origin is not None else None,
+        "effectivePrimaryLimit": (origin.effective_primary_limit if origin is not None else None),
+    }
+
+
 def automation_lifecycle_state(state: AppState) -> dict[str, object]:
     """Report the durable definition/authority state for the lifecycle proof.
 
@@ -2444,6 +2508,12 @@ def application(environ, start_response):
             document = continuation_journey_state(STATE)
         elif path == "/__harness__/automation-lifecycle-state" and method == "GET":
             document = automation_lifecycle_state(STATE)
+        elif path == "/__harness__/run-automation-run-once-worker" and method == "POST":
+            document = run_automation_run_once_worker(STATE)
+        elif path == "/__harness__/automation-run-once-state" and method == "GET":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            discovery_id = (query.get("discoveryId") or [""])[0]
+            document = automation_run_once_state(STATE, discovery_id=discovery_id)
         elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
             document = seed_automation_definition_grant(STATE)
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":

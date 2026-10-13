@@ -33,12 +33,55 @@ import {
   type ActionTransportContract,
 } from "./action-transport";
 
+/**
+ * The single retained Automation definition mode. It is the only value any
+ * form may select or submit; the removed `scan-only` and `scan-and-plan`
+ * modes are not aliases, defaults, fallbacks or choices.
+ */
+export const AUTOMATION_AUTOMATIC_ORGANIZATION_MODE = "automatic-organization";
+
 export const AUTOMATION_RUN_MODES = [
-  "scan-only",
-  "scan-and-plan",
-  "automatic-organization",
+  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
 ] as const;
 export type AutomationRunMode = (typeof AUTOMATION_RUN_MODES)[number];
+
+/**
+ * Definition modes removed by the Contract amendment. Persisted historical
+ * records may still carry them, so a document normalizer accepts them as
+ * recorded text the UI can display as unsupported history. They are never a
+ * legal selectable value, never defaulted to and never converted.
+ */
+export const AUTOMATION_RECORDED_RUN_MODES = [
+  "scan-only",
+  "scan-and-plan",
+] as const;
+export type AutomationRecordedRunMode =
+  (typeof AUTOMATION_RECORDED_RUN_MODES)[number];
+
+/**
+ * A run mode carried by a definition, occurrence or Preview document: the
+ * retained mode, or a recorded historical spelling.
+ */
+export type AutomationDocumentRunMode =
+  AutomationRunMode | AutomationRecordedRunMode;
+
+/** Whether a value is a removed mode that survives only as historical text. */
+export function isRecordedAutomationRunMode(
+  value: string,
+): value is AutomationRecordedRunMode {
+  return (AUTOMATION_RECORDED_RUN_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * The operator-facing text for a recorded run mode. A removed mode is never
+ * converted or hidden: it is displayed with an explicit unsupported-history
+ * marker so no reader mistakes it for a selectable value.
+ */
+export function describeAutomationRunMode(value: string): string {
+  return isRecordedAutomationRunMode(value)
+    ? `${value} (unsupported historical mode)`
+    : value;
+}
 
 export const AUTOMATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
 
@@ -333,6 +376,29 @@ function enumOrFail<T extends readonly string[]>(
 ): T[number] {
   try {
     return normalizeEnum(value, field, allowed);
+  } catch {
+    return fail(field);
+  }
+}
+
+/**
+ * A run mode as carried by a definition, occurrence or Preview document.
+ *
+ * Only the retained mode is a legal value. The removed `scan-only` and
+ * `scan-and-plan` spellings are still accepted when a durable historical
+ * record carries them so a whole old document does not become unreadable; the
+ * raw string is returned so the UI can display it as unsupported history. Any
+ * genuinely unknown value stays malformed, exactly like `enumOrFail`.
+ */
+function runModeOrRecorded(
+  value: unknown,
+  field: string,
+): AutomationDocumentRunMode {
+  try {
+    return normalizeEnum(value, field, [
+      ...AUTOMATION_RUN_MODES,
+      ...AUTOMATION_RECORDED_RUN_MODES,
+    ]);
   } catch {
     return fail(field);
   }
@@ -739,7 +805,7 @@ export interface AutomationOccurrenceModel {
   readonly definitionVersion: number;
   readonly configurationRevisionId: string;
   readonly configurationRevisionVersion: number;
-  readonly runMode: AutomationRunMode;
+  readonly runMode: AutomationDocumentRunMode;
   readonly resourceLibraryId: string;
   readonly sourceScope: string | null;
   readonly itemLimit: number | null;
@@ -792,11 +858,7 @@ export function normalizeAutomationOccurrence(
     definitionVersion: count(source, "definitionVersion"),
     configurationRevisionId: text(source, "configurationRevisionId"),
     configurationRevisionVersion: count(source, "configurationRevisionVersion"),
-    runMode: enumOrFail(
-      source["runMode"],
-      `${field}.runMode`,
-      AUTOMATION_RUN_MODES,
-    ),
+    runMode: runModeOrRecorded(source["runMode"], `${field}.runMode`),
     resourceLibraryId: text(source, "resourceLibraryId"),
     sourceScope: optionalText(source, "sourceScope"),
     itemLimit: optionalCount(source, "itemLimit"),
@@ -823,7 +885,7 @@ export interface AutomationDefinitionDocumentModel {
   readonly name: string;
   readonly enabled: boolean;
   readonly resourceLibraryId: string;
-  readonly mode: AutomationRunMode;
+  readonly mode: AutomationDocumentRunMode;
   readonly itemLimit: number;
   readonly sourceScope: string | null;
   readonly scheduleType: AutomationScheduleType;
@@ -851,7 +913,7 @@ export function normalizeAutomationDefinitionDocument(
     name: text(source, "name"),
     enabled: flag(source, "enabled"),
     resourceLibraryId: text(source, "resourceLibraryId"),
-    mode: enumOrFail(source["mode"], `${field}.mode`, AUTOMATION_RUN_MODES),
+    mode: runModeOrRecorded(source["mode"], `${field}.mode`),
     itemLimit: count(source, "itemLimit"),
     sourceScope: optionalText(source, "sourceScope"),
     scheduleType: intervalSeconds !== null ? "interval" : "cron",
@@ -1153,7 +1215,7 @@ export interface AutomationPreviewModel {
   readonly configurationStatus: string;
   readonly resourceLibraryId: string;
   readonly sourceScope: string | null;
-  readonly runMode: AutomationRunMode;
+  readonly runMode: AutomationDocumentRunMode;
   readonly effectiveItemLimit: number;
   readonly counts: {
     readonly discovered: number;
@@ -1205,11 +1267,7 @@ export function normalizeAutomationPreview(
     configurationStatus: text(source, "configurationStatus"),
     resourceLibraryId: text(source, "resourceLibraryId"),
     sourceScope: optionalText(source, "sourceScope"),
-    runMode: normalizeEnum(
-      source["runMode"],
-      `${field}.runMode`,
-      AUTOMATION_RUN_MODES,
-    ),
+    runMode: runModeOrRecorded(source["runMode"], `${field}.runMode`),
     effectiveItemLimit: count(source, "effectiveItemLimit"),
     counts: {
       discovered: count(rawCounts, "discovered"),

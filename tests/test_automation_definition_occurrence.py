@@ -45,7 +45,7 @@ def definition(
     *,
     resource: str = "resource",
     scope: str | None = "incoming",
-    mode: AutomationTaskRunMode = AutomationTaskRunMode.SCAN_ONLY,
+    mode: AutomationTaskRunMode = AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
     interval: float | None = 60,
     cron: str | None = None,
     timezone: str | None = None,
@@ -123,7 +123,7 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 "revision-1",
                 1,
                 "short",
-                AutomationTaskRunMode.SCAN_ONLY,
+                AutomationTaskRunMode.RECORDED_SCAN_ONLY,
                 "resource",
                 "safe",
                 7,
@@ -134,7 +134,7 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
         cron = definition(
             "cron",
             scope=None,
-            mode=AutomationTaskRunMode.SCAN_AND_PLAN,
+            mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
             cron="30 1 * * *",
             timezone="America/New_York",
             limit=13,
@@ -160,7 +160,7 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 self.assertEqual({item.definition_id for item in emitted}, {"interval", "cron"})
                 by_id = {item.definition_id: item for item in emitted}
                 self.assertEqual(by_id["interval"].limit, 11)
-                self.assertEqual(by_id["cron"].command, AutomationCommand.PREVIEW)
+                self.assertEqual(by_id["cron"].command, AutomationCommand.ORGANIZE)
                 self.assertEqual(by_id["cron"].source_scope, None)
                 for job in emitted:
                     self.assertEqual(job.configuration_snapshot_id, "revision-1")
@@ -343,7 +343,7 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
             enabled=True,
             resource_library_id="resource",
             source_scope=None,
-            mode=AutomationTaskRunMode.SCAN_ONLY,
+            mode="automatic-organization",
             interval_seconds=0,
             cron=None,
             timezone=None,
@@ -394,6 +394,43 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 self.assertIn("backwards", state.last_reason)
                 self.assertEqual(state.next_run_at, due_before_clock_failure)
                 self.assertEqual(due_before_failure, NOW)
+
+    def test_recorded_removed_mode_emits_no_occurrence_and_no_job(self) -> None:
+        """A recorded pre-amendment mode is unsupported, never converted.
+
+        The scheduler records the bounded ``unsupported`` outcome and emits no
+        occurrence and no Job, so the removed mode can never acquire execution
+        authority or a compatible scan/plan executor.
+        """
+
+        recorded = SimpleNamespace(
+            definition_id="recorded",
+            enabled=True,
+            resource_library_id="resource",
+            source_scope=None,
+            mode="scan-only",
+            interval_seconds=60,
+            cron=None,
+            timezone=None,
+            item_limit=7,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                scheduler = IntervalScheduler(
+                    repository,
+                    (),
+                    configuration_snapshot_resolver=lambda: snapshot((recorded,)),
+                )
+                self.assertEqual(scheduler.tick(NOW), ())
+                state = repository.get_automation_definition_due_state("recorded")
+                self.assertEqual(state.last_outcome, "unsupported")
+                self.assertTrue(state.last_next_action)
+                # The recorded occurrence history and the due state stay
+                # readable, but no work was admitted.
+                self.assertEqual(repository.list_automation_definition_occurrences("recorded"), ())
+                self.assertEqual(repository.list_jobs(), ())
+                for table in ("tasks", "task_items", "task_results"):
+                    self.assertEqual(count_rows(repository, table), 0, table)
 
     def test_atomic_failure_restart_and_concurrent_ticks_publish_at_most_one_occurrence(
         self,

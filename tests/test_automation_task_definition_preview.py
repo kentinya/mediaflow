@@ -20,7 +20,7 @@ from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.read_only_storage import ReadOnlyStorageMutationError
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.automation import AutomationTaskDefinition
+from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
 from mediaflow.domain.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewError,
     AutomationTaskDefinitionPreviewItemStatus,
@@ -120,7 +120,7 @@ def _definition(
         "Definition",
         library_id,
         scope,
-        "scan-and-plan",
+        AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
         interval_seconds=60,
         item_limit=limit,
     )
@@ -1141,7 +1141,7 @@ class AutomationTaskDefinitionPreviewApiTests(unittest.TestCase):
                             "id": "task",
                             "name": "Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-and-plan",
+                            "mode": "automatic-organization",
                             "sourceScope": "C",
                             "intervalSeconds": 60,
                             "itemLimit": 5,
@@ -1235,7 +1235,7 @@ class AutomationTaskDefinitionPreviewApiTests(unittest.TestCase):
                             "id": "task",
                             "name": "Task renamed",
                             "resourceLibraryId": "source",
-                            "mode": "scan-and-plan",
+                            "mode": "automatic-organization",
                             "sourceScope": "C",
                             "intervalSeconds": 60,
                             "itemLimit": 5,
@@ -1368,7 +1368,7 @@ class AutomationTaskDefinitionPreviewApiTests(unittest.TestCase):
                             "id": "task",
                             "name": "Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-and-plan",
+                            "mode": "automatic-organization",
                             "sourceScope": "C",
                             "intervalSeconds": 60,
                             "itemLimit": 5,
@@ -1409,7 +1409,7 @@ class AutomationTaskDefinitionPreviewApiTests(unittest.TestCase):
                                     "id": "task",
                                     "name": "Task edited",
                                     "resourceLibraryId": "source",
-                                    "mode": "scan-and-plan",
+                                    "mode": "automatic-organization",
                                     "sourceScope": "C",
                                     "intervalSeconds": 60,
                                     "itemLimit": 5,

@@ -115,7 +115,7 @@ def definition(definition_id: str, **overrides) -> dict:
         "id": definition_id,
         "name": f"Automation {definition_id}",
         "resourceLibraryId": "source",
-        "mode": "scan-only",
+        "mode": "automatic-organization",
         "intervalSeconds": 3600,
         "itemLimit": 10,
     }
@@ -147,7 +147,7 @@ def _occurrence(
         revision_id,
         version,
         digest,
-        AutomationTaskRunMode.SCAN_ONLY,
+        AutomationTaskRunMode.RECORDED_SCAN_ONLY,
         "source",
         None,
         10,
@@ -256,7 +256,7 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertEqual(self.ids(), ["nightly"])
         stored = self.definitions()[0]
         self.assertIs(stored["enabled"], False)
-        self.assertEqual(stored["mode"], "scan-only")
+        self.assertEqual(stored["mode"], "automatic-organization")
         # The previously reviewed configuration semantics are unchanged.
         self.assertEqual(
             revision.document["resourceLibraries"], before.document["resourceLibraries"]
@@ -359,6 +359,38 @@ class AutomationPublicationTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, code)
         self.assert_active_unchanged(before)
         self.assertEqual(self.repository.activations, self.activations_at_baseline)
+
+    def test_removed_modes_are_rejected_by_every_publication_boundary(self) -> None:
+        """A pre-amendment mode can never be published, copied or enabled.
+
+        The former ``scan-only``/``scan-and-plan`` modes are not runnable: each
+        removed spelling and alias is a bounded refusal at create and edit, and
+        no successor revision is activated.
+        """
+
+        self.save(definition("nightly"))
+        before = self.managed.active()
+        for removed in ("scan", "scan-only", "scan_only", "scan-and-plan", "preview"):
+            with self.subTest(removed=removed):
+                with self.assertRaises(AutomationDefinitionSaveError) as caught:
+                    self.save(definition("removed", mode=removed))
+                self.assertEqual(caught.exception.code, "automation_definition_invalid_field")
+                self.assertEqual(caught.exception.durable_state, "active_unchanged")
+                self.assertEqual(caught.exception.side_effects, "none")
+        self.assert_active_unchanged(before)
+        self.assertEqual(self.repository.activations, self.activations_at_baseline + 1)
+
+        # An edit may not smuggle a removed mode into the published definition.
+        with self.assertRaises(AutomationDefinitionSaveError) as caught:
+            self.save({"id": "nightly", "mode": "scan-only"}, object_id="nightly")
+        self.assertEqual(caught.exception.code, "automation_definition_invalid_field")
+        self.assert_active_unchanged(before)
+
+        # The copied successor inherits the retained mode, never a removed one.
+        copied = self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        copied_value = copied.document[AUTOMATION_DEFINITION_SECTION][-1]
+        self.assertEqual(copied_value["mode"], "automatic-organization")
+        self.assertIs(copied_value["enabled"], False)
 
     def test_disabled_resource_library_reference_is_rejected(self) -> None:
         active = self.managed.active()
@@ -685,7 +717,7 @@ class AutomationPublicationTests(unittest.TestCase):
                 "id": "nightly",
                 "name": "Nightly",
                 "resourceLibraryId": "source",
-                "mode": "scan-only",
+                "mode": "automatic-organization",
                 "cron": "0 8 * * *",
                 "timezone": "UTC",
             },
@@ -758,7 +790,7 @@ class AutomationPublicationTests(unittest.TestCase):
             definition(
                 "nightly",
                 name="Published historical name",
-                mode="scan-and-plan",
+                mode="automatic-organization",
                 sourceScope="incoming/season-01",
                 itemLimit=17,
             )
@@ -789,7 +821,7 @@ class AutomationPublicationTests(unittest.TestCase):
             historical = self.commands.historical_definition("nightly", occurrence=occurrence)
         self.assertIsNotNone(historical)
         self.assertEqual(historical["definition"]["name"], "Published historical name")
-        self.assertEqual(historical["definition"]["mode"], "scan-and-plan")
+        self.assertEqual(historical["definition"]["mode"], "automatic-organization")
         self.assertEqual(historical["definition"]["sourceScope"], "incoming/season-01")
         self.assertEqual(historical["definition"]["itemLimit"], 17)
         self.assertEqual(historical["revision"]["revisionId"], active.revision_id)
@@ -1024,7 +1056,7 @@ class AutomationPublicationTests(unittest.TestCase):
             definition(
                 "nightly",
                 name="Published historical name",
-                mode="scan-and-plan",
+                mode="automatic-organization",
                 sourceScope="incoming/season-01",
                 itemLimit=17,
             )
@@ -1278,7 +1310,7 @@ class AutomationPublicationTests(unittest.TestCase):
                 "id": "nightly",
                 "name": "Nightly",
                 "resourceLibraryId": "source",
-                "mode": "scan-only",
+                "mode": "automatic-organization",
                 "intervalSeconds": 60,
             },
             object_id="nightly",

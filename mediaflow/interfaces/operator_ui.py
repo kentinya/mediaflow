@@ -717,7 +717,7 @@ APP_JS = b"""(() => {
       automationTaskDefinitions: [['id', 'ID'], ['name', 'Name'],
         ['resourceLibraryId', 'ResourceLibrary ID'],
         ['sourceScope', 'Source scope path (optional)'],
-        ['mode', 'Run mode (scan_only, scan_and_preview, scan_and_organize)'],
+        ['mode', 'Run mode (automatic-organization)'],
         ['intervalSeconds', 'Interval seconds', 'number'],
         ['cron', 'Cron expression (optional)'],
         ['timezone', 'Timezone (e.g. Asia/Shanghai)'],

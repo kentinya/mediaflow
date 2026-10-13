@@ -262,7 +262,10 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 replace(_job(definition), definition_id="other"),
                 replace(_job(definition), resource_library_id="other"),
                 replace(_job(definition), source_scope="incoming"),
-                replace(_job(definition), run_mode=AutomationTaskRunMode.SCAN_AND_PLAN),
+                replace(
+                    _job(definition),
+                    run_mode=AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
+                ),
                 replace(_job(definition), limit=5),
             )
             for candidate in mismatches:

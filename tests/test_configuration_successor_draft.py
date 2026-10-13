@@ -37,7 +37,7 @@ class SuccessorDraftLifecycleTests(unittest.TestCase):
                 "id": "scan-task",
                 "name": "Scan task",
                 "resourceLibraryId": "source",
-                "mode": "scan_only",
+                "mode": "automatic-organization",
                 "intervalSeconds": 3600,
                 "enabled": True,
             }

@@ -32,30 +32,46 @@ class AutomationCommand(StrEnum):
 class AutomationTaskRunMode(StrEnum):
     """The bounded work intent owned by a managed Automation Task Definition.
 
-    These values intentionally describe the amount of work the definition may
-    request.  They do not select a Provider, policy, destination, or transfer
-    operation; those decisions remain in the normal media pipeline.
+    The user's V2 amendment retains exactly one mode.  These values intentionally
+    describe the amount of work the definition may request; they do not select a
+    Provider, policy, destination, or transfer operation, because those decisions
+    remain in the normal media pipeline.
+
+    ``RECORDED_SCAN_ONLY`` and ``RECORDED_SCAN_AND_PLAN`` are **not** modes.  They
+    exist only so a persisted pre-amendment Job, occurrence, Preview or grant row
+    stays readable as recorded historical data.  They are absent from
+    :meth:`runnable_modes`, rejected by :meth:`parse`, refused by every validation,
+    publication, import and admission boundary, and can never acquire execution
+    authority or a definition-bound executor.
     """
 
-    SCAN_ONLY = "scan-only"
-    SCAN_AND_PLAN = "scan-and-plan"
     AUTOMATIC_ORGANIZATION = "automatic-organization"
+    RECORDED_SCAN_ONLY = "scan-only"
+    RECORDED_SCAN_AND_PLAN = "scan-and-plan"
+
+    @classmethod
+    def runnable_modes(cls) -> tuple[AutomationTaskRunMode, ...]:
+        """The only modes a definition may declare, publish or execute."""
+
+        return (cls.AUTOMATIC_ORGANIZATION,)
+
+    @property
+    def is_runnable(self) -> bool:
+        return self is AutomationTaskRunMode.AUTOMATIC_ORGANIZATION
 
     @classmethod
     def parse(cls, value: object) -> AutomationTaskRunMode:
+        """Validate one *submitted* mode.
+
+        Removed modes and their aliases are refused here, so no validation,
+        publication, import or admission path can accept them.  Reading an
+        already-persisted historical value is a different, explicit operation:
+        :meth:`decode_recorded`.
+        """
+
         if not isinstance(value, str) or not value.strip() or len(value) > 64:
             raise ValueError("Automation Task Definition mode must be bounded text")
         aliases = {
-            "scan": cls.SCAN_ONLY,
-            "scan_only": cls.SCAN_ONLY,
-            "scanonly": cls.SCAN_ONLY,
-            "scanOnly": cls.SCAN_ONLY,
-            "scan-only": cls.SCAN_ONLY,
-            "preview": cls.SCAN_AND_PLAN,
-            "scan_and_plan": cls.SCAN_AND_PLAN,
-            "scanandplan": cls.SCAN_AND_PLAN,
-            "scanAndPlan": cls.SCAN_AND_PLAN,
-            "scan-and-plan": cls.SCAN_AND_PLAN,
             "organize": cls.AUTOMATIC_ORGANIZATION,
             "automatic_organization": cls.AUTOMATIC_ORGANIZATION,
             "automaticorganization": cls.AUTOMATIC_ORGANIZATION,
@@ -66,9 +82,42 @@ class AutomationTaskRunMode(StrEnum):
             return aliases[value.strip().lower()]
         except KeyError as error:
             raise ValueError(
-                "Automation Task Definition mode must be scan-only, scan-and-plan, "
-                "or automatic-organization"
+                "Automation Task Definition mode must be automatic-organization; "
+                "scan-only and scan-and-plan are no longer supported and cannot be "
+                "converted, defaulted or executed"
             ) from error
+
+    @classmethod
+    def decode_recorded(cls, value: object) -> AutomationTaskRunMode:
+        """Decode one *already persisted* value so history stays readable.
+
+        This is deliberately separate from :meth:`parse`: it is the only place a
+        removed spelling is understood, it is used by persistence read-back
+        alone, and the returned member reports ``is_runnable is False``.  No
+        command, validation or execution path may call it to obtain a mode to
+        run.
+        """
+
+        if not isinstance(value, str):
+            raise ValueError("recorded Automation Task Definition mode must be text")
+        recorded = value.strip().lower()
+        if recorded in {
+            "scan",
+            "scan_only",
+            "scanonly",
+            "scanonly".lower(),
+            "scan-only",
+        }:
+            return cls.RECORDED_SCAN_ONLY
+        if recorded in {
+            "preview",
+            "scan_and_plan",
+            "scanandplan",
+            "scanandplan".lower(),
+            "scan-and-plan",
+        }:
+            return cls.RECORDED_SCAN_AND_PLAN
+        return cls.parse(value)
 
 
 # Short aliases make the domain contract discoverable to application adapters
@@ -90,7 +139,7 @@ class AutomationTaskDefinition:
     name: str
     resource_library_id: str
     source_scope: str | None = None
-    mode: AutomationTaskRunMode = AutomationTaskRunMode.SCAN_ONLY
+    mode: AutomationTaskRunMode = AutomationTaskRunMode.AUTOMATIC_ORGANIZATION
     interval_seconds: float | None = None
     cron: str | None = None
     timezone: str | None = None
@@ -128,6 +177,12 @@ class AutomationTaskDefinition:
             raise ValueError("Automation Task Definition ResourceLibrary reference is invalid")
         if not isinstance(self.mode, AutomationTaskRunMode):
             object.__setattr__(self, "mode", AutomationTaskRunMode.parse(self.mode))
+        if not self.mode.is_runnable:
+            raise ValueError(
+                "Automation Task Definition mode must be automatic-organization; "
+                "scan-only and scan-and-plan are no longer supported and cannot be "
+                "converted or executed"
+            )
         normalized_scope = self.normalize_scope(self.source_scope)
         object.__setattr__(self, "source_scope", normalized_scope)
         if not isinstance(self.enabled, bool):
@@ -663,7 +718,9 @@ class AutomationDefinitionOccurrence:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"automation occurrence {label} must be positive")
         if not isinstance(self.run_mode, AutomationTaskRunMode):
-            object.__setattr__(self, "run_mode", AutomationTaskRunMode.parse(self.run_mode))
+            object.__setattr__(
+                self, "run_mode", AutomationTaskRunMode.decode_recorded(self.run_mode)
+            )
         normalized_scope = AutomationTaskDefinition.normalize_scope(self.source_scope)
         object.__setattr__(self, "source_scope", normalized_scope)
         if (

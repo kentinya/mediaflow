@@ -27,7 +27,10 @@ import {
   automationDraftQueryOptions,
 } from "./automation-query";
 import {
+  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
   AUTOMATION_RUN_MODES,
+  isRecordedAutomationRunMode,
+  type AutomationDocumentRunMode,
   type AutomationRunMode,
 } from "../../entities/operations/automation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -40,7 +43,7 @@ interface DefinitionFormState {
   readonly name: string;
   readonly enabled: boolean;
   readonly resourceLibraryId: string;
-  readonly mode: AutomationRunMode;
+  readonly mode: AutomationDocumentRunMode;
   readonly sourceScope: string;
   readonly itemLimit: string;
   readonly scheduleType: "interval" | "cron";
@@ -302,7 +305,13 @@ export function AutomationEditorPage() {
         const formInterval = currentForm?.intervalSeconds ?? "";
         const formCron = currentForm?.cron ?? "";
         const formTimezone = currentForm?.timezone ?? "";
+        // A Draft that still records a removed mode stays readable as
+        // history, but it cannot be saved, validated or activated until the
+        // operator deliberately chooses the retained mode. Nothing is
+        // rewritten silently.
+        const formModeIsSupported = !isRecordedAutomationRunMode(formMode);
         const formValid =
+          formModeIsSupported &&
           formName.trim().length > 0 &&
           formLibrary.length > 0 &&
           /^\d+$/.test(formItemLimit) &&
@@ -434,13 +443,30 @@ export function AutomationEditorPage() {
                   updateForm({ mode: event.target.value as AutomationRunMode })
                 }
               >
-                {" "}
+                {isRecordedAutomationRunMode(formMode) && (
+                  <option value={formMode} disabled>
+                    {formMode} (unsupported historical mode)
+                  </option>
+                )}
                 {AUTOMATION_RUN_MODES.map((mode) => (
                   <option key={mode} value={mode}>
                     {mode}
                   </option>
                 ))}
               </select>
+              {isRecordedAutomationRunMode(formMode) && (
+                <StatusBanner
+                  variant="info"
+                  title="Unsupported historical run mode"
+                >
+                  <p>
+                    This Draft carries the removed mode{" "}
+                    <strong>{formMode}</strong>. It stays visible as history and
+                    is never silently rewritten. Choose{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} before saving.
+                  </p>
+                </StatusBanner>
+              )}
               <p className="mf-label">
                 <label htmlFor="automation-edit-schedule-type">
                   Schedule type
@@ -523,7 +549,11 @@ export function AutomationEditorPage() {
               </Button>
               <Button
                 type="button"
-                disabled={!validate.available || validateMutation.isPending}
+                disabled={
+                  !validate.available ||
+                  !formModeIsSupported ||
+                  validateMutation.isPending
+                }
                 onClick={() => validateMutation.mutate(draft.revisionId)}
               >
                 {validateMutation.isPending
@@ -572,6 +602,7 @@ export function AutomationEditorPage() {
                     type="button"
                     disabled={
                       !confirmActivate ||
+                      !formModeIsSupported ||
                       activateMutation.isPending ||
                       draft.revisionStatus !== "validated"
                     }

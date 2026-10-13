@@ -1814,6 +1814,10 @@ import {
   type AutomationSchedulePreviewModel,
 } from "../../entities/operations/automation-lifecycle";
 import {
+  normalizeAutomationRunOnce,
+  type AutomationRunOnceModel,
+} from "../../entities/operations/run-once";
+import {
   NOTIFICATION_URI_SAFE_SEGMENT,
   normalizeNotificationActivation,
   normalizeNotificationDeliveriesPage,
@@ -7898,4 +7902,185 @@ export async function removeAutomationDefinitionFocused(
     normalizeAutomationPublication,
     fetchImpl,
   );
+}
+
+// --- Definition-bound Run once --------------------------------------------
+
+const AUTOMATION_RUN_ONCE_BASE = "/api/v1/operations/automation/run-once";
+
+export interface AutomationRunOnceReadResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly code: string | null;
+  readonly model?: AutomationRunOnceModel;
+  readonly nextAction?: string | null;
+}
+
+function runOnceFailure(
+  status: number,
+  payload: unknown,
+): AutomationRunOnceReadResult {
+  const failure = discoveryErrorResult(status, payload);
+  return {
+    ok: false,
+    status,
+    code: failure.code,
+    nextAction: failure.nextAction,
+  };
+}
+
+/**
+ * Admit one definition-bound Run once.
+ *
+ * The published definition itself supplies the ResourceLibrary and source
+ * sub-scope, so no file picker and no hand-selected subset is sent. The
+ * response is the prompt durable discovery identity; the bounded walk happens
+ * in the resident Processing Worker. A caller-supplied `admissionRequestId`
+ * lets a lost response reconcile to the actual admission instead of starting a
+ * duplicate run.
+ */
+export async function admitAutomationRunOnce(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly admissionRequestId?: string | null;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationRunOnceReadResult> {
+  if (!isSafeIdentifier(options.definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  const body: Record<string, unknown> = {};
+  if (options.admissionRequestId) {
+    body.admissionRequestId = options.admissionRequestId;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}/run-once`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify(body),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return runOnceFailure(response.status, payload);
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      model: normalizeAutomationRunOnce(payload),
+    };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+    };
+  }
+}
+
+/** Read one durable Run once by its discovery identity. */
+export async function fetchAutomationRunOnce(
+  token: string | null,
+  discoveryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationRunOnceReadResult> {
+  if (!isSafeIdentifier(discoveryId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_RUN_ONCE_BASE}/${encodeURIComponent(discoveryId)}`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return runOnceFailure(response.status, payload);
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      model: normalizeAutomationRunOnce(payload),
+    };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+    };
+  }
+}
+
+/**
+ * Control or freeze one durable Run once.
+ *
+ * Pause/cancel/resume only record a cooperative request the resident Worker
+ * honours at its next safe boundary. Finalize freezes the complete bounded
+ * manifest and creates its exact zero-mutation Preview; a budget/safety-limited
+ * walk is refused instead of being frozen as a truncated prefix.
+ */
+export async function controlAutomationRunOnce(
+  token: string | null,
+  options: {
+    readonly discoveryId: string;
+    readonly action: "pause" | "cancel" | "resume" | "finalize";
+    readonly expectedVersion: number;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  AutomationRunOnceReadResult & { readonly previewId?: string | null }
+> {
+  if (!isSafeIdentifier(options.discoveryId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_RUN_ONCE_BASE}/${encodeURIComponent(options.discoveryId)}/${options.action}`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return runOnceFailure(response.status, payload);
+  try {
+    const model = normalizeAutomationRunOnce(payload);
+    const record = readRecord(payload, "runOnce");
+    const previewId =
+      typeof record["previewId"] === "string" ? record["previewId"] : null;
+    return { ok: true, status: response.status, code: null, model, previewId };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+    };
+  }
 }

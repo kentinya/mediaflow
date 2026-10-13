@@ -14461,7 +14461,10 @@ const server = createServer(async (req, res) => {
         typeof object.resourceLibraryId === "string" && object.resourceLibraryId
           ? object.resourceLibraryId
           : "source",
-      mode: typeof object.mode === "string" ? object.mode : "scan-only",
+      mode:
+        typeof object.mode === "string"
+          ? object.mode
+          : "automatic-organization",
       itemLimit: typeof object.itemLimit === "number" ? object.itemLimit : 100,
       intervalSeconds:
         typeof object.intervalSeconds === "number"

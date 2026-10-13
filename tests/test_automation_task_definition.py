@@ -99,21 +99,21 @@ class AutomationTaskDefinitionDomainTests(unittest.TestCase):
                 "id": "daily",
                 "name": "Daily scan",
                 "resourceLibraryId": "source",
-                "mode": "scan",
+                "mode": "automatic-organization",
                 "sourceScope": "incoming/films",
                 "intervalSeconds": 3600,
                 "itemLimit": 20,
             }
         )
-        self.assertEqual(interval.mode, AutomationTaskRunMode.SCAN_ONLY)
+        self.assertEqual(interval.mode, AutomationTaskRunMode.AUTOMATIC_ORGANIZATION)
         self.assertEqual(interval.source_scope, "incoming/films")
-        self.assertEqual(interval.document()["mode"], "scan-only")
+        self.assertEqual(interval.document()["mode"], "automatic-organization")
         cron = AutomationTaskDefinition.from_document(
             {
                 "id": "morning",
                 "name": "Morning plan",
                 "resourceLibraryId": "source",
-                "mode": "scan-and-plan",
+                "mode": "automatic-organization",
                 "cron": "0 8 * * *",
                 "timezone": "UTC",
             }
@@ -126,7 +126,7 @@ class AutomationTaskDefinitionDomainTests(unittest.TestCase):
             "id": "task",
             "name": "Task",
             "resourceLibraryId": "source",
-            "mode": "scan-only",
+            "mode": "automatic-organization",
             "intervalSeconds": 60,
         }
         for field, value in (
@@ -140,12 +140,73 @@ class AutomationTaskDefinitionDomainTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     AutomationTaskDefinition.from_document(candidate)
 
+    def test_removed_modes_and_aliases_are_rejected_everywhere(self) -> None:
+        # The two pre-amendment modes are not runnable values: submitting any
+        # removed spelling or alias is a bounded refusal, not a conversion.
+        for removed in (
+            "scan",
+            "scan-only",
+            "scan_only",
+            "scanonly",
+            "scanOnly",
+            "scan-and-plan",
+            "scan_and_plan",
+            "scanandplan",
+            "scanAndPlan",
+            "preview",
+        ):
+            with self.subTest(removed=removed):
+                with self.assertRaises(ValueError):
+                    AutomationTaskRunMode.parse(removed)
+                with self.assertRaises(ValueError):
+                    AutomationTaskDefinition.from_document(
+                        {
+                            "id": "task",
+                            "name": "Task",
+                            "resourceLibraryId": "source",
+                            "mode": removed,
+                            "intervalSeconds": 60,
+                        }
+                    )
+        # Only the retained mode is runnable and advertised.
+        self.assertEqual(
+            AutomationTaskRunMode.runnable_modes(),
+            (AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,),
+        )
+        self.assertTrue(AutomationTaskRunMode.AUTOMATIC_ORGANIZATION.is_runnable)
+        self.assertFalse(AutomationTaskRunMode.RECORDED_SCAN_ONLY.is_runnable)
+        self.assertFalse(AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN.is_runnable)
+        # A recorded historical value stays readable, but only through the
+        # explicit read-back decoder and never as a runnable definition.
+        self.assertIs(
+            AutomationTaskRunMode.decode_recorded("scan-only"),
+            AutomationTaskRunMode.RECORDED_SCAN_ONLY,
+        )
+        self.assertIs(
+            AutomationTaskRunMode.decode_recorded("scan-and-plan"),
+            AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
+        )
+        for recorded in (
+            AutomationTaskRunMode.RECORDED_SCAN_ONLY,
+            AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
+        ):
+            with self.subTest(recorded=recorded):
+                with self.assertRaises(ValueError):
+                    AutomationTaskDefinition(
+                        "task",
+                        "Task",
+                        "source",
+                        None,
+                        recorded,
+                        interval_seconds=60,
+                    )
+
     def test_resource_reference_must_exist_and_be_enabled(self) -> None:
         value = {
             "id": "task",
             "name": "Task",
             "resourceLibraryId": "source",
-            "mode": "scan-only",
+            "mode": "automatic-organization",
             "intervalSeconds": 60,
         }
         with self.assertRaisesRegex(ValueError, "unknown ResourceLibrary"):
@@ -251,7 +312,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         "id": "task",
                         "name": "Task",
                         "resourceLibraryId": "source",
-                        "mode": "scan-only",
+                        "mode": "automatic-organization",
                         "intervalSeconds": 60,
                         "itemLimit": 12,
                     },
@@ -265,7 +326,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         "id": "task",
                         "name": "Task edited",
                         "resourceLibraryId": "source",
-                        "mode": "scan-and-plan",
+                        "mode": "automatic-organization",
                         "sourceScope": "incoming/films",
                         "intervalSeconds": 120,
                         "itemLimit": 5,
@@ -311,7 +372,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "task",
                             "name": "must not mutate",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 60,
                         },
                         expected_version=active.version,
@@ -373,7 +434,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "task",
                             "name": "must not mutate",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 60,
                         },
                         expected_version=active.version,
@@ -399,7 +460,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         "id": "first",
                         "name": "First",
                         "resourceLibraryId": "source",
-                        "mode": "scan-only",
+                        "mode": "automatic-organization",
                         "intervalSeconds": 60,
                     },
                     expected_version=draft.version,
@@ -412,7 +473,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         "id": "first",
                         "name": "Concurrent edit",
                         "resourceLibraryId": "source",
-                        "mode": "scan-and-plan",
+                        "mode": "automatic-organization",
                         "intervalSeconds": 90,
                     },
                     expected_version=created.version,
@@ -425,7 +486,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "second",
                             "name": "Second",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 30,
                         },
                         expected_version=created.version,
@@ -473,7 +534,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                         "id": "task",
                         "name": "Task",
                         "resourceLibraryId": "source",
-                        "mode": "scan-only",
+                        "mode": "automatic-organization",
                         "intervalSeconds": 60,
                     },
                     expected_version=reloaded.version,
@@ -544,7 +605,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "api-task",
                             "name": "API Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 30,
                         },
                     },
@@ -596,7 +657,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "api-task",
                             "name": "API Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 30,
                         },
                     },
@@ -618,7 +679,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "api-task",
                             "name": "API Task edited",
                             "resourceLibraryId": "source",
-                            "mode": "scan-and-plan",
+                            "mode": "automatic-organization",
                             "sourceScope": "incoming",
                             "intervalSeconds": 60,
                             "itemLimit": 5,
@@ -673,7 +734,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "cfg-task",
                             "name": "Config Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 45,
                         },
                         "expectedVersion": draft.version,
@@ -693,7 +754,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "cfg-task",
                             "name": "Config Task edited",
                             "resourceLibraryId": "source",
-                            "mode": "scan-and-plan",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 90,
                         },
                         "expectedVersion": draft.version,
@@ -810,7 +871,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                     "id": "api-task",
                     "name": "API Task",
                     "resourceLibraryId": "source",
-                    "mode": "scan-only",
+                    "mode": "automatic-organization",
                     "intervalSeconds": 30,
                 }
 
@@ -951,7 +1012,7 @@ class AutomationTaskDefinitionManagedTests(unittest.TestCase):
                             "id": "task",
                             "name": "Task",
                             "resourceLibraryId": "source",
-                            "mode": "scan-only",
+                            "mode": "automatic-organization",
                             "intervalSeconds": 60,
                         },
                     },

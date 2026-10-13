@@ -75,7 +75,6 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationFailureEvidence,
     AutomationTaskDefinition,
-    AutomationTaskRunMode,
     CronSchedule,
     SchedulerConfigurationSnapshot,
 )
@@ -3635,14 +3634,17 @@ def _continuation_scope(
         )
         if definition is None:
             raise ValueError("paused Definition is absent from the pinned configuration")
-        expected_command = {
-            AutomationTaskRunMode.SCAN_ONLY: AutomationCommand.SCAN,
-            AutomationTaskRunMode.SCAN_AND_PLAN: AutomationCommand.PREVIEW,
-            AutomationTaskRunMode.AUTOMATIC_ORGANIZATION: AutomationCommand.ORGANIZE,
-        }.get(definition.mode)
+        # A paused Definition continuation is only meaningful for the single
+        # retained intent.  A recorded pre-amendment mode has no runnable
+        # command, so its old work stops here instead of continuing through a
+        # compatible scan/plan branch.
+        if not definition.mode.is_runnable:
+            raise ValueError(
+                "paused Definition records an unsupported Automation mode and cannot continue"
+            )
+        expected_command = AutomationCommand.ORGANIZE
         if (
-            expected_command is None
-            or original_job.command is not expected_command
+            original_job.command is not expected_command
             or pinned_task.command != expected_command.value
             or original_job.run_mode is not definition.mode
             or original_job.definition_fingerprint != definition.definition_fingerprint

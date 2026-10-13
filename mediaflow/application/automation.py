@@ -174,7 +174,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 45,
+        runtime_schema_version: int = 46,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -1190,6 +1190,25 @@ class IntervalScheduler:
                     expected_next_run_at=state.next_run_at if state else None,
                 )
                 continue
+            try:
+                mode = _definition_mode(definition)
+            except ValueError:
+                # A recorded pre-amendment mode is unsupported: it emits no
+                # occurrence, acquires no authority and is never converted into
+                # automatic organization.  The durable due state and every
+                # recorded pin/outcome stay readable.
+                self._record_definition_failure(
+                    definition_id,
+                    now=now,
+                    outcome="unsupported",
+                    reason="Automation Task Definition uses a removed run mode",
+                    next_action=(
+                        "remove or correct the unsupported definition configuration; "
+                        "recorded history is preserved"
+                    ),
+                    expected_next_run_at=state.next_run_at if state else None,
+                )
+                continue
             resource_id = _definition_resource_library_id(definition)
             if resource_library_ids and resource_id not in resource_library_ids:
                 self._record_definition_failure(
@@ -1242,7 +1261,6 @@ class IntervalScheduler:
                 )
                 continue
             try:
-                mode = _definition_mode(definition)
                 definition_fingerprint = _definition_fingerprint(definition)
                 source_scope = _definition_source_scope(definition)
                 item_limit = _definition_limit(definition)
@@ -1486,7 +1504,17 @@ def _definition_limit(definition) -> int:
 
 def _definition_mode(definition) -> AutomationTaskRunMode:
     value = getattr(definition, "mode", getattr(definition, "run_mode", None))
-    return value if isinstance(value, AutomationTaskRunMode) else AutomationTaskRunMode.parse(value)
+    if isinstance(value, AutomationTaskRunMode):
+        if not value.is_runnable:
+            raise ValueError(
+                "Automation Task Definition uses the unsupported mode "
+                f"{value.value!r}; only automatic-organization is supported"
+            )
+        return value
+    # A persisted raw value must still be refused when it names a removed mode:
+    # ``parse`` is the submission authority and rejects every removed spelling
+    # and alias.
+    return AutomationTaskRunMode.parse(value)
 
 
 def _definition_schedule(definition) -> tuple[str, float | str, str | None]:
@@ -1528,11 +1556,19 @@ def _definition_fingerprint(definition) -> str:
 
 
 def _command_for_definition_mode(mode: AutomationTaskRunMode) -> AutomationCommand:
-    return {
-        AutomationTaskRunMode.SCAN_ONLY: AutomationCommand.SCAN,
-        AutomationTaskRunMode.SCAN_AND_PLAN: AutomationCommand.PREVIEW,
-        AutomationTaskRunMode.AUTOMATIC_ORGANIZATION: AutomationCommand.ORGANIZE,
-    }[mode]
+    """The one command a runnable definition mode admits.
+
+    A recorded pre-amendment mode has no definition-bound command any more, so
+    asking for one fails closed instead of silently mapping onto a compatible
+    scan/plan executor.
+    """
+
+    if not isinstance(mode, AutomationTaskRunMode) or not mode.is_runnable:
+        raise ValueError(
+            "only automatic-organization definitions have a runnable command; "
+            "scan-only and scan-and-plan are unsupported"
+        )
+    return AutomationCommand.ORGANIZE
 
 
 # Explicit names for callers that want the managed occurrence boundary while

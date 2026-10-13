@@ -963,7 +963,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 45)
+                self.assertEqual(SCHEMA_VERSION, 46)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1140,7 +1140,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 45)
+                self.assertEqual(SCHEMA_VERSION, 46)
                 # The pre-existing admitted intent survived the additive upgrade.
                 intent = repository.get_manual_intent("intent-base")
                 self.assertIsNotNone(intent)
@@ -1319,6 +1319,175 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
             )
             is None
         )
+
+
+class Schema45To46DefinitionOriginUpgradeTests(unittest.TestCase):
+    """The additive 45 -> 46 definition-origin upgrade preserves prior facts.
+
+    Schema 46 adds one nullable ``media_discoveries.definition_origin_json`` and
+    the matching nullable ``operations_run_display`` origin columns.  A
+    prior-schema database therefore gains the columns without changing any
+    existing row's identity, and a legacy discovery simply has no definition
+    origin: reads never backfill one and never invent a definition link.
+    """
+
+    @staticmethod
+    def _rewind_to_schema45(database: Path) -> None:
+        with SQLiteTaskRepository(database) as repository:
+            connection = repository._connection
+            connection.execute("ALTER TABLE media_discoveries DROP COLUMN definition_origin_json")
+            for column in ("origin_definition_id", "origin_definition_name", "origin_kind"):
+                connection.execute(f"ALTER TABLE operations_run_display DROP COLUMN {column}")
+            connection.execute("INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)", (45,))
+            connection.commit()
+
+    def test_schema45_upgrades_additively_without_inventing_a_definition_origin(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-45.sqlite3")
+            # Seed one real admitted discovery under the current shape, then
+            # rewind to the genuine schema-45 shape so the additive DDL is
+            # exercised over a database that still holds durable work.
+            with SQLiteTaskRepository(database) as repository:
+                Schema44To45DiscoveryUpgradeTests._assert_discovery_round_trip(repository)
+            self._rewind_to_schema45(database)
+
+            with sqlite3.connect(database) as connection:
+                self.assertEqual(
+                    45,
+                    connection.execute(
+                        "SELECT version FROM schema_version WHERE component='runtime'"
+                    ).fetchone()[0],
+                )
+                discovery_columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(media_discoveries)").fetchall()
+                }
+                display_columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(operations_run_display)"
+                    ).fetchall()
+                }
+            self.assertNotIn("definition_origin_json", discovery_columns)
+            self.assertNotIn("origin_definition_id", display_columns)
+
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                discovery_columns = {
+                    row[1]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(media_discoveries)"
+                    ).fetchall()
+                }
+                display_columns = {
+                    row[1]
+                    for row in repository._connection.execute(
+                        "PRAGMA table_info(operations_run_display)"
+                    ).fetchall()
+                }
+                self.assertIn("definition_origin_json", discovery_columns)
+                self.assertLessEqual(
+                    {"origin_definition_id", "origin_definition_name", "origin_kind"},
+                    display_columns,
+                )
+                # The pre-existing admission survived and simply carries no
+                # definition origin: nothing is backfilled or guessed.
+                stored = repository.get_media_discovery("discovery-round-trip")
+                self.assertIsNotNone(stored)
+                self.assertIsNone(stored.definition_origin)
+                # The definition-origin lookups are usable and honestly empty.
+                self.assertIsNone(
+                    repository.find_open_definition_run_once(
+                        actor="operator",
+                        definition_id="nightly",
+                        definition_fingerprint="a" * 64,
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                    )
+                )
+                self.assertEqual((), repository.list_definition_run_once_discoveries("nightly"))
+
+    def test_a_recorded_definition_origin_round_trips_after_the_upgrade(self) -> None:
+        from mediaflow.domain.media_discovery import (
+            DefinitionRunOnceOrigin,
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-45-origin.sqlite3")
+            self._rewind_to_schema45(database)
+            now = datetime(2026, 10, 4, tzinfo=UTC)
+            origin = DefinitionRunOnceOrigin(
+                "nightly",
+                "Nightly",
+                "a" * 64,
+                "revision-1",
+                3,
+                "b" * 64,
+                "library-base",
+                "Movies",
+                10,
+                10,
+                "automatic-organization",
+                "11111111-1111-4111-8111-111111111111",
+            )
+            discovery = MediaDiscovery(
+                "discovery-run-once",
+                "operator",
+                "library-base",
+                "storage-base",
+                "revision-1",
+                "b" * 64,
+                DiscoveryStatus.QUEUED,
+                1,
+                DiscoveryBudgets(),
+                DiscoveryProgress(
+                    "queued",
+                    (DiscoveryScopeEntry("Movies", DiscoveryEntryKind.DIRECTORY),),
+                    DiscoveryCounters(),
+                    DiscoveryIncompleteReason.NONE,
+                    (),
+                    (),
+                ),
+                now,
+                now,
+                admission_request_id="11111111-1111-4111-8111-111111111111",
+                definition_origin=origin,
+            )
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_media_discovery(discovery)
+                stored = repository.get_media_discovery("discovery-run-once")
+                self.assertIsNotNone(stored)
+                self.assertEqual(origin, stored.definition_origin)
+                # The durable definition-origin lookups find exactly this run.
+                self.assertEqual(
+                    "discovery-run-once",
+                    repository.find_open_definition_run_once(
+                        actor="operator",
+                        definition_id="nightly",
+                        definition_fingerprint="a" * 64,
+                        snapshot_id="revision-1",
+                        snapshot_digest="b" * 64,
+                    ).discovery_id,
+                )
+                self.assertEqual(
+                    ("discovery-run-once",),
+                    tuple(
+                        value.discovery_id
+                        for value in repository.list_definition_run_once_discoveries("nightly")
+                    ),
+                )
+                # A different definition identity is never matched.
+                self.assertEqual((), repository.list_definition_run_once_discoveries("other"))
 
 
 def _manual_intent(intent_id: str):

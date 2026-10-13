@@ -41,7 +41,7 @@ function formAuthorityPayload(
       },
     ],
     enums: {
-      modes: ["scan-only", "scan-and-plan"],
+      modes: ["automatic-organization"],
       scheduleTypes: ["interval", "cron"],
     },
     limits: {
@@ -69,8 +69,35 @@ describe("normalizeAutomationFormAuthority", () => {
     expect(model.active.revisionId).toBe("rev-1");
     expect(model.active.digest).toHaveLength(64);
     expect(model.resourceLibraries[0]?.id).toBe("source");
-    expect(model.modes).toContain("scan-only");
+    expect(model.modes).toEqual(["automatic-organization"]);
     expect(model.limits.itemLimitMaximum).toBe(10000);
+  });
+
+  it("never offers a removed run mode even when the backend advertises one", () => {
+    // The Contract amendment removed scan-only/scan-and-plan. A stale backend
+    // that still advertises them must not turn them into a selectable choice.
+    const model = normalizeAutomationFormAuthority(
+      formAuthorityPayload({
+        enums: {
+          modes: ["scan-only", "automatic-organization", "scan-and-plan"],
+          scheduleTypes: ["interval", "cron"],
+        },
+      }),
+    );
+    expect(model.modes).toEqual(["automatic-organization"]);
+    expect(model.modes).not.toContain("scan-only");
+    expect(model.modes).not.toContain("scan-and-plan");
+    // A list with no retained mode at all is malformed: no form is offered.
+    expect(() =>
+      normalizeAutomationFormAuthority(
+        formAuthorityPayload({
+          enums: {
+            modes: ["scan-only", "scan-and-plan"],
+            scheduleTypes: ["interval"],
+          },
+        }),
+      ),
+    ).toThrow(AutomationLifecycleNormalizationError);
   });
 
   it("fails closed on unknown enums and malformed collections", () => {
@@ -100,7 +127,7 @@ describe("normalizeAutomationEditProjection", () => {
         name: "Nightly",
         enabled: false,
         resourceLibraryId: "source",
-        mode: "scan-only",
+        mode: "automatic-organization",
         itemLimit: 10,
         sourceScope: null,
         intervalSeconds: 3600,
@@ -145,7 +172,7 @@ describe("normalizeAutomationEditProjection", () => {
         name: "Sub-second",
         enabled: false,
         resourceLibraryId: "source",
-        mode: "scan-only",
+        mode: "automatic-organization",
         itemLimit: 10,
         sourceScope: null,
         intervalSeconds: 1.5,
@@ -267,7 +294,7 @@ describe("normalizeAutomationCopyCandidate", () => {
       name: "Nightly copy",
       enabled,
       resourceLibraryId: "source",
-      mode: "scan-only",
+      mode: "automatic-organization",
       itemLimit: 10,
       sourceScope: null,
       intervalSeconds: 3600,
@@ -299,7 +326,7 @@ describe("normalizeAutomationRemovalImpact", () => {
         id: "nightly",
         name: "Nightly",
         enabled: true,
-        mode: "scan-only",
+        mode: "automatic-organization",
       },
       definitionState: "active",
       references: { total: 0, items: [], truncated: false },
@@ -395,7 +422,7 @@ describe("normalizeAutomationPublication", () => {
       name: "Nightly",
       enabled: false,
       resourceLibraryId: "source",
-      mode: "scan-only",
+      mode: "automatic-organization",
       itemLimit: 10,
       sourceScope: null,
       intervalSeconds: 3600,
@@ -452,7 +479,7 @@ describe("normalizeAutomationPublication", () => {
           name: "N",
           enabled: false,
           resourceLibraryId: "s",
-          mode: "scan-only",
+          mode: "automatic-organization",
           itemLimit: 1,
           sourceScope: null,
           intervalSeconds: 60,

@@ -271,7 +271,7 @@ function draftOnlyDefinitionDocument(
     definitionState: "draft-only",
     enabled: false,
     resourceLibraryId: "source",
-    mode: "scan-and-plan",
+    mode: "automatic-organization",
     itemLimit: 9,
     sourceScope: null,
     intervalSeconds: null,
@@ -904,10 +904,17 @@ describe("V2 Automation journey", () => {
       screen.getByLabelText("ResourceLibrary"),
       "target-library",
     );
-    await user.selectOptions(
-      screen.getByLabelText("Run mode"),
-      "scan-and-plan",
-    );
+    // Automatic organization is the only retained mode: no removed mode is
+    // offered as an option and the select cannot select one.
+    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
+    expect([...modeSelect.options].map((option) => option.value)).toEqual([
+      "automatic-organization",
+    ]);
+    expect(
+      modeSelect.querySelector('option[value="scan-and-plan"]'),
+    ).toBeNull();
+    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
+    await user.selectOptions(modeSelect, "automatic-organization");
     await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
     await user.clear(screen.getByLabelText("Cron expression"));
     await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
@@ -931,12 +938,71 @@ describe("V2 Automation journey", () => {
       object: {
         id: "auto-task",
         resourceLibraryId: "target-library",
-        mode: "scan-and-plan",
+        mode: "automatic-organization",
         intervalSeconds: null,
         cron: "0 8 * * *",
         timezone: "Asia/Shanghai",
       },
     });
+  });
+
+  it("keeps a Draft that records a removed mode unsupported until the operator chooses the retained mode", async () => {
+    // A historical Draft may still carry a removed mode. It stays visible as
+    // unsupported history, is never silently rewritten, and no Save is offered
+    // until the operator deliberately selects the retained mode.
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url.endsWith(
+          "/operations/automation/task-definitions/auto-task/draft",
+        )
+      ) {
+        return jsonResponse(
+          draftDocument({
+            draft: {
+              revisionId: DRAFT_REVISION,
+              revisionVersion: 2,
+              revisionStatus: "draft",
+              baseActiveRevisionId: ACTIVE_REVISION,
+              updatedAt: "2026-01-01T00:00:00+00:00",
+              validatedAt: null,
+              validationErrors: [],
+              definition: {
+                id: "auto-task",
+                name: "Nightly automation",
+                enabled: true,
+                resourceLibraryId: "source",
+                mode: "scan-and-plan",
+                itemLimit: 12,
+                sourceScope: null,
+                intervalSeconds: 3600,
+                cron: null,
+                timezone: null,
+              },
+            },
+          }),
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation/editor/auto-task");
+
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    expect(screen.getByText(/Unsupported historical run mode/)).toBeVisible();
+    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
+    expect(modeSelect.value).toBe("scan-and-plan");
+    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save into Draft" }),
+    ).toBeDisabled();
+    await user.selectOptions(modeSelect, "automatic-organization");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save into Draft" }),
+      ).toBeEnabled(),
+    );
+    expect(calls.some((item) => item.method === "PUT")).toBe(false);
   });
 
   it("reports a stale Draft save without replaying the mutation", async () => {
@@ -1026,7 +1092,7 @@ describe("V2 Automation journey", () => {
               name: "Created automation",
               enabled: false,
               resourceLibraryId: "source",
-              mode: "scan-and-plan",
+              mode: "automatic-organization",
               itemLimit: 9,
               sourceScope: null,
               intervalSeconds: null,
@@ -1089,10 +1155,21 @@ describe("V2 Automation journey", () => {
       screen.getByLabelText("ResourceLibrary"),
       "source",
     );
-    await user.selectOptions(
-      screen.getByLabelText("Run mode"),
-      "scan-and-plan",
+    // The create form offers only the retained mode; no removed mode exists as
+    // a selectable value.
+    const createModeSelect = screen.getByLabelText(
+      "Run mode",
+    ) as HTMLSelectElement;
+    expect([...createModeSelect.options].map((option) => option.value)).toEqual(
+      ["automatic-organization"],
     );
+    expect(
+      createModeSelect.querySelector('option[value="scan-and-plan"]'),
+    ).toBeNull();
+    expect(
+      createModeSelect.querySelector('option[value="scan-only"]'),
+    ).toBeNull();
+    await user.selectOptions(createModeSelect, "automatic-organization");
     await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
     await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
     await user.type(screen.getByLabelText("Timezone"), "UTC");

@@ -257,9 +257,23 @@ class OperationsRunOverview:
     attention: bool = False
     configuration_snapshot_id: str | None = None
     worker_id: str | None = None
+    #: The durable *manual definition origin* recorded with the admission, or
+    #: ``None`` for an ordinary Files/CLI run.  It is immutable admission
+    #: evidence: reads never derive it from today's Active configuration, and it
+    #: lets Automation history and Operations reach the same Run-once execution
+    #: without a dummy Job or a second queue.
+    origin_definition_id: str | None = None
+    origin_definition_name: str | None = None
+    origin_kind: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attention", self.status in ATTENTION_RUN_STATUSES)
+
+    @property
+    def manual_definition_origin(self) -> bool:
+        """Whether this run was a deliberate definition-bound Run once."""
+
+        return bool(self.origin_definition_id) and self.trigger is OperationsRunTrigger.MANUAL
 
 
 # -- Selected-run detail: progress, items and operation records (RO-3) -------

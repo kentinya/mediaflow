@@ -96,7 +96,7 @@ function formAuthority() {
       },
     ],
     enums: {
-      modes: ["scan-only", "scan-and-plan", "automatic-organization"],
+      modes: ["automatic-organization"],
       scheduleTypes: ["interval", "cron"],
     },
     limits: {
@@ -123,7 +123,7 @@ function definition(overrides: Record<string, unknown> = {}) {
     name: "Nightly",
     enabled: false,
     resourceLibraryId: "source",
-    mode: "scan-only",
+    mode: "automatic-organization",
     itemLimit: 10,
     sourceScope: null,
     intervalSeconds: 3600,
@@ -148,7 +148,7 @@ function removalImpact() {
       id: "nightly",
       name: "Nightly",
       enabled: false,
-      mode: "scan-only",
+      mode: "automatic-organization",
     },
     definitionState: "active",
     references: { total: 0, items: [], truncated: false },
@@ -207,6 +207,16 @@ describe("AutomationLifecyclePage", () => {
     await screen.findByRole("heading", {
       name: "Create Automation definition",
     });
+    // Automatic organization is the only retained mode: the create form never
+    // offers a removed mode as a choice.
+    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
+    expect([...modeSelect.options].map((option) => option.value)).toEqual([
+      "automatic-organization",
+    ]);
+    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
+    expect(
+      modeSelect.querySelector('option[value="scan-and-plan"]'),
+    ).toBeNull();
     await userEvent.type(screen.getByLabelText("Definition ID"), "nightly");
     await userEvent.type(screen.getByLabelText("Name"), "Nightly");
     await userEvent.selectOptions(

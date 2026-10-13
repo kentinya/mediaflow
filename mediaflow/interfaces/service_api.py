@@ -17,6 +17,10 @@ from mediaflow.application.automation import AutomationJobService, ProcessingWor
 from mediaflow.application.automation_definition_occurrence import (
     AutomationDefinitionOccurrenceService,
 )
+from mediaflow.application.automation_run_once import (
+    AutomationRunOnceError,
+    AutomationRunOnceService,
+)
 from mediaflow.application.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewService,
 )
@@ -388,6 +392,7 @@ class MediaFlowApi:
         manual_recovery_service: ManualRecoveryContinuationService | None = None,
         manual_scan_service: ManualScanService | None = None,
         media_discovery_service=None,
+        automation_run_once_service=None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
@@ -458,6 +463,21 @@ class MediaFlowApi:
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
                 ),
+            )
+        # Definition-bound Run once composes the existing bounded discovery, the
+        # existing manual intent admission and the existing exact Preview.  It
+        # adds no second queue, no dummy Job and no mutation authority: only the
+        # separate explicit execution confirmation can reach OrganizerExecutor.
+        self._automation_run_once = automation_run_once_service
+        if (
+            self._automation_run_once is None
+            and self._media_discovery is not None
+            and self._manual_intents is not None
+        ):
+            self._automation_run_once = AutomationRunOnceService(
+                self._media_discovery,
+                self._manual_intents,
+                self._manual_previews,
             )
         self._configuration_objects = (
             ConfigurationObjectService(
@@ -2666,6 +2686,76 @@ class MediaFlowApi:
                 return self._discovery_step_error(start_response, error)
             return self._response(
                 start_response, 201, self._discovery_document(value, principal, binding)
+            )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "automation", "task-definitions"]
+            and parts[6] == "run-once"
+            and method in {"GET", "POST"}
+        ):
+            # Definition-bound Run once on the V2 operator surface.  The POST
+            # admits (or reconciles) one durable discovery derived from the
+            # *published definition's own* ResourceLibrary/sub-scope; the GET
+            # reads it back.  Neither the browser nor the URL supplies the
+            # manifest, so no file picker and no hand-selected subset is
+            # involved, and no execution authority is created here.
+            return self._automation_run_once_projection(
+                parts[5], method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "GET"
+        ):
+            # The bounded list of this principal's own definition-bound Run
+            # once admissions, so a reload or reconnect restores every durable
+            # run without re-walking sources.
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "automation Run once list")
+            service = getattr(self, "_automation_run_once", None)
+            if service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "definition Run once is unavailable",
+                )
+            values = service.list(actor=principal.principal_id, limit=50)
+            items = []
+            for value in values:
+                if value.definition_origin is None:
+                    continue
+                items.append(service.document(value))
+            return self._response(
+                start_response,
+                200,
+                {
+                    "journey": "automation-run-once",
+                    "items": items,
+                    "total": len(items),
+                    "limit": 50,
+                    "sideEffects": "none",
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "GET"
+        ):
+            return self._automation_run_once_detail_projection(
+                parts[5], None, method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "POST"
+            and parts[6] in {"pause", "cancel", "resume", "finalize"}
+        ):
+            return self._automation_run_once_detail_projection(
+                parts[5], parts[6], method, environ, start_response, principal
             )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -13368,6 +13458,33 @@ class MediaFlowApi:
                 ),
                 "nextAction": "revoke the grant when its exact bounds are no longer wanted",
             },
+            "runOnce": {
+                # Definition-bound Run once.  The backend derives the manifest
+                # from the published definition's own ResourceLibrary/sub-scope,
+                # so no file picker is involved.  A *disabled* published schedule
+                # is explicitly runnable once; a Draft-only definition is not.
+                "available": dry_run and in_active,
+                "reason": (
+                    not_active_reason
+                    if not in_active
+                    else self._organize_unavailable_reason(
+                        dry_run,
+                        ApiPermission.SUBMIT_DRY_RUN,
+                        "the connected API principal cannot start a zero-mutation Run once",
+                    )
+                ),
+                "method": "POST",
+                "path": f"/api/v1/operations/automation/task-definitions/{definition_id}/run-once",
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a durable bounded discovery of the definition scope is admitted; it "
+                    "freezes a complete manifest and stores an exact zero-mutation Preview"
+                ),
+                "nextAction": (
+                    "start Run once, review the exact Preview of the frozen manifest, then "
+                    "separately confirm execution"
+                ),
+            },
             "copy": {
                 "available": manage and draft_present,
                 "reason": (
@@ -14627,6 +14744,20 @@ class MediaFlowApi:
             "attention": overview.attention,
             "configuration_snapshot_id": overview.configuration_snapshot_id,
             "worker_id": overview.worker_id,
+            # The durable *manual* definition origin of a deliberate Run once,
+            # or absent for an ordinary Files/CLI run.  It is admission-written
+            # immutable evidence, so Automation history and Operations can reach
+            # the same durable execution without a dummy Job or a read-time
+            # guess from today's Active configuration.
+            "manualDefinitionOrigin": (
+                {
+                    "kind": overview.origin_kind or "definition-run-once",
+                    "definitionId": overview.origin_definition_id,
+                    "definitionName": overview.origin_definition_name,
+                }
+                if overview.origin_definition_id
+                else None
+            ),
             "sideEffects": "none",
         }
         return redact_manual_value(document)
@@ -14685,6 +14816,167 @@ class MediaFlowApi:
             return self._automation_definition_operator_preview_items(
                 parts[5], parts[7], environ, start_response
             )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _automation_run_once_projection(
+        self,
+        definition_id: str,
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Definition-bound Run once: prompt durable admission and readback.
+
+        The published definition itself supplies the ResourceLibrary and source
+        sub-scope, so the operator never re-selects files.  The POST returns the
+        durable discovery identity promptly; the actual bounded walk happens in
+        the resident Processing Worker.  No execution authority is created here:
+        the frozen manifest still needs its exact Preview and a separate explicit
+        confirmation.
+        """
+
+        service = getattr(self, "_automation_run_once", None)
+        if service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "definition Run once is unavailable",
+                details={
+                    "durableState": "no_work_started",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "restore the bounded discovery service and retry Run once",
+                },
+            )
+        if method == "POST":
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            self._require_empty_query(environ, "automation definition Run once")
+            document = self._document(environ)
+            if set(document).difference({"admissionRequestId"}):
+                raise ValueError(
+                    "automation definition Run once accepts only an optional admissionRequestId"
+                )
+            request_id = document.get("admissionRequestId")
+            if request_id is not None and (
+                not isinstance(request_id, str) or not request_id.strip()
+            ):
+                raise ValueError(
+                    "automation definition Run once admissionRequestId must be text or null"
+                )
+            try:
+                discovery = service.admit(
+                    definition_id,
+                    actor=principal.principal_id,
+                    admission_request_id=request_id,
+                )
+                return self._response(start_response, 202, service.document(discovery))
+            except (AutomationRunOnceError, DiscoveryError) as error:
+                return self._discovery_step_error(start_response, error)
+        self._require(principal, ApiPermission.READ)
+        self._require_empty_query(environ, "automation definition Run once detail")
+        try:
+            discovery = service.get(definition_id)
+            return self._response(start_response, 200, service.document(discovery))
+        except (AutomationRunOnceError, DiscoveryError) as error:
+            return self._discovery_step_error(start_response, error)
+
+    def _automation_run_once_detail_projection(
+        self,
+        discovery_id: str,
+        action: str | None,
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Read, control or freeze one durable definition-bound Run once.
+
+        The durable identity is the discovery id the admission returned, so a
+        reload or reconnect restores the same run without re-walking sources.
+        Freezing produces the exact zero-mutation Preview and still creates no
+        execution authority.
+        """
+
+        service = getattr(self, "_automation_run_once", None)
+        if service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "definition Run once is unavailable",
+                details={
+                    "durableState": "no_work_started",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "restore the bounded discovery service and retry Run once",
+                },
+            )
+        discovery_service = getattr(self, "_media_discovery", None)
+        if action is None and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "automation Run once detail")
+            try:
+                discovery = service.get(discovery_id)
+                return self._response(start_response, 200, service.document(discovery))
+            except (AutomationRunOnceError, DiscoveryError) as error:
+                return self._discovery_step_error(start_response, error)
+        if action in {"pause", "cancel", "resume"} and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "automation Run once control")
+            if discovery_service is None:
+                return self._discovery_unavailable(start_response)
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError("automation Run once control requires only expectedVersion")
+            try:
+                if action == "pause":
+                    value = discovery_service.request_pause(
+                        discovery_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                elif action == "cancel":
+                    value = discovery_service.request_cancel(
+                        discovery_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                else:
+                    value = discovery_service.resume(
+                        discovery_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                return self._response(start_response, 200, service.document(value))
+            except (AutomationRunOnceError, DiscoveryError) as error:
+                return self._discovery_step_error(start_response, error)
+        if action == "finalize" and method == "POST":
+            # Freeze the complete bounded manifest and create its exact
+            # zero-mutation Preview.  A budget/safety-limited walk is refused
+            # here rather than executed as a truncated prefix.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "automation Run once finalize")
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError("automation Run once finalize requires only expectedVersion")
+            try:
+                frozen, preview = service.finalize(
+                    discovery_id,
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
+            except (AutomationRunOnceError, DiscoveryError) as error:
+                return self._discovery_step_error(start_response, error)
+            payload = service.document(frozen)
+            payload["preview"] = self._automation_preview_document(preview)
+            payload["previewId"] = preview.preview_id
+            payload["intentId"] = preview.intent_id
+            payload["previewPath"] = (
+                f"/operations/automation/run-once/{discovery_id}/preview/{preview.preview_id}"
+            )
+            return self._response(start_response, 201, payload)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _automation_definition_focused_projection(
@@ -14878,6 +15170,35 @@ class MediaFlowApi:
                     expected_version=expected_version,
                     expected_digest=expected_digest,
                 ),
+            )
+        if len(parts) == 7 and parts[6] == "run-once":
+            # Definition-bound Run once on the focused lifecycle base.  The
+            # published definition itself supplies the ResourceLibrary and
+            # source sub-scope, so no file selection is sent and no execution
+            # authority is created: the frozen manifest still needs its exact
+            # Preview and a separate explicit confirmation.
+            if method not in {"GET", "POST"}:
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET or POST required"
+                )
+            return self._automation_run_once_projection(
+                definition_id, method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 8
+            and parts[6] == "run-once"
+            and parts[7]
+            in {
+                "pause",
+                "cancel",
+                "resume",
+                "finalize",
+            }
+        ):
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            return self._automation_run_once_detail_projection(
+                parts[5], parts[7], method, environ, start_response, principal
             )
         if len(parts) == 7 and parts[6] == "removal-impact":
             if method != "GET":
@@ -15661,6 +15982,15 @@ class MediaFlowApi:
             cursor,
         )
         page, has_previous, has_next = self._page_window(values, limit, cursor)
+        items = [
+            self._automation_occurrence_operator_document(item)
+            for item in self._automation_occurrences.project_occurrences(page)
+        ]
+        # Definition-bound Run once admissions are durable *manual* runs of this
+        # same definition.  They are published in the same history next to the
+        # scheduled occurrences, distinguished by their explicit trigger, and
+        # they are never counted as scheduled occurrences.
+        items.extend(self._automation_run_once_history(definition_id))
         return self._response(
             start_response,
             200,
@@ -15668,10 +15998,7 @@ class MediaFlowApi:
                 "definitionId": definition_id,
                 "historicalState": "removed" if historical else None,
                 "activeConfiguration": self._automation_active_configuration(active),
-                "items": [
-                    self._automation_occurrence_operator_document(item)
-                    for item in self._automation_occurrences.project_occurrences(page)
-                ],
+                "items": items,
                 "limit": limit,
                 "truncated": has_next,
                 "previous_cursor": self._page_cursor(
@@ -15690,6 +16017,35 @@ class MediaFlowApi:
                 ),
             },
         )
+
+    def _automation_run_once_history(self, definition_id: str) -> list[dict[str, object]]:
+        """Bounded durable manual Run once entries for one definition's history.
+
+        Each entry is the *actual* admitted manual run, read from its durable
+        definition origin.  It is distinguished from a scheduled occurrence by
+        its explicit ``manual`` trigger and it never claims a schedule
+        occurrence, so the definition's history counts each run once.
+        """
+
+        service = getattr(self, "_automation_run_once", None)
+        reader = getattr(self._repository, "list_definition_run_once_discoveries", None)
+        if service is None or not callable(reader):
+            return []
+        try:
+            values = reader(definition_id, limit=50)
+        except Exception:
+            return []
+        items: list[dict[str, object]] = []
+        for value in values:
+            try:
+                document = service.document(value)
+            except Exception:
+                continue
+            document["trigger"] = "manual"
+            document["occurrenceId"] = None
+            document["jobId"] = None
+            items.append(document)
+        return items
 
     def _automation_definition_operator_preview(
         self,

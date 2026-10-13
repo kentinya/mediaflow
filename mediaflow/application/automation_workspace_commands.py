@@ -104,7 +104,7 @@ AUTOMATION_DEFINITION_FORM_DEFAULTS: dict[str, object] = {
     "enabled": False,
     "resourceLibraryId": "",
     "sourceScope": None,
-    "mode": AutomationTaskRunMode.SCAN_ONLY.value,
+    "mode": AutomationTaskRunMode.AUTOMATIC_ORGANIZATION.value,
     "itemLimit": 100,
     "intervalSeconds": 3600.0,
     "cron": None,
@@ -301,7 +301,9 @@ class AutomationWorkspaceCommandService:
             "defaults": copy.deepcopy(AUTOMATION_DEFINITION_FORM_DEFAULTS),
             "resourceLibraries": resource_libraries,
             "enums": {
-                "modes": [item.value for item in AutomationTaskRunMode],
+                # The single retained mode.  A removed mode or alias is not
+                # advertised, so a form can never offer one as a legal choice.
+                "modes": [item.value for item in AutomationTaskRunMode.runnable_modes()],
                 "scheduleTypes": ["interval", "cron"],
             },
             "limits": {

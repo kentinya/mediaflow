@@ -73,7 +73,7 @@ def _definition(definition_id: str = "nightly", **overrides) -> dict:
         "id": definition_id,
         "name": f"Automation {definition_id}",
         "resourceLibraryId": "source",
-        "mode": "scan-only",
+        "mode": "automatic-organization",
         "intervalSeconds": 3600,
         "itemLimit": 10,
     }
@@ -180,7 +180,8 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(body["active"]["revisionId"], self.managed.active().revision_id)
         self.assertIn("resourceLibraryId", body["fields"])
         self.assertEqual(body["resourceLibraries"][0]["id"], "source")
-        self.assertIn("scan-only", body["enums"]["modes"])
+        # The only retained mode is advertised; removed modes are absent.
+        self.assertEqual(body["enums"]["modes"], ["automatic-organization"])
         self.assertEqual(body["actions"]["remove"], True)
 
     def test_edit_and_removal_projections_are_read_only(self) -> None:
@@ -394,7 +395,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             self.assertEqual(detail["definition"]["historicalState"], "removed")
             self.assertEqual(detail["definition"]["name"], "Retained historical name")
             self.assertEqual(detail["definition"]["id"], "nightly")
-            self.assertEqual(detail["definition"]["mode"], "scan-and-plan")
+            self.assertEqual(detail["definition"]["mode"], "automatic-organization")
             self.assertEqual(detail["definition"]["sourceScope"], "incoming/series")
             self.assertEqual(detail["definition"]["itemLimit"], 23)
             status, occurrences = self.request("GET", routes[1])
@@ -415,7 +416,7 @@ class AutomationLifecycleApiTests(unittest.TestCase):
                 **self.authority(),
                 "object": _definition(
                     name="Retained historical name",
-                    mode="scan-and-plan",
+                    mode="automatic-organization",
                     sourceScope="incoming/series",
                     itemLimit=23,
                 ),
@@ -1198,7 +1199,13 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         for candidate, expected in (
             ({**_definition("a"), "sourceScope": "../escape"}, 400),
             ({**_definition("b"), "itemLimit": 10_001}, 400),
+            # The legacy ``runMode`` alias is not a typed-form field.
             ({**_definition("c"), "runMode": "scan-only"}, 400),
+            # Each removed mode spelling is refused as a submitted value.
+            ({**_definition("c1"), "mode": "scan-only"}, 400),
+            ({**_definition("c2"), "mode": "scan-and-plan"}, 400),
+            ({**_definition("c3"), "mode": "scan"}, 400),
+            ({**_definition("c4"), "mode": "preview"}, 400),
             ({**_definition("d", enabled=True)}, 409),
             ({**_definition("e"), "resourceLibraryId": "missing"}, 409),
         ):

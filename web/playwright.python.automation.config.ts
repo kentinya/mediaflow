@@ -16,6 +16,12 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  // Both Automation specs drive one real Python harness and one Active
+  // configuration. Playwright parallelizes across *files* even when
+  // `fullyParallel` is false, so a second browser worker would publish
+  // definitions and admit discoveries against the first worker's harness.
+  // One worker keeps the assigned single invocation deterministic.
+  workers: 1,
   forbidOnly: true,
   reporter: [["list"]],
   use: {

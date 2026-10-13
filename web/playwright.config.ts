@@ -12,6 +12,7 @@ export default defineConfig({
     "**/operations-inventory.python.spec.ts",
     "**/operations-principal-identity.python.spec.ts",
     "**/automation-lifecycle.python.spec.ts",
+    "**/automation-run-once.python.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: true,

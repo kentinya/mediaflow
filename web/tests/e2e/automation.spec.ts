@@ -204,9 +204,9 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
 
   const name = page.getByLabel("Name");
   await name.fill("Renamed nightly automation");
-  // Every owned definition field is editable: run mode and the exact
-  // schedule form transition from interval to Cron/timezone.
-  await page.getByLabel("Run mode").selectOption("scan-and-plan");
+  // Every owned definition field is editable: the single retained run mode
+  // and the exact schedule form transition from interval to Cron/timezone.
+  await page.getByLabel("Run mode").selectOption("automatic-organization");
   await page.getByLabel("Schedule type").selectOption("cron");
   await page.getByLabel("Cron expression").fill("0 8 * * *");
   await page.getByLabel("Timezone").fill("Asia/Shanghai");
@@ -240,7 +240,7 @@ test("the Draft journey composes successor Draft, bounded save, validation and c
     object: {
       name: "Renamed nightly automation",
       id: DEFINITION_ID,
-      mode: "scan-and-plan",
+      mode: "automatic-organization",
       intervalSeconds: null,
       cron: "0 8 * * *",
       timezone: "Asia/Shanghai",
@@ -267,7 +267,7 @@ test("the legacy create deep link keeps a new definition recoverable until activ
   await page.getByRole("button", { name: "Start successor Draft" }).click();
   await page.getByLabel("Name").fill("Created automation");
   await page.getByLabel("ResourceLibrary").selectOption("source");
-  await page.getByLabel("Run mode").selectOption("scan-and-plan");
+  await page.getByLabel("Run mode").selectOption("automatic-organization");
   await page.getByLabel("Schedule type").selectOption("cron");
   await page.getByLabel("Cron expression").fill("0 8 * * *");
   await page.getByLabel("Timezone").fill("UTC");

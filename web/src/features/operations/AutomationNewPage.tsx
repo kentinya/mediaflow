@@ -26,6 +26,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import {
+  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
+  AUTOMATION_RUN_MODES,
+  type AutomationRunMode,
+} from "../../entities/operations/automation";
 
 export function AutomationNewPage() {
   const token = useAuthToken();
@@ -35,7 +40,9 @@ export function AutomationNewPage() {
   const [enabled, setEnabled] = useState(false);
   const [resourceLibraryId, setResourceLibraryId] = useState("");
   const [sourceScope, setSourceScope] = useState("");
-  const [mode, setMode] = useState("scan-only");
+  const [mode, setMode] = useState<AutomationRunMode>(
+    AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
+  );
   const [itemLimit, setItemLimit] = useState("100");
   const [scheduleType, setScheduleType] = useState<"interval" | "cron">(
     "interval",
@@ -249,14 +256,20 @@ export function AutomationNewPage() {
               <select
                 id="automation-mode"
                 value={mode}
-                onChange={(event) => setMode(event.target.value)}
+                onChange={(event) =>
+                  setMode(event.target.value as AutomationRunMode)
+                }
               >
-                <option value="scan-only">scan-only</option>
-                <option value="scan-and-plan">scan-and-plan</option>
-                <option value="automatic-organization">
-                  automatic-organization
-                </option>
+                {AUTOMATION_RUN_MODES.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
               </select>
+              <p className="mf-dashboard-meta">
+                Automatic organization is the only supported mode. Removed modes
+                are never offered.
+              </p>
               <p className="mf-label">
                 <label htmlFor="automation-limit">Item limit</label>
               </p>

@@ -24,9 +24,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken, useAuthGeneration } from "../../shared/api/auth-context";
+import { newRequestId } from "../../shared/api/request-id";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
+  admitAutomationRunOnce,
   copyAutomationDefinitionFocused,
   createAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
@@ -42,7 +44,10 @@ import {
 } from "../../shared/api/api-client";
 import { automationListQueryKey } from "./automation-query";
 import {
+  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
   AUTOMATION_RUN_MODES,
+  isRecordedAutomationRunMode,
+  type AutomationDocumentRunMode,
   type AutomationRunMode,
 } from "../../entities/operations/automation";
 import type { AutomationEditProjectionModel } from "../../entities/operations/automation-lifecycle";
@@ -56,7 +61,7 @@ interface FormState {
   readonly name: string;
   readonly enabled: boolean;
   readonly resourceLibraryId: string;
-  readonly mode: AutomationRunMode;
+  readonly mode: AutomationDocumentRunMode;
   readonly sourceScope: string;
   readonly itemLimit: string;
   readonly scheduleType: "interval" | "cron";
@@ -70,7 +75,7 @@ const NEW_FORM: FormState = {
   name: "",
   enabled: false,
   resourceLibraryId: "",
-  mode: "scan-only",
+  mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
   sourceScope: "",
   itemLimit: "100",
   scheduleType: "interval",
@@ -155,6 +160,10 @@ function formIsValid(form: FormState, editing: boolean): boolean {
   const intervalValue = Number(form.intervalSeconds);
   return (
     (editing || form.id.trim().length > 0) &&
+    // A definition that still records a removed mode stays readable as
+    // history, but it cannot be published: the operator must deliberately
+    // choose the retained mode first. Nothing is rewritten silently.
+    !isRecordedAutomationRunMode(form.mode) &&
     form.name.trim().length > 0 &&
     form.resourceLibraryId.length > 0 &&
     /^\d+$/.test(form.itemLimit) &&
@@ -650,6 +659,33 @@ export function AutomationLifecyclePage() {
     refetchOnWindowFocus: false,
   });
 
+  // Definition-bound Run once.  The published definition itself supplies the
+  // ResourceLibrary and source sub-scope, so this action sends no file
+  // selection: the backend discovers and freezes the complete bounded manifest.
+  // It never enables the schedule, grants authority or mutates Storage.
+  const runOnceMutation = useMutation({
+    mutationFn: (id: string) =>
+      admitAutomationRunOnce(token, {
+        definitionId: id,
+        admissionRequestId: newRequestId(),
+      }),
+    retry: false,
+    onMutate: () => setError(null),
+    onSuccess: (result, id) => {
+      if (!result.ok || result.model === undefined) {
+        setError(
+          `Run once was rejected (${result.code ?? "unknown"}). ${result.nextAction ?? "Reload the current state and review the definition bounds."}`,
+        );
+        return;
+      }
+      void navigate({
+        to: "/operations/automation/run-once/$discoveryId",
+        params: { discoveryId: result.model.discoveryId },
+      });
+      void id;
+    },
+  });
+
   const copyCandidateQuery = useQuery({
     queryKey: ["operations.automation-lifecycle-copy", definitionId ?? ""],
     queryFn: () => fetchAutomationCopyCandidate(token, definitionId ?? ""),
@@ -948,12 +984,31 @@ export function AutomationLifecyclePage() {
                   update({ mode: event.target.value as AutomationRunMode })
                 }
               >
+                {isRecordedAutomationRunMode(currentForm.mode) && (
+                  <option value={currentForm.mode} disabled>
+                    {currentForm.mode} (unsupported historical mode)
+                  </option>
+                )}
                 {AUTOMATION_RUN_MODES.map((mode) => (
                   <option key={mode} value={mode}>
                     {mode}
                   </option>
                 ))}
               </select>
+              {isRecordedAutomationRunMode(currentForm.mode) && (
+                <StatusBanner
+                  variant="info"
+                  title="Unsupported historical run mode"
+                >
+                  <p>
+                    This definition records the removed mode{" "}
+                    <strong>{currentForm.mode}</strong>. It is displayed as
+                    history only and is never selectable. Choose{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} before saving;
+                    nothing is rewritten automatically.
+                  </p>
+                </StatusBanner>
+              )}
               <p className="mf-label">
                 <label htmlFor="lifecycle-limit">Item limit</label>
               </p>
@@ -1144,6 +1199,13 @@ export function AutomationLifecyclePage() {
               <section className="mf-count-section">
                 <h3>Lifecycle actions</h3>
                 <div className="mf-actions">
+                  <Button
+                    type="button"
+                    disabled={runOnceMutation.isPending}
+                    onClick={() => runOnceMutation.mutate(routeTargetId)}
+                  >
+                    {runOnceMutation.isPending ? "Starting..." : "运行一次"}
+                  </Button>
                   <Button
                     type="button"
                     disabled={!canManage || toggleMutation.isPending}

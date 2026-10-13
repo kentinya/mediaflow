@@ -109,7 +109,7 @@ def _definition(
     definition_id: str = "definition",
     *,
     scope: str | None = "incoming",
-    mode: AutomationTaskRunMode = AutomationTaskRunMode.SCAN_ONLY,
+    mode: AutomationTaskRunMode = AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
     limit: int = 10,
     enabled: bool = True,
 ) -> AutomationTaskDefinition:
@@ -172,6 +172,38 @@ class _DisabledPinnedDefinition(AutomationTaskDefinition):
         return self._original_fingerprint
 
 
+class _RecordedModePinnedDefinition(AutomationTaskDefinition):
+    """A historical pinned definition whose recorded mode is no longer runnable.
+
+    A pre-amendment row can no longer be constructed as a runnable definition, so
+    this test-only subclass simulates the persisted record: every field is the
+    original runnable definition's except ``mode``, which reports the recorded
+    non-runnable member while the original fingerprint is retained.
+    """
+
+    def __init__(self, original: AutomationTaskDefinition, recorded) -> None:
+        super().__init__(
+            original.definition_id,
+            original.name,
+            original.resource_library_id,
+            original.source_scope,
+            original.mode,
+            original.interval_seconds,
+            original.cron,
+            original.timezone,
+            original.item_limit,
+            original.enabled,
+        )
+        # ``mode`` is an ordinary frozen-dataclass field, so this simulates the
+        # persisted pre-amendment value without a runnable-mode conversion.
+        object.__setattr__(self, "mode", recorded)
+        object.__setattr__(self, "_original_fingerprint", original.definition_fingerprint)
+
+    @property
+    def definition_fingerprint(self) -> str:
+        return self._original_fingerprint
+
+
 class DefinitionScopedExecutionTests(unittest.TestCase):
     def _configuration(
         self,
@@ -182,6 +214,8 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         strategy=None,
         version: int = 1,
     ) -> RuntimeConfiguration:
+        from mediaflow.domain.security import ApiPrincipalDefinition, ApiRole
+
         source = root / "source"
         target = root / "target"
         (source / "Media").mkdir(parents=True, exist_ok=True)
@@ -204,6 +238,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 str(root / "history.jsonl"),
                 str(root / "runtime.sqlite3"),
                 automation_task_definitions=(definition,),
+                # The production Worker re-reads the granting principal's current
+                # permission at each mutation boundary, so the fixture must carry
+                # the admin principal the grant was created for.
+                api_principals=(
+                    ApiPrincipalDefinition("admin", "UNUSED_TOKEN_ENV", (ApiRole.ADMIN,)),
+                ),
             ),
             snapshot_id=SNAPSHOT_ID,
             digest=SNAPSHOT_DIGEST,
@@ -229,6 +269,24 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
         return source, target, factory
 
+    def _writable_storage_factory(self, configuration):
+        """Real local Storage so an authorized automatic run can actually mutate."""
+
+        values = {
+            "source": LocalStorage("source", configuration.storage_definitions[0].root_path),
+            "target": LocalStorage("target", configuration.storage_definitions[1].root_path),
+        }
+
+        def factory(external=None, storage_ids=None):
+            selected = values
+            if storage_ids is not None:
+                selected = {key: value for key, value in values.items() if key in storage_ids}
+            if external:
+                selected = {**selected, **external}
+            return selected
+
+        return factory
+
     def _service(
         self,
         repository,
@@ -240,7 +298,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
     ):
         def provider_factory(provider_ids):
             if provider is None:
-                raise AssertionError("the scan-only handoff must not construct a Provider")
+                raise AssertionError("the definition handoff must not construct a Provider")
             self.assertEqual(tuple(provider_ids), ("tmdb",))
             return MetadataProviderRegistry((provider,))
 
@@ -254,6 +312,70 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             history_factory=JsonLinesOperationHistoryRepository,
             unattended_grant_service=unattended_grant_service,
         )
+
+    @staticmethod
+    def _persisted_preview(repository, definition, job):
+        """Persist one exact zero-mutation Preview for the real Worker path."""
+
+        from mediaflow.domain.automation_task_definition_preview import (
+            AutomationTaskDefinitionPreview,
+        )
+
+        preview = AutomationTaskDefinitionPreview(
+            f"preview-{definition.definition_id}",
+            definition.definition_id,
+            definition.definition_fingerprint,
+            job.configuration_snapshot_id,
+            job.configuration_snapshot_version,
+            job.configuration_snapshot_digest,
+            "active",
+            definition.resource_library_id,
+            "source",
+            definition.source_scope,
+            definition.mode.value,
+            definition.item_limit,
+            {
+                "discovered": 0,
+                "selected": 0,
+                "permitted": 0,
+                "excludedIgnored": 0,
+                "unstable": 0,
+                "truncatedByLimit": 0,
+            },
+            AutomationTaskDefinitionPreviewStatus.PREVIEWED,
+            (),
+            "admin",
+            NOW,
+            NOW,
+        )
+        repository.create_automation_task_definition_preview(preview)
+        return preview
+
+    @staticmethod
+    def _grant(repository, definition, job):
+        """Grant the exact unattended authority an automatic definition needs.
+
+        The grant is bound to a *persisted* exact Preview, exactly like the
+        production grant admission, so the real Worker path can re-read it.
+        """
+
+        from mediaflow.final_cli import _PersistedPreviewReader
+
+        preview = DefinitionScopedExecutionTests._persisted_preview(repository, definition, job)
+        grant_service = UnattendedExecutionGrantService(
+            repository, preview_service=_PersistedPreviewReader(repository)
+        )
+        grant_service.grant(
+            definition,
+            configuration_snapshot_id=job.configuration_snapshot_id,
+            configuration_snapshot_digest=job.configuration_snapshot_digest,
+            configuration_snapshot_version=job.configuration_snapshot_version,
+            actor="admin",
+            confirmation=True,
+            preview_id=preview.preview_id,
+            storage_id="source",
+        )
+        return grant_service
 
     @staticmethod
     def _emit(repository, definition):
@@ -273,65 +395,80 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             lambda job, cancelled: service.run(job, cancelled),
         ).run_next()
 
-    def test_scan_only_is_scoped_bounded_dry_and_reloadable(self) -> None:
+    def test_authorized_automatic_organization_is_scoped_bounded_and_reloadable(self) -> None:
+        """The retained mode honors scope, item limit and durable read-back.
+
+        Authorized automatic organization processes exactly one selected item in
+        the definition sub-scope, never a sibling or a file above the
+        ResourceLibrary root, and the Task/occurrence survive a reload.
+        """
+
         definition = _definition(limit=1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source"
             incoming = source / "Media" / "incoming"
+            selected = incoming / "A"
             sibling = source / "Media" / "sibling"
-            incoming.mkdir(parents=True)
+            selected.mkdir(parents=True)
             sibling.mkdir()
-            (incoming / "first.mkv").write_bytes(b"first")
-            (incoming / "second.mkv").write_bytes(b"second")
+            (selected / "Alpha.Movie.2024.mkv").write_bytes(b"first")
+            (selected / "Bravo.Movie.2024.mkv").write_bytes(b"second")
             (sibling / "not-selected.mkv").write_bytes(b"sibling")
             (source / "above-root.mkv").write_bytes(b"outside")
-            before_source = _tree(source)
-
             configuration = self._configuration(root, definition)
-            source_guard, target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
+            storage_factory = self._writable_storage_factory(configuration)
+            provider = SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "movie-alpha",
+                        MediaType.MOVIE,
+                        "Alpha Movie",
+                        year=2024,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
             )
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
-                service = self._service(repository, file_index, configuration, storage_factory)
-                finished = self._run(repository, service)
+                grant_service = self._grant(repository, definition, job)
+                finished = self._run(
+                    repository,
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        provider,
+                        grant_service,
+                    ),
+                )
                 self.assertIsNotNone(finished)
                 self.assertEqual(finished.status, AutomationJobStatus.COMPLETED)
                 self.assertIsNotNone(finished.task_id)
                 task = repository.get_task(finished.task_id)
-                self.assertIsNotNone(task)
-                self.assertEqual(
-                    task.status,
-                    PersistentTaskStatus.COMPLETED,
-                    (
-                        task,
-                        repository.list_items(task.task_id),
-                        repository.list_results(task.task_id),
-                    ),
-                )
+                self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
                 self.assertEqual(task.scope_path, "Media/incoming")
                 self.assertEqual(task.item_limit, 1)
                 items = repository.list_items(task.task_id)
+                # The item ceiling bounds selected work: only one of the two
+                # in-scope files is admitted.
                 self.assertEqual(len(items), 1)
-                self.assertEqual(items[0].source_path, "Media/incoming/first.mkv")
-                self.assertEqual(items[0].status, TaskItemStatus.SKIPPED)
-                self.assertEqual(repository.list_results(task.task_id), ())
-                self.assertNotIn(
-                    "Media/sibling/not-selected.mkv", {item.source_path for item in items}
+                self.assertEqual(
+                    {item.source_path for item in items},
+                    {"Media/incoming/A/Alpha.Movie.2024.mkv"},
                 )
-                self.assertNotIn("above-root.mkv", {item.source_path for item in items})
-
                 occurrence = repository.get_latest_automation_definition_occurrence(
                     definition.definition_id
                 )
                 self.assertEqual(occurrence.job_id, job.job_id)
                 self.assertEqual(occurrence.task_id, task.task_id)
                 self.assertEqual(occurrence.outcome, "completed")
-                self.assertIsNone(occurrence.failure_category)
             with SQLiteTaskRepository(configuration.database_path) as reopened:
                 task = reopened.get_task(finished.task_id)
                 occurrence = reopened.get_latest_automation_definition_occurrence(
@@ -340,6 +477,100 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(task.status, PersistentTaskStatus.COMPLETED)
                 self.assertEqual(occurrence.task_id, finished.task_id)
                 self.assertEqual(occurrence.outcome, "completed")
+            # The sibling and the file above the ResourceLibrary root were never
+            # selected, so they are untouched.
+            self.assertTrue((sibling / "not-selected.mkv").exists())
+            self.assertTrue((source / "above-root.mkv").exists())
+
+    def test_recorded_scan_only_mode_is_rejected_without_any_task_or_mutation(self) -> None:
+        """A pinned pre-amendment ``scan-only`` Job stops safely at this boundary.
+
+        The former scan-only handoff no longer exists: the service refuses the
+        recorded mode with the bounded ``unsupported_definition_mode`` failure
+        before any Storage, Provider, strategy, history or Task construction, so
+        an old queued Job can never be converted into a compatible scan executor.
+        """
+
+        definition = _definition(limit=1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            incoming = source / "Media" / "incoming"
+            incoming.mkdir(parents=True)
+            (incoming / "first.mkv").write_bytes(b"first")
+            (source / "above-root.mkv").write_bytes(b"outside")
+            before_source = _tree(source)
+
+            configuration = self._configuration(root, definition)
+            source_guard, target_guard, storage_factory = self._guarded_storage_factory(
+                configuration
+            )
+            counts = {"storage": 0, "provider": 0, "strategy": 0, "history": 0}
+
+            def guarded_storage_factory(*, storage_ids=None, external=None):
+                counts["storage"] += 1
+                raise AssertionError("a recorded removed mode constructed Storage")
+
+            def guarded_provider_factory(_provider_ids):
+                counts["provider"] += 1
+                raise AssertionError("a recorded removed mode constructed a Provider")
+
+            def guarded_strategy_factory(*_args, **_kwargs):
+                counts["strategy"] += 1
+                raise AssertionError("a recorded removed mode constructed a strategy")
+
+            def guarded_history_factory(_path):
+                counts["history"] += 1
+                raise AssertionError("a recorded removed mode constructed history")
+
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                job = self._emit(repository, definition)
+                recorded = _RecordedModePinnedDefinition(
+                    definition, AutomationTaskRunMode.RECORDED_SCAN_ONLY
+                )
+                drifted = replace(configuration, automation_task_definitions=(recorded,))
+                service = DefinitionScopedExecutionService(
+                    repository,
+                    object(),
+                    drifted,
+                    storage_factory=guarded_storage_factory,
+                    provider_factory=guarded_provider_factory,
+                    strategy_factory=guarded_strategy_factory,
+                    history_factory=guarded_history_factory,
+                )
+                with patch(
+                    "mediaflow.application.automation_definition_execution.OrganizerExecutor",
+                    side_effect=AssertionError("a recorded removed mode constructed an executor"),
+                ):
+                    finished = self._run(repository, service)
+                self.assertIsNotNone(finished)
+                self.assertEqual(finished.status, AutomationJobStatus.FAILED)
+                self.assertEqual(finished.failure_category, "unsupported_definition_mode")
+                self.assertEqual(finished.failure_side_effects, "none")
+                self.assertFalse(finished.failure_retry_safe)
+                self.assertTrue(finished.failure_next_action)
+                self.assertIsNone(finished.task_id)
+                self.assertEqual(counts, {key: 0 for key in counts})
+                self.assertEqual(repository.list_tasks(), ())
+                occurrence = repository.get_latest_automation_definition_occurrence(
+                    definition.definition_id
+                )
+                self.assertEqual(occurrence.job_id, job.job_id)
+                # This pre-work fail-closed refusal is a *blocked* occurrence
+                # exactly like ``definition_invalid``/``definition_pin_mismatch``:
+                # the definition is unsupported, not the runtime broken, and no
+                # Task or Storage effect ever existed.
+                self.assertEqual(occurrence.outcome, "blocked")
+                self.assertEqual(occurrence.failure_category, "unsupported_definition_mode")
+                self.assertIsNone(occurrence.task_id)
+            with SQLiteTaskRepository(configuration.database_path) as reopened:
+                self.assertEqual(reopened.list_tasks(), ())
+                self.assertEqual(
+                    reopened.get_latest_automation_definition_occurrence(
+                        definition.definition_id
+                    ).outcome,
+                    "blocked",
+                )
 
             self.assertEqual(_tree(source), before_source)
             self.assertEqual(
@@ -356,7 +587,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         from mediaflow.application.task_runtime import PersistentTaskCoordinator
 
         definition = _definition(
-            "relative-worker", scope="C", mode=AutomationTaskRunMode.SCAN_AND_PLAN, limit=2
+            "relative-worker", scope="C", mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION, limit=2
         )
         candidate = MediaCandidate(
             "tmdb",
@@ -641,17 +872,23 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             (media / "nested" / "nested.mkv").write_bytes(b"nested")
             (root / "source" / "parent.mkv").write_bytes(b"parent")
             configuration = self._configuration(root, definition)
-            source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
-            )
+            storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
-                self._emit(repository, definition)
+                job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 finished = self._run(
                     repository,
-                    self._service(repository, file_index, configuration, storage_factory),
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        SyntheticMetadataProvider(()),
+                        grant_service,
+                    ),
                 )
                 task = repository.get_task(finished.task_id)
                 self.assertEqual(task.scope_path, "Media")
@@ -659,10 +896,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     {item.source_path for item in repository.list_items(task.task_id)},
                     {"Media/root.mkv", "Media/nested/nested.mkv"},
                 )
-            self.assertEqual(source_guard.mutation_calls["Move"], 0)
+            # Files outside the ResourceLibrary root are never selected; the
+            # unselected parent remains untouched.
+            self.assertTrue((root / "source" / "parent.mkv").exists())
 
     def test_scan_and_plan_preserves_mixed_recognition_types_and_c(self) -> None:
-        definition = _definition(mode=AutomationTaskRunMode.SCAN_AND_PLAN)
+        definition = _definition(mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION)
         candidates = (
             MediaCandidate(
                 "tmdb",
@@ -697,14 +936,13 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 (path / filename).write_bytes(recognition_type.encode())
             before_source = _tree(root / "source")
             configuration = self._configuration(root, definition)
-            source_guard, target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
-            )
+            storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
-                self._emit(repository, definition)
+                job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 finished = self._run(
                     repository,
                     self._service(
@@ -713,6 +951,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         configuration,
                         storage_factory,
                         provider,
+                        grant_service,
                     ),
                 )
                 self.assertEqual(finished.status, AutomationJobStatus.COMPLETED)
@@ -739,7 +978,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 }
                 for filename, policies in expected.items():
                     result = by_source[filename]
-                    self.assertEqual(result.status, TaskItemStatus.DRY_RUN.value)
+                    self.assertEqual(result.status, TaskItemStatus.SUCCESS.value)
                     self.assertEqual(
                         (
                             result.recognition_type,
@@ -751,12 +990,24 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     )
                     self.assertEqual(result.organize_policy_id, policies[3])
                     self.assertEqual(result.operation, "MOVE")
-            self.assertEqual(_tree(root / "source"), before_source)
-            self.assertEqual(source_guard.mutation_calls["Move"], 0)
-            self.assertEqual(target_guard.mutation_calls["Move"], 0)
+            # Authorized automatic organization performs the real Move and the
+            # source media files are gone from the incoming scope.
+            self.assertFalse(
+                (root / "source" / "Media" / "incoming" / "A" / "Alpha.Movie.2024.mkv").exists()
+            )
+            self.assertFalse(
+                (
+                    root / "source" / "Media" / "incoming" / "B" / "Bravo.Show.2024.S01E01.mkv"
+                ).exists()
+            )
+            self.assertFalse(
+                (root / "source" / "Media" / "incoming" / "C" / "Charlie.Movie.2024.mkv").exists()
+            )
+            self.assertNotEqual(_tree(root / "source"), before_source)
+            self.assertEqual(len(list((root / "target").rglob("*.mkv"))), 3)
 
     def test_per_item_failure_does_not_hide_successful_sibling(self) -> None:
-        definition = _definition(mode=AutomationTaskRunMode.SCAN_AND_PLAN)
+        definition = _definition(mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION)
         provider = SyntheticMetadataProvider(
             (
                 MediaCandidate(
@@ -778,14 +1029,13 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             (incoming / "C" / "Charlie.Movie.2024.mkv").write_bytes(b"good")
             (incoming / "unknown" / "Unrecognized.Movie.2024.mkv").write_bytes(b"unknown")
             configuration = self._configuration(root, definition)
-            _source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
-            )
+            storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
-                self._emit(repository, definition)
+                job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 finished = self._run(
                     repository,
                     self._service(
@@ -794,6 +1044,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         configuration,
                         storage_factory,
                         provider,
+                        grant_service,
                     ),
                 )
                 task = repository.get_task(finished.task_id)
@@ -802,7 +1053,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     Path(item.source_path).name: item
                     for item in repository.list_items(task.task_id)
                 }
-                self.assertEqual(items["Charlie.Movie.2024.mkv"].status, TaskItemStatus.DRY_RUN)
+                self.assertEqual(items["Charlie.Movie.2024.mkv"].status, TaskItemStatus.SUCCESS)
                 self.assertEqual(
                     items["Unrecognized.Movie.2024.mkv"].status,
                     TaskItemStatus.WAITING_RECOGNITION,
@@ -810,7 +1061,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(len(repository.list_results(task.task_id)), 1)
 
     def test_post_task_failure_marks_job_occurrence_and_notification_failed(self) -> None:
-        definition = _definition("post-task-failure", mode=AutomationTaskRunMode.SCAN_AND_PLAN)
+        definition = _definition(
+            "post-task-failure", mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source" / "Media" / "incoming").mkdir(parents=True)
@@ -827,7 +1080,8 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
-                self._emit(repository, definition)
+                job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 service = DefinitionScopedExecutionService(
                     repository,
                     file_index,
@@ -838,6 +1092,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     ),
                     strategy_factory=fail_strategy,
                     history_factory=JsonLinesOperationHistoryRepository,
+                    unattended_grant_service=grant_service,
                 )
                 finished = AutomationWorker(
                     repository,
@@ -2256,10 +2511,18 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     SQLiteTaskRepository(configuration.database_path) as repository,
                     SQLiteFileIndexRepository(configuration.database_path) as file_index,
                 ):
-                    self._emit(repository, definition)
+                    job = self._emit(repository, definition)
+                    grant_service = self._grant(repository, definition, job)
                     finished = self._run(
                         repository,
-                        self._service(repository, file_index, configuration, storage_factory),
+                        self._service(
+                            repository,
+                            file_index,
+                            configuration,
+                            storage_factory,
+                            SyntheticMetadataProvider(()),
+                            grant_service,
+                        ),
                     )
                     self.assertEqual(finished.failure_category, category)
                     self.assertEqual(repository.list_tasks(), ())
@@ -2301,15 +2564,26 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 job = self._emit(repository, definition)
+                self._grant(repository, definition, job)
                 calls = []
 
                 def resolve(_path, **kwargs):
+                    if not kwargs:
+                        # The production permission authority re-reads the
+                        # current configuration without a snapshot pin.
+                        return configuration
                     calls.append(kwargs)
                     self.assertEqual(kwargs["snapshot_id"], job.configuration_snapshot_id)
                     self.assertEqual(kwargs["snapshot_digest"], job.configuration_snapshot_digest)
                     return configuration
 
-                with patch("mediaflow.final_cli._configuration", side_effect=resolve):
+                with (
+                    patch("mediaflow.final_cli._configuration", side_effect=resolve),
+                    patch(
+                        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                        return_value=MetadataProviderRegistry((SyntheticMetadataProvider(()),)),
+                    ),
+                ):
                     finished = AutomationWorker(
                         repository,
                         lambda candidate, cancelled: _run_queued_workflow(
@@ -2368,7 +2642,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertNotIn("linked Task", state["nextAction"])
 
     def test_cancellation_preserves_completed_item_and_occurrence_evidence(self) -> None:
-        definition = _definition("cancel", mode=AutomationTaskRunMode.SCAN_AND_PLAN)
+        definition = _definition("cancel", mode=AutomationTaskRunMode.AUTOMATIC_ORGANIZATION)
         candidate = MediaCandidate(
             "tmdb",
             "movie-c",
@@ -2385,14 +2659,13 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             (incoming / "Charlie.Movie.2024.mkv").write_bytes(b"one")
             (incoming / "Charlie.Movie.2025.mkv").write_bytes(b"two")
             configuration = self._configuration(root, definition)
-            _source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
-            )
+            storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 cancellation_requested = False
 
                 class CancellingProvider(SyntheticMetadataProvider):
@@ -2410,6 +2683,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration,
                     storage_factory,
                     CancellingProvider((candidate,)),
+                    grant_service,
                 )
                 finished = self._run(repository, service)
                 self.assertEqual(finished.status, AutomationJobStatus.CANCELLED)
@@ -2422,7 +2696,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(task.status, PersistentTaskStatus.CANCELLED)
                 items = repository.list_items(task.task_id)
                 self.assertEqual(len(items), 1)
-                self.assertEqual(items[0].status, TaskItemStatus.DRY_RUN)
+                self.assertEqual(items[0].status, TaskItemStatus.SUCCESS)
                 occurrence = repository.get_latest_automation_definition_occurrence(
                     definition.definition_id
                 )
@@ -2446,20 +2720,40 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         definition = _definition("api")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "source" / "Media" / "incoming").mkdir(parents=True)
-            (root / "source" / "Media" / "incoming" / "one.mkv").write_bytes(b"one")
-            configuration = self._configuration(root, definition)
-            _source_guard, _target_guard, storage_factory = self._guarded_storage_factory(
-                configuration
+            (root / "source" / "Media" / "incoming" / "A").mkdir(parents=True)
+            (root / "source" / "Media" / "incoming" / "A" / "Alpha.Movie.2024.mkv").write_bytes(
+                b"one"
             )
+            configuration = self._configuration(root, definition)
+            storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
                 SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
-                self._emit(repository, definition)
+                job = self._emit(repository, definition)
+                grant_service = self._grant(repository, definition, job)
                 self._run(
                     repository,
-                    self._service(repository, file_index, configuration, storage_factory),
+                    self._service(
+                        repository,
+                        file_index,
+                        configuration,
+                        storage_factory,
+                        SyntheticMetadataProvider(
+                            (
+                                MediaCandidate(
+                                    "tmdb",
+                                    "movie-alpha",
+                                    MediaType.MOVIE,
+                                    "Alpha Movie",
+                                    year=2024,
+                                    genres=("Animation",),
+                                    countries=("JP",),
+                                ),
+                            )
+                        ),
+                        grant_service,
+                    ),
                 )
                 api = self._api(repository, (definition,))
                 before_audit = repository._connection.execute(

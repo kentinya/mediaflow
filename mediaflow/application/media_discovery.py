@@ -44,6 +44,7 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
+from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
     occurrence_id_for,
@@ -57,6 +58,7 @@ from mediaflow.domain.media_discovery import (
     BUDGET_LIMITED_REASONS,
     MAX_DISCOVERY_REFUSALS,
     MAX_DISCOVERY_TEXT_LENGTH,
+    DefinitionRunOnceOrigin,
     DiscoveryBudgets,
     DiscoveryConflict,
     DiscoveryCounters,
@@ -80,6 +82,7 @@ from mediaflow.domain.media_discovery import (
     discovery_budget_limited,
     discovery_material_refusal,
     discovery_scope_signature,
+    effective_primary_limit,
     is_settlement_status,
 )
 from mediaflow.domain.organizer import StorageLocation
@@ -352,13 +355,282 @@ class MediaDiscoveryService:
                 return winner
             raise
 
+    def admit_definition_run_once(
+        self,
+        *,
+        definition_id: str,
+        actor: str,
+        admission_request_id: str | None = None,
+    ) -> MediaDiscovery:
+        """Admit one definition-bound Run once without a file picker.
+
+        The saved published definition already identifies its ResourceLibrary and
+        source sub-scope, so the backend derives the complete admitted scope from
+        that definition instead of a browser selection.  The immutable Active pin
+        is resolved *here*, so a stale rendered definition cannot silently
+        re-pin today's Active.
+
+        The whole scope is the ResourceLibrary root or the definition's safe
+        relative sub-scope; the manifest bound is the smaller of the definition
+        item ceiling and the existing manual primary bound.  A definition whose
+        ceiling exceeds that bound is refused up front rather than silently
+        truncated, because a first-N prefix is never a complete manifest.
+        """
+
+        actor = self._actor(actor)
+        admission_request_id = self._admission_request_id(admission_request_id)
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise DiscoveryError(
+                "Run once requires one published Automation definition",
+                code="malformed_selection",
+                next_action="open an existing published definition and choose Run once",
+            )
+        if admission_request_id is not None:
+            requested = self._reconcile_admission_request(
+                actor,
+                admission_request_id,
+                resource_library_id=None,
+                submitted_paths=None,
+                definition_id=definition_id,
+            )
+            if requested is not None:
+                return requested
+        snapshot_id, snapshot_digest = self._active_pin()
+        runtime = self._load_runtime(snapshot_id, snapshot_digest)
+        definition = self._runtime_definition(runtime, definition_id)
+        if not definition.mode.is_runnable:
+            raise DiscoveryError(
+                "this definition records a removed Automation mode and cannot be run once",
+                code="unsupported_definition_mode",
+                status=409,
+                next_action=(
+                    "remove or correct the unsupported definition configuration; recorded "
+                    "history and completed outcomes are preserved"
+                ),
+            )
+        bound = effective_primary_limit(definition.item_limit)
+        if definition.item_limit > bound:
+            # min(definition ceiling, manual bound) is always the manual bound
+            # here, so the definition's own ceiling can never be honoured in
+            # full.  Refusing is the only truthful outcome: freezing the first
+            # ``bound`` sources would silently execute a truncated prefix.
+            raise DiscoveryError(
+                "the definition item ceiling exceeds the bounded manual/discovery "
+                f"manifest limit of {bound}, so a complete Run-once manifest cannot be proved",
+                code="discovery_overflow",
+                status=409,
+                next_action=(
+                    "narrow the definition sourceScope or lower its itemLimit to at most "
+                    f"{bound}, publish it, then start Run once again"
+                ),
+                details={
+                    "definitionItemLimit": definition.item_limit,
+                    "effectivePrimaryLimit": bound,
+                },
+            )
+        library = self._runtime_library(runtime, definition.resource_library_id)
+        storage = self._guarded_storage(runtime, library.storage_id)
+        scope_entry = DiscoveryScopeEntry(
+            definition.source_scope or "", DiscoveryEntryKind.DIRECTORY
+        )
+        resolved = self._resolve_entry_kind(storage, library, scope_entry)
+        deduplicated = canonical_scope((resolved,))
+        origin = DefinitionRunOnceOrigin(
+            definition.definition_id,
+            definition.name,
+            definition.definition_fingerprint,
+            snapshot_id,
+            self._runtime_snapshot_version(runtime, snapshot_id),
+            snapshot_digest,
+            library.library_id,
+            definition.source_scope,
+            definition.item_limit,
+            bound,
+            definition.mode.value,
+            admission_request_id,
+        )
+        reconciliation = self._reconcile_definition_admission(
+            actor,
+            definition.definition_id,
+            definition.definition_fingerprint,
+            snapshot_id,
+            snapshot_digest,
+        )
+        if reconciliation is not None:
+            return reconciliation
+        now = self._clock()
+        progress = DiscoveryProgress(
+            "queued",
+            deduplicated,
+            DiscoveryCounters(),
+            DiscoveryIncompleteReason.NONE,
+            (),
+            (),
+            (),
+            tuple(entry.path for entry in deduplicated),
+            None,
+            None,
+            (),
+            "queued for bounded Run-once discovery by the resident Processing Worker",
+        )
+        discovery = MediaDiscovery(
+            str(uuid4()),
+            actor,
+            library.library_id,
+            library.storage_id,
+            snapshot_id,
+            snapshot_digest,
+            DiscoveryStatus.QUEUED,
+            1,
+            self._definition_budgets(bound),
+            progress,
+            now,
+            now,
+            (),
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            False,
+            False,
+            None,
+            admission_request_id=admission_request_id,
+            definition_origin=origin,
+        )
+        creator = getattr(self._repository, "create_media_discovery", None)
+        if not callable(creator):
+            raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+        try:
+            return creator(discovery)
+        except DiscoveryConflict:
+            if admission_request_id is not None:
+                requested = self._reconcile_admission_request(
+                    actor,
+                    admission_request_id,
+                    resource_library_id=None,
+                    submitted_paths=None,
+                    definition_id=definition_id,
+                )
+                if requested is not None:
+                    return requested
+            winner = self._reconcile_definition_admission(
+                actor,
+                definition.definition_id,
+                definition.definition_fingerprint,
+                snapshot_id,
+                snapshot_digest,
+            )
+            if winner is not None:
+                return winner
+            raise
+
+    def _definition_budgets(self, primary_bound: int) -> DiscoveryBudgets:
+        """The persisted budgets of one definition-bound Run once.
+
+        Only the primary bound differs from the ordinary discovery budgets, and
+        it is the exact effective bound so a later read proves what the run was
+        allowed to freeze.
+        """
+
+        if primary_bound == self._budgets.max_primary_sources:
+            return self._budgets
+        return replace(self._budgets, max_primary_sources=primary_bound)
+
+    def _runtime_definition(self, runtime, definition_id: str) -> AutomationTaskDefinition:
+        matches = tuple(
+            value
+            for value in getattr(runtime, "automation_task_definitions", ())
+            if getattr(value, "definition_id", getattr(value, "id", None)) == definition_id
+        )
+        if len(matches) != 1:
+            raise DiscoveryError(
+                "the requested Automation definition is not in the pinned Active configuration",
+                code="definition_not_found",
+                status=404,
+                next_action=(
+                    "publish the definition in the current Active configuration, then run once"
+                ),
+            )
+        definition = matches[0]
+        if not isinstance(definition, AutomationTaskDefinition):
+            try:
+                definition = AutomationTaskDefinition.from_document(definition)
+            except (TypeError, ValueError) as error:
+                raise DiscoveryError(
+                    "the pinned Automation definition cannot be consumed safely",
+                    code="definition_invalid",
+                    status=409,
+                    next_action="validate and publish a corrected definition, then run once",
+                ) from error
+        if not definition.enabled:
+            # A *disabled* schedule is explicitly runnable once: only the
+            # schedule is off, not the definition.  The check exists so a
+            # definition that is not published at all is distinguished from one
+            # whose schedule is merely disabled.
+            pass
+        return definition
+
+    def _runtime_snapshot_version(self, runtime, snapshot_id: str) -> int:
+        """The immutable Active revision version of one Run once.
+
+        The normalized runtime carries the version when the resolver supplied
+        it; otherwise it is read from the same managed authority that produced
+        the pin, so a resident Worker or a harness resolver that only returns
+        the runtime never fabricates a version.  A genuinely unprovable version
+        still fails closed.
+        """
+
+        version = getattr(runtime, "configuration_snapshot_version", None)
+        if isinstance(version, int) and not isinstance(version, bool) and version >= 1:
+            return version
+        service = self._configuration_service
+        if service is not None:
+            try:
+                revision = service.require(snapshot_id)
+            except Exception:
+                revision = None
+            revision_version = getattr(revision, "version", None)
+            if (
+                isinstance(revision_version, int)
+                and not isinstance(revision_version, bool)
+                and revision_version >= 1
+            ):
+                return revision_version
+        raise DiscoveryUnavailable(
+            "the pinned Active configuration version is unavailable for Run once"
+        )
+
+    def _reconcile_definition_admission(
+        self,
+        actor: str,
+        definition_id: str,
+        definition_fingerprint: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> MediaDiscovery | None:
+        """One already durable *open* Run once for this exact definition pin."""
+
+        finder = getattr(self._repository, "find_open_definition_run_once", None)
+        if not callable(finder):
+            return None
+        return finder(
+            actor=actor,
+            definition_id=definition_id,
+            definition_fingerprint=definition_fingerprint,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+        )
+
     def _reconcile_admission_request(
         self,
         actor: str,
         admission_request_id: str,
         *,
-        resource_library_id: str,
-        submitted_paths: tuple[str, ...],
+        resource_library_id: str | None,
+        submitted_paths: tuple[str, ...] | None,
+        definition_id: str | None = None,
     ) -> MediaDiscovery | None:
         """The durable admission this exact client request identity created.
 
@@ -367,6 +639,11 @@ class MediaDiscoveryService:
         Active pin or Storage root changed while the response was lost.  A
         repository without the durable lookup (an in-memory test double) simply
         has no proof and reports the honest unknown outcome.
+
+        A request identity is bound to exactly one kind of admission: a Files
+        folder/mixed selection or a definition-bound Run once.  Reusing it for
+        the other kind, another library, another definition or another selection
+        is refused rather than guessed away.
         """
 
         finder = getattr(self._repository, "find_media_discovery_by_request_id", None)
@@ -375,8 +652,33 @@ class MediaDiscoveryService:
         requested = finder(actor=actor, admission_request_id=admission_request_id)
         if requested is None:
             return None
+        origin = requested.definition_origin
+        if definition_id is not None:
+            if origin is None or origin.definition_id != definition_id:
+                raise DiscoveryError(
+                    "this Run-once request ID is already bound to a different definition",
+                    code="admission_request_conflict",
+                    status=409,
+                    next_action=(
+                        "keep this request ID for its original definition, or start this "
+                        "Run once with a new request ID"
+                    ),
+                    details={"requestIdReuse": True},
+                )
+            return requested
+        if origin is not None:
+            raise DiscoveryError(
+                "this discovery request ID is already bound to a definition Run once",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request ID for its original Run once, or start this selection "
+                    "with a new request ID"
+                ),
+                details={"requestIdReuse": True},
+            )
         stored_paths = {entry.path for entry in requested.progress.scope_entries}
-        selected_paths = set(submitted_paths)
+        selected_paths = set(submitted_paths or ())
         # A selected directory canonically subsumes any explicitly selected
         # descendants. Use the old persisted entry kinds for that comparison:
         # the current root may have changed or disappeared, and is not proof of
@@ -1233,7 +1535,9 @@ class MediaDiscoveryService:
                     }
                     demote_observed_attachment_groups(explicit_directories)
                     explicit_files_associated = True
-                    if self._over_primary_limit(sources, bump, note):
+                    if self._over_primary_limit(
+                        sources, discovery.budgets.max_primary_sources, bump, note
+                    ):
                         incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
                         refuse(incomplete)
                         status = DiscoveryStatus.PARTIAL_SUCCESS
@@ -1251,7 +1555,9 @@ class MediaDiscoveryService:
                     }
                     demote_observed_attachment_groups(walked_directories)
                     directory_entries = []
-                    if self._over_primary_limit(sources, bump, note):
+                    if self._over_primary_limit(
+                        sources, discovery.budgets.max_primary_sources, bump, note
+                    ):
                         incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
                         refuse(incomplete)
                         status = DiscoveryStatus.PARTIAL_SUCCESS
@@ -1441,7 +1747,7 @@ class MediaDiscoveryService:
         # left the manifest over the primary bound; the durable manifest is
         # always trimmed to the exact bound and reported as a material refusal,
         # so no code path can freeze an over-limit or first-N prefix.
-        if self._over_primary_limit(sources, bump, note):
+        if self._over_primary_limit(sources, discovery.budgets.max_primary_sources, bump, note):
             incomplete = DiscoveryIncompleteReason.PRIMARY_LIMIT
             refuse(incomplete)
             status = DiscoveryStatus.PARTIAL_SUCCESS
@@ -1556,18 +1862,23 @@ class MediaDiscoveryService:
                 # the durable progress already published is unaffected.
                 pass
 
-    def _over_primary_limit(self, sources, bump, note) -> bool:
-        """Trim the manifest to the primary bound, reporting whether it was hit.
+    @staticmethod
+    def _over_primary_limit(sources, bound: int, bump, note) -> bool:
+        """Trim the manifest to the discovery's own admitted primary bound.
 
-        The bound is evaluated against the *true* primary set (after the
-        production attachment association has demoted proven sidecars), so a
-        directory that overshoots in one page is trimmed back to exactly the
-        configured maximum instead of leaving an over-limit manifest behind.
+        The bound is the *durable* bound persisted with this exact admission
+        (never the service default), so a definition-bound Run once whose
+        effective manifest bound is smaller than the manual default can never
+        leave an over-limit manifest behind.  It is evaluated against the true
+        primary set (after the production attachment association has demoted
+        proven sidecars), so a directory that overshoots in one page is trimmed
+        back to exactly that bound instead of silently becoming a first-N
+        prefix.
         """
 
-        if len(sources) <= self._budgets.max_primary_sources:
+        if len(sources) <= bound:
             return False
-        while len(sources) > self._budgets.max_primary_sources:
+        while len(sources) > bound:
             path = next(reversed(sources))
             sources.pop(path, None)
             bump(_REASON_UNSAFE_ENTRY, path)

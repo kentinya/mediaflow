@@ -14,13 +14,7 @@ import { automationListQueryOptions } from "./automation-query";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-
-function displayEnum(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
+import { describeAutomationRunMode } from "../../entities/operations/automation";
 
 export function AutomationListPage() {
   const token = useAuthToken();
@@ -157,7 +151,9 @@ export function AutomationListPage() {
                     </h3>
                     <dl>
                       <dt>Mode</dt>
-                      <dd>{displayEnum(definition.document.mode)}</dd>
+                      <dd>
+                        {describeAutomationRunMode(definition.document.mode)}
+                      </dd>
                       <dt>Schedule</dt>
                       <dd>{schedule}</dd>
                       <dt>Source scope</dt>

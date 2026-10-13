@@ -583,6 +583,33 @@ class ManualOrganizeExecutionService:
             admit_only=True,
         )
 
+    def _with_definition_origin(self, display, *, intent):
+        """Attach the durable manual definition origin of one Run once.
+
+        The origin is read from the durable discovery linked to this intent, so
+        it is the *actual* admission this execution came from rather than a
+        value derived at read time.  An ordinary Files run (no linked discovery,
+        or a discovery without a definition origin) keeps its existing display
+        evidence unchanged.
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return display
+        try:
+            discovery = finder(intent.intent_id)
+        except Exception:
+            return display
+        origin = getattr(discovery, "definition_origin", None) if discovery else None
+        if origin is None:
+            return display
+        return replace(
+            display,
+            origin_definition_id=origin.definition_id,
+            origin_definition_name=origin.definition_name,
+            origin_kind="definition-run-once",
+        )
+
     def _run_display_context(
         self,
         *,
@@ -823,6 +850,13 @@ class ManualOrganizeExecutionService:
             plans=plan_by_item,
             runtime=runtime,
         )
+        # A definition-bound Run once records its immutable definition origin in
+        # the same admission transaction, so Automation history and Operations
+        # reach the same durable run without a dummy Job or a read-time guess
+        # from today's Active configuration.  The link is resolved from the
+        # durable discovery this intent came from; an ordinary Files run simply
+        # has no origin.
+        display = self._with_definition_origin(display, intent=intent)
         admitted = admit(authority, execution, execution_items, locks, now, display=display)
         if admit_only:
             # The durable execution is committed and waiting for the resident
