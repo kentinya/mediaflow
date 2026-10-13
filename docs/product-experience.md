@@ -724,8 +724,9 @@ names, counts, paths, dates and parameter values are examples. Existing schedule
 CURRENT; this complete redesign and actual per-process settings adoption are not yet delivered.
 
 The user-approved 2026-10-13 change makes automatic organization the only Automation mode in this
-TARGET journey. It removes the mode selector and the scan-only/scan-and-plan Run-once branches;
-standalone Scan/Preview/DryRun remain available. CURRENT code still supports the old modes until
+TARGET journey. The clarified instruction entirely removes scan-only/scan-and-plan Automation modes,
+their definition-bound execution branches and compatibility paths; there is no conversion feature.
+Standalone Scan/Preview/DryRun remain available. CURRENT code still supports the old modes until
 the transition is implemented. Existing accepted journeys and historical outcomes are not rewritten.
 
 - **Goal/entry:** open shared-shell `自动化` to manage long-lived source/schedule intent, inspect
@@ -740,11 +741,10 @@ the transition is implemented. Existing accepted journeys and historical outcome
   disabled without authority; removal preserves historical runs and revokes future unattended
   mutation. Disabling future scheduling, cancelling existing work and revoking authority are
   separate actions with explicit effects.
-- **Legacy recovery:** show an old scan/plan definition as legacy with its original history. Block
-  new manual/scheduled admission and offer explicit conversion to automatic organization. Review
-  changed effects, save disabled, then require fresh exact Preview and explicit applicable authority.
-  Copy/import/upgrade cannot silently broaden intent. Previously admitted work keeps its old pin
-  and non-mutating intent; unrelated Save preserves recoverable legacy objects.
+- **Removed-mode data:** old configuration requesting either removed mode is unsupported and offers
+  existing configuration correction/removal guidance; old work stops safely with cancel/history
+  guidance. There is no legacy-mode inventory, compatible running path or conversion action. Preserve
+  historical intent/results/pins; no import, copy or upgrade silently turns old work into organization.
 - **Preview/authorize:** show the existing bounded zero-media-mutation chain and expected effects;
   separately confirm scoped unattended permission. Valid future scheduled runs need no repeated
   execution click. Relevant changes require fresh evidence/authority under the existing gates.

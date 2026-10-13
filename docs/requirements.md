@@ -1,9 +1,9 @@
 # MediaFlow Canonical Product Requirements
 
-本文档是 MediaFlow 的 canonical V1 产品需求，统一保存完整产品定义与稳定工程/UX 需求 ID。
+本文档保存 MediaFlow 的 canonical V1 产品基线、明确授权的现行产品修订与稳定工程/UX 需求 ID。
 
 - [完整产品定义](#完整产品定义)：范围、字段、格式、示例、约束和完整验收场景。
-- [需求 ID 索引](#canonical-coverage-map)：用于 Slice / Task 追踪与验收，现有 ID 和含义保持不变。
+- [需求 ID 索引](#canonical-coverage-map)：用于 Slice / Task 追踪与验收；ID 不重新编号，含义仅能由明确授权的产品修订改变。
 - [V2 Requirements](v2-requirements.md)：V2 的稳定扩展，保留冻结的 V1 基线。
 
 需求 ID 表是完整定义的可引用索引，不能替代、缩小或扩大完整定义；未展开的细节以同文件的
@@ -24,18 +24,22 @@
 
 `docs/requirements.md` owns the complete canonical V1 definition and its stable requirement IDs.
 V2 requirements are kept in the separate [`docs/v2-requirements.md`](v2-requirements.md) layer so V1
-IDs and meanings remain stable while the active V2 program adds migration and operator-surface acceptance properties.
+IDs remain stable while the active V2 program adds migration and operator-surface acceptance
+properties. Meaning changes require an explicit user-approved product amendment such as the one below.
 The V2 document records durable product and authority boundaries, not transient Task paths,
 package versions, test counts or internal function names.
 
-**Explicit V2 product amendment — 2026-10-13:** the user authorized A to retain only automatic
-organization as the Automation definition mode. `V2-AUTO-009` supersedes the three-mode selection
-in `REQ-SCHED-001` and the scan/plan default described in §自动整理 / §98.4 for new V2 definition
-publication and new definition-bound admissions. Those V1 descriptions remain the historical
-baseline, not authorization to offer those modes in the amended V2 journey. Legacy definitions,
-admitted pins and results retain their original meaning; no automatic conversion gains mutation
-authority. Standalone Scan, Preview and DryRun and every execution safety invariant remain required.
-This is an explicit product change, not a Task-local deferral or a claim of implementation.
+**Explicit product amendment for the current V2 program — 2026-10-13:** the user authorized A to
+retain only automatic organization and clarified that the two other Automation modes are entirely
+unwanted. `REQ-SCHED-001/002`, §自动整理 and §定时任务 below reflect that change; `V2-AUTO-009` records its
+V2 acceptance. Remove scan-only/scan-and-plan mode values/aliases and definition-bound publication,
+scheduling/admission/execution paths, without a conversion feature or compatible old-mode executor.
+Unsupported old configuration/work fails closed through existing correction/removal/cancel guidance;
+recorded intent, pins, results and audits remain historical data, never executable authority or
+automatic organization. Standalone Scan/Preview/DryRun and automatic organization's internal analysis
+stages remain required. This is an explicit product change, not a Task-local deferral or delivery
+claim; prior V1 meanings and accepted release evidence remain in Git and are not retroactively
+re-reviewed. All other stable requirement meanings and safety invariants remain unchanged.
 
 `REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
 and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
@@ -262,8 +266,8 @@ supplies the journey-level interpretation.
 
 | ID | Scope | Requirement | Canonical Source | Acceptance Meaning |
 |---|---|---|---|---|
-| REQ-SCHED-001 | REQUIRED | ResourceLibrary supports scan-only, scan-and-plan and automatic-organization modes. | §自动整理 | Automatic execution still satisfies identity, safety, conflict and authority gates. |
-| REQ-SCHED-002 | REQUIRED | Schedules support periodic/Cron timed scan, automatic organization, cache cleanup and log cleanup with configured timezone semantics. | §定时任务 | The user can manage schedules through the same configuration and Web/API authority. |
+| REQ-SCHED-001 | REQUIRED | ResourceLibrary Automation supports automatic organization as its sole mode under the explicit 2026-10-13 product amendment. | §自动整理 | No scan-only/scan-and-plan selection, aliases, conversion or compatible Automation execution path remains. Automatic execution satisfies identity, safety, conflict and authority gates; Scan/Preview remain internal stages and standalone capabilities. |
+| REQ-SCHED-002 | REQUIRED | Schedules support periodic/Cron automatic organization, cache cleanup and log cleanup with configured timezone semantics; standalone scan scheduling is removed by the explicit 2026-10-13 Automation-mode amendment. | §定时任务 | The user manages applicable schedules through the same configuration and Web/API authority; cleanup remains outside the active Automation Slice. |
 | REQ-SCHED-003 | REQUIRED | Scheduler only decides when a configured Automation Task Definition is due and durably emits an idempotent Automation Job; it never chooses media policies or invokes Storage mutation. | §Scheduler 责任边界; Engineering derivation from §任务系统 | Restart/concurrency cannot duplicate an occurrence, and Scheduler cannot bypass the normal policy, Preview or execution-authority chain. |
 | REQ-SCHED-004 | REQUIRED | An Automation Task Definition identifies the ResourceLibrary/source scope and optional sub-scope, schedule/timezone, enabled state, managed configuration authority, execution mode/authority and bounded run limits. | §自动化对象与生命周期边界 | The user can define what source is eligible and when it runs without embedding a per-file Provider, final destination or transfer operation. |
 | REQ-SCHED-005 | REQUIRED | Every scheduled media item follows Scan, Parse, Recognition, RecognitionType, RecognitionTypePolicy, MetadataPolicy, NamingPolicy, ClassificationPolicy, OrganizePolicy, Plan/Preview, Execute and Result/Log. | §定时自动整理链路 | Different RecognitionTypes in one occurrence may select different Providers, naming/classification policies, MediaLibraries and operations; ClassificationPolicy owns destination and OrganizePolicy owns operation. |
@@ -2966,11 +2970,9 @@ TARGET
 
 ### **自动整理**
 
-允许资源库配置：
+自动化只支持一种模式（2026-10-13 用户明确修订）：
 
 ```Plain Text
-仅扫描
-扫描并生成计划
 自动整理
 ```
 
@@ -4296,7 +4298,6 @@ Files/Media 详情显示解析、识别、元数据、策略、
 支持：
 
 ```Plain Text
-定时扫描资源库
 定时自动整理
 定时清理缓存
 定时清理日志
@@ -4313,9 +4314,9 @@ Cron
 例如：
 
 ```Plain Text
-每30分钟增量扫描
+每30分钟自动整理新增文件
 
-每天03:00全量检查
+每天03:00自动整理指定范围
 ```
 
 #### **98.1 自动化对象与生命周期边界**
@@ -4429,7 +4430,9 @@ OrganizePolicy 决定；Scheduler 和 Automation Task Definition 不复制该配
 
 Scheduled Unattended Organization 是 V1 REQUIRED。
 
-默认的定时运行可以只扫描、生成计划或 DryRun。当用户显式启用自动整理时，可以向
+自动化定义固定为自动整理，新建默认关闭且不带执行授权；不再提供“仅扫描”或“扫描并生成计划”
+模式，也不保留旧模式执行兼容或转换入口。Preview / DryRun 是独立的零变更预演能力，
+不是可选的自动化运行模式。当用户显式授权自动整理时，可以向
 该 Automation Task Definition 授予持久、可撤销、受范围限制的 unattended execution
 authority。在该授权有效且本次运行通过全部安全校验时，到达调度时间后不需要用户再次
 手工点击 Execute。

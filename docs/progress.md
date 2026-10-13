@@ -11,9 +11,10 @@ workflow authority. Closure rules live only in
 Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on
 local `main`, integrating accepted Slice 44 with preserved unfinished work under
 the current Slice 44-era governance. [SLICE.md](../SLICE.md) retains the original Base and records
-the user's 2026-10-13 single-mode automatic-organization amendment, including safe legacy conversion.
-Task 43.1 is **B PASS**; [TASK.md](../TASK.md) owns the replanned, unstarted Task 43.2 under the
-checkpointed single-mode Contract. The mode transition, durable Preview/Run once and remaining Slice outcomes
+the user's clarified 2026-10-13 automatic-organization-only amendment: the other two Automation
+modes are removed entirely, without conversion or compatible execution. Task 43.1 is **B PASS**;
+[TASK.md](../TASK.md) owns Task 43.2 replanning after this clarified Contract checkpoint.
+The mode removal, durable Preview/Run once and remaining Slice outcomes
 are not delivered or finally accepted. Detailed implementation and review history remains in Git.
 
 Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.

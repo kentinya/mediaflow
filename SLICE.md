@@ -12,11 +12,11 @@ Status: ACTIVE
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: 7b9bc83fd2f14271f594924895b976ca3a02af0e
 Development Hold: LIFTED BY USER — 2026-10-12
-Contract Revision: 2026-10-13 — user-approved single-mode Automation; original Slice Base retained
+Contract Revision: 2026-10-13 — automatic organization only; other modes removed without conversion/compatibility
 Working Branch: main
 Risk: High
 Final Test Level: T4
-Next Action: DEVELOPER IMPLEMENTS PLANNED TASK 43.2 WHEN DIRECTED
+Next Action: B REPLANS UNSTARTED TASK 43.2 AGAINST CHECKPOINTED AUTOMATION-ONLY CONTRACT
 ```
 
 ## Authority and current state
@@ -66,28 +66,33 @@ That Task's checked-publication/history facts remain valid. Its three-mode lifec
 not yet satisfy the new single-mode requirement. Prior reports/review rounds remain in Git;
 local evidence is not claimed remotely reachable. Slice readiness and A Final Review are not claimed.
 
-### User-approved Contract change — 2026-10-13
+### User-approved Contract change and clarification — 2026-10-13
 
 The user explicitly authorized A to retain only `自动整理` and update the related documents.
 This is a material product/Contract change, not a wording clarification: three-mode selection,
-new scan-only/scan-and-plan scheduled admissions and their Run-once branches are superseded.
+scan-only/scan-and-plan scheduling, Run-once and compatible execution branches are superseded.
 Keep Slice 43 ACTIVE and its original Base; the organizing workspace, settings, safety and recovery
 boundaries remain the same business capability. Standalone Scan, Preview and DryRun are unchanged.
 
-New/create/copy/converted definitions use `automatic-organization` without a selectable mode.
-All definition-bound new admissions share that restriction, including API/CLI compatibility paths.
-Legacy scan/plan definitions remain readable/exportable with their real mode and actionable legacy
-status; they cannot emit new scheduled or manual work after the change is implemented. Explicit
-conversion reviews changed effects, publishes a disabled automatic-organization successor and
-invalidates/revokes prior future authority. Fresh exact Preview and explicit applicable grant or
-one-shot intent are required before execution. No import, Save, enable, copy or upgrade silently
-turns non-mutating intent into mutation; unrelated legacy objects are preserved by focused Save.
-Previously admitted work retains its exact original mode/pin and existing safe-boundary semantics,
-never acquires organizing authority and is never relabelled or replayed as automatic organization.
+The user clarified that the other two modes are entirely unwanted. This supersedes the earlier
+documentation's legacy conversion and compatible scan/plan processing obligations, neither of which
+was implemented. Automation definitions support only `automatic-organization`: remove the two other
+mode values/aliases, selectors, definition-bound scheduling/admission/execution branches and their
+compatibility paths across Web/API/CLI. Do not build a legacy-mode inventory, conversion action,
+grandfathered publication rule or compatible old-mode executor.
+
+Old configuration requesting a removed mode is unsupported and cannot validate/activate or run;
+use the existing configuration correction/removal journey, never automatic conversion/defaulting.
+Persisted old work must stop safely at supported boundaries with an unsupported-mode explanation
+and existing cancel/history guidance. Preserve recorded names, original intent, pins, outcomes and
+audit evidence as historical data; do not delete media/history, relabel old work as organization,
+replay completed/uncertain effects or grant new mutation authority. Historical read decoding alone
+is not an executable-mode compatibility promise. Standalone Scan/Preview/DryRun and the internal
+Scan → Plan/Preview stages of automatic organization remain outside this mode removal.
 
 A checkpoints this Contract before B replans the unstarted Task 43.2. That Task keeps the coherent
 durable exact Preview/manual Run-once journey, removes the two new-run branches and includes the
-native fixed-mode lifecycle/legacy transition needed for a usable single-mode product. The change
+native fixed-mode lifecycle and complete removal of the unwanted modes. The change
 is TARGET until implemented and reviewed; it does not close this Slice or reopen accepted Slices.
 
 ## User Goal and Journey
@@ -99,8 +104,8 @@ with parameters actually used by resident processes.
 
 - **Entry:** shared-shell `自动化`, an existing definition/occurrence deep link, or the Automation
   settings section reached from System Settings. Preserve existing compatible links and return context.
-- **Visible state:** definition inventory, automatic-organization scope/schedule/limit, labelled
-  legacy modes, enabled versus authorized versus running state, next scheduled run, real summary
+- **Visible state:** definition inventory, automatic-organization scope/schedule/limit,
+  enabled versus authorized versus running state, next scheduled run, real summary
   statistics, independent run outcomes, and published
   versus process-consumed settings. Internal IDs remain optional diagnostic details.
 - **Action:** create/copy/edit/enable/disable/reference-safe remove; one checked Save; exact Preview;
@@ -145,13 +150,13 @@ Deliver one native Automation workspace with `任务列表 / 执行记录 / 全�
 shortcut opens that same settings surface. Reuse the existing shared light shell, typography,
 icons, blue primary actions, light borders and status badges; no alternate shell.
 
-The list has name, scheduling enabled state, mode, source ResourceLibrary/scope, readable schedule
+The list has name, scheduling enabled state, source ResourceLibrary/scope, readable schedule
 and timezone, item limit, next scheduled run, latest processing outcome/time and available actions.
-Its secondary text may derive from scope/mode; a new free-form description field is not required.
+Its secondary text may derive from scope; a new free-form description field is not required.
 New/Edit/Preview/detail open only by explicit navigation. Provide real empty/setup/dependency/error,
 loading and denied states, responsive layout, keyboard use and refresh-safe deep links.
 
-Backend-authoritative bounded search, enabled/source and legacy-status filters, stable sorting and pagination
+Backend-authoritative bounded search, enabled/source filters, stable sorting and pagination
 must keep every authorized definition reachable. Draft-only legacy definitions remain labelled and
 reachable for recovery, never counted or toggled as published. New definitions start disabled;
 copy creates a new identity, disabled schedule and no copied execution authority.
@@ -179,13 +184,11 @@ bound and exactly one of interval or Cron with required IANA timezone. Daily/wee
 supported Cron semantics; advanced Cron remains available. Preview upcoming times and invalid/DST
 behavior through the same backend schedule calculation, without emitting work.
 
-The mode is fixed to `自动整理`; create/edit/copy has no selector for scan-only or scan-and-plan.
-Legacy definitions show their original intent and a dedicated conversion/history action. Conversion
-or copying a legacy definition into a new automatic one explicitly reviews the changed effects,
-starts disabled and carries no old authority. Backend publication/admission rejects attempts to
-create, re-enable or run a removed mode; unchanged legacy objects must not block unrelated focused
-publication or be silently dropped from the successor. Import retains legacy data for recovery,
-never enables new legacy scheduling or automatically converts it to organizing work.
+The intent is fixed to `自动整理`; create/edit/copy has no mode selector. Backend configuration,
+publication, import and admission reject both removed modes and their aliases. Invalid old
+configuration uses existing correction/removal guidance; there is no dedicated legacy conversion
+or compatible running mode. New/copy starts disabled without authority. Removing invalid definition
+configuration does not remove media, historical pins, grants/audits or recorded outcomes.
 
 Save and lifecycle commands compose a focused successor from the exact published Active, validate
 the whole candidate and applicable evidence, then atomically publish it. The operator does not
@@ -249,7 +252,7 @@ safe next actions; success immediately links to the selected durable run and bac
 
 ### RO-5 — Cross-definition history, results and native recovery
 
-Provide bounded server-filtered history by definition, mode, trigger, outcome and time, including
+Provide bounded server-filtered history by definition, trigger, outcome and time, including
 scheduled occurrences and manually admitted runs. Pending/pre-Task failures remain visible. Keep
 scheduler blocked-emission diagnostics distinct from actual admitted runs and processing outcomes.
 Latest-result projection and statistics must respect linked Task/items, not interpret Job completion
@@ -300,9 +303,9 @@ business authority. Intact admitted pins remain governed by their existing execu
 
 Web/API use the same validation, applicability, permissions, publication, admission, grants, query and
 recovery services. Existing V1/API/CLI configuration and old Automation/Task/Job links remain compatible
-or resolve through a truthful contextual route, with the explicit single-mode exception above for new
-definition publication/admission. A removed mode submitted directly cannot bypass the Web restriction.
-Legacy definitions offer conversion/history, not a hidden Run-once branch or silent reinterpretation.
+or resolve through a truthful contextual route, with the explicit exception above for removed
+Automation modes. Direct requests cannot bypass their removal. Old-mode configuration/work is
+unsupported, with existing configuration correction/cancel/history guidance and no conversion path.
 Empty Active is valid and offers dependency guidance;
 absence of Active leads to Settings, while broken prior Active offers recovery rather than new setup.
 
@@ -332,7 +335,7 @@ atomic admission/publication, locks/claims/leases/fences and no automatic uncert
 
 ResourceLibrary is the organizing source. Definition and Scheduler never select per-file Provider,
 Naming/Classification policies, final MediaLibrary path or transfer action; the existing
-RecognitionType policy chain does. Legacy scan/plan pins and standalone analysis cannot acquire
+RecognitionType policy chain does. Old scan/plan records and standalone analysis cannot acquire
 mutation capability. Grant/revoke is separate from Preview, schedule enablement and manual one-shot
 authority. Long work is durable;
 controls operate at safe boundaries and do not promise rollback or immediate interruption.
@@ -370,10 +373,10 @@ reference availability must be reported rather than replacing the originals with
 |---|---|
 | AC-1 | Reference-aligned list/records/settings use real data, shared shell, refresh-safe navigation, responsive/keyboard behavior and actionable empty/error/denied states. |
 | AC-2 | Server search/filter/sort/page and full-population metrics remain consistent, authorized and truthful across pages, month/timezone boundaries, zero denominators and unavailable data. |
-| AC-3 | Fixed-mode typed lifecycle and one checked Save publish only the intended change; stale/concurrent/failed/unknown publication preserves prior authority and recovery without sibling Draft activation. Legacy conversion is explicit, disabled, fresh-authority-bound and never changes old pins/history. |
+| AC-3 | Automatic-organization-only typed lifecycle and one checked Save publish only the intended change; stale/concurrent/failed/unknown publication preserves prior authority and recovery without sibling Draft activation. Removed modes/aliases cannot validate, publish, import or execute; no conversion/compatibility branch remains. Old records stay historical and unsupported work stops safely. |
 | AC-4 | Schedule, scope, limits and next times use existing semantics; exact Preview/grant/revoke complete natively, copies gain no authority, broadened scope cannot reuse insufficient authority. |
 | AC-5 | Due occurrences remain unique across concurrency/restart/DST; scheduled valid grants execute without per-run clicks while current scope/capability/conflict/revocation gates remain enforced. |
-| AC-6 | Automatic-organization Run once completes bounded live-source discovery/selection, exact Preview, explicit one-shot execution, duplicate/unknown-admission reconciliation and no schedule advancement. Removed modes cannot start new definition-bound runs through any surface. |
+| AC-6 | Automatic-organization Run once completes bounded live-source discovery/selection, exact Preview, explicit one-shot execution, duplicate/unknown-admission reconciliation and no schedule advancement. Neither removed mode executes through any surface or retained-work compatibility path. |
 | AC-7 | Definition, manual/scheduled run, Job/Task/execution and per-item results retain durable links without double count; pre-Task failures and removed-definition history remain reachable. |
 | AC-8 | Latest outcomes/progress/bounds and native task-linked recovery preserve independent results; waiting/partial/unknown effects are not false success or replay candidates. |
 | AC-9 | Settings Save validates/publishes the exact four-field scope; capacity and stale observation retain their real semantics and no setting grants media authority. |
@@ -398,9 +401,10 @@ the complete corrected-candidate gates or Slice Final; the concrete risk coverag
 - Native Web tests cover form dependencies, check/save/grant separation, polling, return routes,
   denied/stale/unknown states and settings consumption. Real Python/SQLite/Storage/Provider/Worker/
   Scheduler browser paths prove fixed-mode create -> Save -> Preview -> grant -> scheduled result,
-  automatic-organization Run once -> Operations, explicit legacy conversion and an affected item's
-  existing native recovery. Direct legacy-mode publication/admission refuses safely; old admitted
-  pins/history survive upgrade and unrelated focused Save without gaining mutation authority.
+  automatic-organization Run once -> Operations and an affected item's existing native recovery.
+  Removed-mode/alias configuration, publication/import and direct admission refuse safely. Old
+  queued/running work stops safely without mode reinterpretation, media mutation or automatic replay;
+  recorded outcomes/pins/history survive upgrade/reopen. No conversion/compatibility journey is added.
 - Actual resident subprocess tests change settings while processes are idle/busy, start before Active,
   observe adopted cadence independently of HTTP echoes, and cover long waits, override, loss of
   consumer, DB/config failure and restart. Assert process identities persist when no restart is needed,
@@ -424,9 +428,9 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task 43.1 is B PASS; Task 43.2 is replanned and PLANNED against the single-mode
-Contract checkpoint `dfd64505fd4344d4d99d1b0ad0a3e07d92fbca33`. Its implementation has not started.
-The single-mode transition and other Required Outcomes remain unfinished.
+Not submitted. Task 43.1 is B PASS; the unstarted Task 43.2 requires replanning after this clarified
+Contract checkpoint. The earlier conversion/compatibility plan is superseded, not delivered.
+Automatic-organization-only behavior and other Required Outcomes remain unfinished.
 No Slice readiness or closure is claimed.
 
 ## A Final Review

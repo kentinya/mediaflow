@@ -685,15 +685,17 @@ inventory/history and full-population metrics with real admission links and mode
 Historical display context comes from durable admission/pins, never a lookup of today's renamed or
 removed definition. Removed definitions retain readable run history and revoked authority evidence.
 
-Automation's only new-definition/new-admission mode is automatic organization, per `V2-AUTO-009`
-and the user's 2026-10-13 amendment. Fixed-mode typed lifecycle and shared backend publication/
-admission checks remove scan/plan choices across Web/API/CLI. Keep legacy parsing, immutable pins,
-reads/exports and original admitted processing/recovery; block new legacy-mode scheduling/manual
-admission with explicit conversion guidance. Conversion is a checked disabled successor with changed
-effects reviewed and prior future authority invalidated/revoked. Fresh exact Preview and authority
-are required; no upgrade, copy or import silently promotes analysis into mutation. Whole-document
-validation must preserve unchanged legacy entries during unrelated focused publication. Standalone
-Scan/Preview/DryRun services remain available; compatibility never grants new organizing authority.
+Automation's only mode is automatic organization, per `V2-AUTO-009` and the user's clarified
+2026-10-13 amendment. Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound
+publication, Scheduler/admission and execution branches across Web/API/CLI. There is no grandfathered
+publication, compatible executor or dedicated conversion feature. Old configuration requesting a
+removed mode cannot validate/activate; existing configuration correction/removal is the recovery.
+Persisted removed-mode work stops safely at supported boundaries with unsupported-mode/cancel/history
+guidance, without invoking old-mode processing. Keep historical evidence/intent/pins/results readable
+without exposing an executable definition mode or broadening authority. Never delete history/media,
+reinterpret old work as organizing work or replay completed/uncertain effects. Standalone Scan/Preview/
+DryRun and automatic organization's internal scanning/planning remain; this removal does not delete
+the Scanner/Planner modules or unrelated standalone command support.
 
 Run once adds a durable manual-origin association, not another queue or processing model.
 Manual automatic organization composes bounded live
