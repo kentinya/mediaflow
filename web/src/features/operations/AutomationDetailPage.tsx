@@ -14,7 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  createAutomationPreview,
+  admitDefinitionPreviewAnalysis,
   createAutomationSuccessorDraft,
   copyAutomationDefinition,
   grantAutomationAuthority,
@@ -58,14 +58,14 @@ export function AutomationDetailPage() {
   };
 
   const previewMutation = useMutation({
-    mutationFn: () => createAutomationPreview(token, { definitionId }),
+    mutationFn: () => admitDefinitionPreviewAnalysis(token, { definitionId }),
     retry: false,
     onMutate: () => setError(null),
     onSuccess: (result) => {
-      if (result.ok) {
+      if (result.ok && result.model !== undefined) {
         void navigate({
-          to: "/operations/automation/preview/$definitionId/$previewId",
-          params: { definitionId, previewId: result.model.previewId },
+          to: "/operations/automation/preview-analyses/$analysisId",
+          params: { analysisId: result.model.analysisId },
         });
         return;
       }

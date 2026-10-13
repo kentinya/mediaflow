@@ -340,6 +340,12 @@ class AutomationWorkspaceCommandService:
             "definition": self._form_projection(stored),
             "active": self._safe_active(active),
             "definitionState": definition_state,
+            # The exact published definition fingerprint this projection
+            # observed. It is the definition half of the Run-once admission
+            # fence, so a new admission refuses a definition that changed after
+            # this page rendered. It is an immutable identity, not secret
+            # evidence, and is absent when the domain cannot compute one.
+            "definitionFingerprint": self._definition_fingerprint(stored),
             "sideEffects": "none",
         }
 

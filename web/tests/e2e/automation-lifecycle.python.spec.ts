@@ -225,8 +225,9 @@ test("removal revokes live unattended authority and retains its audit", async ({
 }) => {
   await openLifecycleNew(page);
   await fillCreateForm(page);
-  // Automatic organization is the only mode unattended authority may bind.
-  await page.getByLabel("Run mode").selectOption("automatic-organization");
+  // Automatic organization is the only mode unattended authority may bind, and
+  // the form renders it as fixed intent with no selector at all.
+  await expect(page.getByLabel("Run mode")).toHaveCount(0);
   await page.getByRole("button", { name: "保存" }).click();
   await expect(
     page.getByText(/published definition is the Active/),

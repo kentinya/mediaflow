@@ -95,8 +95,9 @@ async function publishRunOnceDefinition(page: Page): Promise<void> {
   await page.getByLabel("Definition ID").fill(DEFINITION_ID);
   await page.getByLabel("Name").fill("Harness run once");
   await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
-  // Only the retained automatic-organization intent is selectable.
-  await expect(page.getByLabel("Run mode").locator("option")).toHaveCount(1);
+  // The retained automatic-organization intent is fixed: no mode selector is
+  // rendered and no removed mode can be chosen.
+  await expect(page.getByLabel("Run mode")).toHaveCount(0);
   await page.getByLabel("Interval seconds").fill("3600");
   await page.getByLabel("Item limit").fill("5");
   await page.getByRole("button", { name: "保存" }).click();
@@ -109,6 +110,10 @@ test.beforeEach(async ({ page }) => {
   // Every test starts from a known definition population, reset through the
   // real managed publication boundary rather than a database edit.
   await page.request.post("/__harness__/reset-automation-definitions");
+  // A real Move execution genuinely relocates a source file, so restore the
+  // deterministic harness media as well: every test then starts from the same
+  // known population instead of inheriting a previous test's effect.
+  await page.request.post("/__harness__/restore-source-media");
 });
 
 test("a disabled published definition runs once without a file picker", async ({
@@ -156,9 +161,13 @@ test("a disabled published definition runs once without a file picker", async ({
   expect(advancedBody.status).toBe("completed");
   // The durable progress is read back by the operator's own page. The token is
   // memory-only, so a full reload reconnects on the exact durable route rather
-  // than silently losing authority.
+  // than silently losing authority.  A completed-but-unfrozen walk is "ready",
+  // never "已冻结": the frozen banner appears only after the durable freeze.
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
-  await expect(page.getByText("来源清单已冻结")).toBeVisible();
+  await expect(page.getByText("来源清单已发现，等待冻结")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "冻结清单并生成精确预览" }),
+  ).toBeVisible();
 
   const manifest = await runOnceState(page, discoveryId);
   expect(manifest.found).toBe(true);
@@ -201,9 +210,32 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   ).toBeVisible();
   await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
 
-  // Freezing produces the existing exact zero-mutation Preview and still
-  // creates no execution authority.
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/preview\//);
+  // Freezing hands the expensive exact analysis to the resident Worker, so the
+  // operator continues on the durable analysis page rather than waiting inline.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/preview-analyses\//,
+  );
+  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(analysisId.length).toBeGreaterThan(0);
+  await expect(
+    page.getByRole("heading", { name: "精确预览分析" }),
+  ).toBeVisible();
+
+  // The real Worker runs the existing exact-Preview service and links it.
+  const advanced = await page.request.post(
+    "/__harness__/run-preview-analysis-worker",
+  );
+  const advancedBody = (await advanced.json()) as {
+    advanced?: boolean;
+    status?: string;
+    previewId?: string | null;
+  };
+  expect(
+    advancedBody.advanced,
+    `analysis worker: ${JSON.stringify(advancedBody)}`,
+  ).toBe(true);
+  expect(advancedBody.status).toBe("completed");
+  expect(advancedBody.previewId).not.toBeNull();
 
   await page.request.post("/__harness__/restart");
   const manifest = await runOnceState(page, discoveryId);
@@ -211,9 +243,54 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   expect(manifest.frozen).toBe(true);
   expect(manifest.intentId).not.toBeNull();
   expect(manifest.primarySourceCount).toBeGreaterThan(0);
+
+  // The frozen manifest's exact zero-mutation Preview is the existing *manual*
+  // Preview over the frozen intent, and it survives the restart.
+  await connectOn(
+    page,
+    `/ui-v2/operations/organize/preview/${advancedBody.previewId}`,
+  );
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
+
+  // One separate explicit confirmation executes the exact reviewed selection
+  // through the resident Worker; the resulting run carries the durable
+  // definition origin so Operations reaches the same run.
+  // The resident Worker must be registered *before* the page reads the
+  // Preview, because the exact Execute action is offered only when a live
+  // Worker can actually claim the admitted work.
+  await page.request.post("/__harness__/register-manual-worker");
+  await connectOn(
+    page,
+    `/ui-v2/operations/organize/preview/${advancedBody.previewId}`,
+  );
+  const execute = page.getByRole("button", { name: "确认执行所选条目" });
+  await expect(execute).toBeEnabled();
+  await execute.click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  const worker = await page.request.post("/__harness__/run-manual-worker");
+  const workerBody = (await worker.json()) as {
+    completed?: boolean;
+    taskId?: string;
+    status?: string;
+  };
+  expect(
+    workerBody.completed,
+    `manual worker: ${JSON.stringify(workerBody)}`,
+  ).toBe(true);
+  expect(workerBody.status).toBe("completed");
+  expect(workerBody.taskId).toBeTruthy();
+
+  // Operations reaches the same durable run with the definition origin, and
+  // the frozen manifest is still the immutable reviewed one.
+  const afterExecution = await runOnceState(page, discoveryId);
+  expect(afterExecution.frozen).toBe(true);
+  expect(afterExecution.intentId).toBe(manifest.intentId);
 });
 
-test("an over-bound definition ceiling is refused with narrowing guidance", async ({
+test("an over-bound ceiling runs once when the actual manifest fits the bound", async ({
   page,
 }) => {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
@@ -224,8 +301,10 @@ test("an over-bound definition ceiling is refused with narrowing guidance", asyn
   await page.getByLabel("Name").fill("Harness over bound");
   await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
   await page.getByLabel("Interval seconds").fill("3600");
-  // The definition's own ceiling exceeds the bounded manual/discovery limit, so
-  // a complete manifest cannot be proved and Run once must refuse.
+  // A ceiling above the manual/discovery bound is a *legal* definition: the
+  // effective manifest bound is min(250, 100) = 100 and the harness scope holds
+  // only a few eligible files, so a complete manifest is proved and Run once
+  // must be admitted rather than refused before the walk.
   await page.getByLabel("Item limit").fill("250");
   await page.getByRole("button", { name: "保存" }).click();
   await expect(
@@ -233,10 +312,19 @@ test("an over-bound definition ceiling is refused with narrowing guidance", asyn
   ).toBeVisible();
 
   await page.getByRole("button", { name: "运行一次" }).click();
-  // The bounded refusal is surfaced to the operator with a concrete next
-  // action rather than silently truncating the manifest.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/run-once\//);
+  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+
+  await page.request.post("/__harness__/run-automation-run-once-worker");
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  // The complete manifest fits the effective bound, so freezing is offered and
+  // both limits are shown truthfully.
   await expect(
-    page.getByText(/Run once was rejected|discovery_overflow/),
+    page.getByRole("button", { name: "冻结清单并生成精确预览" }),
   ).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/lifecycle/);
+  const manifest = await runOnceState(page, discoveryId);
+  expect(manifest.found).toBe(true);
+  expect(manifest.effectivePrimaryLimit).toBe(100);
+  expect(manifest.primarySourceCount).toBeGreaterThan(0);
+  expect(manifest.primarySourceCount).toBeLessThanOrEqual(100);
 });

@@ -1797,6 +1797,16 @@ class ManualOrganizePreviewService:
 
     invalidate_previews = invalidate
 
+    def load_intent_for_admission(self, intent_id: str) -> ManualOrganizeIntent:
+        """Read one intent for durable-analysis admission.
+
+        This is the same bounded loader the synchronous Preview uses, exposed so
+        the durable-analysis admission can resolve and persist the exact pinned
+        intent context *before* any expensive walk or Provider call runs.
+        """
+
+        return self._load_intent(intent_id)
+
     def _load_intent(self, intent_id: str) -> ManualOrganizeIntent:
         try:
             return self._intent_service.get(intent_id)

@@ -83,6 +83,50 @@ function action(
   };
 }
 
+/**
+ * The exact durable preview-analysis document the backend returns when the
+ * definition admits its exact analysis.
+ */
+function definitionAnalysisDocument(): Record<string, unknown> {
+  return {
+    analysisId: "analysis-1",
+    kind: "definition",
+    actor: "operator",
+    configurationSnapshotId: "snapshot-1",
+    configurationSnapshotDigest: "a".repeat(64),
+    status: "queued",
+    version: 1,
+    progress: {
+      phase: "queued",
+      message:
+        "queued for durable exact analysis by the resident Processing Worker",
+      visitedEntries: 0,
+      analysedItems: 0,
+      totalItems: 12,
+    },
+    definitionId: "auto-task",
+    definitionFingerprint: "b".repeat(64),
+    intentId: null,
+    intentVersion: null,
+    previewId: null,
+    error: null,
+    cancelRequested: false,
+    pauseRequested: false,
+    createdAt: "2026-01-01T00:00:00+00:00",
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    admissionRequestId: null,
+    zeroMutation: true,
+    sideEffects: "none",
+    previewPath: null,
+    actions: {
+      pause: { available: true },
+      resume: { available: false },
+      cancel: { available: true },
+      preview: { available: false },
+    },
+  };
+}
+
 function definitionDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -738,6 +782,61 @@ describe("V2 Automation journey", () => {
     ).toHaveLength(1);
   });
 
+  it("admits a durable exact analysis from Create exact Preview and follows it", async () => {
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/automation/task-definitions/auto-task"
+      ) {
+        return jsonResponse({ definition: definitionDocument() });
+      }
+      if (
+        call.url ===
+          "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(definitionAnalysisDocument(), 202);
+      }
+      if (
+        call.url ===
+          "/api/v1/operations/automation/preview-analyses/analysis-1" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(definitionAnalysisDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation/definition/auto-task");
+
+    await screen.findByRole("heading", { name: /Automation definition/ });
+    await user.click(
+      await screen.findByRole("button", { name: "Create exact Preview" }),
+    );
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (item) =>
+            item.url ===
+              "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+            item.method === "POST",
+        ),
+      ).toBe(true),
+    );
+    // The admission carries no pin or authority material: the backend resolves
+    // the exact immutable revision at admission time.
+    const admit = calls.find(
+      (item) =>
+        item.url ===
+        "/api/v1/automation/task-definitions/auto-task/preview-analyses",
+    );
+    expect(admit?.body).toEqual({});
+    // The journey continues to the durable analysis route, not a synchronous
+    // definition Preview.
+    await screen.findByRole("heading", { name: "精确预览分析" });
+    await screen.findByText("排队中");
+  });
+
   it("saves the bounded Draft form and never submits a digest", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
@@ -904,17 +1003,13 @@ describe("V2 Automation journey", () => {
       screen.getByLabelText("ResourceLibrary"),
       "target-library",
     );
-    // Automatic organization is the only retained mode: no removed mode is
-    // offered as an option and the select cannot select one.
-    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
-    expect([...modeSelect.options].map((option) => option.value)).toEqual([
-      "automatic-organization",
-    ]);
+    // Automatic organization is the only retained mode: the editor has no mode
+    // selector, so no removed mode can ever be chosen.
+    expect(screen.queryByLabelText("Run mode")).toBeNull();
+    expect(document.querySelector("#automation-edit-mode")).toBeNull();
     expect(
-      modeSelect.querySelector('option[value="scan-and-plan"]'),
-    ).toBeNull();
-    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
-    await user.selectOptions(modeSelect, "automatic-organization");
+      screen.getByTestId("automation-edit-mode-intent").textContent,
+    ).toContain("automatic-organization");
     await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
     await user.clear(screen.getByLabelText("Cron expression"));
     await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
@@ -946,10 +1041,11 @@ describe("V2 Automation journey", () => {
     });
   });
 
-  it("keeps a Draft that records a removed mode unsupported until the operator chooses the retained mode", async () => {
+  it("keeps a Draft that records a removed mode unsupported until the operator confirms the correction", async () => {
     // A historical Draft may still carry a removed mode. It stays visible as
     // unsupported history, is never silently rewritten, and no Save is offered
-    // until the operator deliberately selects the retained mode.
+    // until the operator explicitly confirms the correction to the retained
+    // mode. There is no mode selector to choose from.
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (
@@ -990,13 +1086,18 @@ describe("V2 Automation journey", () => {
 
     await screen.findByRole("heading", { name: "Edit Automation definition" });
     expect(screen.getByText(/Unsupported historical run mode/)).toBeVisible();
-    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
-    expect(modeSelect.value).toBe("scan-and-plan");
-    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
+    expect(screen.queryByLabelText("Run mode")).toBeNull();
+    expect(document.querySelector("#automation-edit-mode")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Save into Draft" }),
     ).toBeDisabled();
-    await user.selectOptions(modeSelect, "automatic-organization");
+    // The explicit correction is the only way to publish; nothing is rewritten
+    // automatically.
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /Publish this Draft as automatic-organization/,
+      }),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Save into Draft" }),
@@ -1155,21 +1256,13 @@ describe("V2 Automation journey", () => {
       screen.getByLabelText("ResourceLibrary"),
       "source",
     );
-    // The create form offers only the retained mode; no removed mode exists as
-    // a selectable value.
-    const createModeSelect = screen.getByLabelText(
-      "Run mode",
-    ) as HTMLSelectElement;
-    expect([...createModeSelect.options].map((option) => option.value)).toEqual(
-      ["automatic-organization"],
+    // The create form has no mode selector at all: no removed mode can exist as
+    // a selectable value because no selector is rendered.
+    expect(screen.queryByLabelText("Run mode")).toBeNull();
+    expect(document.querySelector("#automation-mode")).toBeNull();
+    expect(screen.getByTestId("automation-mode-intent").textContent).toContain(
+      "automatic-organization",
     );
-    expect(
-      createModeSelect.querySelector('option[value="scan-and-plan"]'),
-    ).toBeNull();
-    expect(
-      createModeSelect.querySelector('option[value="scan-only"]'),
-    ).toBeNull();
-    await user.selectOptions(createModeSelect, "automatic-organization");
     await user.selectOptions(screen.getByLabelText("Schedule type"), "cron");
     await user.type(screen.getByLabelText("Cron expression"), "0 8 * * *");
     await user.type(screen.getByLabelText("Timezone"), "UTC");

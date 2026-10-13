@@ -316,6 +316,16 @@ const childDestinationData = [
     dynamicPrefix: "/operations/automation/run-once/" as const,
   },
   {
+    id: "operations-automation-preview-analysis",
+    label: "Preview analysis",
+    path: "/operations/automation/preview-analyses/$analysisId",
+    title: "Preview analysis | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Durable exact Preview analysis of one definition or manual intent, with bounded progress and cooperative pause/resume/cancel.",
+    dynamicPrefix: "/operations/automation/preview-analyses/" as const,
+  },
+  {
     id: "operations-notifications",
     label: "Notifications",
     path: "/operations/notifications",
@@ -937,7 +947,8 @@ export function allowlistedDestinationSearch(
     path === "/operations/organize/intent/$intentId" ||
     path === "/operations/organize/discovery/$discoveryId" ||
     path === "/operations/organize/preview/$previewId" ||
-    path === "/operations/organize/execution/$executionId"
+    path === "/operations/organize/execution/$executionId" ||
+    path === "/operations/automation/preview-analyses/$analysisId"
   ) {
     // The intent, durable discovery, exact Preview and execution pages of one
     // Organize journey carry only the bounded return contexts that let them

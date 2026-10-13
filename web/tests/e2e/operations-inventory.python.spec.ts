@@ -828,7 +828,23 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     sourceExists: true,
     destinationTargets: [],
   });
+  // The exact Preview is now admitted as durable analysis work and the
+  // resident Worker runs the existing exact-Preview service; the operator
+  // follows the completed analysis to the manual Preview.
   await page.getByRole("button", { name: "生成精确预览" }).click();
+  await expect(page).toHaveURL(/\/operations\/automation\/preview-analyses\//);
+  const analysisAdvanced = await request.post(
+    `${BASE}/__harness__/run-preview-analysis-worker`,
+  );
+  const analysisBody = (await analysisAdvanced.json()) as {
+    status?: string;
+    previewId?: string | null;
+  };
+  expect(analysisBody.status).toBe("completed");
+  expect(analysisBody.previewId).toBeTruthy();
+  // Follow the analysis page's own exact-Preview link so the reviewed
+  // selection state survives (a full reload would discard it).
+  await page.getByRole("link", { name: "打开精确预览" }).click();
   await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
   await expect(
@@ -1195,6 +1211,15 @@ test("the default unfiltered task-center origin selects its admitted run through
   await expect(page.getByText(/选择已持久保存/)).toBeVisible();
   expect((await refetchedIntent).ok()).toBeTruthy();
   await page.getByRole("button", { name: "生成精确预览" }).click();
+  await expect(page).toHaveURL(/\/operations\/automation\/preview-analyses\//);
+  const returnAnalysis = await request.post(
+    `${BASE}/__harness__/run-preview-analysis-worker`,
+  );
+  const returnBody = (await returnAnalysis.json()) as {
+    previewId?: string | null;
+  };
+  expect(returnBody.previewId).toBeTruthy();
+  await page.getByRole("link", { name: "打开精确预览" }).click();
   await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await expect(page).toHaveURL(/returnOps=/);
 

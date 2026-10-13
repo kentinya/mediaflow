@@ -262,6 +262,13 @@ export interface AutomationEditProjectionModel {
   readonly definition: AutomationDefinitionDocumentModel;
   readonly active: AutomationActiveIdentityModel;
   readonly definitionState: "active" | "draft-only" | "historical";
+  /**
+   * The exact published definition fingerprint this projection observed, or
+   * `null` when the backend cannot compute one (a Draft-only or removed
+   * definition). It is the definition half of the Run-once admission fence: it
+   * is an immutable identity, not secret evidence.
+   */
+  readonly definitionFingerprint: string | null;
 }
 
 export function normalizeAutomationEditProjection(
@@ -276,6 +283,7 @@ export function normalizeAutomationEditProjection(
       "draft-only",
       "historical",
     ] as const),
+    definitionFingerprint: optionalText(source, "definitionFingerprint"),
   };
 }
 

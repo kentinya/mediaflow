@@ -80,6 +80,7 @@ from mediaflow.domain.media_discovery import (
     deduplicate_scope,
     deduplicate_sources,
     discovery_budget_limited,
+    discovery_manifest_incomplete,
     discovery_material_refusal,
     discovery_scope_signature,
     effective_primary_limit,
@@ -361,6 +362,10 @@ class MediaDiscoveryService:
         definition_id: str,
         actor: str,
         admission_request_id: str | None = None,
+        expected_definition_fingerprint: str | None = None,
+        expected_revision_id: str | None = None,
+        expected_revision_version: int | None = None,
+        expected_revision_digest: str | None = None,
     ) -> MediaDiscovery:
         """Admit one definition-bound Run once without a file picker.
 
@@ -372,9 +377,19 @@ class MediaDiscoveryService:
 
         The whole scope is the ResourceLibrary root or the definition's safe
         relative sub-scope; the manifest bound is the smaller of the definition
-        item ceiling and the existing manual primary bound.  A definition whose
-        ceiling exceeds that bound is refused up front rather than silently
-        truncated, because a first-N prefix is never a complete manifest.
+        item ceiling and the existing manual primary bound.  A ceiling above
+        that bound is a *legal* definition: the effective bound is applied to
+        the actual manifest, so a scope holding fewer eligible sources than the
+        bound is discovered and frozen completely.  Only a walk that actually
+        reaches the bound without proving exhaustion is refused, because a
+        first-N prefix is never a complete manifest.
+
+        The caller may also submit the exact published definition/configuration
+        it observed.  That is a *fence*, not a hint: a changed definition
+        fingerprint or a repinned Active revision refuses the new admission
+        instead of silently binding today's Active to a stale operator intent.
+        A reconciled original request is unaffected by a later publication,
+        because it reads back the admission it actually created.
         """
 
         actor = self._actor(actor)
@@ -385,6 +400,12 @@ class MediaDiscoveryService:
                 code="malformed_selection",
                 next_action="open an existing published definition and choose Run once",
             )
+        expected_fingerprint = self._expected_fingerprint(expected_definition_fingerprint)
+        expected_revision = self._expected_revision(
+            expected_revision_id,
+            expected_revision_version,
+            expected_revision_digest,
+        )
         if admission_request_id is not None:
             requested = self._reconcile_admission_request(
                 actor,
@@ -394,8 +415,21 @@ class MediaDiscoveryService:
                 definition_id=definition_id,
             )
             if requested is not None:
+                # The request identity proves the *original* admission.  A
+                # repeated call that submits a different binding is not a
+                # reconciliation but a changed intent reusing another request's
+                # identity, so it refuses instead of silently returning the
+                # original (which would misreport what the caller asked for).
+                self._assert_reconciliation_binding(
+                    requested,
+                    expected_fingerprint=expected_fingerprint,
+                    expected_revision=expected_revision,
+                    definition_id=definition_id,
+                )
                 return requested
         snapshot_id, snapshot_digest = self._active_pin()
+        if expected_revision is not None:
+            self._assert_expected_revision(snapshot_id, snapshot_digest, expected_revision)
         runtime = self._load_runtime(snapshot_id, snapshot_digest)
         definition = self._runtime_definition(runtime, definition_id)
         if not definition.mode.is_runnable:
@@ -408,26 +442,25 @@ class MediaDiscoveryService:
                     "history and completed outcomes are preserved"
                 ),
             )
-        bound = effective_primary_limit(definition.item_limit)
-        if definition.item_limit > bound:
-            # min(definition ceiling, manual bound) is always the manual bound
-            # here, so the definition's own ceiling can never be honoured in
-            # full.  Refusing is the only truthful outcome: freezing the first
-            # ``bound`` sources would silently execute a truncated prefix.
+        if expected_fingerprint is not None and definition.definition_fingerprint != (
+            expected_fingerprint
+        ):
             raise DiscoveryError(
-                "the definition item ceiling exceeds the bounded manual/discovery "
-                f"manifest limit of {bound}, so a complete Run-once manifest cannot be proved",
-                code="discovery_overflow",
+                "the published definition changed since this Run once was observed, so the "
+                "stale request was not admitted",
+                code="definition_stale",
                 status=409,
                 next_action=(
-                    "narrow the definition sourceScope or lower its itemLimit to at most "
-                    f"{bound}, publish it, then start Run once again"
+                    "reload the definition, review its current scope and bounds, then start "
+                    "Run once again"
                 ),
-                details={
-                    "definitionItemLimit": definition.item_limit,
-                    "effectivePrimaryLimit": bound,
-                },
+                details={"definitionChanged": True},
             )
+        bound = effective_primary_limit(definition.item_limit)
+        # ``bound`` is min(definition ceiling, manual bound).  A ceiling above
+        # the manual bound is a legal definition whose *effective* manifest
+        # bound is the manual bound; that bound is enforced against the actual
+        # walked manifest, never by refusing the definition up front.
         library = self._runtime_library(runtime, definition.resource_library_id)
         storage = self._guarded_storage(runtime, library.storage_id)
         scope_entry = DiscoveryScopeEntry(
@@ -537,6 +570,137 @@ class MediaDiscoveryService:
         if primary_bound == self._budgets.max_primary_sources:
             return self._budgets
         return replace(self._budgets, max_primary_sources=primary_bound)
+
+    def _assert_reconciliation_binding(
+        self,
+        requested: MediaDiscovery,
+        *,
+        expected_fingerprint: str | None,
+        expected_revision: tuple[str, int, str] | None,
+        definition_id: str,
+    ) -> None:
+        """Refuse a repeated request identity that submits a *different* binding.
+
+        The request identity is the caller's proof of the admission it actually
+        created.  Reusing it with a changed definition fingerprint or a changed
+        observed Active revision is a changed intent wearing another request's
+        identity, so the honest outcome is a bounded refusal rather than
+        returning the original admission as if it matched the new request.
+        """
+
+        origin = requested.definition_origin
+        if origin is None or origin.definition_id != definition_id:
+            raise DiscoveryError(
+                "this admission request identity is already bound to a different Run once",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request identity for its original Run once, or start a new "
+                    "Run once with a new request identity"
+                ),
+                details={"requestIdReuse": True},
+            )
+        if (
+            expected_fingerprint is not None
+            and origin.definition_fingerprint != expected_fingerprint
+        ):
+            raise DiscoveryError(
+                "this admission request identity already proved a different published "
+                "definition, so the changed binding was not admitted",
+                code="definition_stale",
+                status=409,
+                next_action=(
+                    "start a new Run once with a new request identity for the changed definition"
+                ),
+                details={"requestIdReuse": True},
+            )
+        if expected_revision is not None:
+            revision_id, _version, revision_digest = expected_revision
+            if (
+                origin.configuration_revision_id != revision_id
+                or origin.configuration_revision_digest != revision_digest
+            ):
+                raise DiscoveryError(
+                    "this admission request identity already proved a different Active "
+                    "configuration, so the changed binding was not admitted",
+                    code="configuration_stale",
+                    status=409,
+                    next_action=(
+                        "start a new Run once with a new request identity for the current "
+                        "Active configuration"
+                    ),
+                    details={"requestIdReuse": True},
+                )
+
+    def _expected_fingerprint(self, value: object) -> str | None:
+        """The optional observed definition fingerprint submitted as a fence."""
+
+        if value is None:
+            return None
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise DiscoveryError(
+                "the observed definition fingerprint is malformed",
+                code="malformed_selection",
+                next_action="reload the definition and start Run once again",
+            )
+        return value
+
+    def _expected_revision(
+        self,
+        revision_id: object,
+        revision_version: object,
+        revision_digest: object,
+    ) -> tuple[str, int, str] | None:
+        """The optional observed Active revision submitted as a fence.
+
+        All three parts are required together: a partial binding could not
+        prove which published revision the operator observed, so it is refused
+        rather than treated as a weaker hint.
+        """
+
+        if revision_id is None and revision_version is None and revision_digest is None:
+            return None
+        if (
+            not isinstance(revision_id, str)
+            or not revision_id.strip()
+            or isinstance(revision_version, bool)
+            or not isinstance(revision_version, int)
+            or revision_version < 1
+            or not isinstance(revision_digest, str)
+            or not revision_digest.strip()
+        ):
+            raise DiscoveryError(
+                "the observed Active revision fence is incomplete or malformed",
+                code="malformed_selection",
+                next_action="reload the definition and start Run once again",
+            )
+        return revision_id, revision_version, revision_digest
+
+    def _assert_expected_revision(
+        self,
+        snapshot_id: str,
+        snapshot_digest: str,
+        expected: tuple[str, int, str],
+    ) -> None:
+        """Refuse a stale admission whose observed Active is no longer published."""
+
+        revision_id, _version, revision_digest = expected
+        if snapshot_id != revision_id or snapshot_digest != revision_digest:
+            raise DiscoveryError(
+                "the Active configuration changed since this Run once was observed, so the "
+                "stale request was not admitted",
+                code="configuration_stale",
+                status=409,
+                next_action=(
+                    "reload the definition and the current Active configuration, then start "
+                    "Run once again"
+                ),
+                details={"configurationChanged": True},
+            )
 
     def _runtime_definition(self, runtime, definition_id: str) -> AutomationTaskDefinition:
         matches = tuple(
@@ -795,6 +959,21 @@ class MediaDiscoveryService:
             return ()
         return tuple(lister(actor=actor, limit=limit))
 
+    def find_by_request_id(self, *, actor: str, admission_request_id: str) -> MediaDiscovery | None:
+        """The durable admission one exact client request identity created.
+
+        This is the reconciliation read a lost admission response needs: the
+        request identity is generated before the POST, so it proves the *actual*
+        admission even when the Active pin or Storage root changed while the
+        response was in flight.  A proved absence returns ``None`` (an honest
+        unknown outcome), never a guessed binding from a recent-list window.
+        """
+
+        finder = getattr(self._repository, "find_media_discovery_by_request_id", None)
+        if not callable(finder):
+            return None
+        return finder(actor=self._actor(actor), admission_request_id=admission_request_id)
+
     def discovery_for_intent(self, intent_id: str) -> MediaDiscovery | None:
         finder = getattr(self._repository, "find_media_discovery_for_intent", None)
         if not callable(finder):
@@ -932,6 +1111,41 @@ class MediaDiscoveryService:
                 ),
                 details={"incompleteReason": reason},
             )
+        if discovery.definition_origin is not None:
+            # A *definition-derived* Run once must prove a complete manifest of
+            # the saved definition scope.  An ordinary read failure (an
+            # unreadable subtree or an unobservable named file) leaves the
+            # recorded sources a partial subset, so freezing it here would
+            # advertise a truncated Automation prefix as executable work.  The
+            # strict rule lives at this shared authority boundary, so a direct
+            # generic finalize of a definition-origin record is refused exactly
+            # like the Run-once route.  The accepted standalone Files selection
+            # (no definition origin) keeps its explicit-subset review path.
+            strict_refusal = discovery_manifest_incomplete(discovery.progress)
+            if strict_refusal is not None:
+                raise DiscoveryError(
+                    "this Run once did not prove a complete manifest of the definition scope, "
+                    "so its findings cannot be frozen",
+                    code="discovery_incomplete_manifest",
+                    status=409,
+                    next_action=(
+                        "narrow the definition sourceScope or correct the unreadable source, "
+                        "publish it, then start a fresh Run once and discover again"
+                    ),
+                    details={
+                        "incompleteReason": strict_refusal.value,
+                        "definitionItemLimit": (
+                            discovery.definition_origin.definition_item_limit
+                            if discovery.definition_origin
+                            else None
+                        ),
+                        "effectivePrimaryLimit": (
+                            discovery.definition_origin.effective_primary_limit
+                            if discovery.definition_origin
+                            else None
+                        ),
+                    },
+                )
         if not discovery.sources:
             raise DiscoveryError(
                 "this discovery found no eligible primary source to freeze",

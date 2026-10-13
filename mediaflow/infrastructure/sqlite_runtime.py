@@ -172,6 +172,14 @@ from mediaflow.domain.operations_run import (
     known_command_label,
     statuses_for_disposition,
 )
+from mediaflow.domain.preview_analysis import (
+    PreviewAnalysis,
+    PreviewAnalysisConflict,
+    PreviewAnalysisKind,
+    PreviewAnalysisProgress,
+    PreviewAnalysisStatus,
+    PreviewAnalysisUnavailable,
+)
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAudit,
     CheckpointBlocker,
@@ -314,7 +322,15 @@ from mediaflow.infrastructure.file_index_schema import (
 # are immutable historical/display evidence only — they create no execution
 # authority, no dummy Job and no second queue — and a legacy row simply has no
 # origin, so nothing is backfilled and no definition identity is guessed.
-SCHEMA_VERSION = 46
+# Schema 47 adds the additive ``preview_analyses`` table: one durable record per
+# admitted *exact analysis* of a pinned definition or manual intent.  A large
+# definition Preview or manual exact analysis is therefore admitted promptly,
+# executed by the existing resident Worker under an exclusive claim/lease, and
+# readable, pausable and cancellable while it runs.  It is identity/progress
+# evidence only — it creates no execution authority, no dummy Job and no second
+# queue — and a legacy database simply has no analysis rows, so nothing is
+# backfilled.
+SCHEMA_VERSION = 47
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -10576,6 +10592,354 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._media_discovery_observation(row) for row in rows)
 
+    # ------------------------------------------------------------------
+    # Durable exact-analysis admission
+    # ------------------------------------------------------------------
+
+    def create_preview_analysis(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
+        """Persist one admitted exact analysis, rejecting a duplicate identity."""
+
+        if not isinstance(analysis, PreviewAnalysis):
+            raise ValueError("preview analysis projection is required")
+        with self._lock, self._connection:
+            try:
+                self._connection.execute(
+                    "INSERT INTO preview_analyses "
+                    "(analysis_id, kind, actor, configuration_snapshot_id, "
+                    "configuration_snapshot_digest, status, version, progress_json, "
+                    "definition_id, definition_fingerprint, intent_id, intent_version, "
+                    "preview_id, error, cancel_requested, pause_requested, claim_worker_id, "
+                    "claim_token, claim_expires_at, attempts, admission_request_id, "
+                    "created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?)",
+                    (
+                        analysis.analysis_id,
+                        analysis.kind.value,
+                        analysis.actor,
+                        analysis.configuration_snapshot_id,
+                        analysis.configuration_snapshot_digest,
+                        analysis.status.value,
+                        analysis.version,
+                        json.dumps(
+                            analysis.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        analysis.definition_id,
+                        analysis.definition_fingerprint,
+                        analysis.intent_id,
+                        analysis.intent_version,
+                        analysis.preview_id,
+                        analysis.error,
+                        int(analysis.cancel_requested),
+                        int(analysis.pause_requested),
+                        analysis.claim_worker_id,
+                        analysis.claim_token,
+                        (
+                            analysis.claim_expires_at.isoformat()
+                            if analysis.claim_expires_at
+                            else None
+                        ),
+                        analysis.attempts,
+                        analysis.admission_request_id,
+                        analysis.created_at.isoformat(),
+                        analysis.updated_at.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise PreviewAnalysisConflict(
+                    "a preview analysis with this identity already exists"
+                ) from error
+        return analysis
+
+    def get_preview_analysis(self, analysis_id: str) -> PreviewAnalysis | None:
+        with self._lock:
+            return self._load_preview_analysis_locked(analysis_id)
+
+    def _load_preview_analysis_locked(self, analysis_id: str) -> PreviewAnalysis | None:
+        row = self._connection.execute(
+            "SELECT * FROM preview_analyses WHERE analysis_id=?", (analysis_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return PreviewAnalysis(
+                analysis_id=row["analysis_id"],
+                kind=PreviewAnalysisKind(row["kind"]),
+                actor=row["actor"],
+                configuration_snapshot_id=row["configuration_snapshot_id"],
+                configuration_snapshot_digest=row["configuration_snapshot_digest"],
+                status=PreviewAnalysisStatus(row["status"]),
+                version=int(row["version"]),
+                progress=PreviewAnalysisProgress.from_document(json.loads(row["progress_json"])),
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+                definition_id=row["definition_id"],
+                definition_fingerprint=row["definition_fingerprint"],
+                intent_id=row["intent_id"],
+                intent_version=(
+                    int(row["intent_version"]) if row["intent_version"] is not None else None
+                ),
+                preview_id=row["preview_id"],
+                error=row["error"],
+                cancel_requested=bool(row["cancel_requested"]),
+                pause_requested=bool(row["pause_requested"]),
+                claim_worker_id=row["claim_worker_id"],
+                claim_token=row["claim_token"],
+                claim_expires_at=(
+                    datetime.fromisoformat(row["claim_expires_at"])
+                    if row["claim_expires_at"]
+                    else None
+                ),
+                attempts=int(row["attempts"]),
+                admission_request_id=row["admission_request_id"],
+            )
+        except Exception as error:
+            raise PreviewAnalysisUnavailable(
+                "durable preview analysis state is corrupt or unavailable"
+            ) from error
+
+    def find_preview_analysis_by_request_id(
+        self, *, actor: str, admission_request_id: str
+    ) -> PreviewAnalysis | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT analysis_id FROM preview_analyses "
+                "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                (actor, admission_request_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._load_preview_analysis_locked(row["analysis_id"])
+
+    def find_open_preview_analysis(
+        self,
+        *,
+        actor: str,
+        kind: PreviewAnalysisKind,
+        definition_id: str | None,
+        definition_fingerprint: str | None,
+        intent_id: str | None,
+        configuration_snapshot_id: str,
+        configuration_snapshot_digest: str,
+    ) -> PreviewAnalysis | None:
+        """One already durable *open* analysis for this exact pinned context."""
+
+        with self._lock:
+            if kind is PreviewAnalysisKind.DEFINITION:
+                row = self._connection.execute(
+                    "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
+                    "AND definition_id=? AND definition_fingerprint IS ? "
+                    "AND configuration_snapshot_id=? AND configuration_snapshot_digest=? "
+                    "AND status IN (?, ?) ORDER BY created_at, analysis_id LIMIT 1",
+                    (
+                        actor,
+                        kind.value,
+                        definition_id,
+                        definition_fingerprint,
+                        configuration_snapshot_id,
+                        configuration_snapshot_digest,
+                        PreviewAnalysisStatus.QUEUED.value,
+                        PreviewAnalysisStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+            else:
+                row = self._connection.execute(
+                    "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
+                    "AND intent_id=? AND configuration_snapshot_id=? "
+                    "AND configuration_snapshot_digest=? AND status IN (?, ?) "
+                    "ORDER BY created_at, analysis_id LIMIT 1",
+                    (
+                        actor,
+                        kind.value,
+                        intent_id,
+                        configuration_snapshot_id,
+                        configuration_snapshot_digest,
+                        PreviewAnalysisStatus.QUEUED.value,
+                        PreviewAnalysisStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+            if row is None:
+                return None
+            return self._load_preview_analysis_locked(row["analysis_id"])
+
+    def list_preview_analyses(
+        self,
+        *,
+        actor: str | None = None,
+        definition_id: str | None = None,
+        intent_id: str | None = None,
+        limit: int = 100,
+    ) -> tuple[PreviewAnalysis, ...]:
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("preview analysis limit must be between 1 and 500")
+        clauses: list[str] = []
+        values: list[object] = []
+        if actor is not None:
+            clauses.append("actor=?")
+            values.append(actor)
+        if definition_id is not None:
+            clauses.append("definition_id=?")
+            values.append(definition_id)
+        if intent_id is not None:
+            clauses.append("intent_id=?")
+            values.append(intent_id)
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT analysis_id FROM preview_analyses {where}"
+                f"ORDER BY created_at DESC, analysis_id DESC LIMIT ?",
+                (*values, limit),
+            ).fetchall()
+            return tuple(
+                value
+                for value in (
+                    self._load_preview_analysis_locked(row["analysis_id"]) for row in rows
+                )
+                if value is not None
+            )
+
+    def update_preview_analysis(
+        self, analysis: PreviewAnalysis, *, expected_version: int
+    ) -> PreviewAnalysis:
+        """Persist one analysis transition under a version CAS.
+
+        The claim columns are written only by the claim/release helpers, so a
+        control request that read an older snapshot can never restore a stale
+        claim over a Worker's fresh ownership.
+        """
+
+        if not isinstance(analysis, PreviewAnalysis):
+            raise ValueError("preview analysis projection is required")
+        if isinstance(expected_version, bool) or expected_version < 1:
+            raise ValueError("preview analysis expected version must be positive")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE preview_analyses SET status=?, version=?, progress_json=?, "
+                "preview_id=?, error=?, cancel_requested=?, pause_requested=?, updated_at=? "
+                "WHERE analysis_id=? AND version=?",
+                (
+                    analysis.status.value,
+                    analysis.version,
+                    json.dumps(analysis.progress.document(), ensure_ascii=False, sort_keys=True),
+                    analysis.preview_id,
+                    analysis.error,
+                    int(analysis.cancel_requested),
+                    int(analysis.pause_requested),
+                    analysis.updated_at.isoformat(),
+                    analysis.analysis_id,
+                    expected_version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PreviewAnalysisConflict(
+                    "preview analysis changed; no transition was published"
+                )
+        return analysis
+
+    def claim_next_preview_analysis(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> PreviewAnalysis | None:
+        """Atomically lease the oldest queued or expired analysis for one Worker."""
+
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("preview analysis worker identity is invalid")
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("preview analysis claim token is invalid")
+        if (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int | float)
+            or not 0 < float(lease_seconds) <= 86_400
+        ):
+            raise ValueError("preview analysis lease must be between 1 second and 1 day")
+        if now.tzinfo is None:
+            raise ValueError("preview analysis claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE status IN (?, ?) "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
+                "ORDER BY created_at, analysis_id LIMIT 1",
+                (
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                "UPDATE preview_analyses SET claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=?, attempts=attempts+1, updated_at=? "
+                "WHERE analysis_id=? AND status IN (?, ?) "
+                "AND (claim_expires_at IS NULL OR claim_expires_at <= ?)",
+                (
+                    worker_id,
+                    claim_token,
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    row["analysis_id"],
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return self._load_preview_analysis_locked(row["analysis_id"])
+
+    def heartbeat_preview_analysis_claim(
+        self,
+        analysis_id: str,
+        claim_token: str,
+        now: datetime,
+        lease_seconds: float,
+    ) -> bool:
+        """Renew one live analysis lease without changing its ownership."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("preview analysis claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("preview analysis heartbeat timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE preview_analyses SET claim_expires_at=?, updated_at=? "
+                "WHERE analysis_id=? AND claim_token=? AND status IN (?, ?)",
+                (
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    analysis_id,
+                    claim_token,
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def release_preview_analysis_claim(self, analysis_id: str, claim_token: str) -> bool:
+        """Drop one *unstarted* claim so another Worker may pick the record up."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("preview analysis claim token is invalid")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE preview_analyses SET claim_worker_id=NULL, claim_token=NULL, "
+                "claim_expires_at=NULL WHERE analysis_id=? AND claim_token=? "
+                "AND status IN (?, ?)",
+                (
+                    analysis_id,
+                    claim_token,
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
     def upsert_media_discovery_observations(
         self, discovery_id: str, observations: tuple[DiscoveryObservation, ...]
     ) -> None:
@@ -13329,6 +13693,31 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS media_discovery_observations_discovery
                     ON media_discovery_observations(discovery_id, source_path);
+                CREATE TABLE IF NOT EXISTS preview_analyses (
+                    analysis_id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    status TEXT NOT NULL, version INTEGER NOT NULL,
+                    progress_json TEXT NOT NULL,
+                    definition_id TEXT, definition_fingerprint TEXT,
+                    intent_id TEXT, intent_version INTEGER,
+                    preview_id TEXT, error TEXT,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    pause_requested INTEGER NOT NULL DEFAULT 0,
+                    claim_worker_id TEXT, claim_token TEXT, claim_expires_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    admission_request_id TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS preview_analyses_status_created
+                    ON preview_analyses(status, created_at, analysis_id);
+                CREATE INDEX IF NOT EXISTS preview_analyses_definition
+                    ON preview_analyses(definition_id, created_at, analysis_id);
+                CREATE INDEX IF NOT EXISTS preview_analyses_intent
+                    ON preview_analyses(intent_id, created_at, analysis_id);
+                CREATE INDEX IF NOT EXISTS preview_analyses_request
+                    ON preview_analyses(actor, admission_request_id);
                 CREATE TABLE IF NOT EXISTS manual_previews (
                     preview_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
                     actor TEXT NOT NULL, configuration_snapshot_id TEXT NOT NULL,

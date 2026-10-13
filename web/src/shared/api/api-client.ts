@@ -1818,6 +1818,10 @@ import {
   type AutomationRunOnceModel,
 } from "../../entities/operations/run-once";
 import {
+  normalizePreviewAnalysis,
+  type PreviewAnalysisModel,
+} from "../../entities/operations/preview-analysis";
+import {
   NOTIFICATION_URI_SAFE_SEGMENT,
   normalizeNotificationActivation,
   normalizeNotificationDeliveriesPage,
@@ -7944,6 +7948,16 @@ export async function admitAutomationRunOnce(
   options: {
     readonly definitionId: string;
     readonly admissionRequestId?: string | null;
+    /**
+     * The exact published definition/configuration the operator observed. The
+     * backend treats these as a fence: a changed definition fingerprint or a
+     * repinned Active revision refuses the stale request instead of silently
+     * binding today's Active to an intent the operator never saw.
+     */
+    readonly expectedDefinitionFingerprint?: string | null;
+    readonly expectedRevisionId?: string | null;
+    readonly expectedRevisionVersion?: number | null;
+    readonly expectedRevisionDigest?: string | null;
   },
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationRunOnceReadResult> {
@@ -7952,6 +7966,14 @@ export async function admitAutomationRunOnce(
   const body: Record<string, unknown> = {};
   if (options.admissionRequestId) {
     body.admissionRequestId = options.admissionRequestId;
+  }
+  if (options.expectedDefinitionFingerprint) {
+    body.expectedDefinitionFingerprint = options.expectedDefinitionFingerprint;
+  }
+  if (options.expectedRevisionId) {
+    body.expectedRevisionId = options.expectedRevisionId;
+    body.expectedRevisionVersion = options.expectedRevisionVersion ?? 0;
+    body.expectedRevisionDigest = options.expectedRevisionDigest ?? "";
   }
   let response: Response;
   try {
@@ -8030,6 +8052,61 @@ export async function fetchAutomationRunOnce(
 }
 
 /**
+ * Reconcile one lost Run-once admission response by the client's own request
+ * identity.
+ *
+ * The request id is generated before the POST, so it proves the *actual*
+ * admission however the Active pin changed while the response was in flight.
+ * A proved absence is a bounded `run_once_request_not_found`, never a guessed
+ * latest run.
+ */
+export async function reconcileAutomationRunOnce(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly admissionRequestId: string;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationRunOnceReadResult> {
+  if (
+    !isSafeIdentifier(options.definitionId) ||
+    !isSafeIdentifier(options.admissionRequestId)
+  )
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(options.definitionId)}/run-once` +
+        `?admissionRequestId=${encodeURIComponent(options.admissionRequestId)}`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return runOnceFailure(response.status, payload);
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      model: normalizeAutomationRunOnce(payload),
+    };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+    };
+  }
+}
+
+/**
  * Control or freeze one durable Run once.
  *
  * Pause/cancel/resume only record a cooperative request the resident Worker
@@ -8046,7 +8123,10 @@ export async function controlAutomationRunOnce(
   },
   fetchImpl: FetchLike = fetch,
 ): Promise<
-  AutomationRunOnceReadResult & { readonly previewId?: string | null }
+  AutomationRunOnceReadResult & {
+    readonly previewId?: string | null;
+    readonly analysisId?: string | null;
+  }
 > {
   if (!isSafeIdentifier(options.discoveryId))
     return { ok: false, status: 400, code: "invalid_request" };
@@ -8075,7 +8155,18 @@ export async function controlAutomationRunOnce(
     const record = readRecord(payload, "runOnce");
     const previewId =
       typeof record["previewId"] === "string" ? record["previewId"] : null;
-    return { ok: true, status: response.status, code: null, model, previewId };
+    // A finalize whose exact analysis was deferred to the resident Worker
+    // returns a durable analysis identity instead of a completed Preview.
+    const analysisId =
+      typeof record["analysisId"] === "string" ? record["analysisId"] : null;
+    return {
+      ok: true,
+      status: response.status,
+      code: null,
+      model,
+      previewId,
+      analysisId,
+    };
   } catch {
     return {
       ok: false,
@@ -8083,4 +8174,218 @@ export async function controlAutomationRunOnce(
       code: "malformed_response",
     };
   }
+}
+
+// --- Durable exact Preview analysis ---------------------------------------
+
+const AUTOMATION_PREVIEW_ANALYSES_BASE =
+  "/api/v1/operations/automation/preview-analyses";
+
+export interface PreviewAnalysisReadResult {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly code: string | null;
+  readonly model?: PreviewAnalysisModel;
+  readonly nextAction?: string | null;
+}
+
+function previewAnalysisFailure(
+  status: number,
+  payload: unknown,
+): PreviewAnalysisReadResult {
+  // A rejected response is normally the bounded error envelope, but a proxy or
+  // gateway may answer with any JSON shape. A non-envelope body must degrade to
+  // one bounded rejection code rather than throw out of the API boundary.
+  try {
+    const failure = discoveryErrorResult(status, payload);
+    return {
+      ok: false,
+      status,
+      code: failure.code,
+      nextAction: failure.nextAction,
+    };
+  } catch {
+    return { ok: false, status, code: "request_rejected", nextAction: null };
+  }
+}
+
+function previewAnalysisSuccess(
+  status: number,
+  payload: unknown,
+): PreviewAnalysisReadResult {
+  try {
+    return {
+      ok: true,
+      status,
+      code: null,
+      model: normalizePreviewAnalysis(payload),
+    };
+  } catch {
+    return { ok: false, status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Admit one durable exact analysis of a published definition.
+ *
+ * The request validates the exact pinned context and returns the durable
+ * analysis identity promptly; the expensive walk and Provider batch run in the
+ * resident Processing Worker, so a large definition never blocks this request
+ * and the operator can read progress and cancel safely. A caller-supplied
+ * `admissionRequestId` lets a lost response reconcile to the actual admission
+ * instead of starting a duplicate analysis.
+ */
+export async function admitDefinitionPreviewAnalysis(
+  token: string | null,
+  options: {
+    readonly definitionId: string;
+    readonly revisionId?: string | null;
+    readonly admissionRequestId?: string | null;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewAnalysisReadResult> {
+  if (!isSafeIdentifier(options.definitionId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  const body: Record<string, unknown> = {};
+  if (options.revisionId) {
+    body.revisionId = options.revisionId;
+  }
+  if (options.admissionRequestId) {
+    body.admissionRequestId = options.admissionRequestId;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/preview-analyses`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify(body),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return previewAnalysisFailure(response.status, payload);
+  return previewAnalysisSuccess(response.status, payload);
+}
+
+/**
+ * Admit one durable exact analysis of an open manual intent.
+ *
+ * The current intent version fences the admission so a concurrent choice edit
+ * is rejected instead of analysing choices the operator never reviewed.
+ */
+export async function admitManualPreviewAnalysis(
+  token: string | null,
+  options: {
+    readonly intentId: string;
+    readonly expectedVersion: number;
+    readonly admissionRequestId?: string | null;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewAnalysisReadResult> {
+  if (!isSafeIdentifier(options.intentId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  const body: Record<string, unknown> = {
+    expectedVersion: options.expectedVersion,
+  };
+  if (options.admissionRequestId) {
+    body.admissionRequestId = options.admissionRequestId;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/preview-analyses`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify(body),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return previewAnalysisFailure(response.status, payload);
+  return previewAnalysisSuccess(response.status, payload);
+}
+
+/** Read one durable exact Preview analysis by its analysis identity. */
+export async function fetchPreviewAnalysis(
+  token: string | null,
+  options: { readonly analysisId: string },
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewAnalysisReadResult> {
+  if (!isSafeIdentifier(options.analysisId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_PREVIEW_ANALYSES_BASE}/${encodeURIComponent(options.analysisId)}`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return previewAnalysisFailure(response.status, payload);
+  return previewAnalysisSuccess(response.status, payload);
+}
+
+/**
+ * Control one durable exact Preview analysis.
+ *
+ * Pause/cancel/resume only record a cooperative request the resident Worker
+ * honours at its next safe boundary; none of them publishes a Preview or
+ * mutates Storage.
+ */
+export async function controlPreviewAnalysis(
+  token: string | null,
+  options: {
+    readonly analysisId: string;
+    readonly action: "pause" | "cancel" | "resume";
+    readonly expectedVersion: number;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewAnalysisReadResult> {
+  if (!isSafeIdentifier(options.analysisId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_PREVIEW_ANALYSES_BASE}/${encodeURIComponent(options.analysisId)}/${options.action}`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return previewAnalysisFailure(response.status, payload);
+  return previewAnalysisSuccess(response.status, payload);
 }

@@ -3970,120 +3970,128 @@ def _run_worker(
                 # their independent consumers reconstruct their own durable pins.
                 return (None, None)
 
-        with _media_discovery_worker_context(
+        with _preview_analysis_worker_context(
             configuration, configured_path, repository
-        ) as media_discovery_worker:
-            with _manual_organize_worker_context(
+        ) as preview_analysis_worker:
+            with _media_discovery_worker_context(
                 configuration, configured_path, repository
-            ) as manual_organize_worker:
-                with _files_transfer_worker_context(
+            ) as media_discovery_worker:
+                with _manual_organize_worker_context(
                     configuration, configured_path, repository
-                ) as files_transfer_worker:
-                    register_resident_process(
-                        runtime,
-                        "worker",
-                        instance_id,
-                        heartbeat_interval_seconds=5.0,
-                        snapshot_id=resident_id,
-                    )
-                    # The resident Worker records its own presence through the same
-                    # heartbeat the resident registry reads, so a slow provider call
-                    # or a long claim never makes the deployment look stopped.
-                    worker_service = AutomationWorker(
-                        repository,
-                        lambda job, cancelled: _run_queued_workflow(
-                            job, configured_path, cancelled, repository=repository
-                        ),
-                        _worker_notification_publisher(repository, configured_path),
-                        configuration_snapshot_resolver=pending_snapshot,
-                        runtime_schema_version=SCHEMA_VERSION,
-                        manual_organize_worker=manual_organize_worker,
-                        media_discovery_worker=media_discovery_worker,
-                        files_transfer_worker=files_transfer_worker,
-                    )
-                    if arguments.worker_command == "run-next":
-                        job = worker_service.run_next()
-                        if job is not None:
-                            stdout.write(render_job(job))
-                            return 0 if job.status.value in {"completed", "cancelled"} else 1
-                        discovered = media_discovery_worker.run_next()
-                        if discovered is not None:
-                            stdout.write(
-                                f"Discovery ID: {discovered.discovery_id}\n"
-                                f"Status: {discovered.status.value}\n"
-                            )
-                            return 0
-                        execution = manual_organize_worker.run_next()
-                        if execution is not None:
-                            stdout.write(
-                                f"Manual execution ID: {execution.execution_id}\n"
-                                f"Status: {execution.status.value}\n"
-                            )
-                            return 0 if execution.status.value in {"completed", "cancelled"} else 1
-                        transfer = files_transfer_worker.run_next()
-                        if transfer is None:
-                            stdout.write("No pending automation jobs\n")
-                            return 0
-                        stdout.write(
-                            f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n"
+                ) as manual_organize_worker:
+                    with _files_transfer_worker_context(
+                        configuration, configured_path, repository
+                    ) as files_transfer_worker:
+                        register_resident_process(
+                            runtime,
+                            "worker",
+                            instance_id,
+                            heartbeat_interval_seconds=5.0,
+                            snapshot_id=resident_id,
                         )
-                        return 0 if transfer.terminal else 1
-                    poll = getattr(arguments, "poll_seconds", None) or getattr(
-                        configuration, "worker_poll_seconds", default_poll
-                    )
-                    original_heartbeat = worker_service.heartbeat
-
-                    def heartbeat(now=None) -> bool:
-                        kept = original_heartbeat(now)
-                        _resident_worker_heartbeat(runtime, instance_id)
-                        return kept
-
-                    worker_service.heartbeat = heartbeat
-                    files_transfer_worker.set_worker_heartbeat(heartbeat)
-
-                    def step(loop: ResidentLoop) -> int:
-                        if worker_service._registered and not worker_service.heartbeat():
-                            raise RuntimeError("worker registration unavailable")
-                        worked = worker_service.run_next() is not None
-                        if not worked:
-                            worked = (
-                                worker_service._run_media_discovery_work()
-                                or worker_service._run_manual_organize_work()
-                                or worker_service._run_files_transfer_work()
-                            )
-                        if worked:
-                            loop.clear_waiting()
-                        else:
-                            current = _resolve_resident_configuration(configured_path)
-                            if current is None:
-                                loop.note(
-                                    "unconfigured", "waiting for published business configuration"
+                        # The resident Worker records its own presence through the same
+                        # heartbeat the resident registry reads, so a slow provider call
+                        # or a long claim never makes the deployment look stopped.
+                        worker_service = AutomationWorker(
+                            repository,
+                            lambda job, cancelled: _run_queued_workflow(
+                                job, configured_path, cancelled, repository=repository
+                            ),
+                            _worker_notification_publisher(repository, configured_path),
+                            configuration_snapshot_resolver=pending_snapshot,
+                            runtime_schema_version=SCHEMA_VERSION,
+                            manual_organize_worker=manual_organize_worker,
+                            media_discovery_worker=media_discovery_worker,
+                            preview_analysis_worker=preview_analysis_worker,
+                            files_transfer_worker=files_transfer_worker,
+                        )
+                        if arguments.worker_command == "run-next":
+                            job = worker_service.run_next()
+                            if job is not None:
+                                stdout.write(render_job(job))
+                                return 0 if job.status.value in {"completed", "cancelled"} else 1
+                            discovered = media_discovery_worker.run_next()
+                            if discovered is not None:
+                                stdout.write(
+                                    f"Discovery ID: {discovered.discovery_id}\n"
+                                    f"Status: {discovered.status.value}\n"
                                 )
-                            else:
-                                loop.clear_waiting()
-                        return int(worked)
-
-                    loop = ResidentLoop(
-                        runtime,
-                        "worker",
-                        instance_id,
-                        heartbeat_interval_seconds=5.0,
-                        poll_seconds=poll,
-                        stdout=stdout,
-                        step=step,
-                        describe=_resident_failure_reason,
-                    )
-                    try:
-                        processed = _run_resident(
-                            lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds))
+                                return 0
+                            execution = manual_organize_worker.run_next()
+                            if execution is not None:
+                                stdout.write(
+                                    f"Manual execution ID: {execution.execution_id}\n"
+                                    f"Status: {execution.status.value}\n"
+                                )
+                                return (
+                                    0 if execution.status.value in {"completed", "cancelled"} else 1
+                                )
+                            transfer = files_transfer_worker.run_next()
+                            if transfer is None:
+                                stdout.write("No pending automation jobs\n")
+                                return 0
+                            stdout.write(
+                                f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n"
+                            )
+                            return 0 if transfer.terminal else 1
+                        poll = getattr(arguments, "poll_seconds", None) or getattr(
+                            configuration, "worker_poll_seconds", default_poll
                         )
-                    finally:
+                        original_heartbeat = worker_service.heartbeat
+
+                        def heartbeat(now=None) -> bool:
+                            kept = original_heartbeat(now)
+                            _resident_worker_heartbeat(runtime, instance_id)
+                            return kept
+
+                        worker_service.heartbeat = heartbeat
+                        files_transfer_worker.set_worker_heartbeat(heartbeat)
+
+                        def step(loop: ResidentLoop) -> int:
+                            if worker_service._registered and not worker_service.heartbeat():
+                                raise RuntimeError("worker registration unavailable")
+                            worked = worker_service.run_next() is not None
+                            if not worked:
+                                worked = (
+                                    worker_service._run_media_discovery_work()
+                                    or worker_service._run_preview_analysis_work()
+                                    or worker_service._run_manual_organize_work()
+                                    or worker_service._run_files_transfer_work()
+                                )
+                            if worked:
+                                loop.clear_waiting()
+                            else:
+                                current = _resolve_resident_configuration(configured_path)
+                                if current is None:
+                                    loop.note(
+                                        "unconfigured",
+                                        "waiting for published business configuration",
+                                    )
+                                else:
+                                    loop.clear_waiting()
+                            return int(worked)
+
+                        loop = ResidentLoop(
+                            runtime,
+                            "worker",
+                            instance_id,
+                            heartbeat_interval_seconds=5.0,
+                            poll_seconds=poll,
+                            stdout=stdout,
+                            step=step,
+                            describe=_resident_failure_reason,
+                        )
                         try:
-                            worker_service.stop()
-                        except Exception:
-                            pass
-                    stdout.write(f"Worker stopped; processed={processed}\n")
-                    return 0
+                            processed = _run_resident(
+                                lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds))
+                            )
+                        finally:
+                            try:
+                                worker_service.stop()
+                            except Exception:
+                                pass
+                        stdout.write(f"Worker stopped; processed={processed}\n")
+                        return 0
 
 
 def _resident_worker_heartbeat(runtime, instance_id) -> None:
@@ -4619,6 +4627,75 @@ def _manual_organize_worker_context(configuration, configured_path: str | None, 
             checkpoint_service=ProcessingCheckpointService(repository),
         )
         yield ManualOrganizeExecutionWorker(execution)
+
+
+@contextmanager
+def _preview_analysis_worker_context(configuration, configured_path: str | None, repository):
+    """Yield the resident Worker's admitted durable exact-analysis runner.
+
+    The runner reconstructs the pinned Active revision and the configured
+    Storage adapters from durable state, so it never shares in-memory authority
+    with the API request that admitted the analysis.  The admitting request
+    performs no Storage walk and no Provider call; this Worker context is the
+    only place an analysis runs, and it remains metadata-only with zero
+    mutation.
+    """
+
+    from mediaflow.application.automation_task_definition_preview import (
+        AutomationTaskDefinitionPreviewService,
+    )
+    from mediaflow.application.preview_analysis import (
+        PreviewAnalysisService,
+        PreviewAnalysisWorker,
+    )
+
+    bootstrap_document = _configuration_document(configured_path)
+    management_only = isinstance(configuration, ManagementBootstrapConfiguration)
+    with (
+        SQLiteFileIndexRepository(configuration.database_path) as file_index,
+        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
+    ):
+        configuration_service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=configuration.database_path,
+            bootstrap_document=bootstrap_document,
+            management_only=management_only,
+        )
+        definition_previews = AutomationTaskDefinitionPreviewService(
+            repository,
+            configuration_service,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+            file_index=file_index,
+        )
+        catalog = FileCatalogService(
+            file_index,
+            tuple(
+                item.library_id
+                for item in getattr(configuration, "resource_libraries", ())
+                if item.enabled
+            ),
+            tuple(item.storage_id for item in getattr(configuration, "storage_definitions", ())),
+            task_repository=repository,
+        )
+        intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        manual_previews = ManualOrganizePreviewService(
+            repository,
+            intents,
+            catalog,
+            file_index=file_index,
+            configuration_service=configuration_service,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+        )
+        service = PreviewAnalysisService(
+            repository,
+            definition_previews=definition_previews,
+            manual_previews=manual_previews,
+        )
+        yield PreviewAnalysisWorker(service)
 
 
 @contextmanager

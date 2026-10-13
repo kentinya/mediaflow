@@ -2,12 +2,14 @@
  * V2 Automation definition creation page.
  *
  * The bounded form offers only the fields an Automation Task Definition owns:
- * name, enabled state, ResourceLibrary, relative source scope, run mode, item
- * limit and exactly one interval or Cron/timezone schedule. Options come from
- * the backend projection. A definition is stored inside the open successor
- * Draft; when none exists the operator starts one explicitly, because reads
- * never create durable state. Validation and activation happen on the Draft
- * editor afterwards; this page starts no work and grants no authority.
+ * name, enabled state, ResourceLibrary, relative source scope, the fixed
+ * automatic-organization intent, item limit and exactly one interval or
+ * Cron/timezone schedule. Options come from the backend projection. There is no
+ * mode selector: removed modes are never offered, converted or run. A
+ * definition is stored inside the open successor Draft; when none exists the
+ * operator starts one explicitly, because reads never create durable state.
+ * Validation and activation happen on the Draft editor afterwards; this page
+ * starts no work and grants no authority.
  */
 
 import { useState } from "react";
@@ -26,11 +28,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
-import {
-  AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  AUTOMATION_RUN_MODES,
-  type AutomationRunMode,
-} from "../../entities/operations/automation";
+import { AUTOMATION_AUTOMATIC_ORGANIZATION_MODE } from "../../entities/operations/automation";
 
 export function AutomationNewPage() {
   const token = useAuthToken();
@@ -40,9 +38,9 @@ export function AutomationNewPage() {
   const [enabled, setEnabled] = useState(false);
   const [resourceLibraryId, setResourceLibraryId] = useState("");
   const [sourceScope, setSourceScope] = useState("");
-  const [mode, setMode] = useState<AutomationRunMode>(
-    AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  );
+  // The intent is fixed: this form offers no mode selector and never submits a
+  // removed mode. The value is the single retained runnable intent.
+  const mode = AUTOMATION_AUTOMATIC_ORGANIZATION_MODE;
   const [itemLimit, setItemLimit] = useState("100");
   const [scheduleType, setScheduleType] = useState<"interval" | "cron">(
     "interval",
@@ -250,25 +248,14 @@ export function AutomationNewPage() {
                 placeholder="empty for the ResourceLibrary root"
                 maxLength={256}
               />
-              <p className="mf-label">
-                <label htmlFor="automation-mode">Run mode</label>
-              </p>
-              <select
-                id="automation-mode"
-                value={mode}
-                onChange={(event) =>
-                  setMode(event.target.value as AutomationRunMode)
-                }
+              <p className="mf-label">Run mode</p>
+              <p
+                className="mf-dashboard-meta"
+                data-testid="automation-mode-intent"
               >
-                {AUTOMATION_RUN_MODES.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <p className="mf-dashboard-meta">
-                Automatic organization is the only supported mode. Removed modes
-                are never offered.
+                {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}
+                （自动整理）是该定义固定的
+                运行意图，没有可选模式。已移除的历史模式不会被提供、转换或兼容执行。
               </p>
               <p className="mf-label">
                 <label htmlFor="automation-limit">Item limit</label>

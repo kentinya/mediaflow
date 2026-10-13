@@ -34,8 +34,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryIncompleteReason,
     DiscoveryStatus,
     MediaDiscovery,
-    discovery_material_refusal,
-    effective_primary_limit,
+    discovery_manifest_incomplete,
 )
 
 #: Bounded operator-facing phases of one definition-bound Run once.
@@ -79,16 +78,33 @@ class AutomationRunOnceService:
         intent_service,
         preview_service,
         *,
+        analysis_service=None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._discovery = discovery_service
         self._intents = intent_service
         self._previews = preview_service
+        # Optional durable exact-analysis admission.  When present, freezing a
+        # Run-once manifest hands its exact Preview work to the resident Worker
+        # instead of running the whole walk and Provider batch inline in the
+        # HTTP request.
+        self._analyses = analysis_service
         self._clock = clock
 
     @property
     def discovery(self):
         return self._discovery
+
+    def bind_analysis_service(self, analysis_service) -> None:
+        """Attach the durable exact-analysis admission used by ``finalize``.
+
+        The API constructs the exact-Preview and analysis services after this
+        service, so the binding is explicit rather than a construction-order
+        dependency.  Until it is bound, ``finalize`` produces the exact Preview
+        inline as before.
+        """
+
+        self._analyses = analysis_service
 
     # ------------------------------------------------------------------
     # Admission (prompt; no Storage walk in the HTTP request)
@@ -100,11 +116,19 @@ class AutomationRunOnceService:
         *,
         actor: str,
         admission_request_id: str | None = None,
+        expected_definition_fingerprint: str | None = None,
+        expected_revision_id: str | None = None,
+        expected_revision_version: int | None = None,
+        expected_revision_digest: str | None = None,
     ) -> MediaDiscovery:
         """Admit the durable discovery for one published definition.
 
         The response is prompt: the actual source walk happens in the resident
         Processing Worker, so a large analysis never blocks the HTTP request.
+
+        The optional observed definition/configuration fence binds the new
+        admission to the exact published state the operator reviewed; a
+        changed definition or repinned Active refuses the stale request.
         """
 
         if self._discovery is None:
@@ -118,6 +142,10 @@ class AutomationRunOnceService:
             definition_id=definition_id,
             actor=actor,
             admission_request_id=admission_request_id,
+            expected_definition_fingerprint=expected_definition_fingerprint,
+            expected_revision_id=expected_revision_id,
+            expected_revision_version=expected_revision_version,
+            expected_revision_digest=expected_revision_digest,
         )
 
     # ------------------------------------------------------------------
@@ -141,7 +169,7 @@ class AutomationRunOnceService:
                 status=404,
                 next_action="open the definition and start Run once",
             )
-        refusal = discovery_material_refusal(discovery.progress)
+        refusal = discovery_manifest_incomplete(discovery.progress)
         phase = self._phase(discovery, refusal)
         document: dict[str, object] = {
             "journey": "automation-run-once",
@@ -162,6 +190,7 @@ class AutomationRunOnceService:
             "counts": discovery.progress.counters.document(),
             "primarySourceCount": len(discovery.sources),
             "intentId": discovery.intent_id,
+            "frozen": discovery.frozen,
             "frozenAt": discovery.frozen_at.isoformat() if discovery.frozen_at else None,
             "zeroMutation": True,
             "sideEffects": "none",
@@ -190,10 +219,15 @@ class AutomationRunOnceService:
             return "analyzing"
         if refusal is not None:
             return "refused"
+        # The frozen state is advertised only after the durable freeze actually
+        # happened: a completed walk that has not been frozen yet is ready to
+        # freeze, not already frozen.
+        if discovery.frozen and discovery.intent_id is not None:
+            return "frozen"
         if discovery.status is DiscoveryStatus.PARTIAL_SUCCESS:
-            # A partial walk without a material refusal is an ordinary read
-            # failure: the reviewed subset keeps its explicit-review path.
-            return "analyzing" if not discovery.sources else "ready"
+            # A partial walk is an incomplete manifest for a definition-derived
+            # Run once; it is refused above rather than advertised as ready.
+            return "refused"
         if discovery.status is DiscoveryStatus.COMPLETED:
             return "ready" if discovery.sources else "no_work"
         if discovery.status is DiscoveryStatus.CANCELLED:
@@ -209,15 +243,12 @@ class AutomationRunOnceService:
             DiscoveryStatus.COMPLETED,
             DiscoveryStatus.PARTIAL_SUCCESS,
         }
-        # Finalize (and therefore any Preview or execution) is refused for a
-        # budget/safety-limited walk: the recorded sources are a truncated
-        # prefix, never a complete manifest.
+        # Finalize (and therefore any Preview or execution) is refused for any
+        # walk that did not prove a complete manifest: a budget/safety-limited
+        # walk recorded a truncated prefix, and a read failure recorded a
+        # partial subset.  Neither may become an executable Automation prefix.
         finalizable = (
-            terminal
-            and refusal is None
-            and discovery.progress.incomplete_reason not in BUDGET_LIMITED_REASONS
-            and bool(discovery.sources)
-            and not discovery.frozen
+            terminal and refusal is None and bool(discovery.sources) and not discovery.frozen
         )
         pause = discovery.status in {DiscoveryStatus.QUEUED, DiscoveryStatus.RUNNING}
         cancel = discovery.status in {
@@ -237,7 +268,7 @@ class AutomationRunOnceService:
                 "sideEffects": "none",
                 "durableOutcome": (
                     "the complete bounded manifest is frozen and an exact zero-mutation "
-                    "Preview is stored"
+                    "manual Preview is stored"
                 ),
                 "nextAction": (
                     "review the exact Preview of the frozen manifest, then separately "
@@ -248,8 +279,8 @@ class AutomationRunOnceService:
                 "available": refusal is not None,
                 "sideEffects": "none",
                 "nextAction": (
-                    "narrow the definition sourceScope or lower its itemLimit, publish it, "
-                    "then start Run once again"
+                    "narrow the definition sourceScope or correct the unreadable source, "
+                    "publish it, then start Run once again"
                 ),
             },
             "preview": {
@@ -267,11 +298,14 @@ class AutomationRunOnceService:
     ) -> str:
         if refusal is not None:
             return (
-                "narrow the definition sourceScope or lower its itemLimit so a complete "
-                "manifest fits the bound, publish it, then start Run once again"
+                "narrow the definition sourceScope or correct the unreadable source so a "
+                "complete manifest is proved, publish it, then start Run once again"
             )
         if discovery.frozen and discovery.intent_id is not None:
-            return "review the exact zero-mutation Preview, then separately confirm execution"
+            return (
+                "review the exact zero-mutation manual Preview of the frozen manifest, then "
+                "separately confirm execution"
+            )
         if discovery.status is DiscoveryStatus.WAITING_STABILITY:
             return (
                 "wait for the configured stability interval, then let the resident Worker "
@@ -295,13 +329,20 @@ class AutomationRunOnceService:
 
     def finalize(
         self, discovery_id: str, *, actor: str, expected_version: int
-    ) -> tuple[MediaDiscovery, object]:
-        """Freeze the complete manifest and create its exact zero-mutation Preview.
+    ) -> tuple[MediaDiscovery, object | None, object | None]:
+        """Freeze the complete manifest and admit its exact zero-mutation Preview.
 
-        Freezing reuses the existing discovery finalize (which hands the frozen
-        source list to the existing manual intent admission) and then runs the
-        existing exact Preview over that intent.  No execution authority is
+        Freezing reuses the existing discovery finalize, which hands the frozen
+        source list to the existing manual intent admission.  The exact Preview
+        over that intent is then admitted through the durable analysis service
+        when one is configured, so a large frozen manifest never blocks the HTTP
+        request; the resident Worker runs the walk and Provider batch and links
+        the resulting exact Preview.  Either way no execution authority is
         created: the operator still has to confirm execution separately.
+
+        Returns ``(frozen, preview, analysis)``.  ``preview`` is the completed
+        Preview when one could be produced inline (no durable analysis service),
+        and ``analysis`` is the durable admission when the work was deferred.
         """
 
         discovery = self._discovery.get(discovery_id)
@@ -324,31 +365,51 @@ class AutomationRunOnceService:
                 status=503,
                 next_action="inspect the discovery state, then finalize it again",
             )
+        intent_version = self._intent_version(frozen.intent_id)
+        if self._analyses is not None:
+            # Defer the expensive exact analysis to the resident Worker.  The
+            # frozen manifest and its intent are already durable, so the
+            # operator reads a durable analysis identity immediately and the
+            # separate one-shot execution intent is still required afterwards.
+            analysis = self._analyses.admit_manual(
+                frozen.intent_id,
+                actor=actor,
+                expected_version=intent_version,
+            )
+            return frozen, None, analysis
         preview = self._previews.create(
             frozen.intent_id,
             actor=actor,
-            expected_version=self._intent_version(frozen.intent_id),
+            expected_version=intent_version,
         )
-        return frozen, preview
+        return frozen, preview, None
 
     def _intent_version(self, intent_id: str) -> int:
         intent = self._intents.get(intent_id)
         return int(getattr(intent, "version", 1))
 
     def _assert_complete(self, discovery: MediaDiscovery) -> None:
-        refusal = discovery_material_refusal(discovery.progress)
-        if refusal is not None or (discovery.progress.incomplete_reason in BUDGET_LIMITED_REASONS):
-            reason = (refusal or discovery.progress.incomplete_reason).value
+        # A definition-derived Run once must prove a *complete* manifest of the
+        # saved definition scope.  The strict rule includes an ordinary read
+        # failure: an unreadable subtree or an unobservable named file leaves
+        # the recorded sources a partial subset, so freezing it would advertise
+        # a truncated Automation prefix as executable work.
+        refusal = discovery_manifest_incomplete(discovery.progress)
+        if refusal is not None:
             raise AutomationRunOnceError(
-                "this Run once stopped at a budget or safety limit, so its findings are an "
-                "incomplete subset and cannot be executed",
-                code="discovery_overflow",
+                "this Run once did not prove a complete manifest of the definition scope, so "
+                "its findings cannot be executed",
+                code=(
+                    "discovery_overflow"
+                    if refusal in BUDGET_LIMITED_REASONS
+                    else "discovery_incomplete_manifest"
+                ),
                 next_action=(
-                    "narrow the definition sourceScope or lower its itemLimit, publish it, "
-                    "then start a fresh Run once"
+                    "narrow the definition sourceScope or correct the unreadable source, "
+                    "publish it, then start a fresh Run once and discover again"
                 ),
                 details={
-                    "incompleteReason": reason,
+                    "incompleteReason": refusal.value,
                     "definitionItemLimit": (
                         discovery.definition_origin.definition_item_limit
                         if discovery.definition_origin
@@ -415,7 +476,10 @@ def definition_run_once_available(definition) -> tuple[bool, str | None]:
     """Whether one published definition may be run once, with its reason.
 
     A disabled schedule is explicitly runnable: only the *schedule* is off.  A
-    definition recording a removed mode is not runnable at all.
+    definition recording a removed mode is not runnable at all.  A ceiling
+    above the manual primary bound is legal: the effective manifest bound is
+    ``min(ceiling, bound)`` and is enforced against the actual discovered
+    manifest, so a scope smaller than the bound still runs once completely.
     """
 
     if not isinstance(definition, AutomationTaskDefinition):
@@ -426,13 +490,6 @@ def definition_run_once_available(definition) -> tuple[bool, str | None]:
     mode = definition.mode
     if not isinstance(mode, AutomationTaskRunMode) or not mode.is_runnable:
         return False, "the definition records a removed Automation mode and cannot be run once"
-    bound = effective_primary_limit(definition.item_limit)
-    if definition.item_limit > bound:
-        return (
-            False,
-            f"the definition item ceiling exceeds the bounded manifest limit of {bound}; "
-            "narrow the scope or lower the limit, publish, then run once",
-        )
     return True, None
 
 

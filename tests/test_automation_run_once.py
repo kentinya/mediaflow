@@ -36,8 +36,11 @@ from mediaflow.application.automation_run_once import (
 )
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.media_discovery import MediaDiscoveryService
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
 from mediaflow.domain.media_discovery import (
     DefinitionRunOnceOrigin,
@@ -47,6 +50,7 @@ from mediaflow.domain.media_discovery import (
     effective_primary_limit,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -75,6 +79,12 @@ class _RecordingStorage:
         self._storage = storage
         self.reads: list[tuple[str, str]] = []
         self.mutations: list[tuple[str, str]] = []
+        self._unreadable: set[str] = set()
+
+    def fail_listing(self, prefix: str) -> None:
+        """Make one subtree unreadable after admission."""
+
+        self._unreadable.add(prefix.strip("/"))
 
     @property
     def storage_id(self) -> str:
@@ -98,6 +108,14 @@ class _RecordingStorage:
 
     def list_page(self, path: str, *, limit: int, cursor: str | None = None):
         self.reads.append(("list_page", path))
+        for prefix in self._unreadable:
+            if path == prefix or path.startswith(prefix + "/"):
+                raise StorageError(
+                    StorageErrorCode.PERMISSION_DENIED,
+                    "list",
+                    path,
+                    "synthetic permission denial for one subtree",
+                )
         return self._storage.list_page(path, limit=limit, cursor=cursor)
 
     def stat(self, path: str):
@@ -132,6 +150,32 @@ class _RecordingStorage:
 
     def soft_link(self, source: str, target: str) -> None:
         self.mutations.append(("soft_link", source))
+
+
+def _provider_registry():
+    """A synthetic Provider registry so exact analysis needs no external service."""
+
+    from mediaflow.application.metadata import MetadataProviderRegistry
+    from mediaflow.application.strategy_test import SyntheticMetadataProvider
+    from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+    return MetadataProviderRegistry(
+        (
+            SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "129",
+                        MediaType.MOVIE,
+                        "One",
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+            ),
+        )
+    )
 
 
 def _activate(service, document):
@@ -273,6 +317,7 @@ class _RunOnceFixture(unittest.TestCase):
                 intents,
                 None,
                 configuration=runtime,
+                providers=_provider_registry(),
                 storages=dict(storages),
                 clock=self.clock,
             )
@@ -285,7 +330,37 @@ class _RunOnceFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
-            run_once = AutomationRunOnceService(discovery, intents, previews, clock=self.clock)
+            from mediaflow.application.preview_analysis import (
+                PreviewAnalysisService,
+                PreviewAnalysisWorker,
+            )
+
+            analyses = PreviewAnalysisService(
+                repository,
+                definition_previews=None,
+                manual_previews=previews,
+                clock=self.clock,
+            )
+            analysis_worker = PreviewAnalysisWorker(analyses, worker_id="harness-analysis-worker")
+            run_once = AutomationRunOnceService(
+                discovery,
+                intents,
+                previews,
+                analysis_service=analyses,
+                clock=self.clock,
+            )
+            execution = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                configuration=runtime,
+                storages=dict(storages),
+                checkpoint_service=ProcessingCheckpointService(repository),
+                clock=self.clock,
+            )
+            execution_worker = ManualOrganizeExecutionWorker(
+                execution, clock=self.clock, worker_id="harness-execution-worker"
+            )
             api = MediaFlowApi(
                 repository,
                 None,
@@ -308,6 +383,7 @@ class _RunOnceFixture(unittest.TestCase):
                 bootstrap_document=document,
                 manual_intent_service=intents,
                 manual_preview_service=previews,
+                manual_execution_service=execution,
                 media_discovery_service=discovery,
                 automation_run_once_service=run_once,
                 storage_adapters=dict(storages),
@@ -318,6 +394,10 @@ class _RunOnceFixture(unittest.TestCase):
                 intents=intents,
                 previews=previews,
                 discovery=discovery,
+                analyses=analyses,
+                analysis_worker=analysis_worker,
+                execution=execution,
+                execution_worker=execution_worker,
                 run_once=run_once,
                 configuration=runtime,
                 clock=self.clock,
@@ -449,7 +529,13 @@ class EffectiveBoundTests(unittest.TestCase):
                 "d", "n", "a" * 64, "r1", 1, "b" * 64, "library", None, 250, 250
             )
 
-    def test_run_once_available_reports_an_over_bound_ceiling(self) -> None:
+    def test_run_once_available_reports_an_over_bound_ceiling_is_legal(self) -> None:
+        """A ceiling above the manual bound is a legal, runnable definition.
+
+        The Contract applies ``min(ceiling, 100)`` to the *actual manifest*, so
+        the definition must be admitted; only an actual overflow refuses.
+        """
+
         definition = AutomationTaskDefinition(
             "d",
             "n",
@@ -463,8 +549,8 @@ class EffectiveBoundTests(unittest.TestCase):
             False,
         )
         available, reason = definition_run_once_available(definition)
-        self.assertFalse(available)
-        self.assertIn("100", reason)
+        self.assertTrue(available, reason)
+        self.assertIsNone(reason)
 
 
 class RunOnceJourneyTests(_RunOnceFixture):
@@ -505,7 +591,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             discovery = value.run_once.admit("nightly", actor="operator")
             self.drive(value)
             current = value.run_once.get(discovery.discovery_id)
-            frozen, preview = value.run_once.finalize(
+            frozen, preview, analysis = value.run_once.finalize(
                 discovery.discovery_id,
                 actor="operator",
                 expected_version=current.version,
@@ -513,24 +599,126 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNotNone(frozen.frozen_at)
             self.assertIsNotNone(frozen.intent_id)
             self.assertEqual("automatic-organization", frozen.definition_origin.run_mode)
-            self.assertTrue(preview.zero_mutation)
-            self.assertIsNotNone(preview.preview_id)
-            # Freezing and Preview are still zero-mutation: only a separate
-            # explicit execution may ever reach OrganizerExecutor.
+            # With a durable analysis service bound, the exact Preview work is
+            # deferred to the resident Worker instead of running inline.
+            self.assertIsNone(preview)
+            self.assertIsNotNone(analysis)
+            self.assertEqual("queued", analysis.status.value)
+            self.assertEqual(frozen.intent_id, analysis.intent_id)
+            # Freezing and Preview admission are still zero-mutation: only a
+            # separate explicit execution may ever reach OrganizerExecutor.
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             document = value.run_once.document(frozen)
-            self.assertEqual("ready", document["phase"])
+            self.assertEqual("frozen", document["phase"])
+            self.assertTrue(document["frozen"])
             self.assertTrue(document["actions"]["preview"])
 
-    def test_over_bound_definition_is_refused_before_any_walk(self) -> None:
+    def test_finalize_runs_inline_when_no_analysis_service_is_bound(self) -> None:
+        """Without a durable analysis service the inline exact Preview is kept."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            value.run_once.bind_analysis_service(None)
+            discovery = value.run_once.admit("nightly", actor="operator")
+            self.drive(value)
+            current = value.run_once.get(discovery.discovery_id)
+            frozen, preview, analysis = value.run_once.finalize(
+                discovery.discovery_id,
+                actor="operator",
+                expected_version=current.version,
+            )
+            self.assertIsNone(analysis)
+            self.assertIsNotNone(preview)
+            self.assertTrue(preview.zero_mutation)
+            self.assertIsNotNone(preview.preview_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_frozen_manifest_reaches_linked_execution_and_operations_origin(self) -> None:
+        """The complete Run-once journey reaches a real linked execution.
+
+        Freeze → exact manual Preview → one separate explicit execution →
+        resident Worker outcome, with the definition origin durable on the
+        resulting Operations run.  The analysis is zero mutation throughout and
+        only the explicit confirmation reaches ``OrganizerExecutor``.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            discovery = value.run_once.admit("nightly", actor="operator")
+            self.drive(value)
+            current = value.run_once.get(discovery.discovery_id)
+            frozen, preview, analysis = value.run_once.finalize(
+                discovery.discovery_id,
+                actor="operator",
+                expected_version=current.version,
+            )
+            self.assertIsNotNone(analysis)
+            # The resident Worker completes the durable exact analysis.
+            settled = value.analysis_worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual("completed", settled.status.value)
+            preview_id = settled.preview_id
+            self.assertIsNotNone(preview_id)
+            # The exact Preview is the *manual* Preview over the frozen intent.
+            preview = value.previews.get(preview_id)
+            self.assertEqual(frozen.intent_id, preview.intent_id)
+            self.assertTrue(preview.zero_mutation)
+            # No mutation happened merely by admitting and analysing.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            # One separate explicit confirmation executes the exact selection.
+            item_ids = [item.item_id for item in preview.items if item.status.value == "previewed"]
+            self.assertTrue(item_ids)
+            execution = value.execution.begin_web_execution(
+                preview_id,
+                item_ids,
+                expected_intent_version=preview.intent_version,
+                actor="operator",
+                confirmation=True,
+            )
+            self.assertIsNotNone(execution.execution_id)
+            run = value.execution_worker.run_next()
+            self.assertIsNotNone(run)
+            self.assertEqual(execution.execution_id, run.execution_id)
+            # The executed run carries the durable definition origin on its
+            # Operations run projection, so Operations and the definition
+            # history reach the same durable run without a dummy Job.
+            self.assertIsNotNone(run.task_id)
+            overviews = value.repository.list_operations_runs(limit=10)
+            manual = [item for item in overviews if item.origin_definition_id == "nightly"]
+            self.assertEqual(1, len(manual))
+            self.assertEqual("definition-run-once", manual[0].origin_kind)
+            self.assertEqual("Nightly", manual[0].origin_definition_name)
+            self.assertEqual(run.task_id, manual[0].task_id)
+            # The definition history lists the same durable manual run.
+            history = value.repository.list_definition_run_once_discoveries("nightly")
+            self.assertEqual(1, len(history))
+            self.assertEqual(discovery.discovery_id, history[0].discovery_id)
+            self.assertEqual(frozen.intent_id, history[0].intent_id)
+
+    def test_over_bound_ceiling_with_one_eligible_file_is_admitted(self) -> None:
+        """Ceiling 250 with one eligible file runs once completely.
+
+        The effective manifest bound is min(250, 100) = 100 and the actual
+        manifest holds one source, so no overflow exists.  The definition is
+        admitted and reads Storage; it is never refused before the walk.
+        """
+
         self.media("Movies/One.2001.mkv")
         with self.journey(item_limit=250, source_scope="Movies") as value:
-            with self.assertRaises(DiscoveryError) as caught:
-                value.run_once.admit("nightly", actor="operator")
-            self.assertEqual("discovery_overflow", caught.exception.code)
-            self.assertIn("100", caught.exception.next_action)
-            self.assertEqual([], value.source.reads)
+            discovery = value.run_once.admit("nightly", actor="operator")
+            self.assertEqual(250, discovery.definition_origin.definition_item_limit)
+            self.assertEqual(100, discovery.definition_origin.effective_primary_limit)
+            self.assertEqual(100, discovery.budgets.max_primary_sources)
+            settled = self.drive(value)
+            self.assertEqual(DiscoveryStatus.COMPLETED, settled.status)
+            self.assertEqual(1, len(settled.sources))
+            document = value.run_once.document(settled)
+            self.assertEqual("ready", document["phase"])
+            self.assertTrue(document["actions"]["finalize"]["available"])
+            self.assertTrue(value.source.reads)
 
     def test_ceiling_at_the_manual_bound_is_admitted_with_that_exact_bound(self) -> None:
         """A ceiling exactly equal to the manual bound keeps its own bound."""
@@ -545,18 +733,53 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual(DiscoveryStatus.COMPLETED, settled.status)
             self.assertEqual(1, len(settled.sources))
 
-    def test_ceiling_above_the_manual_bound_is_refused_not_truncated(self) -> None:
-        """A ceiling above the bound never silently freezes a first-N prefix."""
+    def test_ceiling_above_the_manual_bound_uses_the_manual_bound(self) -> None:
+        """A ceiling above the bound is admitted with the bound as its limit.
+
+        The bound is applied to the *actual* manifest: a scope holding fewer
+        eligible sources than the bound is discovered and frozen completely.
+        Only an actual overflow refuses; the definition itself is legal.
+        """
 
         for ceiling in (101, 1000, 10_000):
             with self.subTest(ceiling=ceiling):
+                self.media("Movies/One.2001.mkv")
                 with self.journey(item_limit=ceiling, source_scope="Movies") as value:
-                    with self.assertRaises(DiscoveryError) as caught:
-                        value.run_once.admit("nightly", actor="operator")
-                    self.assertEqual("discovery_overflow", caught.exception.code)
-                    # No durable record and no Storage read was created.
-                    self.assertEqual((), value.discovery.list(actor="operator"))
-                    self.assertEqual([], value.source.reads)
+                    discovery = value.run_once.admit("nightly", actor="operator")
+                    self.assertEqual(ceiling, discovery.definition_origin.definition_item_limit)
+                    self.assertEqual(100, discovery.definition_origin.effective_primary_limit)
+                    self.assertEqual(100, discovery.budgets.max_primary_sources)
+                    settled = self.drive(value)
+                    self.assertEqual(DiscoveryStatus.COMPLETED, settled.status)
+                    self.assertEqual(1, len(settled.sources))
+                    document = value.run_once.document(settled)
+                    self.assertEqual("ready", document["phase"])
+                    self.assertTrue(document["actions"]["finalize"]["available"])
+
+    def test_actual_overflow_above_the_effective_bound_is_refused(self) -> None:
+        """An actual manifest above min(ceiling, 100) is refused, never truncated."""
+
+        # 101 eligible primaries exceed the effective bound of 100, so the walk
+        # records a truncated prefix and freezing must be refused.
+        for index in range(101):
+            self.media(f"Movies/Movie{index:03d}.2001.mkv")
+        with self.journey(item_limit=250, source_scope="Movies") as value:
+            discovery = value.run_once.admit("nightly", actor="operator")
+            self.assertEqual(100, discovery.budgets.max_primary_sources)
+            settled = self.drive(value)
+            self.assertEqual(DiscoveryStatus.PARTIAL_SUCCESS, settled.status)
+            self.assertEqual(100, len(settled.sources))
+            document = value.run_once.document(settled)
+            self.assertEqual("refused", document["phase"])
+            self.assertFalse(document["actions"]["finalize"]["available"])
+            self.assertTrue(document["actions"]["narrowScope"]["available"])
+            with self.assertRaises(AutomationRunOnceError) as caught:
+                value.run_once.finalize(
+                    discovery.discovery_id,
+                    actor="operator",
+                    expected_version=settled.version,
+                )
+            self.assertEqual("discovery_overflow", caught.exception.code)
 
     def test_ceiling_below_the_manual_bound_uses_the_smaller_bound(self) -> None:
         """A small definition ceiling is the effective manifest bound."""
@@ -679,26 +902,36 @@ class RunOnceJourneyTests(_RunOnceFixture):
             )
 
     def test_scope_narrowing_after_an_overflow_recovers(self) -> None:
-        """A refused over-bound run recovers by narrowing and republishing."""
+        """A refused actual-overflow run recovers by narrowing and republishing."""
 
-        self.media("Movies/One.2001.mkv")
+        # The overflow must be a *real* manifest overflow: 101 eligible
+        # primaries against the effective bound of 100.  A mere ceiling above
+        # 100 is legal and is covered by the bound tests above.
+        for index in range(101):
+            self.media(f"Movies/Movie{index:03d}.2001.mkv")
         self.media("Other/Two.2002.mkv")
-        # The over-bound definition is refused before any walk or durable row.
         with self.journey(item_limit=250, source_scope="Movies") as value:
-            with self.assertRaises(DiscoveryError) as caught:
-                value.run_once.admit("nightly", actor="operator")
+            discovery = value.run_once.admit("nightly", actor="operator")
+            settled = self.drive(value)
+            self.assertEqual(DiscoveryStatus.PARTIAL_SUCCESS, settled.status)
+            document = value.run_once.document(settled)
+            self.assertEqual("refused", document["phase"])
+            with self.assertRaises(AutomationRunOnceError) as caught:
+                value.run_once.finalize(
+                    discovery.discovery_id,
+                    actor="operator",
+                    expected_version=settled.version,
+                )
             self.assertEqual("discovery_overflow", caught.exception.code)
-            self.assertEqual((), value.discovery.list(actor="operator"))
-            self.assertEqual([], value.source.reads)
         # The same definition with a bound inside the manual limit now runs and
         # discovers only its own narrowed scope, proving the recovery path.
-        with self.journey(item_limit=5, source_scope="Movies") as value:
+        with self.journey(item_limit=5, source_scope="Other") as value:
             discovery = value.run_once.admit("nightly", actor="operator")
             settled = self.drive(value)
             self.assertEqual(DiscoveryStatus.COMPLETED, settled.status)
             self.assertEqual(5, discovery.definition_origin.effective_primary_limit)
             self.assertEqual(
-                ("Movies/One.2001.mkv",),
+                ("Other/Two.2002.mkv",),
                 tuple(item["path"] for item in settled.sources),
             )
 
@@ -710,7 +943,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             discovery = value.run_once.admit("nightly", actor="operator")
             settled = self.drive(value)
             self.assertEqual(1, len(settled.sources))
-            frozen, _preview = value.run_once.finalize(
+            frozen, _preview, _analysis = value.run_once.finalize(
                 discovery.discovery_id,
                 actor="operator",
                 expected_version=settled.version,
@@ -796,6 +1029,120 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual(DiscoveryStatus.CANCELLED, cancelled.status)
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+    def test_an_unreadable_subtree_refuses_the_definition_manifest(self) -> None:
+        """A definition-derived manifest must prove completeness.
+
+        An unreadable subtree leaves the recorded sources a partial subset, so
+        neither the Run-once route nor a direct generic finalize of the
+        definition-origin record may freeze it into an executable manifest.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Locked/Two.2002.mkv")
+        with self.journey(source_scope=None) as value:
+            discovery = value.run_once.admit("nightly", actor="operator")
+            value.source.fail_listing("Locked")
+            settled = self.drive(value)
+            self.assertEqual(DiscoveryStatus.PARTIAL_SUCCESS, settled.status)
+            self.assertEqual("read_failure", settled.progress.incomplete_reason.value)
+            # The known subset is preserved for diagnosis ...
+            self.assertEqual(1, len(settled.sources))
+            document = value.run_once.document(settled)
+            self.assertEqual("refused", document["phase"])
+            self.assertFalse(document["actions"]["finalize"]["available"])
+            self.assertTrue(document["actions"]["narrowScope"]["available"])
+            # ... but it can never become an executable Automation manifest.
+            with self.assertRaises(AutomationRunOnceError) as caught:
+                value.run_once.finalize(
+                    discovery.discovery_id,
+                    actor="operator",
+                    expected_version=settled.version,
+                )
+            self.assertEqual("discovery_incomplete_manifest", caught.exception.code)
+            self.assertEqual("read_failure", caught.exception.details["incompleteReason"])
+            # The shared authority boundary refuses it too: a direct generic
+            # finalize of the definition-origin record is not a bypass.
+            with self.assertRaises(DiscoveryError) as direct:
+                value.discovery.finalize(
+                    discovery.discovery_id,
+                    actor="operator",
+                    expected_version=settled.version,
+                )
+            self.assertEqual("discovery_incomplete_manifest", direct.exception.code)
+            self.assertIsNone(value.run_once.get(discovery.discovery_id).intent_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_standalone_files_read_failure_subset_still_freezes(self) -> None:
+        """The accepted standalone Files explicit-subset path is unchanged."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Locked/Two.2002.mkv")
+        with self.journey() as value:
+            admitted = value.discovery.admit(
+                resource_library_id="library",
+                relative_paths=["Movies", "Locked"],
+                actor="operator",
+            )
+            value.source.fail_listing("Locked")
+            settled = self.drive(value)
+            self.assertEqual(DiscoveryStatus.PARTIAL_SUCCESS, settled.status)
+            self.assertIsNone(settled.definition_origin)
+            # No definition origin: the reviewed subset keeps its legal Finalize.
+            frozen = value.discovery.finalize(
+                admitted.discovery_id,
+                actor="operator",
+                expected_version=settled.version,
+            )
+            self.assertIsNotNone(frozen.intent_id)
+            self.assertEqual([], value.source.mutations)
+
+    def test_definition_fingerprint_fence_refuses_a_changed_definition(self) -> None:
+        """A stale observed definition is refused, not silently re-pinned."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            definition = next(
+                item
+                for item in value.configuration.automation_task_definitions
+                if item.definition_id == "nightly"
+            )
+            # The exact observed fingerprint admits.
+            admitted = value.run_once.admit(
+                "nightly",
+                actor="operator",
+                expected_definition_fingerprint=definition.definition_fingerprint,
+                expected_revision_id=value.revision.revision_id,
+                expected_revision_version=value.revision.version,
+                expected_revision_digest=value.revision.digest,
+            )
+            self.assertEqual("nightly", admitted.definition_origin.definition_id)
+            # A different observed fingerprint is a stale binding.
+            with self.assertRaises(DiscoveryError) as caught:
+                value.run_once.admit(
+                    "nightly",
+                    actor="operator",
+                    expected_definition_fingerprint="0" * 64,
+                )
+            self.assertEqual("definition_stale", caught.exception.code)
+            # A repinned Active is equally stale.
+            with self.assertRaises(DiscoveryError) as revision:
+                value.run_once.admit(
+                    "nightly",
+                    actor="operator",
+                    expected_revision_id="other-revision",
+                    expected_revision_version=1,
+                    expected_revision_digest="other-digest",
+                )
+            self.assertEqual("configuration_stale", revision.exception.code)
+            # A malformed or partial fence is refused rather than weakened.
+            with self.assertRaises(DiscoveryError) as malformed:
+                value.run_once.admit(
+                    "nightly", actor="operator", expected_definition_fingerprint="short"
+                )
+            self.assertEqual("malformed_selection", malformed.exception.code)
+            self.assertEqual([], value.source.mutations)
 
 
 class HistoricalModeTests(_RunOnceFixture):
@@ -938,6 +1285,72 @@ class RunOnceApiTests(_RunOnceFixture):
             self.assertEqual(200, status)
             self.assertEqual(1, document["total"])
             self.assertEqual("nightly", document["items"][0]["definitionId"])
+
+    def test_unicode_principal_isolation_across_reload_and_reconcile(self) -> None:
+        """AC-T4: a Unicode principal reconciles only its own request identity.
+
+        The request identity is principal-scoped, so a Unicode principal's
+        unknown admission is readable by that exact principal and invisible to
+        another; a reconnect never inherits another principal's outcome.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            unicode_actor = "操作员-張三-🎬"
+            request_id = "44444444-4444-4444-8444-444444444444"
+            admitted = value.run_once.admit(
+                "nightly", actor=unicode_actor, admission_request_id=request_id
+            )
+            # The same principal reads back its own proved original.
+            reconciled = value.discovery.find_by_request_id(
+                actor=unicode_actor, admission_request_id=request_id
+            )
+            self.assertIsNotNone(reconciled)
+            self.assertEqual(admitted.discovery_id, reconciled.discovery_id)
+            # Another principal never reconciles to it.
+            self.assertIsNone(
+                value.discovery.find_by_request_id(
+                    actor="operator", admission_request_id=request_id
+                )
+            )
+            # The durable record keeps the Unicode actor unchanged.
+            reread = value.run_once.get(admitted.discovery_id)
+            self.assertEqual(unicode_actor, reread.actor)
+            # The listing is principal-scoped: the other principal sees none.
+            self.assertEqual((), value.discovery.list(actor="operator"))
+            self.assertEqual(1, len(value.discovery.list(actor=unicode_actor)))
+            self.assertEqual([], value.source.mutations)
+
+    def test_concurrent_duplicate_admission_converges_on_one_run(self) -> None:
+        """AC-T4: concurrent identical requests converge on one durable run."""
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            request_id = "55555555-5555-4555-8555-555555555555"
+
+            def admit_once():
+                return value.run_once.admit(
+                    "nightly", actor="operator", admission_request_id=request_id
+                )
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(lambda _index: admit_once(), range(4)))
+            identities = {item.discovery_id for item in results}
+            self.assertEqual(1, len(identities))
+            self.assertEqual(1, len(value.discovery.list(actor="operator")))
+            self.assertEqual([], value.source.mutations)
+            # A changed binding with the *same* request identity refuses rather
+            # than silently re-pinning the proved original.
+            with self.assertRaises(DiscoveryError) as caught:
+                value.run_once.admit(
+                    "nightly",
+                    actor="operator",
+                    admission_request_id=request_id,
+                    expected_definition_fingerprint="0" * 64,
+                )
+            self.assertEqual("definition_stale", caught.exception.code)
 
     def test_malformed_run_once_body_is_rejected(self) -> None:
         with self.journey(source_scope="Movies") as value:

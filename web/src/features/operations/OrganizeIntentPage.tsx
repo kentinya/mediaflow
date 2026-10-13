@@ -19,7 +19,7 @@ import {
 } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  submitOrganizePreview,
+  admitManualPreviewAnalysis,
   updateOrganizeChoice,
 } from "../../shared/api/api-client";
 import type {
@@ -333,14 +333,14 @@ export function OrganizeIntentPage() {
 
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) =>
-      submitOrganizePreview(token, { intentId, expectedVersion }),
+      admitManualPreviewAnalysis(token, { intentId, expectedVersion }),
     retry: false,
     onMutate: () => setPreviewError(null),
     onSuccess: (value) => {
-      if (value.ok) {
+      if (value.ok && value.model !== undefined) {
         void navigate({
-          to: "/operations/organize/preview/$previewId",
-          params: { previewId: value.model.previewId },
+          to: "/operations/automation/preview-analyses/$analysisId",
+          params: { analysisId: value.model.analysisId },
           search: {
             ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
             ...operationsReturnSearch(operationsReturn),

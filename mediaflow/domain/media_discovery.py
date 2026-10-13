@@ -319,6 +319,44 @@ def discovery_material_refusal(progress: DiscoveryProgress) -> DiscoveryIncomple
     return None
 
 
+#: Incomplete reasons that mean the walk did not prove a *complete* manifest of
+#: its admitted scope, even though no durable budget bound was exhausted.  A
+#: definition-derived Run once must refuse these at the shared authority
+#: boundary: an unreadable subtree or an unobservable named file makes the
+#: recorded source list a partial subset, and silently freezing it would admit
+#: an Automation prefix as if it were the whole scope.  The accepted standalone
+#: Files selection keeps its own explicit-subset review path and is not bound
+#: by this set.
+INCOMPLETE_MANIFEST_REASONS = frozenset(
+    {
+        DiscoveryIncompleteReason.READ_FAILURE,
+        DiscoveryIncompleteReason.CANCELLED,
+    }
+)
+
+
+def discovery_manifest_incomplete(progress: DiscoveryProgress) -> DiscoveryIncompleteReason | None:
+    """The durable reason one discovery did not prove a complete manifest.
+
+    This is the single authority for a definition-derived Run once.  It is a
+    superset of :func:`discovery_material_refusal`: a material budget/safety
+    refusal always counts, and an ordinary read failure or cancellation does
+    too, because neither proves that the recorded sources are the whole
+    admitted scope.  It is monotonic for the same reason: the earliest
+    recorded fact wins, so a later pass cannot re-enable freezing.
+    """
+
+    material = discovery_material_refusal(progress)
+    if material is not None:
+        return material
+    for reason in progress.refusal_reasons:
+        if reason in INCOMPLETE_MANIFEST_REASONS:
+            return reason
+    if progress.incomplete_reason in INCOMPLETE_MANIFEST_REASONS:
+        return progress.incomplete_reason
+    return None
+
+
 def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
     """The canonical signature of one deduplicated scope.
 

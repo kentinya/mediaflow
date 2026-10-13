@@ -120,6 +120,47 @@ test.describe("manual organize journey", () => {
     expect(JSON.stringify(choice)).not.toContain("Bearer");
 
     await page.getByRole("button", { name: "生成精确预览" }).click();
+
+    // The intent action now admits one durable exact analysis and hands the
+    // expensive walk to the resident Worker; the operator lands on the
+    // analysis' own durable route instead of waiting inline.
+    await expect(page).toHaveURL(
+      /\/ui-v2\/operations\/automation\/preview-analyses\/preview-analysis-manual-e2e-001$/,
+    );
+    await expect(
+      page.getByRole("heading", { name: "精确预览分析" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "排队中", exact: true }),
+    ).toBeVisible();
+
+    const afterAdmission = await manualEvidence(page);
+    const admissions = afterAdmission.filter(
+      (entry) => entry.objectType === "organize_preview_analysis",
+    );
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]?.method).toBe("POST");
+    // The admission is fenced by the exact reviewed intent version.
+    expect(admissions[0]?.body).toMatchObject({ expectedVersion: 2 });
+    expect(JSON.stringify(admissions)).not.toMatch(
+      /fingerprint|digest|snapshot/i,
+    );
+
+    // The resident Worker runs the existing exact-Preview service and links it.
+    const advanced = await page.request.post(
+      `${BASE_URL}/__test__/run-preview-analysis-worker`,
+    );
+    expect(await advanced.json()).toMatchObject({
+      advanced: true,
+      status: "completed",
+      previewId: PREVIEW_ID,
+    });
+
+    // Following the analysis' own link keeps the reviewed selection state.
+    await page.getByRole("link", { name: "打开精确预览" }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/ui-v2/operations/organize/preview/${PREVIEW_ID}$`),
+    );
     await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
     await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
     await expect(page.getByText(/预期目标/)).toBeVisible();
@@ -128,8 +169,16 @@ test.describe("manual organize journey", () => {
     const preview = afterPreview.filter(
       (entry) => entry.objectType === "organize_preview",
     );
-    expect(preview.some((entry) => entry.method === "POST")).toBe(true);
+    expect(preview.some((entry) => entry.method === "GET")).toBe(true);
     expect(JSON.stringify(preview)).not.toMatch(/fingerprint|digest|snapshot/i);
+    // The exact analysis admission never replayed the legacy inline Preview
+    // mutation: the durable analysis is the only thing the operator admitted.
+    expect(
+      afterPreview.filter(
+        (entry) =>
+          entry.method === "POST" && entry.objectType === "organize_preview",
+      ),
+    ).toHaveLength(0);
   });
 
   test("admits exactly one Execute action and follows the durable outcome", async ({

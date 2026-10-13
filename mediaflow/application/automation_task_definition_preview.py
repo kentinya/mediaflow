@@ -444,6 +444,31 @@ class AutomationTaskDefinitionPreviewService:
             )
         return value
 
+    def resolve_admission_pin(
+        self, definition_id: str, revision_id: str | None = None
+    ) -> tuple[str, str, str]:
+        """The exact immutable revision and definition identity analysis runs under.
+
+        The durable-analysis admission resolves the pin *here*, at admission
+        time, and persists it with the record.  A Worker that later claims the
+        analysis therefore runs it under the pin the operator actually admitted
+        instead of today's Active, and a stale rendered definition can never
+        silently re-pin the work.  The definition fingerprint is returned so the
+        durable record can prove *which* published definition was admitted and
+        so two different definitions under the same revision never reconcile.
+        """
+
+        self._definition_id(definition_id)
+        revision = self._resolve_revision(revision_id)
+        if revision is None:
+            raise AutomationTaskDefinitionPreviewUnavailable(
+                "no pinned managed configuration revision is available for analysis",
+                details={"definitionId": definition_id},
+            )
+        runtime = self._load_runtime(revision)
+        definition = self._definition(runtime, definition_id)
+        return revision.revision_id, revision.digest, definition.definition_fingerprint
+
     def _resolve_revision(self, revision_id: str | None):
         if self._configuration_service is None:
             return None

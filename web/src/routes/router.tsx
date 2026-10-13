@@ -38,6 +38,7 @@ import { AutomationLifecyclePage } from "../features/operations/AutomationLifecy
 import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
 import { AutomationRunOncePage } from "../features/operations/AutomationRunOncePage";
+import { PreviewAnalysisPage } from "../features/operations/PreviewAnalysisPage";
 import { NotificationListPage } from "../features/operations/NotificationListPage";
 import { NotificationNewPage } from "../features/operations/NotificationNewPage";
 import { NotificationDetailPage } from "../features/operations/NotificationDetailPage";
@@ -269,6 +270,12 @@ const automationRunOnceRoute = createRoute({
   component: AutomationRunOncePage,
 });
 
+const previewAnalysisRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/preview-analyses/$analysisId",
+  component: PreviewAnalysisPage,
+});
+
 const notificationListRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/notifications",
@@ -365,6 +372,7 @@ const routeTree = rootRoute.addChildren([
   automationPreviewRoute,
   automationOccurrencesRoute,
   automationRunOnceRoute,
+  previewAnalysisRoute,
   notificationListRoute,
   notificationNewRoute,
   notificationDefinitionRoute,

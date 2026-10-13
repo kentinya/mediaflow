@@ -40,7 +40,8 @@ import {
 const PHASE_LABELS: Readonly<Record<string, string>> = {
   discovering: "正在发现来源",
   analyzing: "正在分析稳定性",
-  ready: "来源清单已冻结",
+  ready: "来源清单已发现，等待冻结",
+  frozen: "来源清单已冻结",
   refused: "发现未完整，已拒绝执行",
   no_work: "没有可整理的来源",
   failed: "发现失败",
@@ -110,19 +111,33 @@ export function AutomationRunOncePage() {
         expectedVersion: read.model.version,
       });
       if (!result.ok) throw new Error(result.code ?? "run_once_rejected");
-      return { action, previewId: result.previewId ?? null };
+      return {
+        action,
+        previewId: result.previewId ?? null,
+        analysisId: result.analysisId ?? null,
+      };
     },
     onSuccess: (result) => {
       setControlError(null);
       if (result.action === "finalize" && result.previewId !== null) {
+        // The frozen manifest's exact zero-mutation Preview is the existing
+        // *manual* Organize Preview over the frozen intent, so the operator
+        // continues there and separately confirms execution.  The definition
+        // Preview route reads a different repository and would 404.
         void navigate({
-          to: "/operations/automation/preview/$definitionId/$previewId",
-          params: {
-            definitionId: query.data?.ok
-              ? (query.data.model?.definitionId ?? "")
-              : "",
-            previewId: result.previewId,
-          },
+          to: "/operations/organize/preview/$previewId",
+          params: { previewId: result.previewId },
+          search: { ...operationsReturnSearch(operationsReturn) },
+        });
+        return;
+      }
+      if (result.action === "finalize" && result.analysisId !== null) {
+        // The expensive exact analysis was admitted to the resident Worker:
+        // continue on the durable analysis page, which shows progress and the
+        // exact Preview link when it completes.
+        void navigate({
+          to: "/operations/automation/preview-analyses/$analysisId",
+          params: { analysisId: result.analysisId },
           search: { ...operationsReturnSearch(operationsReturn) },
         });
         return;
@@ -131,10 +146,14 @@ export function AutomationRunOncePage() {
     },
     onError: (error) => {
       const code = error instanceof Error ? error.message : "";
-      if (code === "discovery_overflow") {
+      if (
+        code === "discovery_overflow" ||
+        code === "discovery_incomplete_manifest"
+      ) {
         setControlError(
-          "本次运行一次已达到来源数量或安全上限，已记录的来源只是被截断的前缀，不能作为可执行清单冻结。" +
-            "请缩小定义的来源范围或降低条目上限，重新发布后再发起运行一次。",
+          "本次运行一次没有证明定义范围的完整清单（达到上限或存在读取失败），" +
+            "已记录的来源只是被截断或部分读取的子集，不能作为可执行清单冻结。" +
+            "请缩小定义的来源范围或修正不可读的来源，重新发布后再发起运行一次。",
         );
         refresh();
         return;
@@ -212,12 +231,12 @@ export function AutomationRunOncePage() {
                 {model.message !== "" ? <p>{model.message}</p> : null}
                 {model.phase === "refused" ? (
                   <p role="status">
-                    发现已达到来源数量或安全上限
+                    发现未完整遍历定义范围
                     {model.refusalReason !== null
                       ? `（${label(REASON_LABELS, model.refusalReason)}）`
                       : ""}
-                    ，已记录的来源是被截断的前缀，不能冻结为可执行清单。
-                    请缩小定义的来源范围或降低条目上限，重新发布后再发起运行一次。
+                    ，已记录的来源是被截断或部分读取的子集，不能冻结为可执行清单。
+                    请缩小定义的来源范围或修正不可读的来源，重新发布后再发起运行一次。
                   </p>
                 ) : null}
                 {model.incomplete && model.phase !== "refused" ? (
@@ -323,7 +342,7 @@ export function AutomationRunOncePage() {
                   >
                     打开整理意图
                   </Link>
-                ) : null}
+                ) : null}{" "}
               </div>
             </div>
           );

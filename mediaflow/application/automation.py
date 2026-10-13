@@ -174,7 +174,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 46,
+        runtime_schema_version: int = 47,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -588,6 +588,7 @@ class AutomationWorker:
         runtime_schema_version: int = 34,
         manual_organize_worker=None,
         media_discovery_worker=None,
+        preview_analysis_worker=None,
         files_transfer_worker=None,
         configuration_snapshot_resolver: Callable[[], tuple[str | None, str | None]] | None = None,
     ) -> None:
@@ -606,6 +607,7 @@ class AutomationWorker:
             if manual_organize_worker is not None:
                 raw_commands += ("manual_organize",)
             raw_commands += tuple(getattr(media_discovery_worker, "commands", ()))
+            raw_commands += tuple(getattr(preview_analysis_worker, "commands", ()))
             transfer_commands = getattr(files_transfer_worker, "commands", ())
             raw_commands += tuple(transfer_commands)
         self._supported_commands = validate_worker_commands(tuple(raw_commands))
@@ -622,6 +624,11 @@ class AutomationWorker:
         # resident loop.  Discovery is metadata-only and zero mutation, so this
         # runner owns only an exclusive claim, never execution authority.
         self._media_discovery_worker = media_discovery_worker
+        # Optional admitted durable exact-analysis runner sharing this
+        # Worker's resident loop.  Analysis is metadata-only and zero
+        # mutation, so this runner owns only an exclusive claim, never
+        # execution authority.
+        self._preview_analysis_worker = preview_analysis_worker
         # Optional admitted Files Copy/Move transfer runner sharing this
         # Worker's resident loop.  It owns its own durable claim/lease fence
         # and only executes transfers the API durably admitted; a missing
@@ -640,6 +647,7 @@ class AutomationWorker:
             or configuration_snapshot_digest is not None
             or manual_organize_worker is not None
             or media_discovery_worker is not None
+            or preview_analysis_worker is not None
             or files_transfer_worker is not None
         )
         self._registered = False
@@ -888,6 +896,7 @@ class AutomationWorker:
                 if self.run_next() is None:
                     if (
                         self._run_media_discovery_work()
+                        or self._run_preview_analysis_work()
                         or self._run_manual_organize_work()
                         or self._run_files_transfer_work()
                     ):
@@ -902,6 +911,22 @@ class AutomationWorker:
             except Exception:
                 pass
         return processed
+
+    def _run_preview_analysis_work(self) -> bool:
+        """Serve one admitted durable exact analysis without holding a Job.
+
+        The runner records its own bounded, secret-free notice and durable
+        outcome, so a rejected analysis never stops this Worker from serving
+        queued Jobs or other admitted work.
+        """
+
+        runner = self._preview_analysis_worker
+        if runner is None:
+            return False
+        try:
+            return runner.run_next() is not None
+        except Exception:
+            return False
 
     def _run_media_discovery_work(self) -> bool:
         """Serve one admitted bounded discovery without holding a Job.

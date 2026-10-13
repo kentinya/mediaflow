@@ -34,6 +34,7 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.domain.media_discovery import DiscoveryBudgets, DiscoveryStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -59,6 +60,12 @@ class _RecordingStorage:
         self._storage = storage
         self.reads: list[tuple[str, str]] = []
         self.mutations: list[tuple[str, str]] = []
+        self._unreadable: set[str] = set()
+
+    def fail_listing(self, prefix: str) -> None:
+        """Make one subtree unreadable after admission."""
+
+        self._unreadable.add(prefix.strip("/"))
 
     @property
     def storage_id(self) -> str:
@@ -82,6 +89,14 @@ class _RecordingStorage:
 
     def list_page(self, path: str, *, limit: int, cursor: str | None = None):
         self.reads.append(("list_page", path))
+        for prefix in self._unreadable:
+            if path == prefix or path.startswith(prefix + "/"):
+                raise StorageError(
+                    StorageErrorCode.PERMISSION_DENIED,
+                    "list",
+                    path,
+                    "synthetic permission denial for one subtree",
+                )
         return self._storage.list_page(path, limit=limit, cursor=cursor)
 
     def stat(self, path: str):
@@ -298,10 +313,11 @@ class RunOnceApiTests(unittest.TestCase):
     def request(self, value, method, path, body=None, *, token=ADMIN_TOKEN):
         payload = b"" if body is None else json.dumps(body).encode("utf-8")
         statuses: list[str] = []
+        path_info, _, query_string = path.partition("?")
         environ = {
             "REQUEST_METHOD": method,
-            "PATH_INFO": path,
-            "QUERY_STRING": "",
+            "PATH_INFO": path_info,
+            "QUERY_STRING": query_string,
             "CONTENT_LENGTH": str(len(payload)),
             "wsgi.input": io.BytesIO(payload),
             "REMOTE_ADDR": "127.0.0.1",
@@ -391,15 +407,70 @@ class RunOnceApiTests(unittest.TestCase):
                 {"expectedVersion": current.version},
             )
             self.assertEqual(201, status)
-            self.assertEqual("ready", frozen["phase"])
+            self.assertEqual("frozen", frozen["phase"])
+            self.assertTrue(frozen["frozen"])
+            self.assertIsNotNone(frozen["intentId"])
+            # The expensive exact analysis is deferred to the resident Worker:
+            # the response carries a durable analysis identity promptly instead
+            # of blocking on the walk and Provider batch.
+            analysis_id = frozen["analysisId"]
+            self.assertIsNotNone(analysis_id)
+            self.assertEqual(
+                f"/operations/automation/preview-analyses/{analysis_id}",
+                frozen["analysisPath"],
+            )
+            self.assertEqual("queued", frozen["analysis"]["status"])
+            self.assertIsNone(frozen["previewId"])
+            # Freezing and the analysis admission are zero mutation.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_finalize_inline_preview_when_analysis_is_unbound(self) -> None:
+        """Without the durable analysis service the inline exact Preview is kept."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            value.run_once.bind_analysis_service(None)
+            _status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            self.drive(value)
+            current = value.run_once.get(body["discoveryId"])
+            status, frozen = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(201, status)
+            self.assertEqual("frozen", frozen["phase"])
             self.assertIsNotNone(frozen["previewId"])
             self.assertIsNotNone(frozen["intentId"])
             self.assertEqual(frozen["previewId"], frozen["preview"]["previewId"])
+            # The frozen manifest's exact zero-mutation Preview is the existing
+            # *manual* Organize Preview over the frozen intent, so the operator
+            # continues on that surface.  The definition-Preview route reads a
+            # different repository and would never show this Preview.
+            self.assertEqual(
+                f"/operations/organize/preview/{frozen['previewId']}",
+                frozen["previewPath"],
+            )
+            self.assertIsNone(frozen["analysisId"])
             # Freezing and Preview are zero mutation.
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_over_bound_definition_is_refused_with_narrowing_guidance(self) -> None:
+    def test_over_bound_ceiling_with_a_small_scope_runs_once(self) -> None:
+        """Ceiling 250 with one eligible file is a legal, complete Run once.
+
+        The effective bound is min(250, 100) = 100 and the actual manifest holds
+        one source, so no overflow exists: the definition is admitted, Storage
+        is read and the complete manifest can be frozen.
+        """
+
         self.media("Movies/One.2001.mkv")
         with self.journey(item_limit=250, source_scope="Movies") as value:
             status, body = self.request(
@@ -408,10 +479,40 @@ class RunOnceApiTests(unittest.TestCase):
                 "/api/v1/operations/automation/task-definitions/nightly/run-once",
                 {},
             )
+            self.assertEqual(202, status)
+            self.assertEqual(250, body["definitionItemLimit"])
+            self.assertEqual(100, body["effectivePrimaryLimit"])
+            settled = self.drive(value)
+            document = value.run_once.document(settled)
+            self.assertEqual("ready", document["phase"])
+            self.assertEqual(1, document["primarySourceCount"])
+            self.assertTrue(document["actions"]["finalize"]["available"])
+
+    def test_actual_overflow_refuses_with_narrowing_guidance(self) -> None:
+        """An actual manifest above the effective bound refuses, never truncates."""
+
+        for index in range(101):
+            self.media(f"Movies/Movie{index:03d}.2001.mkv")
+        with self.journey(item_limit=250, source_scope="Movies") as value:
+            status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            self.assertEqual(202, status)
+            settled = self.drive(value)
+            self.assertEqual(100, len(settled.sources))
+            current = value.run_once.get(body["discoveryId"])
+            status, refused = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+                {"expectedVersion": current.version},
+            )
             self.assertEqual(409, status)
-            self.assertEqual("discovery_overflow", body["error"]["code"])
-            self.assertIn("100", body["error"]["details"]["nextAction"])
-            self.assertEqual([], value.source.reads)
+            self.assertEqual("discovery_overflow", refused["error"]["code"])
+            self.assertIn("narrow", refused["error"]["details"]["nextAction"])
 
     def test_empty_scope_reports_no_work(self) -> None:
         (self.source_root / "Movies").mkdir()
@@ -485,6 +586,141 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertIsNone(manual[0]["jobId"])
 
     # -- refusals and principal isolation --------------------------------
+
+    def test_lost_response_reconciles_by_the_client_request_identity(self) -> None:
+        """A lost admission response reads back its own proved original.
+
+        The request identity is generated before the POST, so it proves the
+        *actual* admission even after the Active pin changed; a proved absence is
+        a bounded 404, never a guessed latest run.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            request_id = "33333333-3333-4333-8333-333333333333"
+            # No admission exists for this identity yet: an honest absence.
+            status, absent = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once"
+                f"?admissionRequestId={request_id}",
+            )
+            self.assertEqual(404, status)
+            self.assertEqual("run_once_request_not_found", absent["error"]["code"])
+            self.assertEqual("unknown", absent["error"]["details"]["durableState"])
+            # Admit, then reconcile the same identity to the same durable run.
+            status, admitted = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {"admissionRequestId": request_id},
+            )
+            self.assertEqual(202, status, admitted)
+            status, reconciled = self.request(
+                value,
+                "GET",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once"
+                f"?admissionRequestId={request_id}",
+            )
+            self.assertEqual(200, status, reconciled)
+            self.assertEqual(admitted["discoveryId"], reconciled["discoveryId"])
+            # The reconciliation never created a second run.
+            status, listing = self.request(value, "GET", "/api/v1/operations/automation/run-once")
+            self.assertEqual(200, status)
+            self.assertEqual(1, listing["total"])
+            self.assertEqual([], value.source.mutations)
+
+    def test_observed_definition_fence_refuses_a_stale_request(self) -> None:
+        """A stale observed definition/configuration refuses the new admission.
+
+        The same stale action must never silently admit today's published
+        definition: the operator reviewed a specific binding, so a changed
+        fingerprint or a repinned Active is a 409, not a repin.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            definition = next(
+                item
+                for item in value.runtime.automation_task_definitions
+                if item.definition_id == "nightly"
+            )
+            status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {
+                    "admissionRequestId": "11111111-1111-4111-8111-111111111111",
+                    "expectedDefinitionFingerprint": definition.definition_fingerprint,
+                    "expectedRevisionId": value.revision.revision_id,
+                    "expectedRevisionVersion": value.revision.version,
+                    "expectedRevisionDigest": value.revision.digest,
+                },
+            )
+            self.assertEqual(202, status, body)
+            self.assertEqual("nightly", body["definitionId"])
+            # A changed observed definition fingerprint is refused.
+            status, stale = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {"expectedDefinitionFingerprint": "0" * 64},
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("definition_stale", stale["error"]["code"])
+            # A repinned Active is refused.
+            status, repinned = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {
+                    "expectedRevisionId": "other-revision",
+                    "expectedRevisionVersion": 1,
+                    "expectedRevisionDigest": "other-digest",
+                },
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("configuration_stale", repinned["error"]["code"])
+            # A partial fence is malformed rather than silently weakened.
+            status, _partial = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {"expectedRevisionId": "other-revision"},
+            )
+            self.assertEqual(400, status)
+            # The refused admissions created no additional work.
+            status, listing = self.request(value, "GET", "/api/v1/operations/automation/run-once")
+            self.assertEqual(200, status)
+            self.assertEqual(1, listing["total"])
+            self.assertEqual([], value.source.mutations)
+
+    def test_unreadable_subtree_refuses_the_definition_manifest(self) -> None:
+        """An incomplete definition-derived walk cannot finalize over the API."""
+
+        self.media("Movies/One.2001.mkv")
+        self.media("Locked/Two.2002.mkv")
+        with self.journey(source_scope=None) as value:
+            status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            self.assertEqual(202, status)
+            value.source.fail_listing("Locked")
+            settled = self.drive(value)
+            status, refused = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+                {"expectedVersion": settled.version},
+            )
+            self.assertEqual(409, status)
+            self.assertEqual("discovery_incomplete_manifest", refused["error"]["code"])
+            self.assertEqual("read_failure", refused["error"]["details"]["incompleteReason"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_viewer_cannot_start_run_once_and_creates_nothing(self) -> None:
         self.media("Movies/One.2001.mkv")

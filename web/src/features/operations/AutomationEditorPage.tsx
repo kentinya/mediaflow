@@ -28,10 +28,8 @@ import {
 } from "./automation-query";
 import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  AUTOMATION_RUN_MODES,
   isRecordedAutomationRunMode,
   type AutomationDocumentRunMode,
-  type AutomationRunMode,
 } from "../../entities/operations/automation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
@@ -61,6 +59,7 @@ export function AutomationEditorPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<DefinitionFormState | null>(null);
   const [confirmActivate, setConfirmActivate] = useState(false);
+  const [confirmModeCorrection, setConfirmModeCorrection] = useState(false);
   const [validationErrors, setValidationErrors] = useState<readonly string[]>(
     [],
   );
@@ -300,16 +299,19 @@ export function AutomationEditorPage() {
         const formEnabled = currentForm?.enabled ?? false;
         const formScope = currentForm?.sourceScope ?? "";
         const formLibrary = currentForm?.resourceLibraryId ?? "";
-        const formMode = currentForm?.mode ?? draft.definition.mode;
+        // The intent is fixed. A Draft that recorded a removed mode is shown as
+        // read-only history; publishing it as automatic organization is the
+        // existing correction journey and needs the operator's explicit
+        // confirmation, so nothing is rewritten silently.
+        const recordedMode = currentForm?.mode ?? draft.definition.mode;
+        const recordedModeIsRemoved = isRecordedAutomationRunMode(recordedMode);
+        const formMode = AUTOMATION_AUTOMATIC_ORGANIZATION_MODE;
         const formScheduleType = currentForm?.scheduleType ?? "interval";
         const formInterval = currentForm?.intervalSeconds ?? "";
         const formCron = currentForm?.cron ?? "";
         const formTimezone = currentForm?.timezone ?? "";
-        // A Draft that still records a removed mode stays readable as
-        // history, but it cannot be saved, validated or activated until the
-        // operator deliberately chooses the retained mode. Nothing is
-        // rewritten silently.
-        const formModeIsSupported = !isRecordedAutomationRunMode(formMode);
+        const formModeIsSupported =
+          !recordedModeIsRemoved || confirmModeCorrection;
         const formValid =
           formModeIsSupported &&
           formName.trim().length > 0 &&
@@ -433,38 +435,37 @@ export function AutomationEditorPage() {
                   </option>
                 ))}
               </select>
-              <p className="mf-label">
-                <label htmlFor="automation-edit-mode">Run mode</label>
-              </p>
-              <select
-                id="automation-edit-mode"
-                value={formMode}
-                onChange={(event) =>
-                  updateForm({ mode: event.target.value as AutomationRunMode })
-                }
+              <p className="mf-label">Run mode</p>
+              <p
+                className="mf-dashboard-meta"
+                data-testid="automation-edit-mode-intent"
               >
-                {isRecordedAutomationRunMode(formMode) && (
-                  <option value={formMode} disabled>
-                    {formMode} (unsupported historical mode)
-                  </option>
-                )}
-                {AUTOMATION_RUN_MODES.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
-              {isRecordedAutomationRunMode(formMode) && (
+                {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}（自动整理）是固定意图，
+                这里没有模式选择器。已移除的历史模式不会被提供或兼容执行。
+              </p>
+              {recordedModeIsRemoved && (
                 <StatusBanner
                   variant="info"
                   title="Unsupported historical run mode"
                 >
                   <p>
-                    This Draft carries the removed mode{" "}
-                    <strong>{formMode}</strong>. It stays visible as history and
-                    is never silently rewritten. Choose{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} before saving.
+                    This Draft records the removed mode{" "}
+                    <strong>{recordedMode}</strong>. It stays visible as history
+                    and is never silently rewritten. Saving will publish{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} as the explicit
+                    correction.
                   </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={confirmModeCorrection}
+                      onChange={(event) =>
+                        setConfirmModeCorrection(event.target.checked)
+                      }
+                    />{" "}
+                    Publish this Draft as{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}
+                  </label>
                 </StatusBanner>
               )}
               <p className="mf-label">

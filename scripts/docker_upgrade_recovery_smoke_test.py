@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Isolated Docker upgrade/backup/migration recovery acceptance for Task 29.5.
 
-The script builds two local image identities: the genuine Task 40.3 Base image
-(schema 38) and the current candidate image (schema 39). It starts the old image
+The script builds two local image identities: a genuine immutable Base image
+(default the original Task 40.3 Base, schema 38; ``--base-sha``/``--base-schema``
+select the Slice Base schema 44 or Task Base schema 45 instead) and the current
+candidate image, whose expected schema is read from the candidate's own runtime
+constant. It starts the old image
 on temporary ``/data`` and media mounts,
 activates a managed runtime, seeds representative durable state, stops the
 stack, creates and verifies a local backup, runs candidate preflight and
@@ -47,8 +50,33 @@ from docker_smoke_test import (
 ROOT = Path(__file__).resolve().parents[1]
 UPGRADE_PROJECT_PREFIX = f"{PROJECT_PREFIX}-upgrade"
 IMAGE_TAG_PREFIX = "mediaflow:task29.5"
+#: Defaults preserved for the original schema-38 profile.  ``--base-sha`` /
+#: ``--base-schema`` let the same smoke rehearse any other immutable Base (for
+#: example the Slice Base schema-44 and Task Base schema-45 candidates).
+DEFAULT_BASE_SHA = "360e59e0791c60635f050a0444b1a2d0b4458ea4"
 OLD_SCHEMA = 38
-CURRENT_SCHEMA = 46
+
+
+def _candidate_schema_version() -> int:
+    """The working tree's own runtime schema, read from the real constant.
+
+    The candidate image is built from this checkout, so the expected upgraded
+    schema must track the code that is actually built rather than a literal
+    that silently goes stale on the next additive bump.
+    """
+
+    import re
+
+    source = (ROOT / "mediaflow" / "infrastructure" / "sqlite_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"^SCHEMA_VERSION = (\d+)$", source, re.MULTILINE)
+    if match is None:
+        raise RuntimeError("could not read SCHEMA_VERSION from the candidate runtime")
+    return int(match.group(1))
+
+
+CURRENT_SCHEMA = _candidate_schema_version()
 DEFINITION_ID = "upgrade-definition"
 SCHEDULE_ID = "hourly-scan"
 TASK_ID = "upgrade-task"
@@ -101,13 +129,20 @@ def build_image(image: str, context: Path, environment: dict[str, str]) -> None:
     )
 
 
-def prepare_old_context() -> tuple[tempfile.TemporaryDirectory, Path]:
-    """Create a local old-schema image context without touching repository files."""
+def prepare_old_context(
+    base_sha: str = DEFAULT_BASE_SHA,
+) -> tuple[tempfile.TemporaryDirectory, Path]:
+    """Create a local old-schema image context without touching repository files.
+
+    The base revision is a parameter so the identical smoke can rehearse any
+    immutable Base (the original schema-38 profile, the Slice Base schema 44 or
+    the Task Base schema 45) without editing this script.
+    """
 
     directory = tempfile.TemporaryDirectory(prefix="mediaflow-old-schema-")
     context = Path(directory.name)
     archive = subprocess.run(
-        ["git", "archive", "360e59e0791c60635f050a0444b1a2d0b4458ea4"],
+        ["git", "archive", base_sha],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -1118,7 +1153,13 @@ print(
 """
 
 
-def upgrade_recovery_smoke(project: str, keep: bool) -> None:
+def upgrade_recovery_smoke(
+    project: str,
+    keep: bool,
+    *,
+    base_sha: str = DEFAULT_BASE_SHA,
+    base_schema: int = OLD_SCHEMA,
+) -> None:
     suffix = f"{os.getpid()}-{int(time.time())}"
     old_image = f"{IMAGE_TAG_PREFIX}-old-{suffix}"
     new_image = f"{IMAGE_TAG_PREFIX}-new-{suffix}"
@@ -1153,8 +1194,8 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
         try:
             print("Building candidate image...")
             build_image(new_image, ROOT, environment)
-            print("Building genuine Task Base schema-38 image...")
-            old_context_handle, old_context = prepare_old_context()
+            print(f"Building genuine Base {base_sha[:12]} schema-{base_schema} image...")
+            old_context_handle, old_context = prepare_old_context(base_sha)
             build_image(old_image, old_context, environment)
 
             print("Starting old-schema Compose deployment...")
@@ -1174,9 +1215,9 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
             seed_result = run_image_python(old_image, volume, seed_state_code())
             seed_output = require_success(seed_result, "seed state")
             summary = json.loads(seed_output.strip().splitlines()[-1])
-            if summary["schema"] != OLD_SCHEMA:
+            if summary["schema"] != base_schema:
                 raise RuntimeError(
-                    f"old deployment schema is {summary['schema']}, expected {OLD_SCHEMA}"
+                    f"old deployment schema is {summary['schema']}, expected {base_schema}"
                 )
 
             baseline = {
@@ -1219,8 +1260,8 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
                 ["database", "verify", "/data/upgrade-backup.sqlite3"],
             )
             verify_output = require_success(verify_result, "database verify")
-            if "Schema: " + str(OLD_SCHEMA) not in verify_output:
-                raise RuntimeError(f"verified backup schema is not {OLD_SCHEMA}: {verify_output}")
+            if "Schema: " + str(base_schema) not in verify_output:
+                raise RuntimeError(f"verified backup schema is not {base_schema}: {verify_output}")
             live_before = image_sha256(new_image, volume, "/data/mediaflow.sqlite3")
             backup_before = image_sha256(new_image, volume, "/data/upgrade-backup.sqlite3")
 
@@ -1550,12 +1591,31 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--keep", action="store_true", help="keep containers for inspection")
+    parser.add_argument(
+        "--base-sha",
+        default=DEFAULT_BASE_SHA,
+        help=(
+            "immutable Base git revision whose own runtime seeds the old-schema volume "
+            f"(default: {DEFAULT_BASE_SHA}, schema {OLD_SCHEMA})"
+        ),
+    )
+    parser.add_argument(
+        "--base-schema",
+        type=int,
+        default=OLD_SCHEMA,
+        help=f"the runtime schema the Base revision creates (default: {OLD_SCHEMA})",
+    )
     arguments = parser.parse_args()
     if shutil.which("docker") is None:
         print("Docker engine is unavailable; Docker upgrade/recovery acceptance SKIP")
         return 0
     project = f"{UPGRADE_PROJECT_PREFIX}-{os.getpid()}-{int(time.time())}"
-    upgrade_recovery_smoke(project, keep=arguments.keep)
+    upgrade_recovery_smoke(
+        project,
+        keep=arguments.keep,
+        base_sha=arguments.base_sha,
+        base_schema=arguments.base_schema,
+    )
     return 0
 
 

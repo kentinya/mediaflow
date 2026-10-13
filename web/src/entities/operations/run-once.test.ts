@@ -104,6 +104,7 @@ describe("normalizeAutomationRunOnce", () => {
       payload({
         phase: "ready",
         status: "completed",
+        frozen: true,
         frozenAt: "2026-01-01T00:05:00+00:00",
         intentId: "intent-1",
         primarySourceCount: 2,

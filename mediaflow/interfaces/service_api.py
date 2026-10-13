@@ -91,6 +91,7 @@ from mediaflow.application.operations_lifecycle import (
     task_result_operator_document,
 )
 from mediaflow.application.package_exchange import PackageExchangeService
+from mediaflow.application.preview_analysis import PreviewAnalysisError, PreviewAnalysisService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
@@ -394,6 +395,7 @@ class MediaFlowApi:
         media_discovery_service=None,
         automation_run_once_service=None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
+        preview_analysis_service=None,
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
         webhook_transport: object | None = None,
@@ -613,6 +615,25 @@ class MediaFlowApi:
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
                 file_index=file_index,
             )
+        # Durable exact-analysis admission: the expensive definition/manual
+        # Preview walk and Provider batch run in the resident Processing Worker
+        # instead of blocking the HTTP request.  The service wraps the *existing*
+        # exact-Preview services, which remain the only authority that produces
+        # Preview evidence, and creates no execution authority and no dummy Job.
+        self._preview_analyses = preview_analysis_service
+        if self._preview_analyses is None:
+            self._preview_analyses = PreviewAnalysisService(
+                repository,
+                definition_previews=self._automation_previews,
+                manual_previews=self._manual_previews,
+            )
+        # A Run-once freeze defers its exact analysis to the same durable
+        # Worker boundary instead of running the walk and Provider batch inline
+        # in the HTTP request.
+        if self._automation_run_once is not None and hasattr(
+            self._automation_run_once, "bind_analysis_service"
+        ):
+            self._automation_run_once.bind_analysis_service(self._preview_analyses)
         self._unattended_grants = UnattendedExecutionGrantService(
             repository,
             preview_service=self._automation_previews,
@@ -2114,6 +2135,58 @@ class MediaFlowApi:
         if (
             len(parts) == 7
             and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
+            and parts[6] == "preview-analyses"
+            and method == "POST"
+        ):
+            # Durable exact analysis of one manual intent.  The request
+            # validates the exact pinned intent context, records one durable
+            # analysis and returns its identity promptly; the resident Worker
+            # performs the walk and Provider batch, so a large selection never
+            # blocks this request and the operator can read progress and cancel.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._preview_analyses is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "durable preview analysis service is unavailable",
+                )
+            self._require_empty_query(environ, "manual preview analysis")
+            document = self._document(environ)
+            if set(document).difference({"expectedVersion", "admissionRequestId"}):
+                raise ValueError(
+                    "manual preview analysis accepts only expectedVersion and an optional "
+                    "admissionRequestId"
+                )
+            expected_version = document.get("expectedVersion")
+            if (
+                isinstance(expected_version, bool)
+                or not isinstance(expected_version, int)
+                or expected_version < 1
+            ):
+                raise ValueError(
+                    "manual preview analysis expectedVersion must be a positive integer"
+                )
+            request_id = document.get("admissionRequestId")
+            if request_id is not None and (
+                not isinstance(request_id, str) or not request_id.strip()
+            ):
+                raise ValueError(
+                    "manual preview analysis admissionRequestId must be non-empty text"
+                )
+            try:
+                analysis = self._preview_analyses.admit_manual(
+                    parts[5],
+                    actor=principal.principal_id,
+                    expected_version=expected_version,
+                    admission_request_id=request_id,
+                )
+            except PreviewAnalysisError as error:
+                return self._preview_analysis_error(start_response, error)
+            return self._response(start_response, 202, self._preview_analysis_document(analysis))
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
             and parts[6] == "previews"
             and method == "POST"
         ):
@@ -2757,6 +2830,25 @@ class MediaFlowApi:
             return self._automation_run_once_detail_projection(
                 parts[5], parts[6], method, environ, start_response, principal
             )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "preview-analyses"
+            and method == "GET"
+        ):
+            return self._preview_analysis_detail_projection(
+                parts[5], None, method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "preview-analyses"
+            and method == "POST"
+            and parts[6] in {"pause", "cancel", "resume"}
+        ):
+            return self._preview_analysis_detail_projection(
+                parts[5], parts[6], method, environ, start_response, principal
+            )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -3296,6 +3388,54 @@ class MediaFlowApi:
                 f"the pinned Automation Task Definition was {action}",
             )
             return self._response(start_response, 200, response)
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
+            and parts[5] == "preview-analyses"
+            and method == "POST"
+        ):
+            # Durable exact analysis: the request validates the exact pinned
+            # context, records one durable analysis and returns its identity
+            # promptly.  The expensive walk and Provider batch run in the
+            # resident Processing Worker, so a large definition never blocks
+            # this request and the operator can read progress and cancel safely.
+            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+            if self._preview_analyses is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "durable preview analysis service is unavailable",
+                )
+            self._require_empty_query(environ, "automation preview analysis")
+            document = self._document(environ)
+            if set(document).difference({"revisionId", "admissionRequestId"}):
+                raise ValueError(
+                    "automation preview analysis accepts only an optional revisionId and "
+                    "admissionRequestId"
+                )
+            revision_id = document.get("revisionId")
+            if revision_id is not None and (
+                not isinstance(revision_id, str) or not revision_id.strip()
+            ):
+                raise ValueError("automation preview analysis revisionId must be non-empty text")
+            request_id = document.get("admissionRequestId")
+            if request_id is not None and (
+                not isinstance(request_id, str) or not request_id.strip()
+            ):
+                raise ValueError(
+                    "automation preview analysis admissionRequestId must be non-empty text"
+                )
+            try:
+                analysis = self._preview_analyses.admit_definition(
+                    parts[4],
+                    actor=principal.principal_id,
+                    revision_id=revision_id,
+                    admission_request_id=request_id,
+                )
+            except PreviewAnalysisError as error:
+                return self._preview_analysis_error(start_response, error)
+            return self._response(start_response, 202, self._preview_analysis_document(analysis))
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "automation", "task-definitions"]
@@ -14850,13 +14990,69 @@ class MediaFlowApi:
                     "nextAction": "restore the bounded discovery service and retry Run once",
                 },
             )
+        if method == "GET":
+            # Reconcile one lost Run-once response by the *client's own* request
+            # identity.  The request id is generated before the POST, so it
+            # identifies the actual admission however the Active pin changed
+            # while the response was in flight; it is principal-scoped and never
+            # guesses from a latest/list window.
+            self._require(principal, ApiPermission.READ)
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query) != {"admissionRequestId"} or len(query["admissionRequestId"]) != 1:
+                raise ValueError(
+                    "automation Run once reconciliation requires one admissionRequestId"
+                )
+            request_id = query["admissionRequestId"][0]
+            discovery_service = getattr(self, "_media_discovery", None)
+            finder = (
+                getattr(discovery_service, "find_by_request_id", None)
+                if discovery_service is not None
+                else None
+            )
+            if not callable(finder):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "Run-once request reconciliation is unavailable",
+                )
+            try:
+                discovery = finder(actor=principal.principal_id, admission_request_id=request_id)
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            if discovery is None or discovery.definition_origin is None:
+                # A proved absence is a bounded 404, never a fabricated run.
+                return self._error(
+                    start_response,
+                    404,
+                    "run_once_request_not_found",
+                    "no Run once was admitted for this request identity",
+                    details={
+                        "durableState": "unknown",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "the response was lost before admission was proved; reload the "
+                            "definition and start Run once again with a new request identity"
+                        ),
+                    },
+                )
+            return self._response(start_response, 200, service.document(discovery))
         if method == "POST":
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
             self._require_empty_query(environ, "automation definition Run once")
             document = self._document(environ)
-            if set(document).difference({"admissionRequestId"}):
+            allowed = {
+                "admissionRequestId",
+                "expectedDefinitionFingerprint",
+                "expectedRevisionId",
+                "expectedRevisionVersion",
+                "expectedRevisionDigest",
+            }
+            if set(document).difference(allowed):
                 raise ValueError(
-                    "automation definition Run once accepts only an optional admissionRequestId"
+                    "automation definition Run once accepts only an optional admissionRequestId "
+                    "and the observed definition/configuration fence"
                 )
             request_id = document.get("admissionRequestId")
             if request_id is not None and (
@@ -14865,11 +15061,45 @@ class MediaFlowApi:
                 raise ValueError(
                     "automation definition Run once admissionRequestId must be text or null"
                 )
+            fingerprint = document.get("expectedDefinitionFingerprint")
+            if fingerprint is not None and (
+                not isinstance(fingerprint, str) or not fingerprint.strip()
+            ):
+                raise ValueError(
+                    "automation definition Run once expectedDefinitionFingerprint must be "
+                    "text or null"
+                )
+            revision_id = document.get("expectedRevisionId")
+            if revision_id is not None and (
+                not isinstance(revision_id, str) or not revision_id.strip()
+            ):
+                raise ValueError(
+                    "automation definition Run once expectedRevisionId must be text or null"
+                )
+            revision_version = document.get("expectedRevisionVersion")
+            if revision_version is not None and (
+                isinstance(revision_version, bool) or not isinstance(revision_version, int)
+            ):
+                raise ValueError(
+                    "automation definition Run once expectedRevisionVersion must be an "
+                    "integer or null"
+                )
+            revision_digest = document.get("expectedRevisionDigest")
+            if revision_digest is not None and (
+                not isinstance(revision_digest, str) or not revision_digest.strip()
+            ):
+                raise ValueError(
+                    "automation definition Run once expectedRevisionDigest must be text or null"
+                )
             try:
                 discovery = service.admit(
                     definition_id,
                     actor=principal.principal_id,
                     admission_request_id=request_id,
+                    expected_definition_fingerprint=fingerprint,
+                    expected_revision_id=revision_id,
+                    expected_revision_version=revision_version,
+                    expected_revision_digest=revision_digest,
                 )
                 return self._response(start_response, 202, service.document(discovery))
             except (AutomationRunOnceError, DiscoveryError) as error:
@@ -14962,7 +15192,7 @@ class MediaFlowApi:
             if set(document) != {"expectedVersion"}:
                 raise ValueError("automation Run once finalize requires only expectedVersion")
             try:
-                frozen, preview = service.finalize(
+                frozen, preview, analysis = service.finalize(
                     discovery_id,
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
@@ -14970,14 +15200,151 @@ class MediaFlowApi:
             except (AutomationRunOnceError, DiscoveryError) as error:
                 return self._discovery_step_error(start_response, error)
             payload = service.document(frozen)
-            payload["preview"] = self._automation_preview_document(preview)
-            payload["previewId"] = preview.preview_id
-            payload["intentId"] = preview.intent_id
-            payload["previewPath"] = (
-                f"/operations/automation/run-once/{discovery_id}/preview/{preview.preview_id}"
-            )
+            payload["intentId"] = frozen.intent_id
+            if preview is not None:
+                # Inline exact Preview (no durable analysis service configured).
+                payload["preview"] = self._automation_preview_document(preview)
+                payload["previewId"] = preview.preview_id
+                # The frozen manifest's exact zero-mutation Preview is the
+                # *manual* Preview over the frozen intent, so the operator
+                # continues on the existing manual Organize Preview surface.
+                # Navigating to the definition-Preview route would read a
+                # different repository and never show this Preview.
+                payload["previewPath"] = f"/operations/organize/preview/{preview.preview_id}"
+                payload["analysisId"] = None
+                payload["analysisPath"] = None
+            elif analysis is not None:
+                # The expensive exact analysis was deferred to the resident
+                # Worker: the operator reads a durable analysis identity now and
+                # the frozen manifest's Preview appears when it completes.
+                payload["analysisId"] = analysis.analysis_id
+                payload["analysisPath"] = (
+                    f"/operations/automation/preview-analyses/{analysis.analysis_id}"
+                )
+                payload["analysis"] = self._preview_analysis_document(analysis)
+                payload["previewId"] = None
+                payload["previewPath"] = None
             return self._response(start_response, 201, payload)
         return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _preview_analysis_detail_projection(
+        self,
+        analysis_id: str,
+        action: str | None,
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Read or cooperatively control one durable exact analysis.
+
+        The durable identity is the analysis id the admission returned, so a
+        reload or reconnect restores the same work without re-walking sources.
+        Controls settle the record at a safe boundary and never publish a
+        Preview; the analysis itself remains metadata-only and zero mutation.
+        """
+
+        service = getattr(self, "_preview_analyses", None)
+        if service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "durable preview analysis service is unavailable",
+                details={
+                    "durableState": "no_work_started",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "restore the durable analysis service and retry",
+                },
+            )
+        if action is None and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "preview analysis detail")
+            try:
+                analysis = service.get(analysis_id)
+            except PreviewAnalysisError as error:
+                return self._preview_analysis_error(start_response, error)
+            return self._response(start_response, 200, self._preview_analysis_document(analysis))
+        if action in {"pause", "cancel", "resume"} and method == "POST":
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "preview analysis control")
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError("preview analysis control requires only expectedVersion")
+            try:
+                if action == "pause":
+                    analysis = service.request_pause(
+                        analysis_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                elif action == "cancel":
+                    analysis = service.request_cancel(
+                        analysis_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+                else:
+                    analysis = service.resume(
+                        analysis_id,
+                        actor=principal.principal_id,
+                        expected_version=document["expectedVersion"],
+                    )
+            except PreviewAnalysisError as error:
+                return self._preview_analysis_error(start_response, error)
+            return self._response(start_response, 200, self._preview_analysis_document(analysis))
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _preview_analysis_document(self, analysis) -> dict:
+        document = redact_manual_value(analysis.document())
+        document["zeroMutation"] = True
+        document["sideEffects"] = "none"
+        document["previewPath"] = (
+            f"/operations/organize/preview/{analysis.preview_id}"
+            if analysis.preview_id is not None
+            else None
+        )
+        document["actions"] = self._preview_analysis_actions(analysis)
+        return document
+
+    @staticmethod
+    def _preview_analysis_actions(analysis) -> dict:
+        active = analysis.status.value in {"queued", "running"}
+        return {
+            "pause": {"available": active, "method": "POST", "sideEffects": "none"},
+            "resume": {
+                "available": analysis.status.value == "paused",
+                "method": "POST",
+                "sideEffects": "none",
+            },
+            "cancel": {
+                "available": analysis.status.value in {"queued", "running", "paused"},
+                "method": "POST",
+                "sideEffects": "none",
+            },
+            "preview": {
+                "available": analysis.preview_id is not None,
+                "method": "GET",
+                "sideEffects": "none",
+                "nextAction": "open the exact zero-mutation Preview",
+            },
+        }
+
+    def _preview_analysis_error(self, start_response: Callable, error) -> object:
+        return self._error(
+            start_response,
+            getattr(error, "status", 409),
+            getattr(error, "code", "preview_analysis_rejected"),
+            str(error),
+            details={
+                "durableState": "unchanged",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": getattr(error, "next_action", None),
+                **getattr(error, "details", {}),
+            },
+        )
 
     def _automation_definition_focused_projection(
         self,
@@ -15170,6 +15537,34 @@ class MediaFlowApi:
                     expected_version=expected_version,
                     expected_digest=expected_digest,
                 ),
+            )
+        if len(parts) == 7 and parts[6] == "preview-analyses":
+            # Durable exact analysis on the focused lifecycle base.  The
+            # request records one durable analysis and returns its identity
+            # promptly; the resident Worker performs the walk and Provider
+            # batch.  Reads and controls stay separate from the analysis itself.
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "automation preview analysis list")
+            if self._preview_analyses is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "durable preview analysis service is unavailable",
+                )
+            values = self._preview_analyses.list(
+                actor=principal.principal_id, definition_id=definition_id, limit=50
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "definitionId": definition_id,
+                    "items": [self._preview_analysis_document(value) for value in values],
+                    "total": len(values),
+                },
             )
         if len(parts) == 7 and parts[6] == "run-once":
             # Definition-bound Run once on the focused lifecycle base.  The

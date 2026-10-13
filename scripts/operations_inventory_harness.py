@@ -1900,6 +1900,60 @@ def run_automation_run_once_worker(state: AppState) -> dict[str, object]:
     }
 
 
+def run_preview_analysis_worker(state: AppState) -> dict[str, object]:
+    """Advance one admitted durable exact analysis with the real Worker.
+
+    The API only *admits* the analysis; this route is the resident
+    Processing-Worker boundary that runs the existing exact-Preview service and
+    links the resulting Preview.  It is metadata-only and never mutates Storage.
+    """
+
+    from mediaflow.application.preview_analysis import PreviewAnalysisWorker
+
+    service = getattr(state.api, "_preview_analyses", None)
+    if service is None:
+        return {"advanced": False, "reason": "preview analysis service is unavailable"}
+    worker = PreviewAnalysisWorker(service, worker_id="harness-analysis-worker")
+    latest = None
+    for _ in range(12):
+        result = worker.run_next()
+        if result is None:
+            break
+        latest = result
+        if result.terminal:
+            break
+    if latest is None:
+        return {"advanced": False, "reason": "no claimable preview analysis"}
+    return {
+        "advanced": True,
+        "analysisId": latest.analysis_id,
+        "status": latest.status.value,
+        "previewId": latest.preview_id,
+    }
+
+
+def preview_analysis_state(state: AppState, *, analysis_id: str) -> dict[str, object]:
+    """Report one durable exact analysis for the browser proof (reads only)."""
+
+    service = getattr(state.api, "_preview_analyses", None)
+    if service is None or not analysis_id:
+        return {"found": False}
+    try:
+        analysis = service.get(analysis_id)
+    except Exception:
+        return {"found": False}
+    return {
+        "found": True,
+        "analysisId": analysis.analysis_id,
+        "kind": analysis.kind.value,
+        "status": analysis.status.value,
+        "version": analysis.version,
+        "previewId": analysis.preview_id,
+        "definitionId": analysis.definition_id,
+        "intentId": analysis.intent_id,
+    }
+
+
 def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str, object]:
     """Report the durable Run-once manifest for the browser proof.
 
@@ -2091,6 +2145,30 @@ def open_automation_definition_draft(state: AppState) -> dict[str, object]:
         "draftRevisionId": edited.revision_id,
         "draftName": AUTOMATION_LIFECYCLE_DRAFT_NAME,
     }
+
+
+def restore_source_media(state: AppState) -> dict[str, object]:
+    """Recreate the deterministic source media the browser journeys organize.
+
+    A real Move execution genuinely relocates the source file, so a later
+    sequential test would find an empty scope.  This restores the exact original
+    synthetic bytes under the same ResourceLibrary-relative paths so every test
+    starts from the same known population.  It is a test-fixture control only:
+    it writes the temporary harness source root, never a product code path.
+    """
+
+    source_root = state.managed.root / "source"
+    files = {
+        "One.2001.mkv": b"synthetic browser media",
+        "Two.2002.mkv": b"second synthetic browser media",
+        "Three.2003.mkv": b"new-task synthetic browser media",
+        "Four.2004.mkv": b"default-origin synthetic browser media",
+    }
+    for relative_path, content in files.items():
+        target = source_root / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    return {"restored": sorted(files)}
 
 
 def reset_automation_definitions(state: AppState) -> dict[str, object]:
@@ -2514,10 +2592,18 @@ def application(environ, start_response):
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
             document = automation_run_once_state(STATE, discovery_id=discovery_id)
+        elif path == "/__harness__/run-preview-analysis-worker" and method == "POST":
+            document = run_preview_analysis_worker(STATE)
+        elif path == "/__harness__/preview-analysis-state" and method == "GET":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            analysis_id = (query.get("analysisId") or [""])[0]
+            document = preview_analysis_state(STATE, analysis_id=analysis_id)
         elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
             document = seed_automation_definition_grant(STATE)
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":
             document = reset_automation_definitions(STATE)
+        elif path == "/__harness__/restore-source-media" and method == "POST":
+            document = restore_source_media(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
             document = open_automation_definition_draft(STATE)
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":

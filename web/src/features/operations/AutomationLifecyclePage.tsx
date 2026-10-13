@@ -29,6 +29,7 @@ import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
   admitAutomationRunOnce,
+  reconcileAutomationRunOnce,
   copyAutomationDefinitionFocused,
   createAutomationDefinitionFocused,
   fetchAutomationCopyCandidate,
@@ -45,10 +46,8 @@ import {
 import { automationListQueryKey } from "./automation-query";
 import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  AUTOMATION_RUN_MODES,
   isRecordedAutomationRunMode,
   type AutomationDocumentRunMode,
-  type AutomationRunMode,
 } from "../../entities/operations/automation";
 import type { AutomationEditProjectionModel } from "../../entities/operations/automation-lifecycle";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -132,7 +131,9 @@ function buildCandidate(form: FormState): Record<string, unknown> {
     name: form.name.trim(),
     enabled: form.enabled,
     resourceLibraryId: form.resourceLibraryId,
-    mode: form.mode,
+    // The intent is fixed: no selector exists, and a recorded removed mode is
+    // only ever published as the retained mode after an explicit confirmation.
+    mode: AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
     itemLimit: Number(form.itemLimit),
     // The scope field is always submitted: clearing the input publishes the
     // cleared value (the ResourceLibrary root) instead of silently keeping a
@@ -155,15 +156,19 @@ function buildCandidate(form: FormState): Record<string, unknown> {
 /** A supported interval value: any finite positive decimal number. */
 const INTERVAL_PATTERN = /^\d+(\.\d+)?$/;
 
-function formIsValid(form: FormState, editing: boolean): boolean {
+function formIsValid(
+  form: FormState,
+  editing: boolean,
+  modeCorrectionConfirmed: boolean,
+): boolean {
   const itemLimit = Number(form.itemLimit);
   const intervalValue = Number(form.intervalSeconds);
   return (
     (editing || form.id.trim().length > 0) &&
     // A definition that still records a removed mode stays readable as
-    // history, but it cannot be published: the operator must deliberately
-    // choose the retained mode first. Nothing is rewritten silently.
-    !isRecordedAutomationRunMode(form.mode) &&
+    // history, but publishing it as the retained intent is an explicit
+    // correction: the operator must confirm it. Nothing is rewritten silently.
+    (!isRecordedAutomationRunMode(form.mode) || modeCorrectionConfirmed) &&
     form.name.trim().length > 0 &&
     form.resourceLibraryId.length > 0 &&
     /^\d+$/.test(form.itemLimit) &&
@@ -264,6 +269,92 @@ function writePendingCopyIntent(
   }
 }
 
+/**
+ * The submitted-but-unconfirmed Run-once admission. It carries only the
+ * definition identity, the client-generated request id and the observed fence
+ * — never a token or reusable execution authority — and it survives a real
+ * page reload so a lost response is reconciled by its own request id instead
+ * of being resubmitted blindly.
+ */
+interface PendingRunOnce {
+  readonly definitionId: string;
+  readonly requestId: string;
+  readonly authority: CandidateAuthority | null;
+  readonly fingerprint: string | null;
+}
+
+const RUN_ONCE_INTENT_SESSION_PREFIX =
+  "mediaflow.operations.automation-run-once-intent:";
+
+function runOnceIntentSessionKey(principalId: string): string {
+  return `${RUN_ONCE_INTENT_SESSION_PREFIX}${principalIdStorageSegment(principalId)}`;
+}
+
+function readPendingRunOnce(principalId: string | null): PendingRunOnce | null {
+  if (principalId === null || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(
+      runOnceIntentSessionKey(principalId),
+    );
+    if (raw === null) return null;
+    const value = JSON.parse(raw) as unknown;
+    if (value === null || typeof value !== "object") return null;
+    const source = value as Record<string, unknown>;
+    if (
+      typeof source.definitionId !== "string" ||
+      typeof source.requestId !== "string" ||
+      source.requestId.length === 0
+    ) {
+      return null;
+    }
+    const rawAuthority = source.authority;
+    let authority: CandidateAuthority | null = null;
+    if (
+      rawAuthority !== null &&
+      typeof rawAuthority === "object" &&
+      typeof (rawAuthority as Record<string, unknown>).revisionId ===
+        "string" &&
+      typeof (rawAuthority as Record<string, unknown>).version === "number" &&
+      typeof (rawAuthority as Record<string, unknown>).digest === "string"
+    ) {
+      const bounded = rawAuthority as Record<string, unknown>;
+      authority = {
+        revisionId: bounded.revisionId as string,
+        version: bounded.version as number,
+        digest: bounded.digest as string,
+      };
+    }
+    return {
+      definitionId: source.definitionId,
+      requestId: source.requestId,
+      authority: authority,
+      fingerprint:
+        typeof source.fingerprint === "string" ? source.fingerprint : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingRunOnce(
+  principalId: string | null,
+  intent: PendingRunOnce | null,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (principalId === null) return;
+    const key = runOnceIntentSessionKey(principalId);
+    if (intent === null) {
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(key, JSON.stringify(intent));
+    }
+  } catch {
+    // Persisting the reconciliation context is best-effort: the operator can
+    // always reconcile from the durable Automation history after a reconnect.
+  }
+}
+
 registerPrincipalSessionDataCleaner(() => {
   if (typeof window === "undefined") return;
   const storage = window.sessionStorage;
@@ -271,6 +362,7 @@ registerPrincipalSessionDataCleaner(() => {
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
     if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
+    if (key?.startsWith(RUN_ONCE_INTENT_SESSION_PREFIX)) keys.push(key);
   }
   for (const key of keys) storage.removeItem(key);
 });
@@ -322,6 +414,7 @@ export function AutomationLifecyclePage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmModeCorrection, setConfirmModeCorrection] = useState(false);
   // One submitted-but-unconfirmed Copy command: while its outcome is unknown,
   // no second Copy is offered until it is reconciled from durable evidence.
   // The intent survives a real page reload (identity + observed authority
@@ -423,6 +516,14 @@ export function AutomationLifecyclePage() {
     latestAuthority !== null &&
     (formEntry.authority.revisionId !== latestAuthority.revisionId ||
       formEntry.authority.digest !== latestAuthority.digest);
+  // The exact published definition/configuration this render observed, used as
+  // the Run-once admission fence. A changed definition or republished Active
+  // makes the new admission stale and the backend refuses it.
+  const observedAuthority = candidateAuthority;
+  const observedFingerprint =
+    editQueryResult !== undefined && editQueryResult.ok
+      ? editQueryResult.model.definitionFingerprint
+      : null;
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void queryClient.invalidateQueries({
@@ -663,26 +764,119 @@ export function AutomationLifecyclePage() {
   // ResourceLibrary and source sub-scope, so this action sends no file
   // selection: the backend discovers and freezes the complete bounded manifest.
   // It never enables the schedule, grants authority or mutates Storage.
+  //
+  // The action also submits the exact published definition/configuration it
+  // observed. That is a fence: if the definition changed or Active was
+  // republished between this render and the click, the backend refuses the
+  // stale request instead of silently binding today's Active to an intent the
+  // operator never reviewed.
+  // A submitted-but-unconfirmed Run-once admission, bounded to the definition
+  // identity, the client request id and the observed fence. It survives a real
+  // page reload because a lost response is an unknown durable outcome: until it
+  // is reconciled by that same request id, no second admission is offered. The
+  // session key is principal-scoped, so another principal's unknown outcome can
+  // never be reconciled as this one's result.
+  const [pendingRunOnceOverride, setPendingRunOnceState] =
+    useState<PendingRunOnce | null>(null);
+  const pendingRunOnce =
+    pendingRunOnceOverride ?? readPendingRunOnce(principalId);
+  const setPendingRunOnce = (intent: PendingRunOnce | null) => {
+    setPendingRunOnceState(intent);
+    writePendingRunOnce(principalId, intent);
+  };
   const runOnceMutation = useMutation({
-    mutationFn: (id: string) =>
-      admitAutomationRunOnce(token, {
+    mutationFn: (id: string) => {
+      const requestId = newRequestId();
+      const intent: PendingRunOnce = {
         definitionId: id,
-        admissionRequestId: newRequestId(),
-      }),
+        requestId: requestId ?? "",
+        authority: observedAuthority,
+        fingerprint: observedFingerprint,
+      };
+      if (requestId !== null) {
+        writePendingRunOnce(principalId, intent);
+        setPendingRunOnce(intent);
+      }
+      return admitAutomationRunOnce(token, {
+        definitionId: id,
+        admissionRequestId: requestId,
+        expectedDefinitionFingerprint: observedFingerprint,
+        expectedRevisionId: observedAuthority?.revisionId ?? null,
+        expectedRevisionVersion: observedAuthority?.version ?? null,
+        expectedRevisionDigest: observedAuthority?.digest ?? null,
+      }).then((result) => ({ result, intent }));
+    },
     retry: false,
     onMutate: () => setError(null),
-    onSuccess: (result, id) => {
+    onSuccess: ({ result }) => {
       if (!result.ok || result.model === undefined) {
+        const unknown =
+          result.status === 0 ||
+          result.status >= 500 ||
+          result.code === "malformed_response";
+        if (unknown) {
+          // The outcome is unknown, not absent: keep the retained intent so the
+          // operator can deliberately reconcile it before any resubmission.
+          setError(
+            "运行一次的响应未能送达或无法解读，无法确定后端是否已经受理。" +
+              "已受理的工作是持久的；请先使用“核对上次请求”，不要重复提交。",
+          );
+          return;
+        }
+        // A proved rejection clears the retained intent.
+        setPendingRunOnce(null);
+        writePendingRunOnce(principalId, null);
         setError(
           `Run once was rejected (${result.code ?? "unknown"}). ${result.nextAction ?? "Reload the current state and review the definition bounds."}`,
         );
         return;
       }
+      setPendingRunOnce(null);
+      writePendingRunOnce(principalId, null);
       void navigate({
         to: "/operations/automation/run-once/$discoveryId",
         params: { discoveryId: result.model.discoveryId },
       });
-      void id;
+    },
+  });
+
+  // Reconcile the retained unknown Run-once admission from durable truth. This
+  // never creates work: it reads back the admission the client's own request id
+  // actually produced, or reports a bounded absence.
+  const reconcileRunOnceMutation = useMutation({
+    mutationFn: (intent: PendingRunOnce) =>
+      reconcileAutomationRunOnce(token, {
+        definitionId: intent.definitionId,
+        admissionRequestId: intent.requestId,
+      }),
+    retry: false,
+    onMutate: () => setError(null),
+    onSuccess: (result) => {
+      if (result.ok && result.model !== undefined) {
+        setPendingRunOnce(null);
+        writePendingRunOnce(principalId, null);
+        void navigate({
+          to: "/operations/automation/run-once/$discoveryId",
+          params: { discoveryId: result.model.discoveryId },
+        });
+        return;
+      }
+      if (result.code === "run_once_request_not_found") {
+        // A proved absence: the original request never became durable work, so
+        // the retained intent can be discarded and a fresh Run once offered.
+        setPendingRunOnce(null);
+        writePendingRunOnce(principalId, null);
+        setError(
+          "上次运行一次的请求没有在后端形成任何持久工作（响应在受理前丢失）。" +
+            "现在可以重新发起运行一次。",
+        );
+        return;
+      }
+      setError(
+        `核对上次运行一次失败（${result.code ?? "unknown"}）。${
+          result.nextAction ?? "请稍后重试核对，不要重复提交。"
+        }`,
+      );
     },
   });
 
@@ -700,6 +894,13 @@ export function AutomationLifecyclePage() {
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId ?? "";
   const copyBlocked = pendingCopyIntent !== null;
+  // A retained Run-once intent for *this* definition blocks a second admission
+  // until it is deliberately reconciled; another definition's unknown outcome
+  // never blocks this one.
+  const pendingRunOnceForRoute =
+    pendingRunOnce !== null && pendingRunOnce.definitionId === routeTargetId
+      ? pendingRunOnce
+      : null;
 
   const convenience =
     currentForm === null ? "interval" : convenienceOf(currentForm);
@@ -766,7 +967,7 @@ export function AutomationLifecyclePage() {
             </StatusBanner>
           );
         }
-        const valid = formIsValid(currentForm, editing);
+        const valid = formIsValid(currentForm, editing, confirmModeCorrection);
         const update = (patch: Partial<FormState>) =>
           setFormEntry({
             key: formContextKey,
@@ -974,27 +1175,14 @@ export function AutomationLifecyclePage() {
                 Clearing this field and saving publishes the cleared scope: the
                 definition then covers the ResourceLibrary root.
               </p>
-              <p className="mf-label">
-                <label htmlFor="lifecycle-mode">Run mode</label>
-              </p>
-              <select
-                id="lifecycle-mode"
-                value={currentForm.mode}
-                onChange={(event) =>
-                  update({ mode: event.target.value as AutomationRunMode })
-                }
+              <p className="mf-label">Run mode</p>
+              <p
+                className="mf-dashboard-meta"
+                data-testid="lifecycle-mode-intent"
               >
-                {isRecordedAutomationRunMode(currentForm.mode) && (
-                  <option value={currentForm.mode} disabled>
-                    {currentForm.mode} (unsupported historical mode)
-                  </option>
-                )}
-                {AUTOMATION_RUN_MODES.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
+                {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}（自动整理）是固定意图，
+                这里没有模式选择器。已移除的历史模式不会被提供、转换或兼容执行。
+              </p>
               {isRecordedAutomationRunMode(currentForm.mode) && (
                 <StatusBanner
                   variant="info"
@@ -1003,10 +1191,21 @@ export function AutomationLifecyclePage() {
                   <p>
                     This definition records the removed mode{" "}
                     <strong>{currentForm.mode}</strong>. It is displayed as
-                    history only and is never selectable. Choose{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} before saving;
-                    nothing is rewritten automatically.
+                    history only and is never selectable. Saving publishes{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} as the explicit
+                    correction; nothing is rewritten automatically.
                   </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={confirmModeCorrection}
+                      onChange={(event) =>
+                        setConfirmModeCorrection(event.target.checked)
+                      }
+                    />{" "}
+                    Publish this definition as{" "}
+                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}
+                  </label>
                 </StatusBanner>
               )}
               <p className="mf-label">
@@ -1201,11 +1400,28 @@ export function AutomationLifecyclePage() {
                 <div className="mf-actions">
                   <Button
                     type="button"
-                    disabled={runOnceMutation.isPending}
+                    disabled={
+                      runOnceMutation.isPending ||
+                      pendingRunOnceForRoute !== null
+                    }
                     onClick={() => runOnceMutation.mutate(routeTargetId)}
                   >
                     {runOnceMutation.isPending ? "Starting..." : "运行一次"}
                   </Button>
+                  {pendingRunOnceForRoute !== null && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={reconcileRunOnceMutation.isPending}
+                      onClick={() =>
+                        reconcileRunOnceMutation.mutate(pendingRunOnceForRoute)
+                      }
+                    >
+                      {reconcileRunOnceMutation.isPending
+                        ? "核对中..."
+                        : "核对上次请求"}
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     disabled={!canManage || toggleMutation.isPending}

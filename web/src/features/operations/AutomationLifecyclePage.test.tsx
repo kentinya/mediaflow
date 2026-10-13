@@ -207,16 +207,13 @@ describe("AutomationLifecyclePage", () => {
     await screen.findByRole("heading", {
       name: "Create Automation definition",
     });
-    // Automatic organization is the only retained mode: the create form never
-    // offers a removed mode as a choice.
-    const modeSelect = screen.getByLabelText("Run mode") as HTMLSelectElement;
-    expect([...modeSelect.options].map((option) => option.value)).toEqual([
+    // Automatic organization is the only retained mode: the create form has no
+    // mode selector at all and never offers a removed mode as a choice.
+    expect(screen.queryByLabelText("Run mode")).toBeNull();
+    expect(document.querySelector("#lifecycle-mode")).toBeNull();
+    expect(screen.getByTestId("lifecycle-mode-intent").textContent).toContain(
       "automatic-organization",
-    ]);
-    expect(modeSelect.querySelector('option[value="scan-only"]')).toBeNull();
-    expect(
-      modeSelect.querySelector('option[value="scan-and-plan"]'),
-    ).toBeNull();
+    );
     await userEvent.type(screen.getByLabelText("Definition ID"), "nightly");
     await userEvent.type(screen.getByLabelText("Name"), "Nightly");
     await userEvent.selectOptions(
