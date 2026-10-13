@@ -12,11 +12,11 @@ Status: ACTIVE
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: 7b9bc83fd2f14271f594924895b976ca3a02af0e
 Development Hold: LIFTED BY USER — 2026-10-12
-Contract Revision: 2026-10-13 — automatic organization only; other modes removed without conversion/compatibility
+Contract Revision: 2026-10-13 — automatic organization only; Run once discovers and freezes sources automatically
 Working Branch: main
 Risk: High
 Final Test Level: T4
-Next Action: DEVELOPER IMPLEMENTS REPLANNED TASK 43.2 WHEN DIRECTED
+Next Action: B REASSESSES UNSTARTED TASK 43.2 AFTER CONTRACT CHECKPOINT
 ```
 
 ## Authority and current state
@@ -94,6 +94,12 @@ A checkpoints this Contract before B replans the unstarted Task 43.2. That Task 
 durable exact Preview/manual Run-once journey, removes the two new-run branches and includes the
 native fixed-mode lifecycle and complete removal of the unwanted modes. The change
 is TARGET until implemented and reviewed; it does not close this Slice or reopen accepted Slices.
+
+The user also authorized correcting the Run-once journey: a saved definition already identifies
+its ResourceLibrary and source sub-scope. Run once automatically discovers and freezes its bounded
+live source manifest; ordinary operators do not select files again. Exact Preview and separate
+one-shot execution intent remain required. This acceptance change is checkpointed by A before B
+adjusts the same unstarted Task 43.2. Existing manual Files/Organize selection is unchanged.
 
 ## User Goal and Journey
 
@@ -231,12 +237,20 @@ claims and fences protect overlapping manual/scheduled work; no new overlap/back
 schedule may be run manually with current command permissions; this does not enable the schedule,
 revive a grant or bypass execution gates. Draft-only work must first be published.
 
-Run once enters the existing manual exact Preview and explicit
-one-shot execution journey: discover/select a bounded live source set within the definition scope,
-show the reviewed effects, then execute exactly that selection. Reuse existing selection/Preview/
-execution authority; do not turn a persistent scheduled grant into manual execution permission or
-execute a changing whole-library scope. Expensive discovery/analysis is durable and cancellable at
-existing safe boundaries. A preflight is not counted as an admitted media execution.
+Run once automatically discovers eligible live sources within the saved definition scope and
+freezes the exact bounded manifest, then shows exact Preview and requests separate one-shot
+execution intent. The normal journey requires no file picker or hand-selected subset. Reuse the
+existing discovery, Preview and execution authority through the shared application behavior;
+do not turn a persistent scheduled grant into manual execution permission or execute a changing
+whole-library scope. The effective primary-file bound is the smaller of the definition's item
+ceiling and the existing 100-primary manual/discovery bound. Show both limits and the frozen
+manifest's eligibility/exclusion evidence. If discovery exceeds the effective bound or cannot
+prove a complete bounded manifest, refuse execution and explain how to narrow the definition
+scope, publish and rediscover/repreview; never silently take the first N files. Empty discovery
+has a truthful no-work outcome. Human decisions use existing item-specific recovery; changed
+scope or sources require fresh evidence and execution intent. Expensive discovery/analysis is
+durable and cancellable at existing safe boundaries. A preflight is not counted as an admitted
+media execution.
 
 Pin configuration/definition context at creation, refuse stale admission without silently repinning,
 and preserve the historical origin through the linked Job/Task or existing manual execution record.
@@ -376,7 +390,7 @@ reference availability must be reported rather than replacing the originals with
 | AC-3 | Automatic-organization-only typed lifecycle and one checked Save publish only the intended change; stale/concurrent/failed/unknown publication preserves prior authority and recovery without sibling Draft activation. Removed modes/aliases cannot validate, publish, import or execute; no conversion/compatibility branch remains. Old records stay historical and unsupported work stops safely. |
 | AC-4 | Schedule, scope, limits and next times use existing semantics; exact Preview/grant/revoke complete natively, copies gain no authority, broadened scope cannot reuse insufficient authority. |
 | AC-5 | Due occurrences remain unique across concurrency/restart/DST; scheduled valid grants execute without per-run clicks while current scope/capability/conflict/revocation gates remain enforced. |
-| AC-6 | Automatic-organization Run once completes bounded live-source discovery/selection, exact Preview, explicit one-shot execution, duplicate/unknown-admission reconciliation and no schedule advancement. Neither removed mode executes through any surface or retained-work compatibility path. |
+| AC-6 | Automatic-organization Run once automatically discovers and freezes the complete bounded live-source manifest without normal file picking, then completes exact Preview, explicit one-shot execution, duplicate/unknown-admission reconciliation and no schedule advancement. Overflow or incomplete discovery blocks execution with scope-narrowing/repreview recovery; no silent first-N truncation. Neither removed mode executes through any surface or retained-work compatibility path. |
 | AC-7 | Definition, manual/scheduled run, Job/Task/execution and per-item results retain durable links without double count; pre-Task failures and removed-definition history remain reachable. |
 | AC-8 | Latest outcomes/progress/bounds and native task-linked recovery preserve independent results; waiting/partial/unknown effects are not false success or replay candidates. |
 | AC-9 | Settings Save validates/publishes the exact four-field scope; capacity and stale observation retain their real semantics and no setting grants media authority. |
@@ -428,8 +442,9 @@ Task planning/review, correction loops, stop rules, Closure Packet and final rev
 
 ## Closure Packet
 
-Not submitted. Task 43.1 is B PASS; Task 43.2 is replanned and PLANNED against clarified Contract
-checkpoint `0f17234a046801d6abce7280e469bec2471bf0e8`, with implementation NOT STARTED.
+Not submitted. Task 43.1 is B PASS; the unstarted Task 43.2 is temporarily inactive pending B's
+reassessment of this checkpointed automatic-discovery Contract. Its prior plan is preserved at
+`16eaac00fd38fba6b0bac812dcbd734fe9cf882b:TASK.md`, with implementation NOT STARTED.
 The earlier conversion/compatibility plan is superseded, not delivered.
 Automatic-organization-only behavior and other Required Outcomes remain unfinished.
 No Slice readiness or closure is claimed.

@@ -749,10 +749,18 @@ the transition is implemented. Existing accepted journeys and historical outcome
   separately confirm scoped unattended permission. Valid future scheduled runs need no repeated
   execution click. Relevant changes require fresh evidence/authority under the existing gates.
 - **Run once:** use the published automatic-organization source/limit with current permissions,
-  even if its schedule is disabled. Enter bounded
-  live-source discovery/selection, exact manual Preview and explicit one-shot execution. Do not
-  reuse scheduled grants as manual permission or change the next due time. Show the durable run
-  immediately after admission; preflight Preview is not a completed or admitted media execution.
+  even if its schedule is disabled. Automatically discover eligible live sources in that saved
+  scope and freeze the complete bounded manifest; no normal file picker is required. Show exact
+  Preview, then separately confirm one-shot execution of that manifest. Display the definition
+  ceiling and the existing 100-primary manual/discovery bound; apply the smaller limit. Overflow
+  or incomplete discovery explains why execution is blocked and offers narrowing the definition
+  scope, publishing and fresh discovery/Preview; never silently choose the first N files. Empty
+  discovery reports no work. Item ambiguities use existing decisions/recovery, and changed scope
+  or sources require fresh evidence/intent. Do not reuse scheduled grants as manual permission or
+  change the next due time. Show durable discovery/analysis immediately after its admission and
+  the actual run after execution admission; preflight is not an admitted media execution.
+  Adding a definition chooses its ResourceLibrary/sub-scope, not individual files. The separate
+  Files/Organize manual-selection journey retains its existing behavior.
 - **Results/recovery:** cross-definition records preserve manual/scheduled origin and historical
   scope, then link to native Operations detail, per-item decisions and safe continuation with
   return context. Failed admission, capacity, invalid dependency, conflict, revoked authority,

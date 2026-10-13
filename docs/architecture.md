@@ -698,9 +698,16 @@ DryRun and automatic organization's internal scanning/planning remain; this remo
 the Scanner/Planner modules or unrelated standalone command support.
 
 Run once adds a durable manual-origin association, not another queue or processing model.
-Manual automatic organization composes bounded live
-source discovery/selection and the existing exact Preview/one-shot execution path. Its scheduled
-definition link does not authorize mutation. Admission reconciles the exact request/principal and
+Manual automatic organization composes automatic live discovery from the published definition's
+ResourceLibrary/sub-scope, durable freezing of a complete bounded source manifest and the existing
+exact Preview/one-shot execution path. The normal Automation entry does not route through a Files
+picker. Reuse existing discovery eligibility/confinement, immutable pins, source fingerprints and
+admission services. The effective primary bound is min(definition ceiling, existing 100-primary
+manual/discovery bound); exceeding it or incomplete enumeration blocks execution and offers scope
+narrowing, publication and rediscovery/repreview, never an automatic first-N prefix. Empty
+discovery yields no work; changed scope/source evidence cannot reuse prior execution intent.
+Separate manual Files/Organize source selection is unchanged. A scheduled definition link does
+not authorize manual mutation. Admission reconciles the exact request/principal and
 definition pin atomically, preserves schedule due state, and resolves through the shared Operations
 run identity without a synthetic Job or duplicate count. Existing scheduled occurrence, miss/DST,
 grant revocation, claim/lock/fence and item recovery semantics remain authoritative.
