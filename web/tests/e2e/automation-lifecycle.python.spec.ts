@@ -621,3 +621,98 @@ test("retained history shows the published configuration, never an open Draft", 
   ).toBeVisible();
   await expect(page.getByText(/removed · retained history/)).toBeVisible();
 });
+
+test("corrupt published evidence is reported as unavailable, never a draft or absence", async ({
+  page,
+}) => {
+  // P1 regression: remove a published definition, retain a same-ID open Draft
+  // with an unpublished name, then corrupt only the superseded published
+  // revision's definition section while keeping its revision ID, stored digest
+  // and positive activation audit. Every affected browser route must render the
+  // actionable unavailable state — never the never-published Draft candidate,
+  // never a false 404 — and the durable Draft must stay inspectable for
+  // explicit correction.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  // A real open successor Draft whose candidate carries a different name.
+  const draft = await page.request.post(
+    "/__harness__/open-automation-definition-draft",
+  );
+  expect(draft.ok()).toBe(true);
+  const draftBody = (await draft.json()) as {
+    draftRevisionId?: string;
+    draftName?: string;
+  };
+  expect(draftBody.draftRevisionId).toBeTruthy();
+  expect(draftBody.draftName).toBe("NEVER PUBLISHED browser draft");
+
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByLabel(/I confirm removing this definition/).check();
+  await page.getByRole("button", { name: "Remove definition" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation$/);
+
+  // Intact evidence still resolves the real published history.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await expect(page.getByText(/removed · retained history/)).toBeVisible();
+
+  const corrupted = await page.request.post(
+    "/__harness__/corrupt-automation-published-history",
+  );
+  expect(corrupted.ok()).toBe(true);
+
+  // The native detail route reports the bounded unavailable state instead of
+  // the unpublished Draft candidate or a false absence. It must not render the
+  // removed definition as retained history, and it must not claim it never
+  // existed.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Operations unavailable" }),
+  ).toBeVisible();
+  await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
+  await expect(page.getByText(/removed · retained history/)).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: /Record not found/ }),
+  ).toHaveCount(0);
+
+  // The lifecycle edit route offers the same bounded recovery and no Save.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByText("The definition could not be read"),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      /Reading the definition failed \(configuration_unavailable\)/,
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存" })).toHaveCount(0);
+  await expect(page.getByLabel("Name")).toHaveCount(0);
+  await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
+
+  // The occurrences route fails closed identically rather than claiming the
+  // removed definition never existed.
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Operations unavailable" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Record not found/ }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
+});

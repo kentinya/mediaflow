@@ -531,6 +531,10 @@ class AppState:
 
 #: The definition identity the real-Python Automation lifecycle proof drives.
 AUTOMATION_LIFECYCLE_DEFINITION_ID = "harness-automation"
+#: The unpublished name a harness successor Draft carries for the corrupt
+#: retained-history proof. It must never appear as the removed definition's
+#: published history.
+AUTOMATION_LIFECYCLE_DRAFT_NAME = "NEVER PUBLISHED browser draft"
 
 STATE: AppState | None = None
 
@@ -1974,6 +1978,57 @@ def seed_automation_definition_grant(state: AppState) -> dict[str, object]:
     return {"grantId": grant.grant_id, "status": grant.status.value}
 
 
+def open_automation_definition_draft(state: AppState) -> dict[str, object]:
+    """Open one real successor Draft with an unpublished definition candidate.
+
+    The corrupt-history browser proof needs a same-ID Draft candidate that was
+    never published, created through the real managed Draft authority (not a
+    database edit). It returns the Draft revision identity so the caller can
+    assert the candidate stayed stored yet was never presented as the removed
+    definition's published history.
+    """
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    try:
+        draft = configuration_service.create_successor_draft(
+            actor="harness",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        definitions = document.get("automationTaskDefinitions")
+        if not isinstance(definitions, list):
+            return {"error": "Active carries no Automation definition section"}
+        candidate = next(
+            (
+                item
+                for item in definitions
+                if isinstance(item, dict) and item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
+            ),
+            None,
+        )
+        if candidate is None:
+            return {"error": "the lifecycle definition is not present in the Active"}
+        candidate["name"] = AUTOMATION_LIFECYCLE_DRAFT_NAME
+        edited = configuration_service.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="harness",
+        )
+    except Exception as error:
+        return {"error": f"draft open failed: {type(error).__name__}"}
+    return {
+        "draftRevisionId": edited.revision_id,
+        "draftName": AUTOMATION_LIFECYCLE_DRAFT_NAME,
+    }
+
+
 def reset_automation_definitions(state: AppState) -> dict[str, object]:
     """Publish an empty Automation section through the real managed authority.
 
@@ -2146,6 +2201,55 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
     return {
         "emitted": [job.definition_id for job in emitted],
         "occurrenceTotal": len(occurrences),
+    }
+
+
+def corrupt_automation_published_history(state: AppState) -> dict[str, object]:
+    """Corrupt the retained published revisions that carry the definition.
+
+    The real browser journey must prove the actionable unavailable state for
+    structurally corrupt published evidence — the shape B reproduced — without
+    the browser editing SQLite. This control corrupts the
+    ``automationTaskDefinitions`` section of every superseded published revision
+    that carries the definition, keeping each revision ID, its stored digest and
+    its positive activation audit exactly as durable authority recorded them.
+    Every retained candidate is corrupted deliberately: a still-intact revision
+    would otherwise resolve the history legitimately (for example through a
+    retained occurrence pin), which is correct product behavior but not the
+    corrupt-evidence scenario under test. It is harness infrastructure, not a
+    product endpoint, and it never touches production configuration.
+    """
+
+    import sqlite3
+
+    repository = state.managed.configuration_repository
+    targets = []
+    for revision in repository.list_revisions(limit=500):
+        if revision.status.value != "superseded":
+            continue
+        definitions = revision.document.get("automationTaskDefinitions")
+        if isinstance(definitions, list) and any(
+            isinstance(item, dict) and item.get("id") == AUTOMATION_LIFECYCLE_DEFINITION_ID
+            for item in definitions
+        ):
+            targets.append(revision)
+    if not targets:
+        return {"error": "no superseded published revision carries the definition"}
+    connection = sqlite3.connect(str(state.database))
+    try:
+        for target in targets:
+            payload = copy.deepcopy(target.document)
+            payload["automationTaskDefinitions"] = "corrupt section"
+            connection.execute(
+                "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                (json.dumps(payload), target.revision_id),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    return {
+        "corruptedRevisionIds": [target.revision_id for target in targets],
+        "definitionId": AUTOMATION_LIFECYCLE_DEFINITION_ID,
     }
 
 
@@ -2344,8 +2448,12 @@ def application(environ, start_response):
             document = seed_automation_definition_grant(STATE)
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":
             document = reset_automation_definitions(STATE)
+        elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
+            document = open_automation_definition_draft(STATE)
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
             document = run_automation_scheduler_tick(STATE)
+        elif path == "/__harness__/corrupt-automation-published-history" and method == "POST":
+            document = corrupt_automation_published_history(STATE)
         elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             raw_edits = (query.get("edits") or ["0"])[0]

@@ -167,7 +167,8 @@ class _PublishedHistory:
     """One removed definition's resolved published revision, or why it is unknown.
 
     ``revision`` is the exact published revision whose document still contains
-    the definition, or ``None`` when the durable activation ledger was read
+    the definition, and ``item`` is that revision's definition read from the
+    same evidence, or ``None`` when the durable activation ledger was read
     completely and provably never published it. ``available`` is ``False`` when
     the evidence could not be read completely; the caller must then report
     bounded unavailability instead of presenting absence as a proven
@@ -176,6 +177,7 @@ class _PublishedHistory:
 
     revision: object | None
     available: bool
+    item: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,21 @@ class _StoredDefinition:
 
     item: dict[str, object] | None
     state: str
+
+
+@dataclass(frozen=True)
+class _DefinitionRead:
+    """One published revision's definition section, or why it proves nothing.
+
+    ``readable`` is ``False`` when the revision's definition section is
+    structurally corrupt — the document or that section is not the shape the
+    managed contract requires. Absence from an unreadable section is *not*
+    evidence that the revision did not carry the definition, so a caller must
+    report unavailable evidence instead of a proven non-publication.
+    """
+
+    readable: bool
+    item: dict[str, object] | None
 
 
 class _ActivationLedgerUnavailable(RuntimeError):
@@ -788,8 +805,10 @@ class AutomationWorkspaceCommandService:
         revision = history.revision
         if revision is None:
             return None
-        item = self._definition_item(revision, definition_id)
+        item = history.item
         if item is None:
+            # The resolver only returns a revision together with the definition
+            # read from that same verified evidence.
             return None
         return {
             "definition": copy.deepcopy(item),
@@ -818,6 +837,16 @@ class AutomationWorkspaceCommandService:
         ordinary publications. ``available`` is ``False`` whenever the read
         could not be completed: absence from an incomplete read is not evidence
         that nothing was ever published.
+
+        A published revision is trusted only after its own integrity checks
+        pass. A structurally corrupt document or definition section, or a
+        document that no longer matches its persisted digest, is *unreadable*
+        evidence: it can neither prove that the revision did not carry the
+        definition nor be skipped in favour of older context, so the whole read
+        is unavailable. When an activation's own bounded evidence positively
+        names the definition but that revision's verified document does not
+        carry it, the two durable records contradict each other and the read is
+        likewise unavailable instead of resolving a different, older revision.
         """
 
         if pinned_revision_id is not None:
@@ -835,14 +864,17 @@ class AutomationWorkspaceCommandService:
                 # A removed definition's run context must be a published
                 # historical revision, never an Active or unpublished Draft.
                 return _PublishedHistory(None, False)
-            item = self._definition_item(revision, definition_id)
-            if item is None:
+            read = self._definition_read(revision, definition_id)
+            if not read.readable or read.item is None:
+                # A corrupt pinned revision, or a pin naming a revision whose
+                # verified document does not carry the definition, is
+                # unavailable rather than proof of a different publication.
                 return _PublishedHistory(None, False)
-            if pinned_fingerprint is not None and self._definition_fingerprint(item) != (
+            if pinned_fingerprint is not None and self._definition_fingerprint(read.item) != (
                 pinned_fingerprint
             ):
                 return _PublishedHistory(None, False)
-            return _PublishedHistory(revision, True)
+            return _PublishedHistory(revision, True, read.item)
         revision_pin_present = (
             pinned_revision_digest is not None or pinned_revision_version is not None
         )
@@ -869,7 +901,15 @@ class AutomationWorkspaceCommandService:
                     continue
                 if revision.status is not ManagedConfigurationStatus.SUPERSEDED:
                     return _PublishedHistory(None, False)
-                item = self._definition_item(revision, definition_id)
+                read = self._definition_read(revision, definition_id)
+                if not read.readable:
+                    # The activation names this revision, but its document or
+                    # definition section is structurally corrupt or no longer
+                    # matches its digest. Absence from unreadable evidence
+                    # proves nothing: report unavailable rather than skipping
+                    # to older context or declaring the definition unpublished.
+                    return _PublishedHistory(None, False)
+                item = read.item
                 matches_revision_pin = revision_pin_present and self._pin_matches(
                     revision, pinned_revision_version, pinned_revision_digest
                 )
@@ -880,17 +920,23 @@ class AutomationWorkspaceCommandService:
                         pinned_fingerprint
                     ):
                         return _PublishedHistory(None, False)
-                    return _PublishedHistory(revision, True)
+                    return _PublishedHistory(revision, True, item)
                 if item is None:
+                    if named is True:
+                        # The activation's own bounded evidence positively
+                        # carried the definition while the verified document no
+                        # longer does. The durable records contradict each
+                        # other, so no revision may be substituted for it.
+                        return _PublishedHistory(None, False)
                     continue
                 if fingerprint_pin_present:
                     if self._definition_fingerprint(item) == pinned_fingerprint:
-                        return _PublishedHistory(revision, True)
+                        return _PublishedHistory(revision, True, item)
                     continue
                 if not any_pin_present:
                     # Pages are newest-first. The first matching activated
                     # revision is therefore the desired historical context.
-                    return _PublishedHistory(revision, True)
+                    return _PublishedHistory(revision, True, item)
         except _ActivationLedgerUnavailable:
             return _PublishedHistory(None, False)
         return _PublishedHistory(None, not any_pin_present)
@@ -998,14 +1044,31 @@ class AutomationWorkspaceCommandService:
             return None
         return False
 
-    def _definition_item(self, revision, definition_id: str) -> dict[str, object] | None:
-        """One revision's raw definition, or ``None`` when it does not carry it."""
+    def _definition_read(self, revision, definition_id: str) -> _DefinitionRead:
+        """One published revision's definition, or proof that it cannot be read.
+
+        The persisted revision is trusted only when its own integrity checks
+        pass — supported document schema and a document that still matches its
+        persisted digest — and its definition section is the array of bounded
+        objects the managed contract requires. ``readable`` is ``False`` for a
+        corrupt document or section: absence from such evidence proves nothing,
+        so a caller must report unavailable evidence instead of a false absence
+        that would release an unpublished Draft candidate or 404 a removed
+        definition's real history.
+        """
 
         try:
+            self._managed.verify_integrity(revision)
+        except Exception:
+            return _DefinitionRead(False, None)
+        try:
             values = self._objects._automation_definition_objects(revision.document)
-        except (ValueError, KeyError):
-            return None
-        return next((entry for entry in values if str(entry.get("id")) == definition_id), None)
+        except (ValueError, KeyError, TypeError):
+            return _DefinitionRead(False, None)
+        return _DefinitionRead(
+            True,
+            next((entry for entry in values if str(entry.get("id")) == definition_id), None),
+        )
 
     @staticmethod
     def _definition_fingerprint(item: dict[str, object]) -> str | None:
@@ -2054,10 +2117,12 @@ class AutomationWorkspaceCommandService:
         candidate) has no published evidence and resolves draft-only for
         explicit correction.
 
-        An incomplete evidence read raises :class:`RuntimeSnapshotUnavailable`
-        rather than reporting "no history": absence from a partial read must
-        never masquerade as a removed definition, and must never release an
-        unpublished Draft candidate in its place.
+        An incomplete or corrupt evidence read raises
+        :class:`RuntimeSnapshotUnavailable` rather than reporting "no history":
+        absence from a partial read, or from a published revision whose
+        definition section is structurally unreadable, must never masquerade as
+        a removed definition, and must never release an unpublished Draft
+        candidate in its place.
         """
 
         for item in self._objects._automation_definition_objects(active.document):
@@ -2072,11 +2137,11 @@ class AutomationWorkspaceCommandService:
                 f"{definition_id!r} could not be read completely",
                 reason="historical_evidence_unavailable",
             )
-        revision = historical.revision
-        if revision is not None:
-            item = self._definition_item(revision, definition_id)
-            if item is not None:
-                return _StoredDefinition(item, "historical")
+        # The state and its value come from the same verified evidence read, so
+        # a corrupt or contradictory published revision can never be skipped
+        # here and released as an unpublished Draft instead.
+        if historical.item is not None:
+            return _StoredDefinition(historical.item, "historical")
         draft = self._open_draft_definition(definition_id)
         if draft is not None:
             return _StoredDefinition(draft, "draft-only")

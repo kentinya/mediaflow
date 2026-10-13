@@ -37,6 +37,7 @@ from mediaflow.application.unattended_execution import UnattendedExecutionGrantS
 from mediaflow.domain.configuration_management import (
     AutomationDefinitionSaveError,
     ConfigurationVersionConflict,
+    ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
@@ -919,6 +920,317 @@ class AutomationPublicationTests(unittest.TestCase):
             actor="tester",
         )
         self.assertFalse(self.commands.definition_was_published("draft-only-candidate"))
+
+    def _publish_remove_and_keep_open_draft(self, draft_name: str) -> str:
+        """Publish, remove, and retain a same-ID unpublished Draft candidate.
+
+        Returns the exact published revision ID that is about to be corrupted.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        published = self.managed.active()
+        assert published is not None
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=published.revision_id,
+            expected_active_version=published.revision_sequence or published.version,
+            expected_active_digest=published.digest,
+            verified_active=published,
+        )
+        document = copy.deepcopy(draft.document)
+        document[AUTOMATION_DEFINITION_SECTION][0]["name"] = draft_name
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        return published.revision_id
+
+    def _corrupt_published_section(self, revision_id: str, section: object) -> None:
+        """Corrupt one superseded published revision's definition section.
+
+        Only the persisted payload is rewritten; the revision ID, its stored
+        digest and its positive activation audit stay exactly as durable
+        authority recorded them, which is the contradictory evidence B
+        reproduced.
+        """
+
+        import sqlite3
+
+        revision = self.repository.get_revision(revision_id)
+        assert revision is not None
+        payload = copy.deepcopy(revision.document)
+        payload[AUTOMATION_DEFINITION_SECTION] = section
+        connection = sqlite3.connect(str(self.root / "configuration.sqlite3"))
+        try:
+            connection.execute(
+                "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                (json.dumps(payload), revision_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_corrupt_published_section_is_unavailable_not_absent_or_draft(self) -> None:
+        """P1 regression: corrupt published evidence is never a false absence.
+
+        B reproduced this with real managed publication: remove a definition,
+        retain a same-ID unpublished Draft, then corrupt only the superseded
+        published revision's definition section while keeping its revision ID,
+        stored digest and positive activation audit. The corrupt section is
+        unreadable evidence, so the resolved state must be the actionable
+        unavailable one — never the unpublished Draft candidate, older context
+        or a proven absence.
+        """
+
+        revision_id = self._publish_remove_and_keep_open_draft("NEVER PUBLISHED B draft")
+        # Intact evidence still resolves the real published history.
+        historical = self.commands.historical_definition("nightly")
+        self.assertIsNotNone(historical)
+        self.assertEqual(historical["definition"]["name"], "Published historical name")
+        self.assertEqual(self.commands.edit_projection("nightly")["definitionState"], "historical")
+        self.assertTrue(self.commands.definition_was_published("nightly"))
+
+        self._corrupt_published_section(revision_id, "corrupt section")
+
+        for operation in (
+            lambda: self.commands.historical_definition("nightly"),
+            lambda: self.commands.edit_projection("nightly"),
+            lambda: self.commands.copy_projection("nightly"),
+            lambda: self.commands.removal_impact("nightly"),
+            lambda: self.commands.definition_was_published("nightly"),
+        ):
+            with self.subTest(operation=operation):
+                with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+                    operation()
+                self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+        # A definition that genuinely never existed still resolves nothing: the
+        # corrupt revision is not a blanket failure for unrelated reads.
+        self.assertFalse(self.commands.definition_was_published("never-published"))
+
+    def test_corrupt_occurrence_pinned_revision_is_unavailable(self) -> None:
+        """P1 regression: a corrupt exact pin is unavailability, never absence.
+
+        A retained occurrence pins the exact published revision its run
+        consumed. When that pinned revision's definition section is
+        structurally corrupt, the read must report unavailable evidence instead
+        of falling back to older context, releasing the unpublished Draft or
+        claiming the definition was never published.
+        """
+
+        self.save(
+            definition(
+                "nightly",
+                name="Published historical name",
+                mode="scan-and-plan",
+                sourceScope="incoming/season-01",
+                itemLimit=17,
+            )
+        )
+        active = self.managed.active()
+        assert active is not None
+        occurrence = _occurrence(
+            "nightly",
+            revision_id=active.revision_id,
+            version=active.version,
+            digest=active.digest,
+            fingerprint=self._definition_value("nightly").definition_fingerprint,
+        )
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("publisher"))
+        self._corrupt_published_section(active.revision_id, "corrupt section")
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.historical_definition("nightly", occurrence=occurrence)
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_corrupt_published_section_never_releases_the_open_draft(self) -> None:
+        """P1 regression: corrupt published evidence must not release the Draft.
+
+        The dangerous shape is a removed definition whose only readable
+        same-ID candidate is an unpublished Draft. If the corrupt published
+        revision were treated as absence, ``_stored_definition_state`` would
+        resolve that Draft as ``draft-only`` and present never-published
+        configuration as the removed run's context.
+        """
+
+        self._publish_remove_and_keep_open_draft("NEVER PUBLISHED B draft")
+        published = self.repository.list_revisions(limit=50)
+        superseded = [
+            revision
+            for revision in published
+            if revision.status is ManagedConfigurationStatus.SUPERSEDED
+        ]
+        assert superseded, "the published revision must still be retained"
+        # Corrupt every superseded revision's section: no older revision may be
+        # silently substituted for the newest published evidence either.
+        for revision in superseded:
+            self._corrupt_published_section(revision.revision_id, "corrupt section")
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.edit_projection("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+        # The same-ID Draft is still stored, but it is never presented.
+        draft = self.managed.latest_open_draft_containing(AUTOMATION_DEFINITION_SECTION, "nightly")
+        self.assertIsNotNone(draft)
+
+    def test_published_digest_mismatch_is_unavailable_not_absent(self) -> None:
+        """P1 regression: a digest-mismatched revision is unreadable evidence.
+
+        Rewriting the payload while leaving the stored digest untouched makes
+        the revision internally contradictory. That is unavailability, not
+        proof the definition was never published, and must not be skipped in
+        favour of an unpublished Draft or an older revision.
+        """
+
+        revision_id = self._publish_remove_and_keep_open_draft("NEVER PUBLISHED B draft")
+        import sqlite3
+
+        revision = self.repository.get_revision(revision_id)
+        assert revision is not None
+        payload = copy.deepcopy(revision.document)
+        payload[AUTOMATION_DEFINITION_SECTION][0]["name"] = "Tampered published name"
+        connection = sqlite3.connect(str(self.root / "configuration.sqlite3"))
+        try:
+            connection.execute(
+                "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                (json.dumps(payload), revision_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.historical_definition("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.definition_was_published("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_published_invalid_document_digest_is_unavailable_not_absent(self) -> None:
+        """P1 regression: an invalid stored document digest is unreadable evidence.
+
+        The other direction of the same contradiction is a persisted digest
+        that is not the SHA-256 of its payload. The revision cannot be consumed
+        as published evidence, so the read is unavailable rather than a false
+        absence that would release the unpublished Draft.
+        """
+
+        revision_id = self._publish_remove_and_keep_open_draft("NEVER PUBLISHED B draft")
+        import sqlite3
+
+        connection = sqlite3.connect(str(self.root / "configuration.sqlite3"))
+        try:
+            connection.execute(
+                "UPDATE managed_configuration_revisions SET digest=? WHERE revision_id=?",
+                ("f" * 64, revision_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.historical_definition("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.edit_projection("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_activation_naming_an_unreadable_revision_is_unavailable(self) -> None:
+        """P1 regression: audit/revision contradiction is unreadable evidence.
+
+        The activation audit positively names the definition, but the verified
+        published document no longer carries it. The two durable records
+        contradict each other, so the read is unavailable and must not resolve
+        a different, older revision as if it were the removed run's context.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("publisher"))
+        for revision in self.repository.list_revisions(limit=50):
+            if revision.status is not ManagedConfigurationStatus.SUPERSEDED:
+                continue
+            if not any(
+                str(item.get("id")) == "nightly"
+                for item in self.objects._automation_definition_objects(revision.document)
+            ):
+                continue
+            # Keep the section structurally valid but remove the definition it
+            # positively activated: the activation evidence now contradicts the
+            # verified document rather than proving a different publication.
+            self._corrupt_published_section(revision.revision_id, [definition("other")])
+
+        with self.assertRaises(RuntimeSnapshotUnavailable) as caught:
+            self.commands.historical_definition("nightly")
+        self.assertEqual(caught.exception.reason, "historical_evidence_unavailable")
+
+    def test_intact_and_absent_history_remain_distinct_after_corruption(self) -> None:
+        """P1 regression: unavailable, intact and genuinely absent stay distinct.
+
+        Corrupting one removed definition's published evidence must not turn
+        another definition's intact retained history, or a genuinely absent
+        definition, into an unavailable read.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.save(definition("retained", name="Retained historical name"))
+        self.commands.remove_object("retained", actor=ADMIN, **self.authority())
+        retained_revision = next(
+            revision
+            for revision in self.repository.list_revisions(limit=50)
+            if revision.status is ManagedConfigurationStatus.SUPERSEDED
+            and any(
+                str(item.get("id")) == "retained"
+                for item in self.objects._automation_definition_objects(revision.document)
+            )
+        )
+        nightly_revision = next(
+            revision
+            for revision in self.repository.list_revisions(limit=50)
+            if revision.status is ManagedConfigurationStatus.SUPERSEDED
+            and any(
+                str(item.get("id")) == "nightly"
+                for item in self.objects._automation_definition_objects(revision.document)
+            )
+        )
+        self._corrupt_published_section(nightly_revision.revision_id, "corrupt section")
+
+        with self.assertRaises(RuntimeSnapshotUnavailable):
+            self.commands.historical_definition("nightly")
+        # The unrelated definition's intact history is unaffected.
+        intact = self.commands.historical_definition("retained")
+        self.assertIsNotNone(intact)
+        self.assertEqual(intact["definition"]["name"], "Retained historical name")
+        self.assertEqual(intact["revision"]["revisionId"], retained_revision.revision_id)
+        # A definition with no activation evidence at all is still a true absence.
+        self.assertIsNone(self.commands.historical_definition("never-published"))
+        self.assertFalse(self.commands.definition_was_published("never-published"))
+        # Genuine Draft-only recovery is also unaffected: a fresh candidate that
+        # was never published still resolves draft-only for explicit correction.
+        active = self.managed.active()
+        assert active is not None
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        document[AUTOMATION_DEFINITION_SECTION].append(definition("draft-only-candidate"))
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        state = self.commands.edit_projection("draft-only-candidate")
+        self.assertEqual(state["definitionState"], "draft-only")
+        self.assertEqual(state["definition"]["id"], "draft-only-candidate")
 
     def test_copy_intent_resolves_committed_copy_from_durable_evidence(self) -> None:
         """P1-5 regression: a Copy whose response was lost must reconcile.

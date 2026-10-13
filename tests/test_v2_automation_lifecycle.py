@@ -755,6 +755,191 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(legacy["definition"]["name"], "Automation nightly")
 
+    def _publish_remove_and_retain_draft(self, draft_name: str) -> str:
+        """Publish, remove, and retain a same-ID unpublished Draft candidate.
+
+        Returns the exact published revision ID that the caller may corrupt.
+        """
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        active = self.managed.active()
+        assert active is not None
+        published_revision_id = active.revision_id
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = json.loads(json.dumps(draft.document))
+        document["automationTaskDefinitions"][0]["name"] = draft_name
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        return published_revision_id
+
+    def _corrupt_published_section(self, revision_id: str, section: object) -> None:
+        """Corrupt one published revision's section, keeping ID/digest/audit."""
+
+        import sqlite3
+
+        revision = self.repository.get_revision(revision_id)
+        assert revision is not None
+        payload = copy.deepcopy(revision.document)
+        payload["automationTaskDefinitions"] = section
+        connection = sqlite3.connect(str(self.root / "configuration.sqlite3"))
+        try:
+            connection.execute(
+                "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                (json.dumps(payload), revision_id),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_corrupt_published_history_is_unavailable_on_every_route(self) -> None:
+        """P1 regression: a corrupt published revision is never false absence.
+
+        B reproduced this against the real API: remove a definition, retain a
+        same-ID unpublished Draft, then corrupt only the superseded published
+        revision's definition section while keeping its revision ID, stored
+        digest and positive activation audit. Every affected route must answer
+        the actionable unavailable state — never the Draft name, a false 404 or
+        older-context substitution — and must keep doing so after a runtime/API
+        reopen.
+        """
+
+        revision_id = self._publish_remove_and_retain_draft("NEVER PUBLISHED B draft")
+        routes = (
+            "/api/v1/operations/automation/task-definitions/nightly",
+            "/api/v1/automation/task-definitions/nightly",
+            "/api/v1/automation/task-definitions/nightly/grant",
+            "/api/v1/operations/automation/task-definitions/nightly/occurrences",
+            f"{BASE}/nightly",
+            f"{BASE}/nightly/copy-candidate",
+            f"{BASE}/nightly/removal-impact",
+        )
+
+        # Before corruption the affected routes resolve the real history.
+        status, detail = self.request("GET", routes[0])
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+        self.assertEqual(detail["definition"]["name"], "Automation nightly")
+
+        self._corrupt_published_section(revision_id, "corrupt section")
+
+        def assert_unavailable() -> None:
+            for route in routes:
+                with self.subTest(route=route):
+                    status, body = self.request("GET", route)
+                    self.assertEqual(status, 503, body)
+                    self.assertEqual(body["error"]["code"], "configuration_unavailable")
+                    self.assertEqual(
+                        body["error"]["details"]["reason"], "historical_evidence_unavailable"
+                    )
+                    # The unpublished Draft candidate was never substituted,
+                    # and no route claims a false absence.
+                    self.assertNotIn("NEVER PUBLISHED B draft", json.dumps(body))
+                    self.assertNotIn("not_found", json.dumps(body))
+
+        assert_unavailable()
+
+        # A runtime/API reopen must not change the durable answer.
+        reopened = MediaFlowApi(
+            self.runtime,
+            None,
+            principals=(
+                ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", VIEWER_TOKEN, frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=self.managed,
+            bootstrap_document=self.document,
+        )
+        original = self.api
+        self.api = reopened
+        try:
+            assert_unavailable()
+        finally:
+            self.api = original
+
+        # A definition with genuinely no published evidence is still a real
+        # 404, and the Draft itself stays inspectable through its own route.
+        status, _absent = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/ghost"
+        )
+        self.assertEqual(status, 404)
+
+    def test_corrupt_published_history_does_not_release_the_draft_via_api(self) -> None:
+        """P1 regression: the corrupt read must not label the Draft draft-only.
+
+        This is the exact B reproducer shape: the V2 detail/lifecycle routes
+        returned 200 with the never-published Draft name and ``draft-only``.
+        They must instead report unavailable evidence for the same-ID Draft.
+        """
+
+        revision_id = self._publish_remove_and_retain_draft("NEVER PUBLISHED B draft")
+        self._corrupt_published_section(revision_id, "corrupt section")
+
+        for route in (
+            "/api/v1/operations/automation/task-definitions/nightly",
+            f"{BASE}/nightly",
+        ):
+            with self.subTest(route=route):
+                status, body = self.request("GET", route)
+                self.assertEqual(status, 503, body)
+                self.assertNotIn("draft-only", json.dumps(body))
+                self.assertNotIn("NEVER PUBLISHED B draft", json.dumps(body))
+
+        # The Draft is still stored for explicit correction; it was simply
+        # never presented as the removed definition's published history.
+        draft = self.managed.latest_open_draft_containing("automationTaskDefinitions", "nightly")
+        self.assertIsNotNone(draft)
+
+    def test_corrupt_published_history_without_a_draft_is_still_unavailable(self) -> None:
+        """P1 regression: corrupt evidence is unavailable, never a false 404.
+
+        Without any same-ID Draft candidate the corrupt published revision used
+        to exhaust the ledger and report the definition as absent, which the V1
+        detail and grant routes turned into a 404. Corrupt published evidence is
+        unavailability, so those routes must answer 503 with the actionable
+        reason rather than claiming the removed definition never existed.
+        """
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        active = self.managed.active()
+        assert active is not None
+        revision_id = active.revision_id
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+        self._corrupt_published_section(revision_id, "corrupt section")
+
+        for route in (
+            "/api/v1/automation/task-definitions/nightly",
+            "/api/v1/automation/task-definitions/nightly/grant",
+            "/api/v1/automation/task-definitions/nightly/occurrences",
+            "/api/v1/operations/automation/task-definitions/nightly",
+            f"{BASE}/nightly",
+        ):
+            with self.subTest(route=route):
+                status, body = self.request("GET", route)
+                self.assertEqual(status, 503, body)
+                self.assertEqual(body["error"]["code"], "configuration_unavailable")
+                self.assertEqual(
+                    body["error"]["details"]["reason"], "historical_evidence_unavailable"
+                )
+                # A false absence is explicitly not claimed.
+                self.assertNotEqual(body["error"]["code"], "not_found")
+
+        # A definition that genuinely never existed is still a real 404.
+        status, _absent = self.request("GET", "/api/v1/automation/task-definitions/never-published")
+        self.assertEqual(status, 404)
+
     def test_copy_intent_binds_to_the_submitted_intent(self) -> None:
         """P1 regression: copy-intent reconciliation is bound to the exact
         submitted intent. A later submission's committed copy is never named

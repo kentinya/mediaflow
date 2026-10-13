@@ -432,6 +432,65 @@ describe("AutomationLifecyclePage", () => {
     expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
   });
 
+  it("reports corrupt published evidence as unavailable, never a draft candidate", async () => {
+    // P1 regression: the backend now answers the affected lifecycle read with
+    // the actionable configuration_unavailable state when a removed
+    // definition's published revision is structurally corrupt. The page must
+    // render that bounded recovery, never a never-published Draft candidate and
+    // never an editable definition.
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: "configuration_unavailable",
+              message:
+                "the durable publication evidence for Automation Task Definition 'nightly' could not be read completely",
+              details: {
+                reason: "historical_evidence_unavailable",
+                durableState: "managed_active_unavailable",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "inspect configuration status and stage a replacement Draft",
+              },
+            },
+          },
+          503,
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByText("The definition could not be read");
+    // The bounded recovery is offered and the unavailable evidence is named.
+    expect(
+      screen.getByText(
+        /Reading the definition failed \(configuration_unavailable\)/,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    expect(screen.queryByText("draft-only")).toBeNull();
+    // No command was published behind the operator's back.
+    expect(
+      calls.some((call) => call.method === "PUT" || call.method === "POST"),
+    ).toBe(false);
+  });
+
   it("targets the route definition after Copy navigation, not retained input", async () => {
     // P1-1 regression: open the origin, change its Name without saving, then
     // navigate to the copy route (as the real Copy action does). A later Save
