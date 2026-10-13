@@ -28,6 +28,15 @@ IDs and meanings remain stable while the active V2 program adds migration and op
 The V2 document records durable product and authority boundaries, not transient Task paths,
 package versions, test counts or internal function names.
 
+**Explicit V2 product amendment — 2026-10-13:** the user authorized A to retain only automatic
+organization as the Automation definition mode. `V2-AUTO-009` supersedes the three-mode selection
+in `REQ-SCHED-001` and the scan/plan default described in §自动整理 / §98.4 for new V2 definition
+publication and new definition-bound admissions. Those V1 descriptions remain the historical
+baseline, not authorization to offer those modes in the amended V2 journey. Legacy definitions,
+admitted pins and results retain their original meaning; no automatic conversion gains mutation
+authority. Standalone Scan, Preview and DryRun and every execution safety invariant remain required.
+This is an explicit product change, not a Task-local deferral or a claim of implementation.
+
 `REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
 and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
 over convenience” must not be interpreted as permission to impose avoidable CLI fallback, raw-token

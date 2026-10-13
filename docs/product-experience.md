@@ -723,11 +723,16 @@ The two Automation references define composition/style and business relationship
 names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
 CURRENT; this complete redesign and actual per-process settings adoption are not yet delivered.
 
+The user-approved 2026-10-13 change makes automatic organization the only Automation mode in this
+TARGET journey. It removes the mode selector and the scan-only/scan-and-plan Run-once branches;
+standalone Scan/Preview/DryRun remain available. CURRENT code still supports the old modes until
+the transition is implemented. Existing accepted journeys and historical outcomes are not rewritten.
+
 - **Goal/entry:** open shared-shell `自动化` to manage long-lived source/schedule intent, inspect
   each run and adjust the engine. Use `任务列表 / 执行记录 / 全局设置`; the header settings shortcut
   and System Settings link resolve to the same managed settings authority.
-- **Visible state:** real definition/source/mode/limit/schedule, enabled versus authorized/readiness
-  state, next run and actual latest outcome; server-paged inventory/history and labelled monthly
+- **Visible state:** real definition/source/limit/schedule with fixed `自动整理` intent, enabled
+  versus authorized/readiness state, next run and actual latest outcome; server-paged inventory/history and labelled monthly
   metrics. Draft-only objects remain recoverable but never appear as published. Job completion is
   not media success, and reaching an item bound is not proof that the source is exhausted.
 - **Configure:** native typed create/copy/edit/enable/disable/reference-safe removal and one checked
@@ -735,11 +740,16 @@ CURRENT; this complete redesign and actual per-process settings adoption are not
   disabled without authority; removal preserves historical runs and revokes future unattended
   mutation. Disabling future scheduling, cancelling existing work and revoking authority are
   separate actions with explicit effects.
+- **Legacy recovery:** show an old scan/plan definition as legacy with its original history. Block
+  new manual/scheduled admission and offer explicit conversion to automatic organization. Review
+  changed effects, save disabled, then require fresh exact Preview and explicit applicable authority.
+  Copy/import/upgrade cannot silently broaden intent. Previously admitted work keeps its old pin
+  and non-mutating intent; unrelated Save preserves recoverable legacy objects.
 - **Preview/authorize:** show the existing bounded zero-media-mutation chain and expected effects;
   separately confirm scoped unattended permission. Valid future scheduled runs need no repeated
   execution click. Relevant changes require fresh evidence/authority under the existing gates.
-- **Run once:** use the published source/mode/limit with current permissions, even if its schedule
-  is disabled. Scan/plan submit existing bounded work; automatic-organization mode enters bounded
+- **Run once:** use the published automatic-organization source/limit with current permissions,
+  even if its schedule is disabled. Enter bounded
   live-source discovery/selection, exact manual Preview and explicit one-shot execution. Do not
   reuse scheduled grants as manual permission or change the next due time. Show the durable run
   immediately after admission; preflight Preview is not a completed or admitted media execution.
@@ -761,8 +771,9 @@ CURRENT; this complete redesign and actual per-process settings adoption are not
 Statistics count each admitted definition-linked run once across Job/Task/execution links. Month
 windows use the declared system timezone; success is relative to run mode and excludes active/waiting
 work from the terminal denominator while partial/cancelled/failed/terminal-uncertain are not successes.
-Standalone diagnostic/grant-preflight Previews and rejected admissions are not runs; admitted
-scan-and-plan work does count. Previous-month comparison uses equivalent elapsed
+Standalone diagnostic/grant-preflight Previews, discovery alone and rejected admissions are not runs;
+previously admitted scan/plan work retains its historical mode and does count, without being
+relabelled as organization. Previous-month comparison uses equivalent elapsed
 local calendar time, clamped to month end; absent denominators/data are explicitly unavailable.
 
 ## Operations administration

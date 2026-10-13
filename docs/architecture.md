@@ -666,6 +666,10 @@ source path. Scheduler emits durable occurrences and AutomationJobs idempotently
 Active snapshot at creation; the Worker runs the existing pipeline and records linked Task/TaskItem/
 Result evidence.
 
+CURRENT code supports scan-only, scan-and-plan and automatic-organization definitions. The
+user-approved single-mode transition below is TARGET; this documentation change removes no runtime
+branch and claims no delivery.
+
 Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Preview
 eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
 authority, scope, capabilities, conflicts and current snapshot at each mutation boundary. Revocation
@@ -681,8 +685,18 @@ inventory/history and full-population metrics with real admission links and mode
 Historical display context comes from durable admission/pins, never a lookup of today's renamed or
 removed definition. Removed definitions retain readable run history and revoked authority evidence.
 
-Run once adds a durable manual-origin association, not another queue or processing model. Scan and
-plan reuse existing asynchronous command admission. Real manual organization composes bounded live
+Automation's only new-definition/new-admission mode is automatic organization, per `V2-AUTO-009`
+and the user's 2026-10-13 amendment. Fixed-mode typed lifecycle and shared backend publication/
+admission checks remove scan/plan choices across Web/API/CLI. Keep legacy parsing, immutable pins,
+reads/exports and original admitted processing/recovery; block new legacy-mode scheduling/manual
+admission with explicit conversion guidance. Conversion is a checked disabled successor with changed
+effects reviewed and prior future authority invalidated/revoked. Fresh exact Preview and authority
+are required; no upgrade, copy or import silently promotes analysis into mutation. Whole-document
+validation must preserve unchanged legacy entries during unrelated focused publication. Standalone
+Scan/Preview/DryRun services remain available; compatibility never grants new organizing authority.
+
+Run once adds a durable manual-origin association, not another queue or processing model.
+Manual automatic organization composes bounded live
 source discovery/selection and the existing exact Preview/one-shot execution path. Its scheduled
 definition link does not authorize mutation. Admission reconciles the exact request/principal and
 definition pin atomically, preserves schedule due state, and resolves through the shared Operations
