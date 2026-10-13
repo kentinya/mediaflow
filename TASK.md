@@ -33,11 +33,12 @@ The explicit REQ-SCHED-001/002 and V2-AUTO-009 amendment removes the two unwante
 
 ## Remaining Slice Work — B reassessment, 2026-10-13
 
-Authority is the committed automatic-organization-only Contract. B inspected repository checkpoint
-`68f26a6ce057a159c781dde08a8d049761a96b85`, actual source and affected existing tests after governance
-PASS. Since Task 43.1's accepted product candidate, the tracked diff contains only eight Markdown
-documents: mode removal, durable Preview/Run once, consolidated workspace and consumer adoption
-are still implementation gaps. This reassessment creates no new product requirement or Slice.
+Authority is the committed automatic-organization-only, automatic-discovery Contract. B rechecked
+repository checkpoint `b0eb63ecd49bf0ff2b1a9fecc787b8f0f2987295`, actual source, existing affected
+tests and retained Task 43.1 review evidence after governance PASS. Since Task 43.1's accepted
+product candidate, the tracked diff contains only eight Markdown documents; the revised product
+behavior has not been implemented. This reassessment changes neither the Contract nor the active
+Task's identity, Base, Goal, Scope, High difficulty, T4 assignment or PLANNED / NOT STARTED state.
 
 ### Accepted foundations and reuse
 
@@ -47,6 +48,29 @@ new Contract and remains to be removed. Existing exact Preview/grants, Scheduler
 Worker claims, manual discovery/one-shot execution and native Operations per-item recovery are
 reuse foundations; their presence does not complete the remaining combined operator journeys.
 
+Preview results already persist and reopen. The missing work is promptly admitting durable
+discovery/analysis, showing progress and allowing safe controls while the analysis runs, then
+completing the exact native authority/run journey. Likewise, existing engine fields and API-local
+readback do not prove that another resident process has adopted those values. Do not rebuild these
+foundations or call their existing backend presence completion of the combined journey.
+
+### Operator journey after the remaining work
+
+Create automatic organization by choosing a ResourceLibrary/sub-scope, item ceiling and
+interval/Cron/timezone, then use one checked Save. No file picker or mode choice is required.
+For scheduled work, use exact Preview and explicit grant/revoke of unattended authority; an enabled
+schedule with valid authority executes future due runs without repeated per-run confirmation.
+For Run once, choose that action on a published definition, automatically discover and freeze the
+complete bounded manifest, review exact Preview and separately confirm execution; this works with a disabled schedule and
+leaves next due time and scheduled authority unchanged. Follow each actual run in the unified
+records and existing Operations recovery. Adjust global engine settings and see what the actual
+live consumers have adopted. These are paths within the same Slice, not additional modes or engines.
+
+Run-once overflow/incomplete discovery blocks execution and offers scope narrowing, publication
+and fresh discovery/Preview. It neither silently takes the first N files nor asks the ordinary
+operator to reconstruct the manifest with individual file selection. Existing bounds and all
+source-change, permission, conflict and explicit execution gates remain required.
+
 ### Three coherent remaining work areas, in order
 
 | Work area | Complete user result | Outcome coverage / state |
@@ -54,6 +78,29 @@ reuse foundations; their presence does not complete the remaining combined opera
 | **1. Automatic organization, durable Preview and Run once — active Task 43.2** | Remove both unwanted Automation modes across all affected boundaries, without conversion/compatible execution. Create/manage an automatic definition, obtain durable exact zero-mutation Preview, grant/revoke scheduled authority or deliberately run one automatically discovered, frozen and reviewed bounded manifest, and reach durable progress/results/recovery without changing the schedule. | Revised RO-2, remaining RO-3 and RO-4; definition-local manual links in RO-5 and applicable RO-7. PLANNED / NOT STARTED, High / T4. |
 | **2. Automation inventory, unified records and truthful statistics** | Reach every definition through server search/filter/sort/paging; see next/latest run and real full-population monthly cards. Find scheduled/manual runs together, retain historical context, distinguish admission from item outcomes, and open existing Operations result/control/recovery with return context. | Remaining RO-1 and RO-5 plus applicable RO-7. Incomplete; later coherent work area, not an active Task. |
 | **3. Global engine settings and actual consumer adoption** | Save the four supported fields through focused checked publication; actual resident Worker/Scheduler safely adopt polling changes without routine restart. Show target versus adopted/override/pending/stale consumer values, with honest capacity and stale-observation meanings. | RO-6, settings part of RO-1 and applicable RO-7. Incomplete; later coherent work area, not an active Task. |
+
+Area 1 completes two deliberate operator paths: scheduled Preview/grant/revoke and Run-once
+automatic discovery/Preview/confirmation, with outcomes and recovery. Its mode removal includes
+values/aliases, defaults, forms, direct configuration/API/CLI, Scheduler and Worker branches;
+old unsupported work stops safely and retains historical evidence, with no conversion feature.
+Area 2 supplies the task-list/record workspace and navigation to the settings surface delivered
+by area 3. It includes full-population monthly counts, terminal-run success and comparable previous
+calendar-period counts; page contents and raw Job completion cannot stand in for these metrics.
+Area 3 retains exactly four fields: shared pending/running Job capacity, no-update stale-observation
+age, Worker polling and Scheduler polling. Capacity is not worker concurrency and stale age is not
+a runtime timeout or replay permission. Required errors, permissions, return context and recovery
+belong to each area rather than becoming a separate miscellaneous Task.
+
+### Evidence for remaining implementation gaps
+
+| Work area | Rechecked source/tests and practical implication |
+|---|---|
+| 1 | `mediaflow/domain/automation.py` and `AutomationLifecyclePage.tsx` still expose three modes; definition execution/defaults retain the old branches. `automation_task_definition_preview.py:create` discovers and analyzes before returning; `test_automation_task_definition_preview.py` proves result reopening, not durable analysis-in-progress. Native lifecycle tests exercise existing publication/history; no definition-bound Run-once flow is implemented. Reuse existing discovery/Preview/execution and extend the coherent journey. |
+| 2 | `AutomationListPage.tsx` explicitly displays a truncated first page, while `automation-query.ts` supplies no list search/filter/sort/page parameters. Existing definition-scoped occurrence/history paging is reusable; complete inventory reachability, consolidated manual/scheduled records and population/calendar statistics remain. |
+| 3 | `system_settings.py:consumption_evidence` and `test_system_settings_management.py` check an API runtime snapshot. `final_cli.py` captures startup poll values; `resident_runtime.py:ResidentLoop` stores and sleeps on that fixed value. Actual live adoption, per-consumer version/freshness/override evidence and focused Automation settings publication remain. |
+
+This was source/test inspection and document validation, not a fresh runtime gate or new Task PASS.
+Task 43.1's accepted evidence is retained; revised executable behavior needs fresh matching evidence.
 
 Only Task 43.2 is authorized as the active implementation unit. After its PASS, B reassesses the
 entire Slice and plans the next unit from actual remaining code/results; the two later rows are
@@ -67,8 +114,8 @@ each affected journey. Do not create separate Tasks for individual fields, test 
 |---|---|
 | RO-1 | Incomplete: current bounded card list can truncate definitions; complete workspace, query reachability and monthly statistics remain. |
 | RO-2 | Publication/lifecycle/history foundation B PASS; automatic-only values/forms/branches and unsupported old-work handling remain in Task 43.2. |
-| RO-3 | Existing Preview/grant/scheduled core is reusable; definition Preview still discovers/analyzes synchronously before returning. Durable work and the complete revised native journey remain in Task 43.2. |
-| RO-4 | Incomplete: no definition-bound Run-once journey or durable manual definition-origin admission. Task 43.2 owns it. |
+| RO-3 | Existing persisted/reopenable Preview results, grants and scheduled core are reusable; definition Preview still discovers/analyzes synchronously before returning. Durable analysis-in-progress and the complete revised native journey remain in Task 43.2. |
+| RO-4 | Incomplete: no definition-bound Run-once journey or durable manual definition-origin admission. Task 43.2 owns automatic discovery/freeze without normal file picking, exact Preview, separate execution intent, overflow/stale recovery and unchanged schedule. |
 | RO-5 | Definition-local scheduled history and native Operations recovery exist; manual links/local recovery belong to Task 43.2, consolidated scheduled/manual queries/results to work area 2. |
 | RO-6 | Four engine fields and API-local consumption evidence exist; focused Automation settings and actual process polling adoption/readback remain in work area 3. ResidentLoop still sleeps on its captured startup value. |
 | RO-7 | Existing shared authority is preserved; validate and complete new failure/context/compatibility paths across all three work areas, with the explicit removed-mode exception. |
@@ -107,7 +154,7 @@ and are superseded. The preceding plan remains at
 `16eaac00fd38fba6b0bac812dcbd734fe9cf882b:TASK.md` and locally at
 `.git/validation-evidence/automation-run-once-auto-discovery-20261013/task43.2-before.md`.
 The earlier mode-removal reassessment and remaining-work map remain valid.
-The preceding plan remains at `10b5710a43589b6fcbe07aa962f61bd441678c67:TASK.md` and locally at
+The earlier conversion plan remains at `10b5710a43589b6fcbe07aa962f61bd441678c67:TASK.md` and locally at
 `.git/validation-evidence/automation-only-20261013/task43.2-before-clarification.md`.
 Task 43.1's existing publication/history acceptance remains valid; no Slice final acceptance is implied.
 
