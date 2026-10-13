@@ -943,10 +943,10 @@ satisfied and whether any further Task is warranted.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA (tested candidate): 9d67f4d0a04ed85b2cdfbdd2825595483773df27
+Head SHA (tested candidate): dd50584b864c21975ca5c96fd6bc763a8a238454
 Report-only successor: this commit, whose diff over the tested candidate touches
-       only TASK.md and .gitignore (zero product/test/script/artifact changes),
-       so every gate above still describes the exact tested content.
+       only TASK.md (zero product/test/script/artifact changes), so every gate
+       above still describes the exact tested content.
 Implementation SHA: 996256d319efc0f946f4bb10c57570a15c1bf12f
 Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
 Schema: 47 (was 46 at Task Base)
