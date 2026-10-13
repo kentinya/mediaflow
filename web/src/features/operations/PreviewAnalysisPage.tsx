@@ -255,7 +255,9 @@ export function PreviewAnalysisPage() {
           );
         }}
       </AuthorizedReadBoundary>
-      <nav aria-label="精确预览分析返回">
+      {/* The existing action-row class separates the two return links; without
+          it they render as one run-together string. */}
+      <nav className="mf-actions" aria-label="精确预览分析返回">
         <Link
           to="/operations/automation"
           search={operationsLandingSearch(operationsReturn, null)}

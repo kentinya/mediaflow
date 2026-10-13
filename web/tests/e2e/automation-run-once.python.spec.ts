@@ -197,7 +197,7 @@ test("a disabled published definition runs once without a file picker", async ({
 
 test("the frozen manifest and its exact Preview are durable across a restart", async ({
   page,
-}) => {
+}, testInfo) => {
   await publishRunOnceDefinition(page);
   await page.getByRole("button", { name: "运行一次" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/run-once\//);
@@ -220,6 +220,24 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   await expect(
     page.getByRole("heading", { name: "精确预览分析" }),
   ).toBeVisible();
+
+  // Real visual evidence of the new durable-analysis interaction at both a
+  // narrow phone width and a wide desktop width, retained beside the run.
+  const analysisPanel = page.getByRole("main");
+  await page.setViewportSize({ width: 375, height: 720 });
+  await expect(
+    page.getByRole("heading", { name: "精确预览分析" }),
+  ).toBeVisible();
+  await analysisPanel.screenshot({
+    path: testInfo.outputPath("run-once-analysis-narrow.png"),
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(
+    page.getByRole("heading", { name: "精确预览分析" }),
+  ).toBeVisible();
+  await analysisPanel.screenshot({
+    path: testInfo.outputPath("run-once-analysis-wide.png"),
+  });
 
   // The real Worker runs the existing exact-Preview service and links it.
   const advanced = await page.request.post(
@@ -252,6 +270,9 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   );
   await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
+  await page.getByRole("main").screenshot({
+    path: testInfo.outputPath("run-once-exact-preview.png"),
+  });
 
   // One separate explicit confirmation executes the exact reviewed selection
   // through the resident Worker; the resulting run carries the durable
@@ -270,6 +291,9 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   await expect(
     page.getByRole("heading", { name: "整理执行情况" }),
   ).toBeVisible();
+  await page.getByRole("main").screenshot({
+    path: testInfo.outputPath("run-once-execution-narrow.png"),
+  });
   const worker = await page.request.post("/__harness__/run-manual-worker");
   const workerBody = (await worker.json()) as {
     completed?: boolean;
