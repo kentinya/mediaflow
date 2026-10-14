@@ -87,7 +87,10 @@ function recordApiCalls(page: Page): { method: string; path: string }[] {
   return api;
 }
 
-async function publishRunOnceDefinition(page: Page): Promise<void> {
+async function publishRunOnceDefinition(
+  page: Page,
+  options: { readonly sourceScope?: string } = {},
+): Promise<void> {
   await connectOn(page, "/ui-v2/operations/automation/lifecycle");
   await expect(
     page.getByRole("heading", { name: "Create Automation definition" }),
@@ -95,6 +98,9 @@ async function publishRunOnceDefinition(page: Page): Promise<void> {
   await page.getByLabel("Definition ID").fill(DEFINITION_ID);
   await page.getByLabel("Name").fill("Harness run once");
   await page.getByLabel("ResourceLibrary").selectOption({ index: 1 });
+  if (options.sourceScope !== undefined) {
+    await page.getByLabel("Relative source scope").fill(options.sourceScope);
+  }
   // The retained automatic-organization intent is fixed: no mode selector is
   // rendered and no removed mode can be chosen.
   await expect(page.getByLabel("Run mode")).toHaveCount(0);
@@ -130,7 +136,9 @@ test("a disabled published definition runs once without a file picker", async ({
   // Run once is an explicit action on the published definition. It sends no
   // file selection: the backend derives the scope from the definition itself.
   await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/run-once\//);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
   await expect(page.getByRole("heading", { name: "运行一次" })).toBeVisible();
 
   const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
@@ -148,7 +156,7 @@ test("a disabled published definition runs once without a file picker", async ({
 
   // The real resident Worker advances the bounded, metadata-only discovery.
   const advanced = await page.request.post(
-    "/__harness__/run-automation-run-once-worker",
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
   );
   const advancedBody = (await advanced.json()) as {
     advanced?: boolean;
@@ -200,10 +208,14 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
 }, testInfo) => {
   await publishRunOnceDefinition(page);
   await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/run-once\//);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
   const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
 
-  await page.request.post("/__harness__/run-automation-run-once-worker");
+  await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   await expect(
     page.getByRole("button", { name: "冻结清单并生成精确预览" }),
@@ -241,7 +253,7 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
 
   // The real Worker runs the existing exact-Preview service and links it.
   const advanced = await page.request.post(
-    "/__harness__/run-preview-analysis-worker",
+    `/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
   );
   const advancedBody = (await advanced.json()) as {
     advanced?: boolean;
@@ -328,6 +340,173 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   expect(afterExecution.intentId).toBe(manifest.intentId);
 });
 
+test("Run once preserves a successful sibling while one failed item is recovered", async ({
+  page,
+}) => {
+  await page.request.post("/__harness__/seed-run-once-mixed-scope");
+  await publishRunOnceDefinition(page, { sourceScope: "电影" });
+  await page.getByRole("button", { name: "运行一次" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
+  const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const discovery = await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
+  const discoveryBody = (await discovery.json()) as {
+    advanced?: boolean;
+    reason?: string;
+    status?: string;
+  };
+  expect(discoveryBody, JSON.stringify(discoveryBody)).toMatchObject({
+    advanced: true,
+    status: "completed",
+  });
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/preview-analyses\//,
+  );
+  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  const analyzed = await page.request.post(
+    `/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
+  );
+  const analysisBody = (await analyzed.json()) as {
+    advanced?: boolean;
+    status?: string;
+    previewId?: string | null;
+  };
+  expect(analysisBody.advanced).toBe(true);
+  expect(analysisBody.status).toBe("completed");
+  expect(analysisBody.previewId).toBeTruthy();
+
+  await page.request.post("/__harness__/register-manual-worker");
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/preview-analyses/${analysisId}`,
+  );
+  await page.getByRole("link", { name: "打开精确预览" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/organize/preview/${analysisBody.previewId}$`),
+  );
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page.getByLabel("选择 One.2001.mkv")).toBeChecked();
+  await expect(page.getByLabel("选择 Two.2002.mkv")).toBeChecked();
+  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await expect(
+    page.getByRole("heading", { name: "整理执行情况" }),
+  ).toBeVisible();
+  const executionId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(executionId).toMatch(/^[0-9a-f-]{36}$/);
+
+  // One selected sibling executes through OrganizerExecutor; the harness
+  // injects one known-zero-effect failure for Two before its Storage operation.
+  // The recovery action continues only that failed item's safe analysis.
+  const executed = await page.request.post(
+    `/__harness__/run-run-once-mixed-worker?executionId=${executionId}`,
+  );
+  const executionBody = (await executed.json()) as {
+    completed?: boolean;
+    taskId?: string;
+    failedItemId?: string;
+    successItemId?: string;
+  };
+  expect(executionBody.completed, JSON.stringify(executionBody)).toBe(true);
+  expect(executionBody.taskId).toBeTruthy();
+  expect(executionBody.failedItemId).toBeTruthy();
+  expect(executionBody.successItemId).toBeTruthy();
+
+  await connectOn(
+    page,
+    `/ui-v2/operations?run=${executionBody.taskId}&item=${executionBody.failedItemId}`,
+  );
+  await expect(page).toHaveURL(
+    new RegExp(
+      `run=${executionBody.taskId}.*item=${executionBody.failedItemId}`,
+    ),
+  );
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  const continuation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${executionBody.taskId}/items/${executionBody.failedItemId}/recovery/continue`,
+  );
+  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
+  expect((await continuation).status()).toBe(202);
+
+  let state = await (
+    await page.request.get("/__harness__/task-item-recovery-state")
+  ).json();
+  expect(state).toMatchObject({
+    taskId: executionBody.taskId,
+    itemId: executionBody.failedItemId,
+    sourceExists: true,
+    successItemId: executionBody.successItemId,
+    successItemStatus: "success",
+    successSourceExists: false,
+  });
+  const origin = await page.request.get(
+    `/__harness__/operations-origin-state?taskId=${executionBody.taskId}`,
+  );
+  expect(await origin.json()).toMatchObject({
+    found: true,
+    originKind: "definition-run-once",
+    originDefinitionId: DEFINITION_ID,
+  });
+
+  // The safe analysis and exact Preview remain scoped to the failed item. Its
+  // successful sibling is already durable and never re-enters this selection.
+  const analyzedRecovery = await page.request.post(
+    "/__harness__/run-task-item-recovery-worker",
+  );
+  const analyzedRecoveryBody = await analyzedRecovery.json();
+  expect(
+    analyzedRecoveryBody,
+    JSON.stringify(analyzedRecoveryBody),
+  ).toMatchObject({
+    ran: true,
+    continuationStatus: "completed",
+  });
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+  await expect(recovery.getByText(/单项分析已完成/)).toBeVisible();
+  await recovery.getByRole("button", { name: "准备精确 Preview" }).click();
+  await expect(
+    recovery.getByText(/精确 Preview 和一次性授权已准备好/),
+  ).toBeVisible();
+  await recovery.getByRole("button", { name: "查看已审核计划" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\/organize\/preview\//);
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page.locator("body")).toContainText("Two.2002.mkv");
+  await expect(page.locator("body")).not.toContainText("One.2001.mkv");
+  await page.getByLabel("选择 Two.2002.mkv").check();
+  const recovered = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  expect((await recovered).status()).toBe(200);
+  await expect(page).toHaveURL(
+    new RegExp(
+      `run=${executionBody.taskId}.*item=${executionBody.failedItemId}`,
+    ),
+  );
+
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expect(recovery.getByText(/状态：consumed/)).toBeVisible();
+  state = await (
+    await page.request.get("/__harness__/task-item-recovery-state")
+  ).json();
+  expect(state.sourceExists).toBe(false);
+  expect(state.successItemStatus).toBe("success");
+  expect(state.successSourceExists).toBe(false);
+  expect(state.successResultId).toBeTruthy();
+});
+
 test("an over-bound ceiling runs once when the actual manifest fits the bound", async ({
   page,
 }) => {
@@ -350,10 +529,14 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
   ).toBeVisible();
 
   await page.getByRole("button", { name: "运行一次" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/automation\/run-once\//);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/run-once\/[0-9a-f-]{36}$/,
+  );
   const discoveryId = new URL(page.url()).pathname.split("/").pop() ?? "";
 
-  await page.request.post("/__harness__/run-automation-run-once-worker");
+  await page.request.post(
+    `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+  );
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   // The complete manifest fits the effective bound, so freezing is offered and
   // both limits are shown truthfully.

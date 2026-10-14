@@ -58,7 +58,8 @@ export type PreviewAnalysisKind = (typeof KINDS)[number];
  * operator-navigable target.
  */
 const PREVIEW_PATH =
-  /^\/operations\/organize\/preview\/[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/;
+  /^\/operations\/organize\/preview\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const DEFINITION_PREVIEW_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export interface PreviewAnalysisAction {
   readonly available: boolean;
@@ -133,15 +134,31 @@ function action(
 /**
  * The linked Preview path, or null.
  *
- * A completed analysis links the existing *manual* Organize Preview over the
- * pinned intent/definition scope, addressed by a fixed route prefix. Anything
- * that is not exactly that shape — including a foreign, absolute or
- * path-traversing value — degrades to "no link" instead of becoming an
- * operator-navigable target.
+ * Definition and manual analyses use distinct Preview authorities and routes.
+ * Anything outside the route for the stated kind — including a foreign,
+ * absolute or path-traversing value — degrades to "no link".
  */
-function previewPath(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  return PREVIEW_PATH.test(value) ? value : null;
+function previewPath(
+  value: unknown,
+  kind: PreviewAnalysisKind,
+  definitionId: string | null,
+  expectedPreviewId: string | null,
+): string | null {
+  if (typeof value !== "string" || expectedPreviewId === null) return null;
+  if (kind === "manual") {
+    return value === `/operations/organize/preview/${expectedPreviewId}` &&
+      PREVIEW_PATH.test(value)
+      ? value
+      : null;
+  }
+  if (definitionId === null || !DEFINITION_PREVIEW_ID.test(definitionId))
+    return null;
+  const prefix = `/operations/automation/preview/${encodeURIComponent(definitionId)}/`;
+  const previewId = value.startsWith(prefix) ? value.slice(prefix.length) : "";
+  return previewId === expectedPreviewId &&
+    DEFINITION_PREVIEW_ID.test(previewId)
+    ? value
+    : null;
 }
 
 export function normalizePreviewAnalysis(
@@ -154,9 +171,14 @@ export function normalizePreviewAnalysis(
   const phase = boundedText(progress, "phase");
   if (!PHASES.has(phase)) fail("progress.phase");
   const actions = readRecord(record["actions"], "actions");
+  const kind = normalizeEnum(record["kind"], "kind", KINDS);
+  const definitionId = normalizeOptionalIdentityText(
+    record["definitionId"],
+    "definitionId",
+  );
   return {
     analysisId: boundedText(record, "analysisId"),
-    kind: normalizeEnum(record["kind"], "kind", KINDS),
+    kind,
     actor: boundedText(record, "actor"),
     configurationSnapshotId: boundedText(record, "configurationSnapshotId"),
     configurationSnapshotDigest: boundedText(
@@ -181,10 +203,7 @@ export function normalizePreviewAnalysis(
         "progress.totalItems",
       ),
     },
-    definitionId: normalizeOptionalIdentityText(
-      record["definitionId"],
-      "definitionId",
-    ),
+    definitionId,
     definitionFingerprint: normalizeOptionalIdentityText(
       record["definitionFingerprint"],
       "definitionFingerprint",
@@ -211,7 +230,12 @@ export function normalizePreviewAnalysis(
     sideEffects: normalizeEnum(record["sideEffects"], "sideEffects", [
       "none",
     ] as const),
-    previewPath: previewPath(record["previewPath"]),
+    previewPath: previewPath(
+      record["previewPath"],
+      kind,
+      definitionId,
+      normalizeOptionalIdentityText(record["previewId"], "previewId"),
+    ),
     actions: {
       pause: action(actions, "pause"),
       resume: action(actions, "resume"),

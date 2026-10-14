@@ -125,6 +125,16 @@ class PreviewAnalysisOwnershipLost(PreviewAnalysisError):
         )
 
 
+class PreviewAnalysisControlRequested(Exception):
+    """Internal signal to stop an in-flight zero-mutation analysis at a boundary."""
+
+    def __init__(self, action: str) -> None:
+        if action not in {"pause", "cancel"}:
+            raise ValueError("preview analysis control action is invalid")
+        super().__init__(action)
+        self.action = action
+
+
 @dataclass(frozen=True)
 class PreviewAnalysisProgress:
     """Bounded, secret-free progress of one admitted analysis."""
@@ -308,6 +318,7 @@ __all__ = [
     "MAX_ANALYSIS_TEXT_LENGTH",
     "PreviewAnalysis",
     "PreviewAnalysisConflict",
+    "PreviewAnalysisControlRequested",
     "PreviewAnalysisError",
     "PreviewAnalysisKind",
     "PreviewAnalysisOwnershipLost",

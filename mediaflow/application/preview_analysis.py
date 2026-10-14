@@ -26,6 +26,7 @@ media.
 from __future__ import annotations
 
 import secrets
+import threading
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -34,8 +35,10 @@ from uuid import UUID, uuid4
 from mediaflow.domain.preview_analysis import (
     PreviewAnalysis,
     PreviewAnalysisConflict,
+    PreviewAnalysisControlRequested,
     PreviewAnalysisError,
     PreviewAnalysisKind,
+    PreviewAnalysisOwnershipLost,
     PreviewAnalysisProgress,
     PreviewAnalysisStatus,
     PreviewAnalysisUnavailable,
@@ -129,10 +132,30 @@ class PreviewAnalysisService:
             )
         request_id = _analysis_id(admission_request_id)
         actor = self._actor(actor)
-        existing = self._reconcile_request(actor, request_id, kind=PreviewAnalysisKind.DEFINITION)
-        if existing is not None:
+        existing = self._reconcile_request(
+            actor,
+            request_id,
+            kind=PreviewAnalysisKind.DEFINITION,
+            definition_id=definition_id,
+        )
+        # A repeated request without a new explicit revision is a retry of the
+        # original admitted intent. Return its durable pin even if Active has
+        # since advanced or the definition was removed; callers that intend a
+        # different revision must use a new request ID (or provide that
+        # revision, which is compared below).
+        if existing is not None and revision_id is None:
             return existing
         snapshot_id, snapshot_digest, fingerprint = self._definition_pin(definition_id, revision_id)
+        if existing is not None:
+            return self._reconcile_request(
+                actor,
+                request_id,
+                kind=PreviewAnalysisKind.DEFINITION,
+                definition_id=definition_id,
+                definition_fingerprint=fingerprint,
+                snapshot_id=snapshot_id,
+                snapshot_digest=snapshot_digest,
+            )
         open_analysis = self._find_open(
             actor=actor,
             kind=PreviewAnalysisKind.DEFINITION,
@@ -197,7 +220,13 @@ class PreviewAnalysisService:
             )
         request_id = _analysis_id(admission_request_id)
         actor = self._actor(actor)
-        existing = self._reconcile_request(actor, request_id, kind=PreviewAnalysisKind.MANUAL)
+        existing = self._reconcile_request(
+            actor,
+            request_id,
+            kind=PreviewAnalysisKind.MANUAL,
+            intent_id=intent_id,
+            intent_version=expected_version,
+        )
         if existing is not None:
             return existing
         intent = self._manual_intent(intent_id)
@@ -307,6 +336,7 @@ class PreviewAnalysisService:
             current,
             status=PreviewAnalysisStatus.QUEUED,
             version=current.version + 1,
+            cancel_requested=False,
             pause_requested=False,
             claim_worker_id=None,
             claim_token=None,
@@ -342,7 +372,12 @@ class PreviewAnalysisService:
         )
         if claimed is None:
             return None
-        return self.run_claimed(claimed.analysis_id, worker_id=worker_id, claim_token=claim_token)
+        return self.run_claimed(
+            claimed.analysis_id,
+            worker_id=worker_id,
+            claim_token=claim_token,
+            heartbeat=heartbeat,
+        )
 
     def run_claimed(
         self,
@@ -350,6 +385,7 @@ class PreviewAnalysisService:
         *,
         worker_id: str,
         claim_token: str,
+        heartbeat: Callable[[str], bool] | None = None,
     ) -> PreviewAnalysis:
         """Advance one claimed analysis to a settled boundary."""
 
@@ -358,17 +394,53 @@ class PreviewAnalysisService:
             raise PreviewAnalysisUnavailable("the claimed preview analysis is no longer readable")
         if analysis.terminal:
             return analysis
-        if analysis.claim_token != claim_token:
-            raise PreviewAnalysisError(
-                "this Worker no longer owns the preview analysis claim",
-                code="preview_analysis_ownership_lost",
-                status=409,
-                next_action="wait for the current owner to settle, then reload the analysis",
+        if not self._owns_unexpired(analysis, worker_id, claim_token):
+            return analysis
+
+        heartbeat_call = heartbeat or (
+            lambda _analysis_id: self._heartbeat_claim(analysis_id, worker_id, claim_token)
+        )
+        stopped = threading.Event()
+        lease_lost = threading.Event()
+
+        def maintain_lease() -> None:
+            interval = max(0.05, min(5.0, self._lease_seconds / 3.0))
+            while not stopped.wait(interval):
+                try:
+                    if not heartbeat_call(analysis_id):
+                        lease_lost.set()
+                        return
+                except Exception:  # a heartbeat failure fences publication
+                    lease_lost.set()
+                    return
+
+        heartbeat_thread = threading.Thread(
+            target=maintain_lease,
+            name=f"preview-analysis-lease-{analysis_id[:12]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        try:
+            return self._run_claimed_owned(
+                analysis,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                lease_lost=lease_lost,
             )
-        if analysis.cancel_requested:
-            return self._cancel(analysis)
-        if analysis.pause_requested:
-            return self._publish_paused(analysis)
+        finally:
+            stopped.set()
+            heartbeat_thread.join(timeout=1)
+
+    def _run_claimed_owned(
+        self,
+        analysis: PreviewAnalysis,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_lost: threading.Event,
+    ) -> PreviewAnalysis:
+        if analysis.cancel_requested or analysis.pause_requested:
+            return self._settle_control(analysis, worker_id, claim_token)
         running = replace(
             analysis,
             status=PreviewAnalysisStatus.RUNNING,
@@ -380,20 +452,80 @@ class PreviewAnalysisService:
                 message="running the exact zero-mutation Preview analysis",
             ),
         )
-        running = self._update(running, expected_version=analysis.version)
         try:
-            preview = self._analyse(running)
+            running = self._update_claimed(
+                running,
+                expected_version=analysis.version,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                clear_claim=False,
+            )
+        except PreviewAnalysisOwnershipLost:
+            return self._read(analysis.analysis_id) or analysis
+
+        def checkpoint(phase: str, visited: int, analysed: int, total: int) -> None:
+            if lease_lost.is_set():
+                raise PreviewAnalysisOwnershipLost(
+                    "the analysis Worker lost its lease; no Preview was published"
+                )
+            current = self._read(analysis.analysis_id)
+            if current is None or not self._owns_unexpired(current, worker_id, claim_token):
+                raise PreviewAnalysisOwnershipLost(
+                    "the analysis Worker no longer owns an unexpired lease"
+                )
+            if current.cancel_requested:
+                raise PreviewAnalysisControlRequested("cancel")
+            if current.pause_requested:
+                raise PreviewAnalysisControlRequested("pause")
+            progress = PreviewAnalysisProgress(
+                "running",
+                (
+                    "checking the bounded source scope"
+                    if phase == "discovery"
+                    else "analysing the exact zero-mutation Preview"
+                ),
+                max(current.progress.visited_entries, visited),
+                max(current.progress.analysed_items, analysed),
+                max(current.progress.total_items, total),
+            )
+            if progress == current.progress:
+                return
+            updated = replace(
+                current,
+                version=current.version + 1,
+                progress=progress,
+                updated_at=self._clock(),
+            )
+            self._update_claimed(
+                updated,
+                expected_version=current.version,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                clear_claim=False,
+            )
+
+        try:
+            preview = self._analyse(running, checkpoint=checkpoint)
+            checkpoint(
+                "analysis",
+                running.progress.visited_entries,
+                running.progress.analysed_items,
+                running.progress.total_items,
+            )
+        except PreviewAnalysisControlRequested:
+            current = self._read(analysis.analysis_id) or running
+            return self._settle_control(current, worker_id, claim_token)
+        except PreviewAnalysisOwnershipLost:
+            return self._read(analysis.analysis_id) or running
         except PreviewAnalysisError as error:
-            return self._fail(running, error.code)
+            return self._fail_claimed(running, error.code, worker_id, claim_token)
         except Exception:  # noqa: BLE001 - a Worker must never crash the loop
-            return self._fail(running, "preview_analysis_failed")
-        # Re-read: an operator control may have settled the record while the
-        # analysis ran, and the accepted control must win.
-        current = self._read(analysis_id) or running
-        if current.cancel_requested:
-            return self._cancel(current)
-        if current.pause_requested:
-            return self._publish_paused(current)
+            return self._fail_claimed(running, "preview_analysis_failed", worker_id, claim_token)
+        current = self._read(analysis.analysis_id) or running
+        if not self._owns_unexpired(current, worker_id, claim_token):
+            return current
+        if current.cancel_requested or current.pause_requested:
+            return self._settle_control(current, worker_id, claim_token)
         completed = replace(
             current,
             status=PreviewAnalysisStatus.COMPLETED,
@@ -412,20 +544,78 @@ class PreviewAnalysisService:
                 ),
             ),
         )
-        return self._update(completed, expected_version=current.version)
+        publisher = getattr(self._repository, "publish_preview_analysis", None)
+        if not callable(publisher):
+            return self._fail_claimed(
+                current, "preview_analysis_publication_unavailable", worker_id, claim_token
+            )
+        try:
+            publisher(
+                completed,
+                preview,
+                expected_version=current.version,
+                worker_id=worker_id,
+                claim_token=claim_token,
+            )
+        except PreviewAnalysisOwnershipLost:
+            successor = self._read(analysis.analysis_id) or current
+            if (
+                successor.claim_token == claim_token
+                and successor.claim_worker_id == worker_id
+                and (successor.cancel_requested or successor.pause_requested)
+            ):
+                return self._settle_control(successor, worker_id, claim_token)
+            return successor
+        except PreviewAnalysisError as error:
+            return self._fail_claimed(current, error.code, worker_id, claim_token)
+        except Exception:  # noqa: BLE001 - preserve the lease and settle a safe failure
+            return self._fail_claimed(current, "preview_analysis_failed", worker_id, claim_token)
+        return self.get(analysis.analysis_id)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _analyse(self, analysis: PreviewAnalysis):
+    def _analyse(
+        self,
+        analysis: PreviewAnalysis,
+        *,
+        checkpoint: Callable[[str, int, int, int], None],
+    ):
         if analysis.kind is PreviewAnalysisKind.DEFINITION:
-            return self._definition_previews.create(analysis.definition_id, actor=analysis.actor)
+            admitted = self._definition_pin(
+                analysis.definition_id, analysis.configuration_snapshot_id
+            )
+            if admitted != (
+                analysis.configuration_snapshot_id,
+                analysis.configuration_snapshot_digest,
+                analysis.definition_fingerprint,
+            ):
+                raise PreviewAnalysisError(
+                    "the admitted definition pin is missing, changed or no longer verifies",
+                    code="definition_pin_stale",
+                    status=409,
+                    next_action=(
+                        "reload the published definition and explicitly request a fresh Preview"
+                    ),
+                )
+            return self._definition_previews.create(
+                analysis.definition_id,
+                revision_id=analysis.configuration_snapshot_id,
+                actor=analysis.actor,
+                persist=False,
+                analysis_checkpoint=checkpoint,
+            )
         return self._manual_previews.create(
             analysis.intent_id,
             None,
             expected_version=analysis.intent_version,
             actor=analysis.actor,
+            snapshot_id=analysis.configuration_snapshot_id,
+            snapshot_digest=analysis.configuration_snapshot_digest,
+            skip_current_snapshot_check=True,
+            persist=False,
+            analysis_checkpoint=checkpoint,
         )
 
     def _definition_pin(self, definition_id: str, revision_id: str | None) -> tuple[str, str, str]:
@@ -455,7 +645,15 @@ class PreviewAnalysisService:
         except PreviewAnalysisConflict:
             if analysis.admission_request_id is not None:
                 requested = self._reconcile_request(
-                    analysis.actor, analysis.admission_request_id, kind=analysis.kind
+                    analysis.actor,
+                    analysis.admission_request_id,
+                    kind=analysis.kind,
+                    definition_id=analysis.definition_id,
+                    definition_fingerprint=analysis.definition_fingerprint,
+                    intent_id=analysis.intent_id,
+                    intent_version=analysis.intent_version,
+                    snapshot_id=analysis.configuration_snapshot_id,
+                    snapshot_digest=analysis.configuration_snapshot_digest,
                 )
                 if requested is not None:
                     return requested
@@ -473,8 +671,147 @@ class PreviewAnalysisService:
             raise PreviewAnalysisUnavailable("durable preview analysis update is unavailable")
         return updater(analysis, expected_version=expected_version)
 
+    def _update_claimed(
+        self,
+        analysis: PreviewAnalysis,
+        *,
+        expected_version: int,
+        worker_id: str,
+        claim_token: str,
+        clear_claim: bool,
+    ) -> PreviewAnalysis:
+        updater = getattr(self._repository, "update_claimed_preview_analysis", None)
+        if not callable(updater):
+            raise PreviewAnalysisUnavailable("fenced preview analysis update is unavailable")
+        return updater(
+            analysis,
+            expected_version=expected_version,
+            worker_id=worker_id,
+            claim_token=claim_token,
+            now=self._clock(),
+            clear_claim=clear_claim,
+        )
+
+    def _heartbeat_claim(self, analysis_id: str, worker_id: str, claim_token: str) -> bool:
+        heartbeat = getattr(self._repository, "heartbeat_preview_analysis_claim", None)
+        if not callable(heartbeat):
+            return False
+        return heartbeat(
+            analysis_id,
+            worker_id=worker_id,
+            claim_token=claim_token,
+            now=self._clock(),
+            lease_seconds=self._lease_seconds,
+        )
+
+    def _owns_unexpired(
+        self,
+        analysis: PreviewAnalysis,
+        worker_id: str,
+        claim_token: str,
+    ) -> bool:
+        return (
+            analysis.claim_worker_id == worker_id
+            and analysis.claim_token == claim_token
+            and analysis.claim_expires_at is not None
+            and analysis.claim_expires_at > self._clock()
+        )
+
+    def _settle_control(
+        self, current: PreviewAnalysis, worker_id: str, claim_token: str
+    ) -> PreviewAnalysis:
+        if not self._owns_unexpired(current, worker_id, claim_token):
+            return self._read(current.analysis_id) or current
+        cancelled = current.cancel_requested
+        status = PreviewAnalysisStatus.CANCELLED if cancelled else PreviewAnalysisStatus.PAUSED
+        progress = replace(
+            current.progress,
+            phase="cancelled" if cancelled else "paused",
+            message=(
+                "cancelled at a safe analysis boundary; no Preview was published"
+                if cancelled
+                else (
+                    "paused at a safe boundary; resume restarts zero-mutation analysis from its "
+                    "pinned context"
+                )
+            ),
+        )
+        updated = replace(
+            current,
+            status=status,
+            version=current.version + 1,
+            cancel_requested=cancelled,
+            pause_requested=not cancelled,
+            claim_worker_id=None,
+            claim_token=None,
+            claim_expires_at=None,
+            progress=progress,
+            updated_at=self._clock(),
+        )
+        try:
+            return self._update_claimed(
+                updated,
+                expected_version=current.version,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                clear_claim=True,
+            )
+        except PreviewAnalysisOwnershipLost:
+            return self._read(current.analysis_id) or current
+
+    def _fail_claimed(
+        self,
+        analysis: PreviewAnalysis,
+        code: str,
+        worker_id: str,
+        claim_token: str,
+    ) -> PreviewAnalysis:
+        current = self._read(analysis.analysis_id) or analysis
+        if current.terminal or not self._owns_unexpired(current, worker_id, claim_token):
+            return current
+        if current.cancel_requested or current.pause_requested:
+            return self._settle_control(current, worker_id, claim_token)
+        updated = replace(
+            current,
+            status=PreviewAnalysisStatus.FAILED,
+            version=current.version + 1,
+            error=code,
+            claim_worker_id=None,
+            claim_token=None,
+            claim_expires_at=None,
+            updated_at=self._clock(),
+            progress=replace(
+                current.progress,
+                phase="failed",
+                message=(
+                    "the exact analysis failed; inspect the stated condition, repair it, then "
+                    "request a fresh analysis"
+                ),
+            ),
+        )
+        try:
+            return self._update_claimed(
+                updated,
+                expected_version=current.version,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                clear_claim=True,
+            )
+        except PreviewAnalysisOwnershipLost:
+            return self._read(current.analysis_id) or current
+
     def _reconcile_request(
-        self, actor: str, admission_request_id: str, *, kind: PreviewAnalysisKind
+        self,
+        actor: str,
+        admission_request_id: str,
+        *,
+        kind: PreviewAnalysisKind,
+        definition_id: str | None = None,
+        definition_fingerprint: str | None = None,
+        intent_id: str | None = None,
+        intent_version: int | None = None,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
     ) -> PreviewAnalysis | None:
         finder = getattr(self._repository, "find_preview_analysis_by_request_id", None)
         if not callable(finder):
@@ -482,9 +819,28 @@ class PreviewAnalysisService:
         requested = finder(actor=actor, admission_request_id=admission_request_id)
         if requested is None:
             return None
-        if requested.kind is not kind:
+        mismatch = requested.kind is not kind
+        mismatch = mismatch or (
+            definition_id is not None and requested.definition_id != definition_id
+        )
+        mismatch = mismatch or (
+            definition_fingerprint is not None
+            and requested.definition_fingerprint != definition_fingerprint
+        )
+        mismatch = mismatch or (intent_id is not None and requested.intent_id != intent_id)
+        mismatch = mismatch or (
+            intent_version is not None and requested.intent_version != intent_version
+        )
+        mismatch = mismatch or (
+            snapshot_id is not None and requested.configuration_snapshot_id != snapshot_id
+        )
+        mismatch = mismatch or (
+            snapshot_digest is not None
+            and requested.configuration_snapshot_digest != snapshot_digest
+        )
+        if mismatch:
             raise PreviewAnalysisError(
-                "this analysis request ID is already bound to a different analysis kind",
+                "this analysis request ID is already bound to different analysis context",
                 code="admission_request_conflict",
                 status=409,
                 next_action=(
@@ -561,95 +917,54 @@ class PreviewAnalysisService:
                 details={"status": current.status.value},
             )
         if pause:
-            if current.status is PreviewAnalysisStatus.PAUSED:
+            if current.status is PreviewAnalysisStatus.PAUSED or current.pause_requested:
                 return current
+            running = current.status is PreviewAnalysisStatus.RUNNING
             updated = replace(
                 current,
-                status=PreviewAnalysisStatus.PAUSED,
+                status=(PreviewAnalysisStatus.RUNNING if running else PreviewAnalysisStatus.PAUSED),
                 version=current.version + 1,
                 pause_requested=True,
                 updated_at=self._clock(),
                 progress=replace(
                     current.progress,
-                    phase="paused",
-                    message="paused cooperatively; resume to continue the same analysis",
+                    phase="running" if running else "paused",
+                    message=(
+                        "pause requested; the Worker will acknowledge it at a safe boundary"
+                        if running
+                        else (
+                            "paused before analysis; resume restarts zero-mutation analysis from "
+                            "its pinned context"
+                        )
+                    ),
                 ),
             )
         else:
             if current.cancel_requested:
                 return current
+            running = current.status is PreviewAnalysisStatus.RUNNING
             updated = replace(
                 current,
-                status=PreviewAnalysisStatus.CANCELLED,
+                status=(
+                    PreviewAnalysisStatus.RUNNING if running else PreviewAnalysisStatus.CANCELLED
+                ),
                 version=current.version + 1,
                 cancel_requested=True,
-                claim_worker_id=None,
-                claim_token=None,
-                claim_expires_at=None,
+                pause_requested=False,
+                claim_worker_id=(current.claim_worker_id if running else None),
+                claim_token=(current.claim_token if running else None),
+                claim_expires_at=(current.claim_expires_at if running else None),
                 updated_at=self._clock(),
                 progress=replace(
                     current.progress,
-                    phase="cancelled",
-                    message="cancelled cooperatively; no Preview was published",
+                    phase="running" if running else "cancelled",
+                    message=(
+                        "cancel requested; the Worker will acknowledge it at a safe boundary"
+                        if running
+                        else "cancelled before analysis; no Preview was published"
+                    ),
                 ),
             )
-        return self._update(updated, expected_version=current.version)
-
-    def _publish_paused(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
-        updated = replace(
-            analysis,
-            status=PreviewAnalysisStatus.PAUSED,
-            version=analysis.version + 1,
-            pause_requested=True,
-            updated_at=self._clock(),
-            progress=replace(
-                analysis.progress,
-                phase="paused",
-                message="paused cooperatively; resume to continue the same analysis",
-            ),
-        )
-        return self._update(updated, expected_version=analysis.version)
-
-    def _cancel(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
-        updated = replace(
-            analysis,
-            status=PreviewAnalysisStatus.CANCELLED,
-            version=analysis.version + 1,
-            cancel_requested=True,
-            claim_worker_id=None,
-            claim_token=None,
-            claim_expires_at=None,
-            updated_at=self._clock(),
-            progress=replace(
-                analysis.progress,
-                phase="cancelled",
-                message="cancelled cooperatively; no Preview was published",
-            ),
-        )
-        return self._update(updated, expected_version=analysis.version)
-
-    def _fail(self, analysis: PreviewAnalysis, code: str) -> PreviewAnalysis:
-        current = self._read(analysis.analysis_id) or analysis
-        if current.terminal:
-            return current
-        updated = replace(
-            current,
-            status=PreviewAnalysisStatus.FAILED,
-            version=current.version + 1,
-            error=code,
-            claim_worker_id=None,
-            claim_token=None,
-            claim_expires_at=None,
-            updated_at=self._clock(),
-            progress=replace(
-                current.progress,
-                phase="failed",
-                message=(
-                    "the exact analysis failed; inspect the stated condition, repair it, then "
-                    "request a fresh analysis"
-                ),
-            ),
-        )
         return self._update(updated, expected_version=current.version)
 
     @staticmethod

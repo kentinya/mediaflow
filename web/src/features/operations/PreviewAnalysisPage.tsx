@@ -237,18 +237,28 @@ export function PreviewAnalysisPage() {
                   </Button>
                 ) : null}
                 {completed && model.previewPath !== null ? (
-                  // The exact Preview lives in the manual Organize route tree.
-                  // The router `Link` keeps the application basepath, so the
-                  // operator reaches the real page rather than a basepath-less
-                  // URL.
-                  <Link
-                    className="mf-button mf-button-secondary"
-                    to="/operations/organize/preview/$previewId"
-                    params={{ previewId: model.previewId ?? "" }}
-                    search={{ ...operationsReturnSearch(operationsReturn) }}
-                  >
-                    打开精确预览
-                  </Link>
+                  model.kind === "definition" && model.definitionId !== null ? (
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations/automation/preview/$definitionId/$previewId"
+                      params={{
+                        definitionId: model.definitionId,
+                        previewId: model.previewId ?? "",
+                      }}
+                      search={{ ...operationsReturnSearch(operationsReturn) }}
+                    >
+                      打开精确预览
+                    </Link>
+                  ) : model.kind === "manual" ? (
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations/organize/preview/$previewId"
+                      params={{ previewId: model.previewId ?? "" }}
+                      search={{ ...operationsReturnSearch(operationsReturn) }}
+                    >
+                      打开精确预览
+                    </Link>
+                  ) : null
                 ) : null}
               </div>
             </div>

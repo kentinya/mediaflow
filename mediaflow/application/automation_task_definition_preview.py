@@ -59,6 +59,7 @@ from mediaflow.domain.metadata import (
     MetadataIdentificationStatus,
 )
 from mediaflow.domain.organizer import PlanStatus
+from mediaflow.domain.preview_analysis import PreviewAnalysisControlRequested
 from mediaflow.domain.recognition import RecognitionStatus
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
@@ -132,6 +133,8 @@ class AutomationTaskDefinitionPreviewService:
         *,
         revision_id: str | None = None,
         actor: str,
+        persist: bool = True,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> AutomationTaskDefinitionPreview:
         actor = self._actor(actor)
         revision = self._resolve_revision(revision_id)
@@ -151,6 +154,7 @@ class AutomationTaskDefinitionPreviewService:
         resource_library = self._resource_library(runtime, definition)
         source_storage = self._source_storage(runtime, resource_library)
         scope_root = self._scope_root(resource_library.root_path, definition.source_scope)
+        self._analysis_checkpoint(analysis_checkpoint, "discovery", 0, 0, 0)
         self._assert_scope_directory(source_storage, scope_root, definition)
 
         discovered = self._discover(
@@ -159,6 +163,7 @@ class AutomationTaskDefinitionPreviewService:
             definition,
             source_storage,
             scope_root,
+            analysis_checkpoint=analysis_checkpoint,
         )
         records = discovered["records"]
         counts = discovered["counts"]
@@ -168,7 +173,15 @@ class AutomationTaskDefinitionPreviewService:
         preview_id = str(uuid4())
         now = self._clock()
         preview_items: list[AutomationTaskDefinitionPreviewItem] = []
+        analysed_items = 0
         for position, value in enumerate(records):
+            self._analysis_checkpoint(
+                analysis_checkpoint,
+                "analysis",
+                discovered["visited_entries"],
+                analysed_items,
+                len(records),
+            )
             if value["status"] in {
                 AutomationTaskDefinitionPreviewItemStatus.EXCLUDED,
                 AutomationTaskDefinitionPreviewItemStatus.UNSTABLE,
@@ -185,6 +198,14 @@ class AutomationTaskDefinitionPreviewService:
                         now,
                     )
                 )
+                analysed_items += 1
+                self._analysis_checkpoint(
+                    analysis_checkpoint,
+                    "analysis",
+                    discovered["visited_entries"],
+                    analysed_items,
+                    len(records),
+                )
                 continue
             source = value["source"]
             try:
@@ -197,7 +218,13 @@ class AutomationTaskDefinitionPreviewService:
                     definition_id,
                     position,
                     now,
+                    analysis_checkpoint=analysis_checkpoint,
+                    visited_entries=discovered["visited_entries"],
+                    analysed_items=analysed_items,
+                    total_items=len(records),
                 )
+            except PreviewAnalysisControlRequested:
+                raise
             except AutomationTaskDefinitionPreviewUnavailable as error:
                 item = self._failed_item(
                     preview_id,
@@ -248,6 +275,14 @@ class AutomationTaskDefinitionPreviewService:
                     now,
                 )
             preview_items.append(item)
+            analysed_items += 1
+            self._analysis_checkpoint(
+                analysis_checkpoint,
+                "analysis",
+                discovered["visited_entries"],
+                analysed_items,
+                len(records),
+            )
 
         status = self._aggregate_status(preview_items)
         preview = AutomationTaskDefinitionPreview(
@@ -277,7 +312,7 @@ class AutomationTaskDefinitionPreviewService:
                 for item in preview_items
             ),
         )
-        persisted = self._persist_create(preview)
+        persisted = self._persist_create(preview) if persist else None
         return persisted or preview
 
     create_preview = create
@@ -641,6 +676,8 @@ class AutomationTaskDefinitionPreviewService:
         definition: AutomationTaskDefinition,
         storage: PreviewReadOnlyStorage,
         scope_root: str,
+        *,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> dict[str, object]:
         counts = {
             "discovered": 0,
@@ -655,6 +692,7 @@ class AutomationTaskDefinitionPreviewService:
         errors: list[str] = []
         records_truncated = False
         ready_seen = 0
+        visited_entries = 0
         now = self._clock()
         pending: deque[tuple[str, int]] = deque([(scope_root, 0)])
         limit = definition.item_limit
@@ -697,6 +735,7 @@ class AutomationTaskDefinitionPreviewService:
             )
 
         while pending:
+            self._analysis_checkpoint(analysis_checkpoint, "discovery", visited_entries, 0, 0)
             directory, depth = pending.popleft()
             try:
                 entries = tuple(
@@ -715,6 +754,8 @@ class AutomationTaskDefinitionPreviewService:
                     break
                 continue
             for entry in entries:
+                visited_entries += 1
+                self._analysis_checkpoint(analysis_checkpoint, "discovery", visited_entries, 0, 0)
                 relative = StorageScanner._relative(entry.path, scope_root)
                 if entry.entry_type is StorageEntryType.DIRECTORY:
                     if StorageScanner._excluded(
@@ -808,7 +849,19 @@ class AutomationTaskDefinitionPreviewService:
             "selected": selected,
             "errors": errors,
             "records_truncated": records_truncated,
+            "visited_entries": visited_entries,
         }
+
+    @staticmethod
+    def _analysis_checkpoint(
+        callback: Callable[[str, int, int, int], None] | None,
+        phase: str,
+        visited_entries: int,
+        analysed_items: int,
+        total_items: int,
+    ) -> None:
+        if callback is not None:
+            callback(phase, visited_entries, analysed_items, total_items)
 
     def _stable(
         self,
@@ -876,8 +929,21 @@ class AutomationTaskDefinitionPreviewService:
         definition_id: str,
         position: int,
         now: datetime,
+        *,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
+        visited_entries: int = 0,
+        analysed_items: int = 0,
+        total_items: int = 0,
     ) -> AutomationTaskDefinitionPreviewItem:
-        outcome = self._analyze(runtime, resource_library, source)
+        outcome = self._analyze(
+            runtime,
+            resource_library,
+            source,
+            analysis_checkpoint=analysis_checkpoint,
+            visited_entries=visited_entries,
+            analysed_items=analysed_items,
+            total_items=total_items,
+        )
         if outcome.status is AutomationTaskDefinitionPreviewItemStatus.PREVIEWED:
             next_action = "inspect this exact zero-mutation plan; this evidence grants no authority"
         else:
@@ -948,7 +1014,20 @@ class AutomationTaskDefinitionPreviewService:
             updated_at=now,
         )
 
-    def _analyze(self, runtime, resource_library, source: AutomationPreviewSource):
+    def _analyze(
+        self,
+        runtime,
+        resource_library,
+        source: AutomationPreviewSource,
+        *,
+        analysis_checkpoint=None,
+        visited_entries: int = 0,
+        analysed_items: int = 0,
+        total_items: int = 0,
+    ):
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
+        )
         configured_storages = self._create_storages(runtime, {resource_library.storage_id})
         source_storage = self._guarded_storage(configured_storages, resource_library.storage_id)
         recognition_runner = self._runner(runtime, None, source_storage, configured_storages)
@@ -961,6 +1040,9 @@ class AutomationTaskDefinitionPreviewService:
             storage_id=resource_library.storage_id,
             storage_path=source.path,
             source_storage=source_storage,
+        )
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
         )
         if recognition_only.recognition.status is not RecognitionStatus.MATCHED:
             return _AutomationItemOutcome(
@@ -1005,6 +1087,9 @@ class AutomationTaskDefinitionPreviewService:
             else None
         )
         runner = self._runner(runtime, providers, source_storage, configured_storages)
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
+        )
         strategy = runner.run_path(
             source.path,
             live_metadata=providers is not None,
@@ -1014,6 +1099,9 @@ class AutomationTaskDefinitionPreviewService:
             storage_id=resource_library.storage_id,
             storage_path=source.path,
             source_storage=source_storage,
+        )
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
         )
         if strategy.recognition.status is not RecognitionStatus.MATCHED:
             return _AutomationItemOutcome(

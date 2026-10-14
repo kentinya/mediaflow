@@ -197,6 +197,7 @@ from mediaflow.domain.package_exchange import (
     MAX_CONFIGURATION_PACKAGE_BYTES,
     PackageExchangeError,
 )
+from mediaflow.domain.preview_analysis import PreviewAnalysisKind
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationError,
@@ -15300,11 +15301,14 @@ class MediaFlowApi:
         document = redact_manual_value(analysis.document())
         document["zeroMutation"] = True
         document["sideEffects"] = "none"
-        document["previewPath"] = (
-            f"/operations/organize/preview/{analysis.preview_id}"
-            if analysis.preview_id is not None
-            else None
-        )
+        if analysis.preview_id is None:
+            document["previewPath"] = None
+        elif analysis.kind is PreviewAnalysisKind.DEFINITION:
+            document["previewPath"] = (
+                f"/operations/automation/preview/{analysis.definition_id}/{analysis.preview_id}"
+            )
+        else:
+            document["previewPath"] = f"/operations/organize/preview/{analysis.preview_id}"
         document["actions"] = self._preview_analysis_actions(analysis)
         return document
 
@@ -15312,14 +15316,21 @@ class MediaFlowApi:
     def _preview_analysis_actions(analysis) -> dict:
         active = analysis.status.value in {"queued", "running"}
         return {
-            "pause": {"available": active, "method": "POST", "sideEffects": "none"},
+            "pause": {
+                "available": active and not analysis.pause_requested,
+                "method": "POST",
+                "sideEffects": "none",
+            },
             "resume": {
                 "available": analysis.status.value == "paused",
                 "method": "POST",
                 "sideEffects": "none",
             },
             "cancel": {
-                "available": analysis.status.value in {"queued", "running", "paused"},
+                "available": (
+                    analysis.status.value in {"queued", "running", "paused"}
+                    and not analysis.cancel_requested
+                ),
                 "method": "POST",
                 "sideEffects": "none",
             },

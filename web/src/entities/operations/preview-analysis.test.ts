@@ -82,7 +82,7 @@ describe("normalizePreviewAnalysis", () => {
           analysedItems: 3,
           totalItems: 3,
         },
-        previewPath: "/operations/organize/preview/preview-1",
+        previewPath: "/operations/automation/preview/nightly/preview-1",
         actions: {
           pause: { available: false },
           resume: { available: false },
@@ -93,7 +93,9 @@ describe("normalizePreviewAnalysis", () => {
     );
     expect(model.status).toBe("completed");
     expect(model.previewId).toBe("preview-1");
-    expect(model.previewPath).toBe("/operations/organize/preview/preview-1");
+    expect(model.previewPath).toBe(
+      "/operations/automation/preview/nightly/preview-1",
+    );
     expect(model.progress.analysedItems).toBe(3);
     expect(model.actions.preview.available).toBe(true);
   });
@@ -112,6 +114,28 @@ describe("normalizePreviewAnalysis", () => {
     expect(model.definitionId).toBeNull();
     expect(model.intentId).toBe("intent-1");
     expect(model.intentVersion).toBe(2);
+  });
+
+  it("rejects a Preview route that names a different durable Preview ID", () => {
+    const definition = normalizePreviewAnalysis(
+      payload({
+        status: "completed",
+        previewId: "preview-1",
+        previewPath: "/operations/automation/preview/nightly/preview-2",
+      }),
+    );
+    const manual = normalizePreviewAnalysis(
+      payload({
+        kind: "manual",
+        definitionId: null,
+        definitionFingerprint: null,
+        status: "completed",
+        previewId: "preview-1",
+        previewPath: "/operations/organize/preview/preview-2",
+      }),
+    );
+    expect(definition.previewPath).toBeNull();
+    expect(manual.previewPath).toBeNull();
   });
 
   it("rejects an unknown status", () => {
@@ -141,7 +165,7 @@ describe("normalizePreviewAnalysis", () => {
       "https://example.invalid/operations/organize/preview/preview-1",
       "/operations/organize/preview/",
       "/operations/organize/preview/../secret",
-      "/operations/automation/preview/nightly/preview-1",
+      "/operations/automation/preview/other/preview-1",
       "//operations/organize/preview/preview-1",
       "/operations/organize/preview/-leading",
       "operations/organize/preview/preview-1",

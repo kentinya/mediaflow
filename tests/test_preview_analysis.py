@@ -20,9 +20,10 @@ import io
 import json
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,7 +37,7 @@ from mediaflow.application.preview_analysis import (
     PreviewAnalysisService,
     PreviewAnalysisWorker,
 )
-from mediaflow.domain.preview_analysis import PreviewAnalysisStatus
+from mediaflow.domain.preview_analysis import PreviewAnalysisError, PreviewAnalysisStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -226,6 +227,22 @@ class _DurableAnalysisFixture(unittest.TestCase):
                 digest=revision.digest,
                 version=revision.version,
             )
+
+            def resolve_definition_runtime(snapshot_id, digest):
+                pinned_revision = managed.require(snapshot_id)
+                managed.verify_integrity(pinned_revision)
+                if pinned_revision.digest != digest:
+                    raise ValueError("requested managed configuration digest is stale")
+                return with_managed_snapshot(
+                    load_managed_runtime_configuration(
+                        pinned_revision.document,
+                        bootstrap_database_path=managed.bootstrap_database_path,
+                    ),
+                    snapshot_id=pinned_revision.revision_id,
+                    digest=pinned_revision.digest,
+                    version=pinned_revision.version,
+                )
+
             intents = ManualOrganizeIntentService(
                 repository,
                 None,
@@ -244,7 +261,7 @@ class _DurableAnalysisFixture(unittest.TestCase):
             definition_previews = AutomationTaskDefinitionPreviewService(
                 repository,
                 managed,
-                runtime_resolver=lambda snapshot_id, digest: runtime,
+                runtime_resolver=resolve_definition_runtime,
                 storages=dict(storages),
                 clock=self.clock,
             )
@@ -291,6 +308,7 @@ class _DurableAnalysisFixture(unittest.TestCase):
                 runtime=runtime,
                 revision=revision,
                 managed=managed,
+                clock=self.clock,
                 source=source,
                 target=target,
             )
@@ -394,7 +412,8 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
                     {"expectedVersion": running.version},
                 )
                 self.assertEqual(200, status, cancelled)
-                self.assertEqual("cancelled", cancelled["status"])
+                self.assertEqual("running", cancelled["status"])
+                self.assertTrue(cancelled["cancelRequested"])
             finally:
                 release.set()
                 value.definition_previews._discover = original
@@ -403,6 +422,12 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             final = value.analyses.get(analysis_id)
             self.assertEqual(PreviewAnalysisStatus.CANCELLED, final.status)
             self.assertIsNone(final.preview_id)
+            self.assertEqual(
+                0,
+                value.repository._connection.execute(
+                    "SELECT COUNT(*) FROM automation_task_definition_previews"
+                ).fetchone()[0],
+            )
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -431,9 +456,19 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             self.assertEqual("completed", detail["status"])
             self.assertEqual(settled.preview_id, detail["previewId"])
             self.assertEqual(
-                f"/operations/organize/preview/{settled.preview_id}",
+                f"/operations/automation/preview/nightly/{settled.preview_id}",
                 detail["previewPath"],
             )
+            status, definition_preview = self.request(
+                value,
+                f"/api/v1/automation/task-definitions/nightly/previews/{settled.preview_id}",
+            )
+            self.assertEqual(200, status, definition_preview)
+            status, manual_preview = self.request(
+                value,
+                f"/api/v1/operations/organize/preview/{settled.preview_id}",
+            )
+            self.assertEqual(404, status, manual_preview)
             self.assertTrue(detail["actions"]["preview"]["available"])
             self.assertFalse(detail["actions"]["pause"]["available"])
             # The exact Preview evidence the existing service produces is durable.
@@ -512,6 +547,288 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             # A different principal never reconciles to another's request.
             third = value.analyses.admit_definition("nightly", actor="someone-else")
             self.assertNotEqual(first.analysis_id, third.analysis_id)
+
+    def test_request_retry_keeps_its_original_pin_and_refuses_a_changed_revision(self) -> None:
+        with self.journey() as value:
+            request_id = "44444444-4444-4444-8444-444444444444"
+            first = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            successor = _activate(value.managed, self.document(source_scope="Other"))
+
+            # A lost-response retry with the same identity returns the exact
+            # original pin even after Active changed. A deliberate request to
+            # reuse that ID for the new revision is a binding conflict.
+            retried = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            self.assertEqual(first.analysis_id, retried.analysis_id)
+            self.assertEqual(first.configuration_snapshot_id, retried.configuration_snapshot_id)
+            with self.assertRaises(PreviewAnalysisError):
+                value.analyses.admit_definition(
+                    "nightly",
+                    actor="operator",
+                    revision_id=successor.revision_id,
+                    admission_request_id=request_id,
+                )
+
+    def test_manual_request_retry_survives_intent_change_and_changed_version_is_refused(
+        self,
+    ) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            request_id = "55555555-5555-4555-8555-555555555555"
+            path = f"/api/v1/operations/organize/intents/{intent.intent_id}/preview-analyses"
+            status, first = self.request(
+                value,
+                path,
+                "POST",
+                {
+                    "expectedVersion": intent.version,
+                    "admissionRequestId": request_id,
+                },
+            )
+            self.assertEqual(202, status, first)
+
+            item = intent.items[0]
+            changed = value.intents.update_choice(
+                intent.intent_id,
+                item.item_id,
+                item.choice,
+                expected_version=intent.version,
+                expected_item_version=item.version,
+                actor="operator",
+            )
+            self.assertGreater(changed.version, intent.version)
+
+            # A replay of the original submitted binding converges to the
+            # durable record; the same request ID cannot bind the new intent
+            # version to a second analysis.
+            status, retried = self.request(
+                value,
+                path,
+                "POST",
+                {
+                    "expectedVersion": intent.version,
+                    "admissionRequestId": request_id,
+                },
+            )
+            self.assertEqual(202, status, retried)
+            self.assertEqual(first["analysisId"], retried["analysisId"])
+            status, refused = self.request(
+                value,
+                path,
+                "POST",
+                {
+                    "expectedVersion": changed.version,
+                    "admissionRequestId": request_id,
+                },
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("admission_request_conflict", refused["error"]["code"])
+
+    def test_analysis_admission_survives_sqlite_close_and_reopen(self) -> None:
+        with self.journey() as value:
+            admitted = value.analyses.admit_definition("nightly", actor="operator")
+            analysis_id = admitted.analysis_id
+            revision_id = admitted.configuration_snapshot_id
+        with SQLiteTaskRepository(self.database) as reopened:
+            persisted = reopened.get_preview_analysis(analysis_id)
+            self.assertIsNotNone(persisted)
+            self.assertEqual(PreviewAnalysisStatus.QUEUED, persisted.status)
+            self.assertEqual("nightly", persisted.definition_id)
+            self.assertEqual(revision_id, persisted.configuration_snapshot_id)
+
+    def test_request_id_reuse_with_another_definition_is_rejected(self) -> None:
+        with self.journey() as value:
+            request_id = "33333333-3333-4333-8333-333333333333"
+            first = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            with self.assertRaises(PreviewAnalysisError):
+                value.analyses.admit_definition(
+                    "different", actor="operator", admission_request_id=request_id
+                )
+            self.assertEqual(first.analysis_id, value.analyses.get(first.analysis_id).analysis_id)
+            self.assertEqual(1, len(value.analyses.list(actor="operator")))
+
+    def test_worker_uses_the_admitted_definition_pin_after_publication(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        self.media("Other/Two.2002.mkv")
+        with self.journey() as value:
+            admitted = value.analyses.admit_definition("nightly", actor="operator")
+            published = _activate(value.managed, self.document(source_scope="Other"))
+            self.assertNotEqual(admitted.configuration_snapshot_id, published.revision_id)
+
+            settled = value.worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(PreviewAnalysisStatus.COMPLETED, settled.status)
+            preview = value.definition_previews.get_readonly(settled.preview_id)
+            self.assertEqual(admitted.configuration_snapshot_id, preview.configuration_revision_id)
+            self.assertEqual("Movies", preview.source_scope)
+            self.assertEqual(
+                ["Movies/One.2001.mkv"],
+                [item.source.path for item in preview.items],
+            )
+
+    def test_running_pause_is_acknowledged_before_any_preview_is_published(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            admitted = value.analyses.admit_definition("nightly", actor="operator")
+            entered = threading.Event()
+            release = threading.Event()
+            original = value.definition_previews._discover
+
+            def blocking_discover(*args, **kwargs):
+                entered.set()
+                release.wait(timeout=15)
+                return original(*args, **kwargs)
+
+            value.definition_previews._discover = blocking_discover
+            runner = threading.Thread(target=value.worker.run_next, daemon=True)
+            try:
+                runner.start()
+                self.assertTrue(entered.wait(timeout=10))
+                running = value.analyses.get(admitted.analysis_id)
+                requested = value.analyses.request_pause(
+                    admitted.analysis_id,
+                    actor="operator",
+                    expected_version=running.version,
+                )
+                self.assertEqual(PreviewAnalysisStatus.RUNNING, requested.status)
+                self.assertTrue(requested.pause_requested)
+            finally:
+                release.set()
+                value.definition_previews._discover = original
+                runner.join(timeout=15)
+
+            paused = value.analyses.get(admitted.analysis_id)
+            self.assertFalse(runner.is_alive())
+            self.assertEqual(PreviewAnalysisStatus.PAUSED, paused.status)
+            self.assertIsNone(paused.preview_id)
+            self.assertEqual(
+                0,
+                value.repository._connection.execute(
+                    "SELECT COUNT(*) FROM automation_task_definition_previews"
+                ).fetchone()[0],
+            )
+
+            resumed = value.analyses.resume(
+                admitted.analysis_id,
+                actor="operator",
+                expected_version=paused.version,
+            )
+            self.assertEqual(PreviewAnalysisStatus.QUEUED, resumed.status)
+            completed = value.worker.run_next()
+            self.assertEqual(PreviewAnalysisStatus.COMPLETED, completed.status)
+            self.assertIsNotNone(completed.preview_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_worker_heartbeats_a_long_analysis_lease(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            admitted = value.analyses.admit_definition("nightly", actor="operator")
+            value.analyses._clock = lambda: datetime.now(UTC)
+            value.analyses._lease_seconds = 0.3
+            entered = threading.Event()
+            release = threading.Event()
+            original = value.definition_previews._discover
+
+            def blocking_discover(*args, **kwargs):
+                entered.set()
+                release.wait(timeout=15)
+                return original(*args, **kwargs)
+
+            value.definition_previews._discover = blocking_discover
+            holder: list[object] = []
+            runner = threading.Thread(
+                target=lambda: holder.append(value.worker.run_next()), daemon=True
+            )
+            try:
+                runner.start()
+                self.assertTrue(entered.wait(timeout=10))
+                initial = value.analyses.get(admitted.analysis_id)
+                first_expiry = initial.claim_expires_at
+                self.assertIsNotNone(first_expiry)
+                time.sleep(0.2)
+                renewed = value.analyses.get(admitted.analysis_id)
+                self.assertGreater(renewed.claim_expires_at, first_expiry)
+                successor = value.repository.claim_next_preview_analysis(
+                    datetime.now(UTC),
+                    worker_id="new-owner",
+                    claim_token="new-owner-token",
+                    lease_seconds=0.3,
+                )
+                self.assertIsNone(successor)
+            finally:
+                release.set()
+                value.definition_previews._discover = original
+                runner.join(timeout=15)
+
+            self.assertFalse(runner.is_alive())
+            self.assertEqual(1, len(holder))
+            self.assertEqual(PreviewAnalysisStatus.COMPLETED, holder[0].status)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_expired_owner_cannot_publish_after_a_successor_claims(self) -> None:
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            admitted = value.analyses.admit_definition("nightly", actor="operator")
+            entered = threading.Event()
+            release = threading.Event()
+            original = value.definition_previews._discover
+
+            def blocking_discover(*args, **kwargs):
+                entered.set()
+                release.wait(timeout=15)
+                return original(*args, **kwargs)
+
+            value.definition_previews._discover = blocking_discover
+            errors: list[BaseException] = []
+
+            def run_old_owner():
+                try:
+                    value.worker.run_next()
+                except BaseException as error:  # captured for the test thread
+                    errors.append(error)
+
+            runner = threading.Thread(target=run_old_owner, daemon=True)
+            try:
+                runner.start()
+                self.assertTrue(entered.wait(timeout=10))
+                value.clock.now += timedelta(seconds=301)
+                successor = value.repository.claim_next_preview_analysis(
+                    value.clock(),
+                    worker_id="new-owner",
+                    claim_token="new-owner-token",
+                    lease_seconds=300,
+                )
+                self.assertIsNotNone(successor)
+                self.assertEqual("new-owner", successor.claim_worker_id)
+            finally:
+                release.set()
+                value.definition_previews._discover = original
+                runner.join(timeout=15)
+
+            self.assertFalse(runner.is_alive())
+            self.assertEqual([], errors)
+            final = value.analyses.get(admitted.analysis_id)
+            self.assertEqual(PreviewAnalysisStatus.RUNNING, final.status)
+            self.assertEqual("new-owner", final.claim_worker_id)
+            self.assertIsNone(final.preview_id)
+            self.assertEqual(
+                0,
+                value.repository._connection.execute(
+                    "SELECT COUNT(*) FROM automation_task_definition_previews"
+                ).fetchone()[0],
+            )
 
     def test_manual_analysis_admits_promptly_and_completes(self) -> None:
         self.media("Movies/One.2001.mkv")

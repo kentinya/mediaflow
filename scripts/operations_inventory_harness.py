@@ -293,6 +293,14 @@ def build_managed_fixture(
     document["storages"][1]["rootPath"] = str(destination_root)
     document["resourceLibraries"][0]["storagePath"] = ""
     document["mediaLibraries"][0]["rootPath"] = "Movies"
+    document["api"]["principals"] = [
+        {
+            "id": ADMIN_PRINCIPAL.principal_id,
+            "tokenEnv": "MEDIAFLOW_HARNESS_ADMIN_TOKEN",
+            "roles": ["admin"],
+            "enabled": True,
+        }
+    ]
     if include_cross_storage_destinations:
         document["resourceLibraries"].append(
             {
@@ -1062,6 +1070,117 @@ class _PreMutationFailureExecutor:
         )
 
 
+class _SelectivePreMutationFailureExecutor:
+    """Fail one exact synthetic source before mutation; execute its sibling normally."""
+
+    def __init__(self, delegate, failed_filename: str) -> None:
+        self._delegate = delegate
+        self._failed_filename = failed_filename
+
+    def execute(self, plan, storages, **kwargs):
+        source_path = plan.source_location.path if plan.source_location else plan.source
+        if source_path.endswith(self._failed_filename):
+            return _PreMutationFailureExecutor().execute(plan, storages, **kwargs)
+        return self._delegate.execute(plan, storages, **kwargs)
+
+
+def run_run_once_mixed_execution_worker(state: AppState, *, execution_id: str) -> dict[str, object]:
+    """Run the exact browser-admitted selection with one isolated safe failure."""
+
+    with state._manual_lock:
+        service = getattr(state.api, "_manual_execution", None)
+        if service is None:
+            return {"completed": False, "reason": "manual execution is unavailable"}
+        target = service.get(execution_id)
+        if target is None:
+            return {"completed": False, "reason": "manual execution was not found"}
+        original_run_admitted = service.run_admitted
+
+        def run_exact_admitted(target_id: str, **kwargs):
+            if target_id != execution_id:
+                return original_run_admitted(target_id, **kwargs)
+            original_executor = service._executor
+            service._executor = _SelectivePreMutationFailureExecutor(
+                original_executor, "Two.2002.mkv"
+            )
+            try:
+                return original_run_admitted(target_id, **kwargs)
+            finally:
+                service._executor = original_executor
+
+        service.run_admitted = run_exact_admitted
+        try:
+            worker = ManualOrganizeExecutionWorker(
+                service,
+                worker_id="harness-manual-worker",
+                notice=lambda _line: None,
+            )
+            completed = None
+            for _ in range(64):
+                current = service.get(execution_id)
+                if current is None or current.status.value != "admitted":
+                    completed = current
+                    break
+                picked = worker.run_next()
+                if picked is None:
+                    continue
+                if picked.execution_id == execution_id:
+                    completed = picked
+                    break
+        finally:
+            service.run_admitted = original_run_admitted
+        if completed is None:
+            return {
+                "completed": False,
+                "reason": "target execution did not reach a durable outcome",
+            }
+        durable = state.repository.get_manual_execution(completed.execution_id)
+        if durable is None or durable.task_id != completed.task_id:
+            raise RuntimeError("Run-once mixed Worker lost its durable Task linkage")
+        failed = next((item for item in durable.items if item.status.value == "failed"), None)
+        succeeded = next((item for item in durable.items if item.status.value == "success"), None)
+        if failed is None or succeeded is None:
+            return {
+                "completed": False,
+                "reason": "Run-once mixed execution did not retain independent item outcomes",
+                "executionId": durable.execution_id,
+                "status": durable.status.value,
+                "items": [
+                    {
+                        "source": item.source.path,
+                        "status": item.status.value,
+                        "error": item.error,
+                        "effectCertainty": item.effect_certainty,
+                        "stage": item.stage,
+                    }
+                    for item in durable.items
+                ],
+            }
+        current = state.repository.get_item(failed.task_item_id)
+        if current is None:
+            raise RuntimeError("Run-once failed TaskItem is missing")
+        failed_path = failed.source.path
+        success_path = succeeded.source.path
+        state.recovery_run = {
+            "runId": durable.task_id,
+            "taskId": durable.task_id,
+            "itemId": failed.task_item_id,
+            "sourcePath": failed_path,
+            "executionId": durable.execution_id,
+            "successItemId": succeeded.task_item_id,
+            "successSourcePath": success_path,
+            "successResultId": succeeded.result_id or "",
+        }
+        return {
+            "completed": True,
+            "executionId": durable.execution_id,
+            "taskId": durable.task_id,
+            "failedItemId": failed.task_item_id,
+            "successItemId": succeeded.task_item_id,
+            "status": completed.status.value,
+        }
+
+
 def seed_task_item_recovery_journey(state: AppState) -> dict[str, str]:
     """Create a real linked Manual TaskItem at a pending Recognition decision.
 
@@ -1641,10 +1760,14 @@ def task_item_recovery_state(state: AppState) -> dict[str, object]:
         if continuation and continuation.new_task_id
         else ()
     )
+    success_item = (
+        state.repository.get_item(str(run["successItemId"])) if run.get("successItemId") else None
+    )
     return {
         "available": True,
         "taskId": run["taskId"],
         "itemId": run["itemId"],
+        "successItemId": run.get("successItemId"),
         "taskStatus": task.status.value if task else None,
         "itemStatus": source.status.value if source else None,
         "itemStage": source.stage if source else None,
@@ -1663,6 +1786,13 @@ def task_item_recovery_state(state: AppState) -> dict[str, object]:
         "analysisResultId": continuation.new_result_id if continuation else None,
         "resultIds": [value.result_id for value in linked_results],
         "sourceExists": (state.managed.root / "source" / run["sourcePath"]).is_file(),
+        "successItemStatus": (success_item.status.value if success_item is not None else None),
+        "successSourceExists": (
+            (state.managed.root / "source" / str(run["successSourcePath"])).is_file()
+            if run.get("successSourcePath")
+            else None
+        ),
+        "successResultId": run.get("successResultId"),
         "targetFiles": [
             value.relative_to(state.managed.root / "destination").as_posix()
             for value in (state.managed.root / "destination").rglob("*")
@@ -1893,7 +2023,7 @@ def seed_authority_refusal(state: AppState) -> dict[str, object]:
     }
 
 
-def run_automation_run_once_worker(state: AppState) -> dict[str, object]:
+def run_automation_run_once_worker(state: AppState, *, discovery_id: str) -> dict[str, object]:
     """Advance the admitted definition-bound Run once with the real Worker.
 
     The API only *admits* the discovery; this route is the resident
@@ -1907,28 +2037,45 @@ def run_automation_run_once_worker(state: AppState) -> dict[str, object]:
     if service is None:
         return {"advanced": False, "reason": "media discovery service is unavailable"}
     worker = MediaDiscoveryWorker(service, worker_id="harness-discovery-worker")
+    try:
+        service.get(discovery_id)
+    except Exception:
+        return {"advanced": False, "reason": "the requested Run-once discovery is unavailable"}
     latest = None
     for _ in range(12):
         result = worker.run_next()
         if result is None:
             break
         latest = result
-        if result.terminal:
-            break
+        if result.discovery_id == discovery_id:
+            return {
+                "advanced": True,
+                "discoveryId": result.discovery_id,
+                "status": result.status.value,
+                "primarySourceCount": len(result.sources),
+            }
+    current = service.get(discovery_id)
     if latest is None:
-        return {"advanced": False, "reason": "no claimable Run-once discovery"}
+        return {
+            "advanced": False,
+            "reason": "the requested Run-once discovery was not claimable",
+            "discoveryId": discovery_id,
+            "status": current.status.value,
+        }
     # A freshly written source may legitimately still be inside the configured
     # stability interval, so the honest durable outcome is reported rather than
     # forced to a fabricated "completed".
     return {
-        "advanced": True,
-        "discoveryId": latest.discovery_id,
-        "status": latest.status.value,
-        "primarySourceCount": len(latest.sources),
+        "advanced": False,
+        "reason": "the Worker advanced earlier queued discoveries before the requested one",
+        "discoveryId": discovery_id,
+        "status": current.status.value,
+        "primarySourceCount": len(current.sources),
+        "lastAdvancedDiscoveryId": latest.discovery_id,
     }
 
 
-def run_preview_analysis_worker(state: AppState) -> dict[str, object]:
+def run_preview_analysis_worker(state: AppState, *, analysis_id: str) -> dict[str, object]:
     """Advance one admitted durable exact analysis with the real Worker.
 
     The API only *admits* the analysis; this route is the resident
@@ -1942,21 +2089,38 @@ def run_preview_analysis_worker(state: AppState) -> dict[str, object]:
     if service is None:
         return {"advanced": False, "reason": "preview analysis service is unavailable"}
     worker = PreviewAnalysisWorker(service, worker_id="harness-analysis-worker")
+    try:
+        service.get(analysis_id)
+    except Exception:
+        return {"advanced": False, "reason": "the requested Preview analysis is unavailable"}
     latest = None
     for _ in range(12):
         result = worker.run_next()
         if result is None:
             break
         latest = result
-        if result.terminal:
-            break
+        if result.analysis_id == analysis_id:
+            return {
+                "advanced": True,
+                "analysisId": result.analysis_id,
+                "status": result.status.value,
+                "previewId": result.preview_id,
+            }
+    current = service.get(analysis_id)
     if latest is None:
-        return {"advanced": False, "reason": "no claimable preview analysis"}
+        return {
+            "advanced": False,
+            "reason": "the requested Preview analysis was not claimable",
+            "analysisId": analysis_id,
+            "status": current.status.value,
+        }
     return {
-        "advanced": True,
-        "analysisId": latest.analysis_id,
-        "status": latest.status.value,
-        "previewId": latest.preview_id,
+        "advanced": False,
+        "reason": "the Worker advanced earlier queued analyses before the requested one",
+        "analysisId": analysis_id,
+        "status": current.status.value,
+        "previewId": current.preview_id,
+        "lastAdvancedAnalysisId": latest.analysis_id,
     }
 
 
@@ -2186,6 +2350,40 @@ def restore_source_media(state: AppState) -> dict[str, object]:
     """
 
     source_root = state.managed.root / "source"
+    scoped_fixtures = (
+        source_root / "电影" / "One.2001.mkv",
+        source_root / "电影" / "Two.2002.mkv",
+    )
+    for scoped_fixture in scoped_fixtures:
+        scoped_fixture.unlink(missing_ok=True)
+    try:
+        scoped_fixtures[0].parent.rmdir()
+    except OSError:
+        pass
+    # The Run-once restart journey executes these same deterministic fixtures
+    # through OrganizerExecutor. Restore their source files before the next
+    # browser test and clear only their known outputs from this temporary
+    # harness destination, so an earlier successful Move cannot turn a later
+    # preview into an unrelated destination conflict.
+    destination_root = state.managed.root / "destination"
+    fixture_outputs = (
+        ("One", 2001, "101"),
+        ("Two", 2002, "102"),
+        ("Three", 2003, "103"),
+        ("Four", 2004, "104"),
+    )
+    for title, year, provider_id in fixture_outputs:
+        directory_name = f"{title} ({year}) [tmdbid-{provider_id}]"
+        filename = f"{title} ({year}).mkv"
+        output = destination_root / "Movies" / "Movies" / "Anime" / directory_name / filename
+        output.unlink(missing_ok=True)
+        parent = output.parent
+        while parent != destination_root:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
     files = {
         "One.2001.mkv": b"synthetic browser media",
         "Two.2002.mkv": b"second synthetic browser media",
@@ -2196,7 +2394,57 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         target = source_root / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
-    return {"restored": sorted(files)}
+    scan = StorageScanner(
+        state.managed.runtime.create_storages(),
+        state.file_index,
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(state.managed.runtime.resource_libraries[0])
+    if scan.status.value != "completed":
+        raise RuntimeError("restored harness media could not be reindexed")
+    return {"restored": sorted(files), "indexStatus": scan.status.value}
+
+
+def seed_scheduled_worker_scope(state: AppState) -> dict[str, object]:
+    """Create and index one recognized source under an exact scoped definition."""
+
+    relative_path = "电影/One.2001.mkv"
+    target = state.managed.root / "source" / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"scheduled Worker exact Preview fixture")
+    scan = StorageScanner(
+        state.managed.runtime.create_storages(),
+        state.file_index,
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(state.managed.runtime.resource_libraries[0])
+    if scan.status.value != "completed":
+        raise RuntimeError("scheduled Worker fixture could not be indexed")
+    return {
+        "sourcePath": relative_path,
+        "scanStatus": scan.status.value,
+        "indexed": state.file_index.find_by_path("source-storage", "source", relative_path)
+        is not None,
+    }
+
+
+def seed_run_once_mixed_scope(state: AppState) -> dict[str, object]:
+    """Create and index two recognized sources for the native mixed-recovery run."""
+
+    files = {
+        "电影/One.2001.mkv": b"synthetic browser media",
+        "电影/Two.2002.mkv": b"second synthetic browser media",
+    }
+    for relative_path, content in files.items():
+        target = state.managed.root / "source" / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    scan = StorageScanner(
+        state.managed.runtime.create_storages(),
+        state.file_index,
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(state.managed.runtime.resource_libraries[0])
+    if scan.status.value != "completed":
+        raise RuntimeError("mixed Run-once fixture could not be indexed")
+    return {"sourcePaths": sorted(files), "scanStatus": scan.status.value}
 
 
 def reset_automation_definitions(state: AppState) -> dict[str, object]:
@@ -2371,6 +2619,65 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
     return {
         "emitted": [job.definition_id for job in emitted],
         "occurrenceTotal": len(occurrences),
+    }
+
+
+def run_automation_definition_worker_once(state: AppState) -> dict[str, object]:
+    """Run one emitted definition occurrence through the production Worker."""
+
+    from mediaflow.final_cli import _run_queued_workflow
+
+    occurrence = state.repository.get_latest_automation_definition_occurrence(
+        AUTOMATION_LIFECYCLE_DEFINITION_ID
+    )
+    if occurrence is None:
+        return {"ran": False, "reason": "no emitted definition occurrence"}
+    if state.managed.config_path is None:
+        return {"ran": False, "reason": "the resident Worker has no managed config path"}
+    active = state.managed.configuration_service.active()
+    if active is None:
+        return {"ran": False, "reason": "no Active configuration"}
+
+    worker = AutomationWorker(
+        state.repository,
+        lambda job, cancelled: _run_queued_workflow(
+            job,
+            str(state.managed.config_path),
+            cancelled,
+            repository=state.repository,
+        ),
+        worker_id="harness-automation-definition-worker",
+        label="harness-automation-definition-worker",
+        supported_commands=("organize",),
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        runtime_schema_version=SCHEMA_VERSION,
+    )
+    with patch(
+        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+        lambda _provider_ids: state.managed.metadata_registry,
+    ):
+        completed = worker.run_next()
+    if completed is None:
+        return {"ran": False, "reason": "no claimable scheduled definition Job"}
+    if completed.job_id != occurrence.job_id:
+        return {
+            "ran": False,
+            "reason": "the Worker claimed a different queued Job",
+            "jobId": completed.job_id,
+        }
+    persisted_occurrence = state.repository.get_latest_automation_definition_occurrence(
+        AUTOMATION_LIFECYCLE_DEFINITION_ID
+    )
+    return {
+        "ran": True,
+        "jobId": completed.job_id,
+        "jobStatus": completed.status.value,
+        "taskId": completed.task_id,
+        "occurrenceId": occurrence.occurrence_id,
+        "occurrenceTaskId": (
+            persisted_occurrence.task_id if persisted_occurrence is not None else None
+        ),
     }
 
 
@@ -2586,6 +2893,10 @@ def application(environ, start_response):
             document = register_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             document = run_manual_worker_once(STATE)
+        elif path == "/__harness__/run-run-once-mixed-worker" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            execution_id = (query.get("executionId") or [""])[0]
+            document = run_run_once_mixed_execution_worker(STATE, execution_id=execution_id)
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             document = seed_task_item_recovery_journey(STATE)
         elif path == "/__harness__/run-task-item-recovery-worker" and method == "POST":
@@ -2619,13 +2930,17 @@ def application(environ, start_response):
         elif path == "/__harness__/automation-lifecycle-state" and method == "GET":
             document = automation_lifecycle_state(STATE)
         elif path == "/__harness__/run-automation-run-once-worker" and method == "POST":
-            document = run_automation_run_once_worker(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            discovery_id = (query.get("discoveryId") or [""])[0]
+            document = run_automation_run_once_worker(STATE, discovery_id=discovery_id)
         elif path == "/__harness__/automation-run-once-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
             document = automation_run_once_state(STATE, discovery_id=discovery_id)
         elif path == "/__harness__/run-preview-analysis-worker" and method == "POST":
-            document = run_preview_analysis_worker(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            analysis_id = (query.get("analysisId") or [""])[0]
+            document = run_preview_analysis_worker(STATE, analysis_id=analysis_id)
         elif path == "/__harness__/preview-analysis-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             analysis_id = (query.get("analysisId") or [""])[0]
@@ -2636,10 +2951,16 @@ def application(environ, start_response):
             document = reset_automation_definitions(STATE)
         elif path == "/__harness__/restore-source-media" and method == "POST":
             document = restore_source_media(STATE)
+        elif path == "/__harness__/seed-scheduled-worker-scope" and method == "POST":
+            document = seed_scheduled_worker_scope(STATE)
+        elif path == "/__harness__/seed-run-once-mixed-scope" and method == "POST":
+            document = seed_run_once_mixed_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
             document = open_automation_definition_draft(STATE)
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
             document = run_automation_scheduler_tick(STATE)
+        elif path == "/__harness__/run-automation-definition-worker" and method == "POST":
+            document = run_automation_definition_worker_once(STATE)
         elif path == "/__harness__/corrupt-automation-published-history" and method == "POST":
             document = corrupt_automation_published_history(STATE)
         elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":

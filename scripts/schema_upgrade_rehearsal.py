@@ -50,8 +50,10 @@ BASE_SEED_SCRIPT = '''
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -67,6 +69,7 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
 )
 from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
@@ -77,20 +80,55 @@ from mediaflow.domain.unattended_execution import (
     UnattendedExecutionGrantAudit,
     UnattendedExecutionGrantStatus,
 )
+from mediaflow.domain.configuration_management import (
+    ManagedConfigurationRevision,
+    ManagedConfigurationStatus,
+)
+from mediaflow.domain.manual_organize import (
+    ManualChoice,
+    ManualConfigurationSnapshot,
+    ManualIntentAudit,
+    ManualIntentItem,
+    ManualIntentItemStatus,
+    ManualIntentStatus,
+    ManualOrganizeIntent,
+    ManualSourceIdentity,
+)
+from mediaflow.domain.manual_organize_preview import (
+    ManualOrganizePreview,
+    ManualPreviewItem,
+    ManualPreviewItemStatus,
+    ManualPreviewStatus,
+)
+from mediaflow.domain.recognition_review import (
+    RecognitionReview,
+    RecognitionReviewChoice,
+    RecognitionReviewStatus,
+)
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 FINGERPRINT = "b" * 64
-DIGEST = "c" * 64
+CONFIG_DOCUMENT = {"schemaVersion": 1, "rehearsal": "immutable-base-pin"}
+DIGEST = hashlib.sha256(
+    json.dumps(
+        CONFIG_DOCUMENT, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+).hexdigest()
 REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 TASK_ID = "rehearsal-task"
 DEFINITION_ID = "rehearsal-definition"
 
-REPORT = {"skipped": [], "seeded": {}, "facts": {}}
+REPORT = {"inapplicable": [], "failures": [], "seeded": {}, "facts": {}}
+
+
+def inapplicable(name, reason):
+    REPORT["inapplicable"].append({"family": name, "reason": reason})
 
 
 def skip(name, reason):
-    REPORT["skipped"].append({"seed": name, "reason": reason})
+    REPORT["failures"].append({"seed": name, "error": reason})
 
 
 def table_exists(repository, name):
@@ -113,6 +151,32 @@ with SQLiteTaskRepository(DATABASE) as repository:
         )
 
     try:
+        with SQLiteConfigurationRepository(DATABASE) as configuration_repository:
+            revision = ManagedConfigurationRevision(
+                "snap-base",
+                7,
+                ManagedConfigurationStatus.SUPERSEDED,
+                1,
+                DIGEST,
+                CONFIG_DOCUMENT,
+                NOW,
+                NOW,
+                activated_at=NOW,
+            )
+            stored_revision = configuration_repository.create_revision(revision)
+        REPORT["seeded"]["configuration_revisions"] = 1
+        REPORT["facts"]["configuration_revision"] = {
+            "revision_id": stored_revision.revision_id,
+            "version": stored_revision.version,
+            "status": stored_revision.status.value,
+            "schema_version": stored_revision.schema_version,
+            "digest": stored_revision.digest,
+            "document": stored_revision.document,
+        }
+    except Exception as error:
+        skip("configuration revision", f"{type(error).__name__}: {error}")
+
+    try:
         repository.create_task(
             PersistentTask(
                 TASK_ID,
@@ -129,7 +193,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
                 scope_path="Movies",
                 item_limit=10,
                 configuration_snapshot_id="snap-base",
-                configuration_snapshot_digest="digest-base",
+                configuration_snapshot_digest=DIGEST,
             )
         )
         REPORT["seeded"]["tasks"] = 1
@@ -139,7 +203,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
             "status": "completed",
             "execute_authorized": True,
             "configuration_snapshot_id": "snap-base",
-            "configuration_snapshot_digest": "digest-base",
+            "configuration_snapshot_digest": DIGEST,
             "total_items": 2,
             "completed_items": 1,
             "failed_items": 1,
@@ -185,6 +249,235 @@ with SQLiteTaskRepository(DATABASE) as repository:
         REPORT["facts"]["items"] = seeded_items
     except Exception as error:
         skip("persistent task items", f"{type(error).__name__}: {error}")
+
+    if table_exists(repository, "task_results") and hasattr(repository, "append_result"):
+        try:
+            result = PersistentResultRecord(
+                "rehearsal-result",
+                TASK_ID,
+                "rehearsal-item-0",
+                "storage-base",
+                "Movies/source-0.mkv",
+                "storage-base",
+                "Movies/organized-0.mkv",
+                "C",
+                "tmdb",
+                "12345",
+                "metadata-c",
+                "naming-a",
+                "classification-a",
+                "organize-move",
+                "MOVE",
+                "success",
+                NOW,
+                title="Rehearsal Movie",
+                completed_operations=("MOVE",),
+                effect_certainty="confirmed",
+            )
+            repository.append_result(result)
+            REPORT["seeded"]["task_results"] = 1
+            REPORT["facts"]["result"] = {
+                "result_id": result.result_id,
+                "task_id": result.task_id,
+                "item_id": result.item_id,
+                "source_storage_id": result.source_storage_id,
+                "source_path": result.source_path,
+                "destination_storage_id": result.destination_storage_id,
+                "destination_path": result.destination_path,
+                "recognition_type": result.recognition_type,
+                "provider": result.provider,
+                "provider_id": result.provider_id,
+                "operation": result.operation,
+                "status": result.status,
+                "effect_certainty": result.effect_certainty,
+            }
+        except Exception as error:
+            skip("task Result", f"{type(error).__name__}: {error}")
+    else:
+        inapplicable("task Results", "task_results table or append_result API is absent")
+
+    if table_exists(repository, "manual_intents") and hasattr(repository, "create_manual_intent"):
+        try:
+            source = ManualSourceIdentity(
+                "rehearsal-manual-file",
+                "storage-base",
+                "library-base",
+                "Movies/manual-source.mkv",
+                "manual-source.mkv",
+                ".mkv",
+                123,
+                NOW,
+                NOW,
+                NOW,
+                NOW,
+                "completed",
+                "rehearsal-scan",
+            )
+            choice = ManualChoice("C", None, "naming-a", "classification-a", "organize-a")
+            manual_item = ManualIntentItem(
+                "rehearsal-manual-item",
+                "rehearsal-manual-intent",
+                0,
+                source,
+                choice,
+                ManualIntentItemStatus.READY,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+            options = ManualConfigurationSnapshot("snap-base", DIGEST, (), (), (), (), ())
+            manual_intent = ManualOrganizeIntent(
+                "rehearsal-manual-intent",
+                "operator",
+                "snap-base",
+                DIGEST,
+                ManualIntentStatus.OPEN,
+                1,
+                NOW,
+                NOW,
+                (manual_item,),
+                options,
+            )
+            manual_audit = ManualIntentAudit(
+                "rehearsal-manual-audit",
+                manual_intent.intent_id,
+                None,
+                "operator",
+                "created",
+                {},
+                {"version": 1},
+                NOW,
+            )
+            repository.create_manual_intent(manual_intent, (manual_item,), manual_audit)
+            REPORT["seeded"]["manual_intents"] = 1
+            REPORT["facts"]["manual_intent"] = {
+                "intent_id": manual_intent.intent_id,
+                "actor": manual_intent.actor,
+                "snapshot_id": manual_intent.snapshot_id,
+                "snapshot_digest": manual_intent.snapshot_digest,
+                "status": manual_intent.status.value,
+                "version": manual_intent.version,
+                "item_id": manual_item.item_id,
+                "source_path": source.path,
+                "recognition_type_id": choice.recognition_type_id,
+            }
+            if hasattr(repository, "create_manual_preview"):
+                preview_id = "rehearsal-manual-preview"
+                preview_item = ManualPreviewItem(
+                    "rehearsal-manual-preview-item",
+                    preview_id,
+                    manual_intent.intent_id,
+                    manual_item.item_id,
+                    0,
+                    manual_intent.version,
+                    manual_item.version,
+                    source,
+                    choice,
+                    "snap-base",
+                    DIGEST,
+                    "a" * 64,
+                    input_fingerprint="d" * 64,
+                    status=ManualPreviewItemStatus.FAILED,
+                    error="synthetic rehearsal analysis evidence",
+                    next_action="request a fresh Preview after the upgrade rehearsal",
+                    created_at=NOW,
+                    updated_at=NOW,
+                )
+                preview = ManualOrganizePreview(
+                    preview_id,
+                    manual_intent.intent_id,
+                    "operator",
+                    manual_intent.version,
+                    "snap-base",
+                    DIGEST,
+                    ManualPreviewStatus.FAILED,
+                    (preview_item,),
+                    NOW,
+                    NOW,
+                )
+                repository.create_manual_preview(preview, (preview_item,))
+                REPORT["seeded"]["manual_previews"] = 1
+                REPORT["facts"]["manual_preview"] = {
+                    "preview_id": preview.preview_id,
+                    "intent_id": preview.intent_id,
+                    "actor": preview.actor,
+                    "intent_version": preview.intent_version,
+                    "configuration_snapshot_id": preview.configuration_snapshot_id,
+                    "configuration_snapshot_digest": preview.configuration_snapshot_digest,
+                    "status": preview.status.value,
+                    "zero_mutation": preview.zero_mutation,
+                    "item_id": preview_item.item_id,
+                    "item_status": preview_item.status.value,
+                }
+        except Exception as error:
+            skip("manual intent and Preview", f"{type(error).__name__}: {error}")
+    else:
+        inapplicable("manual intent and Preview", "manual_intents table or API is absent")
+
+    if table_exists(repository, "recognition_reviews") and hasattr(
+        repository, "create_recognition_review"
+    ):
+        try:
+            review_task_id = "rehearsal-review-task"
+            review_item_id = "rehearsal-review-item"
+            review_task = PersistentTask(
+                review_task_id,
+                "organize",
+                PersistentTaskStatus.RUNNING,
+                True,
+                NOW,
+                NOW,
+                started_at=NOW,
+                total_items=1,
+                scope_path="Movies",
+                item_limit=1,
+                configuration_snapshot_id="snap-base",
+                configuration_snapshot_digest=DIGEST,
+            )
+            repository.create_task(review_task)
+            processing_item = PersistentTaskItem(
+                review_item_id,
+                review_task_id,
+                "storage-base",
+                "library-base",
+                "Movies/review-source.mkv",
+                "review-source.mkv",
+                TaskItemStatus.PROCESSING,
+                "recognition",
+                1,
+                NOW,
+                NOW,
+            )
+            repository.upsert_item(processing_item)
+            review = RecognitionReview(
+                "rehearsal-recognition-review",
+                review_task_id,
+                review_item_id,
+                "storage-base",
+                "Movies/review-source.mkv",
+                RecognitionReviewStatus.PENDING,
+                NOW,
+                NOW,
+            )
+            choices = (
+                RecognitionReviewChoice(review.review_id, "A", "Movie"),
+                RecognitionReviewChoice(review.review_id, "B", "TV"),
+            )
+            waiting_item = replace(processing_item, status=TaskItemStatus.WAITING_RECOGNITION)
+            repository.create_recognition_review(review, choices, waiting_item)
+            REPORT["seeded"]["recognition_reviews"] = 1
+            REPORT["facts"]["review"] = {
+                "review_id": review.review_id,
+                "task_id": review.task_id,
+                "item_id": review.item_id,
+                "source_storage_id": review.source_storage_id,
+                "source_path": review.source_path,
+                "status": review.status.value,
+                "choices": ["A", "B"],
+            }
+        except Exception as error:
+            skip("recognition review", f"{type(error).__name__}: {error}")
+    else:
+        inapplicable("recognition reviews", "recognition_reviews table or API is absent")
 
     try:
         repository.create_job(
@@ -283,7 +576,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         except Exception as error:
             skip("unattended execution grant", f"{type(error).__name__}: {error}")
     else:
-        skip("unattended execution grant", "table is absent in this revision")
+        inapplicable("unattended execution grant", "table is absent in this revision")
 
     if table_exists(repository, "automation_definition_due_state"):
         try:
@@ -297,7 +590,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         except Exception as error:
             skip("automation definition due state", f"{type(error).__name__}: {error}")
     else:
-        skip("automation definition due state", "table is absent in this revision")
+        inapplicable("automation definition due state", "table is absent in this revision")
 
     if table_exists(repository, "automation_definition_occurrences"):
         try:
@@ -365,7 +658,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         except Exception as error:
             skip("automation definition occurrence", f"{type(error).__name__}: {error}")
     else:
-        skip("automation definition occurrence", "table is absent in this revision")
+        inapplicable("automation definition occurrence", "table is absent in this revision")
 
     if REPORT["seeded"].get("automation_definition_due_state"):
         try:
@@ -419,7 +712,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
                 REPORT["definition_origin_seeded"] = True
             else:
                 REPORT["definition_origin_seeded"] = False
-                skip(
+                inapplicable(
                     "media discovery definition origin",
                     "media_discoveries has no definition_origin_json column in this revision",
                 )
@@ -462,7 +755,7 @@ with SQLiteTaskRepository(DATABASE) as repository:
         except Exception as error:
             skip("media discovery", f"{type(error).__name__}: {error}")
     else:
-        skip("media discovery", "table is absent in this revision")
+        inapplicable("media discovery", "table is absent in this revision")
 
 REPORT["raw_counts"] = {}
 with sqlite3.connect(str(DATABASE)) as connection:
@@ -475,6 +768,11 @@ with sqlite3.connect(str(DATABASE)) as connection:
         "automation_definition_due_state",
         "automation_definition_occurrences",
         "media_discoveries",
+        "task_results",
+        "manual_intents",
+        "manual_previews",
+        "recognition_reviews",
+        "managed_configuration_revisions",
     ):
         try:
             row = connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()
@@ -484,6 +782,8 @@ with sqlite3.connect(str(DATABASE)) as connection:
 
 REPORT_PATH.write_text(json.dumps(REPORT, indent=2, sort_keys=True), encoding="utf-8")
 print(json.dumps(REPORT, indent=2, sort_keys=True))
+if REPORT["failures"]:
+    raise SystemExit(1)
 '''
 
 CANDIDATE_VERIFY_SCRIPT = '''
@@ -492,10 +792,12 @@ CANDIDATE_VERIFY_SCRIPT = '''
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
 
 DATABASE = Path(sys.argv[1])
 REPORT = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
@@ -533,6 +835,44 @@ with SQLiteTaskRepository(DATABASE) as repository:
         repository.schema_version == EXPECTED_SCHEMA,
         {"expected": EXPECTED_SCHEMA, "actual": repository.schema_version},
     )
+
+    if SEEDED.get("configuration_revisions"):
+
+        def verify_configuration_revision():
+            with SQLiteConfigurationRepository(DATABASE) as configuration_repository:
+                revision = configuration_repository.get_revision(
+                    FACTS["configuration_revision"]["revision_id"]
+                )
+            check("configuration_revision.readable", revision is not None)
+            if revision is not None:
+                expected = FACTS["configuration_revision"]
+                for field in (
+                    "revision_id",
+                    "version",
+                    "status",
+                    "schema_version",
+                    "digest",
+                    "document",
+                ):
+                    actual = normalize(getattr(revision, field, None))
+                    wanted = expected[field]
+                    check(
+                        f"configuration_revision.{field}",
+                        actual == wanted,
+                        {"expected": wanted, "actual": actual},
+                    )
+                encoded = json.dumps(
+                    revision.document,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                check(
+                    "configuration_revision.digest_matches_document",
+                    hashlib.sha256(encoded.encode("utf-8")).hexdigest() == revision.digest,
+                )
+
+        guard("configuration_revision.readable", verify_configuration_revision)
     check(
         "candidate_schema_constant",
         SCHEMA_VERSION == EXPECTED_SCHEMA,
@@ -560,6 +900,113 @@ with SQLiteTaskRepository(DATABASE) as repository:
                     compare(f"item.{expected['item_id']}", item, expected)
 
         guard("items.readable", verify_items)
+
+    if SEEDED.get("task_results"):
+
+        def verify_result():
+            expected = FACTS["result"]
+            values = repository.list_results_for_item(expected["item_id"])
+            match = [value for value in values if value.result_id == expected["result_id"]]
+            check("result.readable", len(match) == 1, len(values))
+            if match:
+                for field, wanted in expected.items():
+                    actual = normalize(getattr(match[0], field, None))
+                    check(
+                        f"result.{field}",
+                        actual == wanted,
+                        {"expected": wanted, "actual": actual},
+                    )
+
+        guard("result.readable", verify_result)
+
+    if SEEDED.get("manual_intents"):
+
+        def verify_manual_records():
+            expected_intent = FACTS["manual_intent"]
+            intent = repository.get_manual_intent(expected_intent["intent_id"])
+            check("manual_intent.readable", intent is not None)
+            if intent is not None:
+                for field, wanted in expected_intent.items():
+                    if field in {"item_id", "source_path", "recognition_type_id"}:
+                        continue
+                    actual = normalize(getattr(intent, field, None))
+                    check(
+                        f"manual_intent.{field}",
+                        actual == wanted,
+                        {"expected": wanted, "actual": actual},
+                    )
+                item = next(
+                    (
+                        value
+                        for value in intent.items
+                        if value.item_id == expected_intent["item_id"]
+                    ),
+                    None,
+                )
+                check("manual_intent.item.readable", item is not None)
+                if item is not None:
+                    check(
+                        "manual_intent.item.source_path",
+                        item.source.path == expected_intent["source_path"],
+                    )
+                    check(
+                        "manual_intent.item.recognition_type",
+                        item.choice.recognition_type_id == expected_intent["recognition_type_id"],
+                    )
+            if SEEDED.get("manual_previews"):
+                expected_preview = FACTS["manual_preview"]
+                preview = repository.get_manual_preview(expected_preview["preview_id"])
+                check("manual_preview.readable", preview is not None)
+                if preview is not None:
+                    for field, wanted in expected_preview.items():
+                        if field in {"item_id", "item_status"}:
+                            continue
+                        actual = normalize(getattr(preview, field, None))
+                        check(
+                            f"manual_preview.{field}",
+                            actual == wanted,
+                            {"expected": wanted, "actual": actual},
+                        )
+                    item = next(
+                        (
+                            value
+                            for value in preview.items
+                            if value.item_id == expected_preview["item_id"]
+                        ),
+                        None,
+                    )
+                    check("manual_preview.item.readable", item is not None)
+                    if item is not None:
+                        check(
+                            "manual_preview.item.status",
+                            item.status.value == expected_preview["item_status"],
+                        )
+
+        guard("manual_intent.readable", verify_manual_records)
+
+    if SEEDED.get("recognition_reviews"):
+
+        def verify_review():
+            expected = FACTS["review"]
+            review = repository.get_recognition_review(expected["review_id"])
+            check("review.readable", review is not None)
+            if review is not None:
+                for field, wanted in expected.items():
+                    if field == "choices":
+                        continue
+                    actual = normalize(getattr(review, field, None))
+                    check(
+                        f"review.{field}",
+                        actual == wanted,
+                        {"expected": wanted, "actual": actual},
+                    )
+                choices = repository.list_recognition_review_choices(review.review_id)
+                check(
+                    "review.choices",
+                    sorted(value.recognition_type_id for value in choices) == expected["choices"],
+                )
+
+        guard("review.readable", verify_review)
 
     if SEEDED.get("automation_jobs"):
 
@@ -902,7 +1349,8 @@ def main(argv: list[str] | None = None) -> int:
             "candidate_schema": verification.get("candidate_schema"),
             "seeded_row_counts": base_report.get("seeded", {}),
             "raw_base_counts": base_report.get("raw_counts", {}),
-            "skipped_seeds": base_report.get("skipped", []),
+            "seed_failures": base_report.get("failures", []),
+            "inapplicable_families": base_report.get("inapplicable", []),
             "definition_origin_seeded": base_report.get("definition_origin_seeded", False),
             "preserved_row_assertions": assertions,
             "failed_assertions": failures,

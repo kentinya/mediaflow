@@ -152,10 +152,15 @@ describe("PreviewAnalysisPage", () => {
       if (call.url === DETAIL_URL && call.method === "GET") {
         return jsonResponse(
           analysisDocument({
+            kind: "definition",
+            definitionId: "nightly",
+            definitionFingerprint: "b".repeat(64),
+            intentId: null,
+            intentVersion: null,
             status: "completed",
             version: 5,
             previewId: "preview-1",
-            previewPath: "/operations/organize/preview/preview-1",
+            previewPath: "/operations/automation/preview/nightly/preview-1",
             progress: {
               phase: "completed",
               message: "the exact zero-mutation Preview is stored",
@@ -179,10 +184,10 @@ describe("PreviewAnalysisPage", () => {
 
     await screen.findByText("分析完成");
     const link = await screen.findByRole("link", { name: "打开精确预览" });
-    // The exact Preview lives in the manual Organize route tree; the router
-    // link carries the application basepath rather than a basepath-less URL.
+    // Definition analysis uses the definition Preview authority and retains
+    // the application basepath through the router Link.
     expect(link.getAttribute("href")).toContain(
-      "/operations/organize/preview/preview-1",
+      "/operations/automation/preview/nightly/preview-1",
     );
     // A settled analysis advertises no cooperative control.
     expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();

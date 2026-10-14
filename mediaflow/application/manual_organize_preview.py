@@ -73,6 +73,7 @@ from mediaflow.domain.organizer import (
     PlanStatus,
     StorageLocation,
 )
+from mediaflow.domain.preview_analysis import PreviewAnalysisControlRequested
 from mediaflow.domain.recognition import RecognitionStatus
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
@@ -185,6 +186,8 @@ class ManualOrganizePreviewService:
         review_decisions: object | None = None,
         skip_current_snapshot_check: bool = False,
         recovery_source_task_id: str | None = None,
+        persist: bool = True,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> ManualOrganizePreview:
         """Create one durable zero-mutation Preview.
 
@@ -223,7 +226,8 @@ class ManualOrganizePreviewService:
 
         records: dict[str, object] = {}
         states: dict[str, dict[str, object]] = {}
-        for item in selected:
+        for position, item in enumerate(selected):
+            self._analysis_checkpoint(analysis_checkpoint, "discovery", position, 0, len(selected))
             self._positive_version(versions[item.item_id], "expectedItemVersion")
             if item.version != versions[item.item_id]:
                 raise ManualPreviewConflict(
@@ -273,13 +277,19 @@ class ManualOrganizePreviewService:
                 ) from error
             records[item.item_id] = record
             states[item.item_id] = self._input_state(intent, item, record)
+            self._analysis_checkpoint(
+                analysis_checkpoint, "discovery", position + 1, 0, len(selected)
+            )
 
         preview_id = str(uuid4())
         now = self._clock()
         previous = self._latest_preview(intent.intent_id)
         preview_items: list[ManualPreviewItem] = []
-        for item in selected:
+        for position, item in enumerate(selected):
             state = states[item.item_id]
+            self._analysis_checkpoint(
+                analysis_checkpoint, "analysis", len(selected), position, len(selected)
+            )
             try:
                 admission_error = source_admission_errors.get(item.source.file_id)
                 if admission_error is not None:
@@ -291,7 +301,13 @@ class ManualOrganizePreviewService:
                         records[item.item_id],
                         preview_id,
                         review_decisions=review_decisions,
+                        analysis_checkpoint=analysis_checkpoint,
+                        visited_entries=len(selected),
+                        analysed_items=position,
+                        total_items=len(selected),
                     )
+            except PreviewAnalysisControlRequested:
+                raise
             except ManualPreviewUnavailable as error:
                 outcome = _PreviewOutcome(
                     ManualPreviewItemStatus.UNAVAILABLE,
@@ -355,6 +371,13 @@ class ManualOrganizePreviewService:
                     True,
                 )
             )
+            self._analysis_checkpoint(
+                analysis_checkpoint,
+                "analysis",
+                len(selected),
+                position + 1,
+                len(selected),
+            )
 
         aggregate_status = self._aggregate_status(preview_items)
         selected_ids = {value.item_id for value in selected}
@@ -379,7 +402,7 @@ class ManualOrganizePreviewService:
             source_scope_id=source_scope_id,
             recovery_source_task_id=recovery_source_task_id,
         )
-        persisted = self._persist_create(preview)
+        persisted = self._persist_create(preview) if persist else None
         return persisted or preview
 
     create_preview = create
@@ -2165,7 +2188,17 @@ class ManualOrganizePreviewService:
         return tuple(sorted(result, key=lambda value: str(value.get("confirmationId"))))
 
     def _run_item(
-        self, intent, item, record, preview_id: str, *, review_decisions: object | None = None
+        self,
+        intent,
+        item,
+        record,
+        preview_id: str,
+        *,
+        review_decisions: object | None = None,
+        analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
+        visited_entries: int = 0,
+        analysed_items: int = 0,
+        total_items: int = 0,
     ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
         type_policy = next(
@@ -2265,6 +2298,9 @@ class ManualOrganizePreviewService:
         )
         runner = self._runner(runtime, providers, source_storage, configured_storages)
         classification_selection = self._bound_classification_decision(bound, item, type_policy)
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
+        )
         strategy = runner.run_path(
             item.source.path,
             live_metadata=live_metadata,
@@ -2279,6 +2315,9 @@ class ManualOrganizePreviewService:
             forced_recognition_type_id=item.choice.recognition_type_id,
             storage_path=item.source.path,
             source_storage=source_storage,
+        )
+        self._analysis_checkpoint(
+            analysis_checkpoint, "provider", visited_entries, analysed_items, total_items
         )
         if strategy.recognition.status is not RecognitionStatus.MATCHED:
             return _PreviewOutcome(
@@ -3132,6 +3171,17 @@ class ManualOrganizePreviewService:
         if not callable(method):
             raise ManualPreviewUnavailable("manual Preview persistence is unavailable")
         return method(preview, preview.items)
+
+    @staticmethod
+    def _analysis_checkpoint(
+        callback: Callable[[str, int, int, int], None] | None,
+        phase: str,
+        visited_entries: int,
+        analysed_items: int,
+        total_items: int,
+    ) -> None:
+        if callback is not None:
+            callback(phase, visited_entries, analysed_items, total_items)
 
     def _latest_preview(self, intent_id: str):
         method = getattr(self._repository, "get_latest_manual_preview", None)

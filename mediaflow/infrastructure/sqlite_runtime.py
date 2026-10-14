@@ -176,6 +176,7 @@ from mediaflow.domain.preview_analysis import (
     PreviewAnalysis,
     PreviewAnalysisConflict,
     PreviewAnalysisKind,
+    PreviewAnalysisOwnershipLost,
     PreviewAnalysisProgress,
     PreviewAnalysisStatus,
     PreviewAnalysisUnavailable,
@@ -8774,6 +8775,8 @@ class SQLiteTaskRepository:
         self,
         preview: ManualOrganizePreview,
         items: tuple[ManualPreviewItem, ...] | list[ManualPreviewItem] | None = None,
+        *,
+        _analysis_completion: tuple[PreviewAnalysis, int, str, str] | None = None,
     ) -> ManualOrganizePreview:
         """Publish one complete Preview atomically.
 
@@ -8993,6 +8996,8 @@ class SQLiteTaskRepository:
                             int(item.current),
                         ),
                     )
+                if _analysis_completion is not None:
+                    self._complete_preview_analysis_locked(*_analysis_completion)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -9115,6 +9120,8 @@ class SQLiteTaskRepository:
         items: tuple[AutomationTaskDefinitionPreviewItem, ...]
         | list[AutomationTaskDefinitionPreviewItem]
         | None = None,
+        *,
+        _analysis_completion: tuple[PreviewAnalysis, int, str, str] | None = None,
     ) -> AutomationTaskDefinitionPreview:
         if not isinstance(preview, AutomationTaskDefinitionPreview):
             raise ValueError("automation Preview projection is required")
@@ -9269,6 +9276,8 @@ class SQLiteTaskRepository:
                             item.updated_at.isoformat(),
                         ),
                     )
+                if _analysis_completion is not None:
+                    self._complete_preview_analysis_locked(*_analysis_completion)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -10836,6 +10845,159 @@ class SQLiteTaskRepository:
                 )
         return analysis
 
+    def update_claimed_preview_analysis(
+        self,
+        analysis: PreviewAnalysis,
+        *,
+        expected_version: int,
+        worker_id: str,
+        claim_token: str,
+        now: datetime,
+        clear_claim: bool,
+    ) -> PreviewAnalysis:
+        """Publish one Worker transition under a live owner and version fence."""
+
+        if not isinstance(analysis, PreviewAnalysis):
+            raise ValueError("preview analysis projection is required")
+        if isinstance(expected_version, bool) or expected_version < 1:
+            raise ValueError("preview analysis expected version must be positive")
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("preview analysis worker identity is invalid")
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("preview analysis claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("preview analysis transition timestamp needs timezone")
+        claim_values = (
+            (", claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL")
+            if clear_claim
+            else ""
+        )
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE preview_analyses SET status=?, version=?, progress_json=?, "
+                "preview_id=?, error=?, cancel_requested=?, pause_requested=?, updated_at=?"
+                f"{claim_values} WHERE analysis_id=? AND version=? AND status IN (?, ?) "
+                "AND claim_worker_id=? AND claim_token=? AND claim_expires_at>?",
+                (
+                    analysis.status.value,
+                    analysis.version,
+                    json.dumps(analysis.progress.document(), ensure_ascii=False, sort_keys=True),
+                    analysis.preview_id,
+                    analysis.error,
+                    int(analysis.cancel_requested),
+                    int(analysis.pause_requested),
+                    analysis.updated_at.isoformat(),
+                    analysis.analysis_id,
+                    expected_version,
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                    worker_id,
+                    claim_token,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PreviewAnalysisOwnershipLost(
+                    "preview analysis ownership or version changed; "
+                    "no Worker transition was published"
+                )
+        return analysis
+
+    def publish_preview_analysis(
+        self,
+        completed: PreviewAnalysis,
+        preview: ManualOrganizePreview | AutomationTaskDefinitionPreview,
+        *,
+        expected_version: int,
+        worker_id: str,
+        claim_token: str,
+    ) -> PreviewAnalysis:
+        """Atomically publish exact Preview evidence and complete its live analysis claim."""
+
+        if (
+            not isinstance(completed, PreviewAnalysis)
+            or completed.status is not PreviewAnalysisStatus.COMPLETED
+            or completed.preview_id is None
+            or completed.claim_token is not None
+        ):
+            raise ValueError("completed preview analysis projection is invalid")
+        if completed.kind is PreviewAnalysisKind.DEFINITION:
+            if (
+                not isinstance(preview, AutomationTaskDefinitionPreview)
+                or preview.preview_id != completed.preview_id
+                or preview.definition_id != completed.definition_id
+                or preview.definition_fingerprint != completed.definition_fingerprint
+                or preview.configuration_revision_id != completed.configuration_snapshot_id
+                or preview.configuration_revision_digest != completed.configuration_snapshot_digest
+            ):
+                raise PreviewAnalysisConflict(
+                    "definition Preview evidence does not match its admitted pin"
+                )
+            self.create_automation_task_definition_preview(
+                preview,
+                preview.items,
+                _analysis_completion=(completed, expected_version, worker_id, claim_token),
+            )
+        else:
+            if (
+                not isinstance(preview, ManualOrganizePreview)
+                or preview.preview_id != completed.preview_id
+                or preview.intent_id != completed.intent_id
+                or preview.intent_version != completed.intent_version
+                or preview.configuration_snapshot_id != completed.configuration_snapshot_id
+                or preview.configuration_snapshot_digest != completed.configuration_snapshot_digest
+            ):
+                raise PreviewAnalysisConflict(
+                    "manual Preview evidence does not match its admitted pin"
+                )
+            self.create_manual_preview(
+                preview,
+                preview.items,
+                _analysis_completion=(completed, expected_version, worker_id, claim_token),
+            )
+        result = self.get_preview_analysis(completed.analysis_id)
+        if result is None:
+            raise PreviewAnalysisUnavailable("completed preview analysis could not be reloaded")
+        return result
+
+    def _complete_preview_analysis_locked(
+        self,
+        completed: PreviewAnalysis,
+        expected_version: int,
+        worker_id: str,
+        claim_token: str,
+    ) -> None:
+        now = completed.updated_at
+        if now.tzinfo is None:
+            raise ValueError("preview analysis completion timestamp needs timezone")
+        cursor = self._connection.execute(
+            "UPDATE preview_analyses SET status=?, version=?, progress_json=?, preview_id=?, "
+            "error=?, cancel_requested=0, pause_requested=0, claim_worker_id=NULL, "
+            "claim_token=NULL, claim_expires_at=NULL, updated_at=? WHERE analysis_id=? "
+            "AND kind=? AND version=? AND status=? AND cancel_requested=0 "
+            "AND pause_requested=0 AND claim_worker_id=? AND claim_token=? "
+            "AND claim_expires_at>?",
+            (
+                completed.status.value,
+                completed.version,
+                json.dumps(completed.progress.document(), ensure_ascii=False, sort_keys=True),
+                completed.preview_id,
+                completed.error,
+                now.isoformat(),
+                completed.analysis_id,
+                completed.kind.value,
+                expected_version,
+                PreviewAnalysisStatus.RUNNING.value,
+                worker_id,
+                claim_token,
+                now.isoformat(),
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise PreviewAnalysisOwnershipLost(
+                "preview analysis lease or control changed; no Preview was published"
+            )
+
     def claim_next_preview_analysis(
         self,
         now: datetime,
@@ -10895,12 +11057,16 @@ class SQLiteTaskRepository:
     def heartbeat_preview_analysis_claim(
         self,
         analysis_id: str,
+        *,
+        worker_id: str,
         claim_token: str,
         now: datetime,
         lease_seconds: float,
     ) -> bool:
         """Renew one live analysis lease without changing its ownership."""
 
+        if not isinstance(worker_id, str) or not worker_id.strip():
+            raise ValueError("preview analysis worker identity is invalid")
         if not isinstance(claim_token, str) or not claim_token.strip():
             raise ValueError("preview analysis claim token is invalid")
         if now.tzinfo is None:
@@ -10909,12 +11075,15 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE preview_analyses SET claim_expires_at=?, updated_at=? "
-                "WHERE analysis_id=? AND claim_token=? AND status IN (?, ?)",
+                "WHERE analysis_id=? AND claim_worker_id=? AND claim_token=? "
+                "AND claim_expires_at>? AND status IN (?, ?)",
                 (
                     expires_at.isoformat(),
                     now.isoformat(),
                     analysis_id,
+                    worker_id,
                     claim_token,
+                    now.isoformat(),
                     PreviewAnalysisStatus.QUEUED.value,
                     PreviewAnalysisStatus.RUNNING.value,
                 ),

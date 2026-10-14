@@ -833,14 +833,20 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // follows the completed analysis to the manual Preview.
   await page.getByRole("button", { name: "生成精确预览" }).click();
   await expect(page).toHaveURL(/\/operations\/automation\/preview-analyses\//);
+  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(analysisId).toMatch(/^[0-9a-f-]{36}$/);
   const analysisAdvanced = await request.post(
-    `${BASE}/__harness__/run-preview-analysis-worker`,
+    `${BASE}/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
   );
   const analysisBody = (await analysisAdvanced.json()) as {
+    advanced?: boolean;
     status?: string;
     previewId?: string | null;
   };
-  expect(analysisBody.status).toBe("completed");
+  expect(analysisBody, JSON.stringify(analysisBody)).toMatchObject({
+    advanced: true,
+    status: "completed",
+  });
   expect(analysisBody.previewId).toBeTruthy();
   // Follow the analysis page's own exact-Preview link so the reviewed
   // selection state survives (a full reload would discard it).
@@ -1212,12 +1218,20 @@ test("the default unfiltered task-center origin selects its admitted run through
   expect((await refetchedIntent).ok()).toBeTruthy();
   await page.getByRole("button", { name: "生成精确预览" }).click();
   await expect(page).toHaveURL(/\/operations\/automation\/preview-analyses\//);
+  const returnAnalysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(returnAnalysisId).toMatch(/^[0-9a-f-]{36}$/);
   const returnAnalysis = await request.post(
-    `${BASE}/__harness__/run-preview-analysis-worker`,
+    `${BASE}/__harness__/run-preview-analysis-worker?analysisId=${returnAnalysisId}`,
   );
   const returnBody = (await returnAnalysis.json()) as {
+    advanced?: boolean;
+    status?: string;
     previewId?: string | null;
   };
+  expect(returnBody, JSON.stringify(returnBody)).toMatchObject({
+    advanced: true,
+    status: "completed",
+  });
   expect(returnBody.previewId).toBeTruthy();
   await page.getByRole("link", { name: "打开精确预览" }).click();
   await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();

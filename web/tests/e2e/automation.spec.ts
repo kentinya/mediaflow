@@ -183,7 +183,7 @@ test("create exact Preview admits one durable analysis and follows it to the def
   await expect(previewLink).toBeVisible();
   await expect(previewLink).toHaveAttribute(
     "href",
-    /\/ui-v2\/operations\/organize\/preview\/automation-preview-e2e-001$/,
+    `/ui-v2/operations/automation/preview/${DEFINITION_ID}/automation-preview-e2e-001`,
   );
 
   // The token is held in memory only, so the deep link reconnects once and

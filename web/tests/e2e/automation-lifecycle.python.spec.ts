@@ -717,3 +717,118 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   ).toHaveCount(0);
   await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
 });
+
+test("exact definition Preview grants a real scheduled Worker run", async ({
+  page,
+}) => {
+  await page.request.post("/__harness__/restore-source-media");
+  await page.request.post("/__harness__/seed-scheduled-worker-scope");
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByLabel("Relative source scope").fill("电影");
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  // Schedule enablement is a separate publication. The exact Preview below
+  // binds to the enabled Active snapshot that the Scheduler will later emit.
+  await openLifecycle(page, DEFINITION_ID);
+  await page.getByRole("button", { name: "Enable schedule" }).click();
+  await expect(page.getByText(/eligible for future Scheduler/)).toBeVisible();
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await page.getByRole("button", { name: "Create exact Preview" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/automation\/preview-analyses\//,
+  );
+  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(analysisId).not.toBe("");
+  await expect(
+    page.getByRole("heading", { name: "精确预览分析" }),
+  ).toBeVisible();
+
+  const advanced = await page.request.post(
+    `/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
+  );
+  const advancedBody = (await advanced.json()) as {
+    advanced?: boolean;
+    status?: string;
+    previewId?: string | null;
+  };
+  expect(advancedBody.advanced).toBe(true);
+  expect(advancedBody.status).toBe("completed");
+  expect(advancedBody.previewId).toBeTruthy();
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/preview-analyses/${analysisId}`,
+  );
+  const previewLink = page.getByRole("link", { name: "打开精确预览" });
+  await expect(previewLink).toBeVisible();
+  await previewLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/ui-v2/operations/automation/preview/${DEFINITION_ID}/${advancedBody.previewId}$`,
+    ),
+  );
+  await expect(
+    page.getByRole("heading", { name: "Exact Automation Preview" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Zero Storage mutation" }),
+  ).toBeVisible();
+  await expect(page.getByText(/One\.2001\.mkv/).first()).toBeVisible();
+
+  await page.getByLabel("Confirm unattended execution grant").check();
+  await page
+    .getByRole("button", { name: "Grant unattended authority" })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/automation/definition/${DEFINITION_ID}$`),
+  );
+  await expect(page.getByText("Grant state")).toBeVisible();
+  await expect(page.getByText("Active", { exact: true }).last()).toBeVisible();
+
+  const beforeTick = await harnessState(page);
+  expect(beforeTick.definitions[0]?.enabled).toBe(true);
+  expect(beforeTick.grant?.status).toBe("active");
+  const priorOccurrenceTotal = beforeTick.occurrenceTotal;
+  const tick = await page.request.post(
+    "/__harness__/run-automation-scheduler-tick",
+  );
+  const tickBody = (await tick.json()) as { emitted?: string[] };
+  expect(tickBody.emitted).toContain(DEFINITION_ID);
+
+  const worker = await page.request.post(
+    "/__harness__/run-automation-definition-worker",
+  );
+  const workerBody = (await worker.json()) as {
+    ran?: boolean;
+    jobStatus?: string;
+    taskId?: string | null;
+    occurrenceTaskId?: string | null;
+  };
+  expect(workerBody.ran, JSON.stringify(workerBody)).toBe(true);
+  expect(workerBody.jobStatus).toBe("completed");
+  expect(workerBody.taskId).toBeTruthy();
+  expect(workerBody.occurrenceTaskId).toBe(workerBody.taskId);
+
+  const afterWorker = await harnessState(page);
+  expect(afterWorker.definitions[0]?.enabled).toBe(true);
+  expect(afterWorker.grant?.status).toBe("active");
+  expect(afterWorker.occurrenceTotal).toBe(priorOccurrenceTotal + 1);
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/occurrences/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: /Automation occurrences/i }),
+  ).toBeVisible();
+  await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Open the Task" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/tasks/${workerBody.taskId}$`),
+  );
+});

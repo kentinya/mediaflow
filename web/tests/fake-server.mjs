@@ -4728,8 +4728,8 @@ function previewAnalysisIsActive(analysis) {
  * over the in-flight work.  A definition analysis publishes the definition
  * Preview (so the definition Preview page becomes the current, grant-eligible
  * evidence); a manual analysis publishes the manual Preview.  The linked
- * `previewPath` is the manual Organize route the real projection publishes for
- * both kinds.
+ * `previewPath` follows the corresponding definition or manual Preview route,
+ * matching the distinct authorities on the real application surface.
  */
 function advancePreviewAnalysis(analysis, session) {
   if (!previewAnalysisIsActive(analysis)) {
@@ -4747,7 +4747,10 @@ function advancePreviewAnalysis(analysis, session) {
     analysis.kind === "definition"
       ? AUTOMATION_PREVIEW_ID
       : ORGANIZE_PREVIEW_ID;
-  analysis.previewPath = `/operations/organize/preview/${analysis.previewId}`;
+  analysis.previewPath =
+    analysis.kind === "definition"
+      ? `/operations/automation/preview/${encodeURIComponent(analysis.definitionId)}/${analysis.previewId}`
+      : `/operations/organize/preview/${analysis.previewId}`;
   analysis.progress = previewAnalysisProgress(
     "completed",
     "the exact zero-mutation Preview is stored; a separate explicit execution confirmation is still required",
