@@ -22,6 +22,7 @@ fails without mutation and nothing is replayed automatically.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import os
@@ -76,6 +77,7 @@ from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.in_memory_storage import InMemoryStorage
 from tests.test_configuration_objects import example_document
 from tests.test_manual_organize_preview import manual_snapshot
 
@@ -178,6 +180,7 @@ class _JourneyFixtureMixin:
         conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL,
         target_hard_link: bool | None = None,
         register_worker: bool = True,
+        source_storage=None,
     ):
         with self._journey_environment(
             names=names,
@@ -186,6 +189,7 @@ class _JourneyFixtureMixin:
             conflict_strategy=conflict_strategy,
             target_hard_link=target_hard_link,
             register_worker=register_worker,
+            source_storage=source_storage,
         ) as value:
             try:
                 yield value
@@ -202,6 +206,7 @@ class _JourneyFixtureMixin:
         conflict_strategy,
         target_hard_link,
         register_worker,
+        source_storage=None,
     ):
         """Build the whole journey graph; the caller owns the repository."""
 
@@ -233,7 +238,8 @@ class _JourneyFixtureMixin:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_bytes(b"existing-destination")
 
-            source_storage = LocalStorage("source", source_root)
+            if source_storage is None:
+                source_storage = LocalStorage("source", source_root)
             target_storage = LocalStorage("target", target_root)
             library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
 
@@ -490,10 +496,32 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     # --- the journey -------------------------------------------------------
 
     def test_long_source_path_survives_intent_and_preview_projection(self) -> None:
+        """Real-filesystem coverage; skips only on a proved path-length limit.
+
+        macOS ``PATH_MAX`` is 1024, so creating the >1024-byte fixture itself
+        raises ``ENAMETOOLONG`` before the manual-organize journey is exercised.
+        The platform-independent ``..._in_memory`` case below keeps the exact
+        long path through the real application/API/persistence layers on every
+        host.  A permission/I/O/application error still fails.
+        """
+
         long_name = "L" * 175 + ".mkv"
         long_path = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + long_name
         short_path = f"LongFolder/{long_name}"
         self.assertEqual(1222, len(long_path))
+
+        with tempfile.TemporaryDirectory() as probe_root:
+            try:
+                probe = Path(probe_root) / Path(long_path)
+                probe.parent.mkdir(parents=True, exist_ok=True)
+                probe.write_bytes(b"probe")
+            except OSError as error:
+                if error.errno == errno.ENAMETOOLONG:
+                    self.skipTest(
+                        f"temporary filesystem cannot create a >1024-byte path fixture "
+                        f"(errno {error.errno}: {error.strerror}); in-memory coverage runs instead"
+                    )
+                raise
 
         with self.journey(names=(short_path, long_path)) as value:
             long_record = next(
@@ -540,6 +568,66 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             preview = self._create_preview(value, reviewed)
             self.assertEqual(long_path, preview["items"][0]["source"]["path"])
             self.assertTrue(preview["zeroMutation"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_long_source_path_survives_intent_and_preview_projection_in_memory(self) -> None:
+        """Platform-independent exact long path through the real journey.
+
+        A provider-neutral in-memory Storage replaces only the source adapter,
+        so the exact 1222-byte ResourceLibrary-relative path is preserved
+        byte-for-byte through the real manual intent admission, the real SQLite
+        repository and the real exact-Preview projection, with zero mutation.
+        """
+
+        long_name = "L" * 175 + ".mkv"
+        long_path = "LongFolder/" + "/".join(["D" * 171] * 6) + "/" + long_name
+        self.assertEqual(1222, len(long_path))
+        storage = InMemoryStorage("source", {long_path: b"media"})
+
+        with self.journey(
+            names=(),
+            source_storage=storage,
+        ) as value:
+            # The intent is admitted from the live Storage path, so no FileIndex
+            # row is required; the exact bytes must survive admission.
+            status, intent = self._request(
+                value,
+                "/api/v1/resource-libraries/library/files/organize",
+                "POST",
+                {"paths": [long_path]},
+            )
+            self.assertEqual(201, status, intent)
+            self.assertEqual([long_path], [item["source"]["path"] for item in intent["items"]])
+
+            status, detail = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual(long_path, detail["items"][0]["source"]["path"])
+
+            item = detail["items"][0]
+            status, reviewed = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": detail["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, reviewed)
+            preview = self._create_preview(value, reviewed)
+            self.assertEqual(long_path, preview["items"][0]["source"]["path"])
+            self.assertTrue(preview["zeroMutation"])
+            # Exact RecognitionType C identity is preserved under A/A policies.
+            self.assertEqual("C", preview["items"][0]["plan"]["recognitionType"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 

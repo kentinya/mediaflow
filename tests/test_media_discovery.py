@@ -9,6 +9,7 @@ capability.
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import os
@@ -51,6 +52,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.in_memory_storage import InMemoryStorage
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -165,6 +167,27 @@ class _DiscoveryFixture(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._temporary.cleanup()
+
+    def _require_long_path_fixture_support(self, relative: str) -> None:
+        """Skip a real-filesystem long-path case only on a proved path limit.
+
+        The temporary filesystem is probed with the exact fixture the test
+        needs (the parent directories *and* a regular file).  A genuine
+        ``ENAMETOOLONG`` produces a precise reported skip; every other error
+        (permission, I/O, application) is re-raised so it still fails.
+        """
+
+        probe = self.source_root / relative
+        try:
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_bytes(b"probe")
+        except OSError as error:
+            if error.errno == errno.ENAMETOOLONG:
+                self.skipTest(
+                    f"temporary filesystem cannot create a >1024-byte path fixture "
+                    f"(errno {error.errno}: {error.strerror}); in-memory coverage runs instead"
+                )
+            raise
 
     def media(
         self,
@@ -297,6 +320,7 @@ class _DiscoveryFixture(unittest.TestCase):
         second_library: bool = False,
         attachments: bool = False,
         metadata_query_type: str | None = None,
+        source_storage=None,
     ):
 
         document = self.document(
@@ -309,7 +333,14 @@ class _DiscoveryFixture(unittest.TestCase):
         if metadata_query_type is not None:
             for policy in document.get("metadataPolicies", []):
                 policy["mediaQueryType"] = metadata_query_type
-        source = _RecordingStorage(LocalStorage("source", self.source_root))
+        if source_storage is not None:
+            # A provider-neutral Storage double (for example the in-memory
+            # long-path fixture) replaces only the source adapter; the real
+            # managed configuration, SQLite persistence and API stay exactly
+            # the ones the production journey uses.
+            source = _RecordingStorage(source_storage)
+        else:
+            source = _RecordingStorage(LocalStorage("source", self.source_root))
         target = _RecordingStorage(LocalStorage("target", self.target_root))
         storages = {"source": source, "target": target}
         if second_library:
@@ -3440,13 +3471,22 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             self.assertEqual([], value.source.mutations)
 
     def test_a_legal_long_relative_path_is_readable_end_to_end(self) -> None:
-        """A44-9: a >1024-character legal path does not break list or detail."""
+        """A44-9: a >1024-character legal path does not break list or detail.
+
+        Real-filesystem coverage.  The temporary filesystem is probed first so
+        a host path-length limit (macOS ``PATH_MAX`` 1024) produces an explicit,
+        reported skip; the platform-independent ``..._in_memory`` case below
+        still exercises the exact path through the real application/API/
+        persistence layers on every host.  Any non-path-length error still
+        fails.
+        """
 
         path = (
             "Long/" + "/".join(("d" + str(index) + "x" * 197) for index in range(6)) + "/Film.mkv"
         )
-        self.media(path)
         self.assertGreater(len(path), 1024)
+        self._require_long_path_fixture_support(path)
+        self.media(path)
         with self.journey() as value:
             _, admitted = self.request(
                 value,
@@ -3471,6 +3511,48 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             )
             self.assertEqual(200, status, detail)
             self.assertEqual(settled["sources"][0]["path"], detail["sources"][0]["path"])
+
+    def test_a_legal_long_relative_path_is_readable_end_to_end_in_memory(self) -> None:
+        """A44-9 (platform-independent): exact >1024 path through real layers.
+
+        A provider-neutral in-memory Storage replaces only the source adapter,
+        so the exact long ResourceLibrary-relative path is preserved byte-for-
+        byte through the real discovery service, the real SQLite repository and
+        the real authenticated API list/detail projections, with zero mutation.
+        This is the coverage that must hold on macOS and Linux alike.
+        """
+
+        path = (
+            "Long/" + "/".join(("d" + str(index) + "x" * 197) for index in range(6)) + "/Film.mkv"
+        )
+        self.assertGreater(len(path), 1024)
+        storage = InMemoryStorage("source", {path: b"m" * 512})
+        with self.journey(source_storage=storage) as value:
+            _, admitted = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/discoveries",
+                "POST",
+                {"paths": ["Long"]},
+            )
+            settled = self.run_discovery(value)
+            self.assertEqual("completed", settled["status"], settled)
+            # The exact bytes survive the walk, not a shortened or normalized
+            # substitute.
+            self.assertEqual(path, settled["sources"][0]["path"])
+            status, listing = self.request(value, "/api/v1/operations/organize/discoveries")
+            self.assertEqual(200, status, listing)
+            found = next(
+                item for item in listing["items"] if item["discoveryId"] == admitted["discoveryId"]
+            )
+            self.assertEqual(1, found["primarySourceCount"], found)
+            status, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertEqual(path, detail["sources"][0]["path"])
+            # Discovery is metadata-only and performed no mutation.
+            self.assertEqual([], value.source.mutations)
 
     # -- A44-10: truthful partial discovery ------------------------------
 
