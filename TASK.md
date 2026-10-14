@@ -16,6 +16,8 @@ Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
+Latest Reviewed Checkpoint: f0c1934c81c65dea173a2e72c9b7607e7ff94ea4
+Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
 ```
 
 ## Goal
@@ -960,4 +962,728 @@ Gates: full Python 2578 OK (skipped=7); web 1164 unit + typecheck/lint/format/bu
        no ffmpeg/ffprobe.
 Open item for B: pre-existing load-sensitive Rules destination-check race
        (reproduced at Task Base; not self-waived).
+```
+
+## B Fix-Round Review Result — 2026-10-13
+
+```text
+Reviewed Range: 9d4eec52b5196cb323171454c48c055b41256ebc..dd50584b864c21975ca5c96fd6bc763a8a238454
+Reviewed candidate: dd50584b864c21975ca5c96fd6bc763a8a238454
+Report-only successor: cc9e067ba11681b0bc7f0ed098e1b1562529a42a
+Decision: FIX REQUIRED
+Slice Required Outcomes / Required Surfaces all satisfied: NO
+Next: DEVELOPER CORRECTS THE SAME TASK 43.2
+Difficulty / Test Level: High / T4 (unchanged)
+Evidence: .git/validation-evidence/dd50584b864c21975ca5c96fd6bc763a8a238454/b-review43.2-20261013-round2/INDEX.md
+```
+
+This is the current B decision. The earlier review and both Developer reports remain historical
+claims above, not acceptance. Governance passed against committed `HEAD:SLICE.md` before review;
+the report successor changes only `TASK.md`. The three pre-existing dirty governance/experience
+files and four untracked user PNGs were preserved. No Task identity, Base, Goal, Scope, acceptance,
+test assignment, Slice boundary, Roadmap, Progress or stable requirement was changed.
+
+### Findings and required corrections
+
+The fixes improve Run-once discovery bounds/completeness, observed admission fences, fixed-mode
+forms and the manual Preview route. Durable analysis now has prompt persisted admission. These
+facts do not establish the completed exact-analysis/authority journey: independent real
+SQLite/application/API and native-browser probes reproduce the following current Task blockers.
+
+| ID / Severity | Reproduced finding and affected acceptance | Required correction within Task 43.2 |
+|---|---|---|
+| B43.2-R2-1 / P1 | Definition analysis produces an `AutomationTaskDefinitionPreview`, but `_preview_analysis_document` and `PreviewAnalysisPage` always link to the **manual** Organize Preview. Native create -> definition detail -> Create exact Preview -> Worker -> Open exact Preview reaches `Record not found`; the manual Preview API returns 404 while the definition Preview API returns 200. The scheduled exact Preview/grant journey is broken (AC-T1/T3/T6, RO-3). The unit test currently asserts this wrong route. | Preserve the distinct definition/unattended and manual/one-shot Preview authorities in the API projection and actual router action, including return context. Drive both native links; complete definition Preview -> explicit grant -> Scheduler -> Worker result and manual Preview -> separate execution. Do not fix one kind by routing both kinds to the other repository. |
+| B43.2-R2-2 / P1 | `PreviewAnalysisService._analyse` calls definition `create(definition_id, actor=...)` without the admitted revision/digest/fingerprint. A real managed A -> B publication between admission and claim yields a COMPLETED analysis still reporting **A**, linked to a Preview actually analyzed under **B** and B's `Other` scope. `_reconcile_request` also compares only actor/request/kind: admitting `different` with the same request ID returns the original `nightly` analysis instead of refusing the changed binding. AC-T2/T4/T7, UX-010 and RO-3/RO-7 fail. | Consume and validate the exact durable admitted pin and definition/intent identity through Worker execution and Preview publication; missing/corrupt/stale evidence cannot silently substitute current Active. Reconciliation must compare the complete original binding, including definition/intent, revision and applicable version; changed binding refuses, unchanged duplicates converge. Cover publication/removal/reopen, explicit candidate revision, changed manual intent and request identity reuse through shared API/application behavior. |
+| B43.2-R2-3 / P1 | Controls settle only the envelope while the synchronous analyser continues without boundary callbacks. After an acknowledged cancel during blocked discovery, the Worker still persists a definition Preview: SQL/list shows **one published Preview**, although analysis says CANCELLED, no linked Preview and `no Preview was published`. The new cancellation test checks only `analysis.preview_id`, hiding that row. No Worker invokes the analysis lease heartbeat. With a controlled clock advanced past 300s and a successful claim by `new-owner`, the old Worker still publishes COMPLETED and its Preview; the durable record retains `new-owner` as claim owner. Version-only `update_preview_analysis` and rereading the new owner's version do not fence publication. AC-T3/T7, REQ-TASK-007 and the Slice ownership/control invariants fail. | Honour pause/cancel at supported discovery/item/Provider boundaries, distinguish requested from acknowledged control, and publish results atomically under current unexpired ownership. Keep leases/registration alive during long calls; an expired/replaced owner cannot publish or overwrite a successor. Resume must preserve safe admitted context and explain any necessary restart of zero-mutation analysis. Verify actual Preview rows/visibility, subsequent external calls, control races and two-worker takeover, not only the envelope's status/link. No Storage mutation or execution authority is introduced by these corrections. |
+| B43.2-R2-4 / P1 validation blocker | AC-T8 remains unestablished. The clean wheel manifest and genuine schema44/45 extraction logs improve the previous evidence, but the rehearsal seeds/asserts only Task/TaskItem, Job, grant/audit, occurrence/due and optional discovery; it does not seed/read back the assigned manual/review/Result records or real retained configuration revisions/pins. Raw logs contain `skipped_seeds`, including absent discovery in schema44 and absent origin column in schema45, contradicting “0 skipped” / “schema45 already carries origin.” Several required gates have only `inline` declarations with no indexed original log/exit/source identity; the claimed retained first Node failure was overwritten. The new browser “linked recovery” assertions only GET originKind/originDefinitionId, without native mixed-item decision/continuation/recovery. | Correct the index/report by preserving prior claims as history and adding factual corrections. Provide the corrected executable candidate's complete assigned T4 gates with readable raw artifacts, actual runtime/dependency/build/source identity, first failures and repeats. Extend genuine Base seed/upgrade/reopen coverage to the assigned existing historical objects and valid pins; explicitly label absent Base families as inapplicable rather than claiming they were preserved. Complete the native scheduled authority and mixed-item recovery paths plus the other assigned critical failure/reconciliation coverage. Do not treat a run-origin label or a passing count as recovery evidence. |
+
+These are unmet existing acceptance and safety boundaries, not optional proof improvements or new
+business goals. The Contract is sufficient; no A rescope or weakening of requirements is requested.
+
+### Independent verification and evidence limits
+
+- `.venv/bin/python -m unittest tests.test_preview_analysis tests.test_automation_run_once
+  tests.test_v2_automation_run_once`: **61 tests, OK**, 10.942s. These passing tests miss the
+  reproduced pin, ownership, cancellation-publication and wrong-kind link defects.
+- `npm --prefix web run build`: exit 0. The assigned real-Python Automation lifecycle/Run-once
+  browser invocation, with an isolated evidence output directory: **14 passed**, 1.1m. Its current
+  assertions do not exercise the definition-analysis completion link or actual mixed-item recovery.
+- Independent `probe.py` over real managed configuration/SQLite/Local Storage reproduces A -> B
+  silent repinning, definition/manual API 200/404, acknowledged-cancel publication, old-owner
+  completion after lease takeover, and changed-request binding reconciliation. All probes use
+  temporary fixture roots; recorded Storage mutations are empty.
+- Independent Chromium over a separate real Python harness on port 4195 follows native create,
+  definition Preview admission, actual Worker, completion link and the **404**. Actual 1440px and
+  390px screenshots were opened and inspected; the trace and API response statuses are retained.
+- Inspected original Developer full-Python, wheel-manifest/smoke, schema44/45 rehearsal and Docker
+  upgrade logs and the evidence index. Full-Python raw result is **2578 tests, OK (skipped=7),
+  660.793s**, not the report/index durations. Both wheel comparisons report `ok: true`; both Base
+  rehearsal logs report no failed assertions, with the coverage/skip limits above. These are useful
+  evidence, not blanket acceptance of the index's unsupported claims. B's runtime is Python
+  **3.13.5**; the index's claimed 3.13.16 has no matching runtime artifact establishing reuse.
+- Both Automation reference checksums match. `config/alist.json` remains ignored/untracked;
+  no FFmpeg/FFprobe matches, no executable changes by B, and whitespace/governance checks pass.
+- Early P1 rejection follows workflow §6. B did **not** rerun full Python/Web, remaining browser/
+  process/upgrade/wheel/Docker gates or finish the complete independent scheduled/mixed-item/
+  Unicode/failure matrix. Missing/incompatible evidence must be completed on the corrected T4
+  candidate before PASS; this review does not waive any assigned gate. Artifacts are local-only.
+
+The reported Rules contention flake has byte-identical named paths at Task Base and a narrative
+claim of Base repetitions, but no indexed raw repetition logs. It is not the basis of this rejection
+and is not authorized as a Rules refactor/new Task. Preserve raw Base/candidate evidence if claiming
+it is pre-existing; do not weaken the test or manufacture a green final gate.
+
+### Slice reassessment and handoff
+
+**All Required Outcomes / Required Surfaces satisfied: NO.** Task 43.1's publication/history
+foundation remains B PASS. Revised RO-2 fixed-mode forms have improved; Task 43.2 remains FIX
+REQUIRED for RO-3 exact durable analysis/authority, RO-4's correctly fenced analysis handoff and
+Task-owned RO-5/RO-7 outcome/recovery/context/safety acceptance. RO-1 full inventory/statistics,
+cross-definition RO-5 records and RO-6 actual resident settings adoption remain the existing later
+coherent work areas. Their Web/API/resident surfaces are unfinished.
+
+Continue **the same Task 43.2**, first with the reproduced failing behavior and affected regressions,
+then its unchanged complete final T4 plan. Do not plan Task 43.3 or submit a Closure Packet while
+these blockers remain. B changes only this review record and ignored local evidence; A retains
+Contract changes, the full original Base..Implementation Head review and Slice closure authority.
+
+## Developer Fix-Round Completion Report — 2026-10-14
+
+### Scope and delivery
+
+Implemented the corrections for the current B FIX REQUIRED findings within the unchanged Task
+43.2 contract. The coherent implementation checkpoint is `9939881c27ecc5c74b227866173064f0c30344e1`,
+based on Task Base `9d4eec52b5196cb323171454c48c055b41256ebc` and Slice Base
+`853973dbbf8289fa2ad40657033e94e870a690e4`.
+
+- Durable Preview Analysis now validates and carries its admitted pin and request binding through
+  execution, reconciliation, lease heartbeat/ownership fencing, and atomic Preview publication.
+  Pause/cancel controls are observed at supported boundaries, and superseded owners cannot publish.
+- Definition and manual Preview journeys retain their own kind-specific API/UI routes and exact
+  authority. Scheduled execution consumes its exact Preview grant; manual Run once keeps Preview
+  and execution as separate actions.
+- Mixed-item recovery preserves successful sibling outcomes and continues only the failed item
+  through the actual OrganizerExecutor path. Real-Python browser coverage exercises the visible
+  outcome, recovery action, and resulting state.
+- Schema rehearsal coverage now reports preserved records and Base-schema inapplicability
+  accurately for the Slice Base and Task Base families.
+- The implementation checkpoint contains 18 Task-owned application, persistence, API, Web,
+  harness, and regression-test files. It does not change `SLICE.md`, Roadmap, Task scope, or
+  `config/alist.json`.
+
+### Final validation
+
+All assigned T4 gates completed against the final candidate. Raw logs and the artifact/source
+identity index are retained at
+`.git/validation-evidence/9939881c27ecc5c74b227866173064f0c30344e1/task43.2-final-20261014/`.
+
+- Full Python: **PASS**, 2,586 tests, skipped=7. Web unit: **PASS**, 79 files / 1,165 tests;
+  typecheck, lint, format check, and production build: **PASS**.
+- Node browser E2E: **PASS**, 246 tests. Real-Python Automation lifecycle and Run once E2E:
+  **PASS**, 16 tests. Real-Python Operations inventory E2E: **PASS**, 21 tests. Unicode-principal
+  E2E: **PASS**, 1 test. Visual review covered 375×720 and 1440×900 analysis, exact Preview,
+  and execution outcome screens.
+- Migration/preflight unit tests: **PASS**, 10 tests. Genuine SQLite upgrade rehearsals:
+  Slice Base 44→47 **PASS**, 138 preserved-row assertions; Task Base 45→47 **PASS**, 151.
+  Absent Base schema families are recorded as inapplicable, with no failed assertions or seed
+  failures.
+- Wheel manifest checks: **PASS**, 172 entries for clean archive and isolated rebuild; installed
+  wheel backup/restore/verify/preflight smoke: **PASS**, schema 47, migration NO. Docker release
+  security and upgrade/recovery: **PASS**, schema 38→47, 44→47, and 45→47.
+- Ruff format/lint, compileall, pip check, both CLI example-config validations, governance,
+  whitespace, and reference-image checksums: **PASS**. The Vite build reports the existing
+  advisory that its minified JS chunk exceeds 500 kB, but exits successfully.
+
+The evidence index records runtime versions, source and artifact hashes, exact log names, skips,
+first failures, and local-only limits. The wheel-build wrapper's initial tee-path mistakes are
+retained and excluded; the corrected captured wheel build passed. Initial Node E2E, Automation E2E,
+and inventory E2E failures are retained with their focused traces; each cause was corrected and
+its complete assigned suite passed on the final candidate.
+
+### Known failure evidence and risks
+
+An earlier full Python run failed the unchanged
+`RulesWorkspaceCommandTests.test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`.
+The same test failure was reproduced on a detached clean Task Base in 5 of 24 concurrent runs
+(3 rounds × 8); raw per-process logs and exit codes are retained under
+`base-rules-repro-20261014/`. The final committed candidate's full Python run passed. This is
+handed to B for assessment and is not waived by Developer. The production build's chunk-size
+advisory is the only reported build warning. Validation artifacts are local to this host.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Implementation SHA: 9939881c27ecc5c74b227866173064f0c30344e1
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Slice Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Schema: 47
+Evidence: .git/validation-evidence/9939881c27ecc5c74b227866173064f0c30344e1/task43.2-final-20261014/EVIDENCE-INDEX.md
+Gates: Python 2586 (skipped=7); Web 1165; Node E2E 246; Python E2E 16 + 21 + 1;
+       migration 10; schema rehearsals 138 + 151; wheel 172-entry checks and smoke;
+       Docker release security and upgrades 38→47, 44→47, 45→47; all other assigned checks PASS.
+```
+
+`TASK.md` already contains B's uncommitted review record and other pre-existing worktree edits;
+this report is appended in the worktree and is not included in the implementation checkpoint.
+Those existing edits and the untracked reference PNGs remain preserved. No Slice completion or
+Task PASS is asserted; B owns the Task review and Slice reassessment.
+
+## B Candidate Review Result — 2026-10-14
+
+```text
+Task ID: 43.2
+Parent Slice: 43
+Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
+Reviewed Checkpoint: 9939881c27ecc5c74b227866173064f0c30344e1
+Reviewed Range: Task Base..Reviewed Checkpoint, including the 18-file latest correction
+Decision: FIX REQUIRED
+Difficulty / Test Level: High / T4 — unchanged
+All Slice Required Outcomes / Surfaces satisfied: NO
+Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
+Independent Evidence: .git/validation-evidence/9939881c27ecc5c74b227866173064f0c30344e1/b-review43.2-20261014/INDEX.md
+```
+
+The committed ACTIVE Slice 43 remains sufficient. This review changes neither its Contract nor
+Task ID/Base/Goal/Scope/acceptance/Required Tests. Prior reports and rejected checkpoints remain
+historical evidence. Pre-existing worktree edits and user PNGs are preserved; B changes only this
+Task review record and ignored local evidence. No implementation or A final acceptance is performed.
+
+### Corrections established in this round
+
+The definition/manual completion links now use their corresponding Preview repository and native
+route. The Worker consumes the durable admitted definition revision rather than substituting
+current Active. Cooperative pause/cancel checkpoints and atomic Preview-plus-analysis publication
+prevent the previously reproduced cancelled/expired-owner publication. The assigned affected
+Python cases pass, including A-to-B pinning, pause/resume and takeover. The real-Python native browser
+journeys now reach exact definition Preview, explicit scoped grant, actual Scheduler/Worker result,
+and failed-item recovery through exact Preview/execution while preserving the successful sibling.
+These are established improvements, not a Task PASS.
+
+### Remaining P1 blockers — continue the same Task
+
+| ID / Severity | Actual behavior and criterion | Required correction |
+|---|---|---|
+| B43.2-R3-1 / P1 | Manual open-analysis deduplication omits `intent_version`: `PreviewAnalysisService.admit_manual` and `SQLiteTaskRepository.find_open_preview_analysis` match actor/intent/pin only. Independently admit version 1, save an item choice to version 2, then POST version 2 with a **new** request ID: API returns **202 and the version-1 analysis**, whose Worker fails with `preview_analysis_failed`. A fresh corrected intent is silently represented by stale work. AC-T2/T4, RO-3/RO-4 and UX-010 remain unmet. | Include the complete admitted manual intent binding in open-work reconciliation and its concurrency boundary. A version-2 request must receive version-2 analysis or an explicit actionable refusal; it cannot report the version-1 work as its admission. Preserve deliberate original-request readback after edits, and refuse changed binding on the same ID. Cover a new-ID corrected intent while old work is queued/running, concurrent edits/admissions, and native correction/repreview. |
+| B43.2-R3-2 / P1 | Both definition-analysis and Run-once scope deduplication can accept request **B** by returning existing open work for request **A**, without retaining a durable association for B. Independent same-principal equivalent Run-once requests return one discovery; GET by the second submitted ID returns **404 `run_once_request_not_found`**. `AutomationLifecyclePage` treats that as proof no work exists, clears the unknown request, and invites a new run. The definition-analysis request lookup has the same missing association. In addition, `AutomationDetailPage` and `OrganizeIntentPage` submit durable analysis without a client request identity and label a lost/malformed response as a rejected/no-change outcome, offering regeneration without proved reconciliation. AC-T4 and RO-4/RO-7's unknown-submission recovery fail. | Preserve a verifiable association for every accepted request identity when converging equivalent work, or explicitly refuse the new request without claiming acceptance. Validate definition/principal/full binding during every lookup and race path. Native durable analysis admission must retain principal-scoped exact request context before POST, distinguish rejection from unknown outcome, and offer read-only reconciliation after response loss/reload before another admission. Verify two tabs/new IDs, both concurrency winner paths, response loss, original work completing before lookup, A-to-B publication/removal, reopen and principal changes. Do not infer non-admission from an absent request mapping or a bounded recent-list window. |
+| B43.2-R3-3 / P1 | `PreviewAnalysisService` renews its own claim, but `PreviewAnalysisWorker.run_next` and `AutomationWorker._run_preview_analysis_work` never renew the containing processing-Worker registration. Only the Files transfer consumer binds the parent heartbeat. Independent production application assembly blocks analysis for **11 real seconds**, with heartbeat interval 0.1s / stale threshold 10s: analysis lease remains valid, parent heartbeat is unchanged, and actual readiness reports **STALE**, followed by successful analysis completion. The resident CLI likewise wires its registration/resident-presence heartbeat only to the Files consumer. Long analysis therefore produces false unavailable Worker/health state. AC-T3/T7, REQ-TASK-009 and the existing resident heartbeat invariant remain unmet. | Maintain the containing processing-Worker and resident-process presence while discovery/Provider analysis calls are in flight, alongside the analysis claim. Bind the actual production parent heartbeat; do not fabricate another worker or update health from API reads. Preserve ownership/control fencing and safe behavior on heartbeat/DB failure. Prove readiness beyond its stale threshold with the production assembly/resident path and prove stale/stopped/lost registration is handled honestly. |
+
+The first two findings arise from incomplete cross-layer reconciliation semantics; fixes belong to
+the existing exact-analysis/admission journey. They are not new business goals or grounds to split
+fields, evidence keys or individual tests into additional Tasks. No A rescope is required.
+
+### Independent validation and evidence limits
+
+- Governance passed before review; repository is `/root/mediaflow`, branch `main`, HEAD is the
+  reviewed SHA, and worktree/Git/index are writable. No tracked application/test source is dirty.
+- `.venv/bin/python -m unittest tests.test_preview_analysis tests.test_automation_run_once
+  tests.test_v2_automation_run_once`: **69 tests, OK**, 13.226s, exit 0. Independent probes use real
+  managed configuration/application/API/SQLite and temporary Local roots; the new manual-binding,
+  request-alias and parent-heartbeat failures are outside those passing assertions. Recorded media
+  mutation calls are empty. Probe inputs/results and the real-time heartbeat repeat are retained.
+- Assigned real-Python Automation lifecycle/Run-once browser command, one Chromium worker and an
+  isolated output directory: **16 passed**, 1.3m, exit 0. This independently establishes the corrected
+  scheduled authority and mixed-item native recovery paths described above.
+- Inspected Developer's original full-Python result: **2,586 tests, OK (skipped=7), 661.751s**;
+  Web unit totals **79 files / 1,165 tests**; original quality, browser, migration, wheel and Docker
+  logs and indexes were read. Both wheel manifest checks identify the reviewed SHA and report
+  no payload differences. Genuine schema44/45 extraction/rehearsal logs now include historical
+  configuration/pins/manual/review/Result rows with 138/151 successful assertions, no failed
+  assertions, and truthful absent-family inapplicability. These improve the earlier validation
+  blocker; they do not prove the new production findings are absent.
+- Opened all four retained visual images. Analysis is visible at narrow/wide sizes and Preview
+  retains separate execution intent. The image named `run-once-execution-narrow.png` is a **1232×2030
+  main-panel capture taken after switching to a 1440×900 viewport**, and depicts **admitted/waiting**,
+  not a completed Worker outcome. Treat it
+  as that state; the passing native browser assertions establish actual recovery/outcome separately.
+  Correct the visual index's size/state description in the next report, preserving prior evidence.
+- Dependency hashes and both Automation reference checksums match. `config/alist.json` remains
+  ignored/untracked/unstaged; governance and whitespace pass; no FFmpeg/FFprobe source matches.
+- The retained Rules Base reproduction contains actual failed raw logs in 5/24 concurrent attempts;
+  the final candidate's Python gate is green. This is an existing-load-test observation, not the
+  basis of this rejection or authorization for unrelated Rules work or weaker tests.
+- Under workflow §6's early-rejection rule, B did **not** rerun full Python/Web, Node E2E,
+  remaining real-Python inventory/Unicode, wheel/Docker/upgrade gates or complete every assigned
+  independent failure/boundary probe. Full acceptance/evidence reuse is not claimed; the corrected
+  executable T4 candidate must satisfy the unchanged complete final plan. Evidence is local-only.
+
+### Slice reassessment and handoff
+
+Task 43.1's accepted publication/history foundation remains B PASS. Task 43.2 remains FIX REQUIRED
+for exact binding/reconciliation and long-analysis readiness in RO-3/RO-4 and applicable RO-7;
+its corrected fixed-mode, authority and definition-local recovery paths have been observed but
+the Task is not accepted. RO-1 inventory/full-population statistics, consolidated RO-5 records,
+and RO-6 actual settings adoption/readback remain later coherent work areas with unfinished
+Web/API/resident surfaces. **No Task 43.3 and no Closure Packet are created.**
+
+Developer should first reproduce these failing behaviors, correct them inside this Task, run
+affected regressions/native recovery, then freeze and validate the corrected T4 candidate. Preserve
+first failures and exact evidence identities. A retains Contract changes, original Slice Base..Head
+final review and closure authority.
+
+Reusable lesson candidates for eventual Slice closure: deduplication must preserve every accepted
+request's durable lookup and complete intent binding; long child-work lease renewal must also keep
+the actual hosting process's health evidence fresh. These are candidates, not role-document edits
+or extra implementation Tasks.
+
+## Developer Fix-Round Completion Report — 2026-10-14 (round 2)
+
+### Scope and delivery
+
+Implemented the corrections for the current B Candidate Review findings (B43.2-R3-1,
+R3-2, R3-3) inside the unchanged Task 43.2 contract. The coherent implementation
+checkpoint is `94442b7782b89e886228a6550885e86dbe6ce7b2`, and the tested/validated
+candidate is its formatting-only successor `f0c1934c81c65dea173a2e72c9b7607e7ff94ea4`
+(two commits changing whitespace/line-wrapping only, both demanded by the assigned
+quality gates). Task Base, Goal, Scope, acceptance, Required Tests and T4 assignment are
+unchanged; `SLICE.md`, Roadmap, Progress, stable requirements and the four untracked
+user PNGs are untouched. `config/alist.json` remains ignored/untracked/unstaged.
+
+### Changed Files
+
+**Added**
+
+- `mediaflow/infrastructure/sqlite_runtime.py`: schema 48, additive
+  `admission_request_bindings` table + target index, `bind_admission_request`, and
+  binding-aware `find_media_discovery_by_request_id` /
+  `find_preview_analysis_by_request_id` lookups.
+- `mediaflow/application/preview_analysis.py`: `find_by_request_id`,
+  `_bind_request`, `parent_heartbeat` on `run_claimed`/`claim_and_run`,
+  `PreviewAnalysisWorker.set_worker_heartbeat`.
+- `mediaflow/application/media_discovery.py`: `_bind_request`, and a lease keeper in
+  `claim_and_run` that keeps both the discovery claim and the parent registration live
+  during a blocked walk.
+- `mediaflow/application/media_discovery_worker.py` and
+  `mediaflow/application/manual_organize_worker.py`: `set_worker_heartbeat` seams.
+- `mediaflow/application/automation.py`: every non-transfer resident runner binds the
+  containing `AutomationWorker` registration heartbeat at construction; the
+  `ProcessingWorkerService` runtime-schema default moves 47 → 48 with the store.
+
+**Changed**
+
+- `mediaflow/application/preview_analysis.py`: manual open-work deduplication now
+  includes the admitted `intent_version` end to end (service `_find_open` call and
+  repository `find_open_preview_analysis` manual query), so a corrected intent version
+  is never silently answered by an earlier version's queued analysis.
+- `mediaflow/interfaces/service_api.py`: principal-scoped reconciliation read
+  `GET /api/v1/operations/automation/preview-analyses?admissionRequestId=...` returning
+  the proved analysis or a bounded 404 `preview_analysis_request_not_found`
+  (`durableState: unknown`).
+- `mediaflow/final_cli.py`: the resident Worker binds its wrapped heartbeat
+  (processing-Worker row plus resident-presence row) to the media-discovery,
+  preview-analysis and manual-organize runners, exactly like the Files transfer
+  consumer already did.
+- Web: `api-client.ts` gains `reconcilePreviewAnalysis` and passes
+  `admissionRequestId` on both analysis admissions; `AutomationDetailPage` and
+  `OrganizeIntentPage` generate the request identity before POST, retain it
+  principal-scoped across reload, distinguish unknown (transport/5xx/malformed) from
+  rejected outcomes, offer 核对上次请求 read-only reconciliation, and clear the intent
+  only on a proved outcome.
+- Tests: `tests/test_preview_analysis.py` (+4: corrected-version admission, dual-lookup
+  durability, lost-response reconciliation, resident-registration liveness),
+  `tests/test_automation_run_once.py` (+2: discovery/analysis request-alias durability),
+  schema-marker updates 47 → 48 in the six marker tests, and the affected Web router
+  test now asserts the request identity is the only extra admission field.
+
+### Implemented — blocker by blocker
+
+- **B43.2-R3-1 (complete manual intent binding).** Open-work reconciliation for manual
+  analyses matches the full admitted binding — actor, kind, intent, *intent version*
+  and snapshot pin. A version-2 request with a new ID now admits its own version-2
+  analysis (HTTP 202, `intentVersion: 2`); the superseded version-1 work is left
+  untouched and honestly settles failed on its stale pinned version with no Preview,
+  while the corrected analysis completes and publishes the exact Preview at the
+  corrected version. No queued/running version-1 record is ever reported as a
+  version-2 admission.
+- **B43.2-R3-2 (durable association for every accepted request).** Schema 48 adds the
+  additive `admission_request_bindings` table. Whenever an admission *converges* on
+  already-open work — definition-analysis dedup, manual-intent dedup, definition
+  Run-once dedup and the Files selection dedup — the newly accepted request identity is
+  durably bound to that same record, so every accepted request reconciles by its own ID.
+  `find_media_discovery_by_request_id` / `find_preview_analysis_by_request_id` consult
+  the binding first and the record's own column second, refusing (not guessing) if the
+  two durable facts ever disagree. The Web surfaces now carry that identity through the
+  whole journey: generated before POST, retained across reload principal-scoped,
+  unknown outcomes are never labelled rejections, and reconciliation reads the proved
+  original before any resubmission is offered. Definition/Run-once request lookups on
+  the API return the same converged run (HTTP 200) instead of the reproduced 404.
+- **B43.2-R3-3 (containing-process liveness during long analysis).** The
+  preview-analysis service keeps its lease keeper; it now also refreshes the parent
+  registration heartbeat (`parent_heartbeat`) on the same interval, and the
+  media-discovery service gains an equivalent keeper for its walk. The three non-file
+  resident runners (`media-discovery`, `preview-analysis`, `manual-organize`) expose
+  the same `set_worker_heartbeat` seam the Files transfer runner already had;
+  `AutomationWorker` binds them to its registration heartbeat at construction and the
+  resident CLI binds the wrapped heartbeat (registration row + resident-presence row)
+  after wrapping. The parent signal is liveness evidence only: a fault is tolerated and
+  retried on the next interval, and the analysis/discovery claim renewal remains the
+  only publication fence — no fabricated worker, no API-read health writes.
+
+### Tests and Results
+
+Tested and submitted candidate: `f0c1934c81c65dea173a2e72c9b7607e7ff94ea4`. Evidence
+index: `.git/validation-evidence/94442b7782b89e886228a6550885e86dbe6ce7b2/task43.2-fix2-20261014/EVIDENCE-INDEX.md`,
+with every raw log beside it.
+
+| Gate | Command | Result |
+|---|---|---|
+| **Full Python (T4)** | `.venv/bin/python -m unittest discover -s tests` | **PASS — 2592 tests, OK (skipped=7), 672.869s** |
+| Python quality | ruff format --check / ruff check / compileall / pip check | PASS (first run caught 3 unformatted files; reformatted and re-run green) |
+| Web unit | `npm --prefix web run test -- run` | PASS — 79 files / 1165 tests |
+| Web quality | typecheck + lint + format:check + build | PASS (first run caught Prettier drift on the 2 changed pages; fixed and re-run green; build keeps the pre-existing chunk-size advisory) |
+| Node e2e | `npm --prefix web run test:e2e` | PASS — 246 passed |
+| **Assigned automation browser** | lifecycle + run-once specs, isolated output dir | **PASS — 16 passed** |
+| Inventory browser | operations-inventory spec | PASS — 21 passed |
+| Unicode principal browser | principal-identity spec | PASS — 1 passed |
+| Direct-files browser | direct-files spec | PASS — 10 passed |
+| Wheel build + manifest + smoke | clean git-archive build; manifest `ok: true` 172/172; smoke schema 48 | PASS — wheel SHA-256 `51c52443b7b0ceba51f419297b1ae5c279e1f220396c65017a34f7d62fecad57` |
+| Schema rehearsal — Slice Base | `--base-sha 853973d... --expect-schema 44` | PASS — 139 assertions ok, 0 failed, absent Base families labelled inapplicable |
+| Schema rehearsal — Task Base | `--base-sha 9d4eec5... --expect-schema 45` | PASS — 152 assertions ok, 0 failed, origin column labelled inapplicable |
+| Docker security smoke | TMPDIR=workspace-local | PASS |
+| Docker upgrade — Slice Base | 44 → 48 | PASS |
+| Docker upgrade — Task Base | 45 → 48 | PASS |
+| CLI validate ×2 / governance / whitespace | | PASS |
+| Reference checksums | both Automation PNGs | PASS — match the Contract exactly |
+| No FFmpeg/FFprobe | grep mediaflow pyproject.toml | PASS — no matches |
+
+**First failures and repeats (retained).** (1) The first `ruff format --check` run of
+this round failed on 3 files (2 application, 1 test) — reformatted and committed as
+`629b9bc`; the failing and passing runs are both in the evidence directory
+(`python-quality.log` holds the final green run; the first-failure content is quoted in
+the session record). (2) The first `format:check` failed Prettier on the two changed
+pages — fixed and committed as `f0c1934`. (3) The Unicode-principal and direct-files
+browser invocations collided on port 4185 when launched while the automation suite was
+still running; both were re-run sequentially on the freed port and pass. (4) The first
+working-tree `pip wheel .` packaged 289 stray entries from pre-existing unrelated
+build-residue directories (manifest exit 1, disclosed here in prose); the wheel was then
+built from a clean `git archive` of the candidate — the standard approach this
+repository's evidence already documents — giving a 172/172 clean manifest. No workspace
+file was moved, modified or deleted.
+
+**Final candidate verification.** `final-verification-probes.log` re-derives all three B
+findings against the committed candidate: corrected version-2 admission returns
+version 2 (not the old analysis), both request IDs reconcile to their own analyses, the
+second equivalent Run-once request ID reconciles over the API with HTTP 200, and the
+parent registration heartbeat advances while a blocked analysis holds its lease, with
+the analysis completing afterwards. All probes record zero Storage mutations.
+
+**Visual inspection.** All four browser PNGs were opened and inspected (sizes and
+states recorded in the index): the durable-analysis page renders pause/cancel and
+separate return links at 375 px and 1232 px; the frozen manifest's exact manual Preview
+shows per-item recognition/policy/destination evidence; the execution capture is the
+admitted/waiting state at the 1440×900 viewport (labelled honestly in the index), with
+the actual Worker outcome proven by the passing browser assertions.
+
+### Decisions
+
+* **A dedicated additive bindings table instead of overloading existing columns.** A
+  request identity that converges on already-open work must stay readable by its own
+  ID; a single nullable column cannot hold two identities. Schema 48 stores one row per
+  accepted `(actor, request_id)` with its exact kind/target; lookups consult the
+  binding first and the record's own column second, and disagreeing facts refuse rather
+  than guess. Legacy rows keep their own column and stay reconcilable; nothing is
+  backfilled.
+* **Complete binding in dedup, not just in request lookup.** The manual open-work
+  query now includes `intent_version`, so dedup itself can never alias a corrected
+  intent to stale work — fixing the cause, not only the lookup symptom.
+* **Parent heartbeat as a separate liveness signal.** The keeper refreshes the parent
+  registration alongside the analysis/discovery claim but never lets a parent fault
+  settle the analysis; the claim renewal stays the publication fence. This mirrors the
+  accepted Files-transfer keeper exactly, so one proven pattern now covers every
+  resident runner instead of introducing a second mechanism.
+* **Developer experience check applied.** Per the workflow's experience rule: the three
+  reproduced failing behaviors were run and retained *before* fixing; the fix-round
+  gates were re-run in full on the exact frozen candidate after the formatting commits
+  (the candidate content is unchanged by them, and the final gates all ran on
+  `f0c1934` content, not the earlier checkpoint); the wheel was built from a clean
+  archive of the exact candidate after the first working-tree build proved the known
+  residue hazard; every claim above cites a raw log beside the index.
+* No separate experience-document edit: new reusable lessons remain candidates for
+  Slice-closure reconciliation, matching the workflow's maintenance rule.
+
+### Remaining In-Slice Work
+
+None for this Task. The three B43.2-R3 blockers are corrected and verified. B decides
+whether the Task passes and whether the Slice's Required Outcomes are satisfied; RO-1
+inventory/statistics, consolidated RO-5 records and RO-6 resident settings adoption
+remain the later coherent work areas identified by B.
+
+### Risks / Deviations
+
+* The known load-sensitive Rules destination-check race did not reproduce in this
+  round's full Python run; the prior Base-reproduction evidence (5/24 concurrent
+  failures at the Task Base) remains the retained record under
+  `.git/validation-evidence/9939881c27ecc5c74b227866173064f0c30344e1/task43.2-final-20261014/base-rules-repro-20261014/`
+  for B's judgement. Not waived by Developer.
+* The Docker smokes require a reachable daemon and the workspace-local `TMPDIR`; on a
+  host whose daemon can see `/tmp` the plain invocation should also work.
+* All evidence is host-local and not claimed remotely reachable.
+* No unresolved product defect is known in the delivered scope.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Tested candidate / Head SHA: f0c1934c81c65dea173a2e72c9b7607e7ff94ea4
+Implementation SHA: 94442b7782b89e886228a6550885e86dbe6ce7b2
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Slice Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Schema: 48 (was 47 at Task Base)
+Evidence: .git/validation-evidence/94442b7782b89e886228a6550885e86dbe6ce7b2/task43.2-fix2-20261014/EVIDENCE-INDEX.md
+Gates: full Python 2592 OK (skipped=7); Python quality green; web 1165 unit +
+       typecheck/lint/format/build; e2e node 246, automation 16, inventory 21,
+       unicode 1, direct-files 10; wheel manifest 172/172 ok + smoke schema 48;
+       schema rehearsals 44->48 (139 ok) and 45->48 (152 ok), 0 failed;
+       docker security + upgrades 44->48 and 45->48 PASS; CLI validate x2,
+       governance, whitespace, reference checksums, no-ffmpeg PASS.
+```
+
+`TASK.md` already contains B's uncommitted review records and other pre-existing
+worktree edits; this report is appended in the worktree and is not part of the
+implementation checkpoint. Those pre-existing edits and the untracked reference PNGs
+remain preserved. No Slice completion or Task PASS is asserted; B owns the Task review
+and Slice reassessment.
+
+## B Candidate Review Result — 2026-10-14 (round 4)
+
+```text
+Task ID: 43.2
+Parent Slice: 43
+Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
+Reviewed Checkpoint: f0c1934c81c65dea173a2e72c9b7607e7ff94ea4
+Reviewed Range: Task Base..Reviewed Checkpoint; latest correction 9939881..Reviewed Checkpoint
+Decision: FIX REQUIRED
+Difficulty / Test Level: High / T4 — unchanged
+All Slice Required Outcomes / Surfaces satisfied: NO
+Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
+Independent Evidence: .git/validation-evidence/f0c1934c81c65dea173a2e72c9b7607e7ff94ea4/b-review43.2-r4-20261014/INDEX.md
+```
+
+The committed ACTIVE Slice remains the authority and is identical to the working-tree Contract.
+Governance passed before review. This decision preserves Task ID/Base/Goal/Scope/acceptance/Required
+Tests, prior reports and rejected checkpoints. The existing dirty workflow/template/experience
+documents and user reference PNGs remain preserved. B updates only this Task review and ignored
+local evidence; no product implementation, A Contract change or Slice acceptance is performed.
+
+### Established improvements
+
+Manual open-work lookup now includes `intent_version`, and the assigned corrected-version regression
+passes. Sequential equivalent definition Preview/Run-once admissions now store durable request aliases.
+The parent heartbeat wiring is present in the production application and resident CLI. Independently
+blocked definition analysis for **11 real seconds**, exceeding the parent registration's **10-second**
+stale threshold: its heartbeat advanced, the real `ProcessingWorkerService` evaluated it as **live**,
+its analysis lease remained valid, and it subsequently completed with zero recorded Storage mutations.
+The original R3-3 false-stale behavior is no longer reproduced in this production application path.
+These improvements do not establish Task PASS or complete resident failure/override acceptance.
+
+### Remaining P1 blockers — correct the same Task
+
+| ID / Severity | Reproduced behavior and unmet criterion | Required correction |
+|---|---|---|
+| **B43.2-R4-1 / P1** | For one manual intent/version, request A receives **202**. A second equivalent request with a new ID receives **500 `internal_error`** and cannot reconcile. `PreviewAnalysisService.admit_manual`, line 264, calls `_bind_request(open_analysis)` although the method requires `(admission_request_id, analysis)`. This breaks ordinary repeated/two-tab manual Preview and its required recovery (AC-T1/T3/T4; RO-3/RO-4/RO-7). | Make the equivalent manual admission complete the request association and return the exact existing analysis or an explicit actionable refusal. Exercise the **same intent version** with distinct IDs while work is queued/running, plus corrected versions, original-ID readback and reopen. Tests for two different versions do not exercise this branch. |
+| **B43.2-R4-2 / P1** | Atomic reconciliation remains incomplete. With two requests synchronized only between the real open-work read and create, the **same definition-analysis request ID** receives **202 twice and creates two durable analyses**. `create_preview_analysis` does not enforce request uniqueness, and readback selects `LIMIT 1`. For two equivalent Run-once requests with distinct IDs, both admissions return the same discovery, but the loser request's API lookup returns **404** while the winner returns **200**: the `DiscoveryConflict` winner paths at `media_discovery.py:360/566` return without binding the accepted alias. All reproduced mutation lists are empty. AC-T4 and RO-4/RO-7 require one provable admission, including concurrent winner paths. | Enforce the complete principal/request/context association at the durable concurrency boundary, across direct rows and aliases. Every accepted request must have an unambiguous durable readback, including the create-conflict path; incompatible reuse must refuse. Existing ambiguous evidence must remain honestly unresolved rather than selecting an arbitrary row. Cover same-ID concurrent definition/manual analysis, distinct-ID equivalent discovery/Run-once, both winner paths, changed context, publication/removal, terminal completion before lookup, multiple repository connections and reopen. Preserve media execution/authority non-replay. |
+| **B43.2-R4-3 / P1** | The new native reconciliation controls do not protect unresolved requests. Against the built V2 UI and real Python API, B admitted a definition Preview and deliberately dropped its response. **Create exact Preview remains enabled**; clicking it again posts a new request ID and **overwrites the retained first ID** without any reconciliation. Both Detail and OrganizeIntent buttons omit pending unknown context from their availability checks. In addition, both 404 handlers describe non-admission as proved and clear context even though the API explicitly returns `durableState: unknown`; R4-2 demonstrates an accepted request with that lookup outcome. AC-T4 and RO-4/RO-7 remain unmet. | Preserve unresolved exact request/context and principal binding across response loss, reload, navigation and principal changes; prevent a fresh admission from replacing it before resolution. A not-found/unknown lookup cannot establish that no work was admitted. Provide a bounded native investigation/resolution path, and offer deliberate fresh analysis only after safe resolution. Verify transport/5xx/malformed responses, unresolved 404, a slow in-flight admission, two tabs, reload, definition/intent edits and Unicode principal changes on **both** surfaces. Retain expected context/version where needed; do not replace it with a latest-record guess or weaken the original acceptance. |
+
+The first finding is an unexercised success branch of the latest correction. The second and third
+retain the earlier atomic-admission and unknown-submission root causes across persistence/API/Web.
+They are existing Task blockers, not new independent business goals. No A rescope or Task 43.3 is needed.
+
+### Verification performed and limits
+
+- `.venv/bin/python -m unittest tests.test_preview_analysis tests.test_automation_run_once
+  tests.test_v2_automation_run_once`: **75 tests, OK**, 14.116s, exit 0. The passing tests do not
+  cover the same-version manual alias or the reproduced concurrent read/create windows.
+- Independent real application/API/managed-configuration/SQLite probes: the first three failures
+  were reproduced twice; the repeat also verifies Run-once **404/200** API readback and the
+  **11-second live parent heartbeat**. Barriers only control scheduling between production reads
+  and creates; they do not replace database/admission behavior. Temporary Local fixtures record
+  **zero Storage mutations**. Probe programs and raw results are retained.
+- Native Chromium probe: real checked definition publication, real durable Preview admission,
+  response delivery deliberately aborted after the API accepted it, and a second enabled click.
+  The raw log proves two different submitted IDs and the overwritten session context. Opened the
+  actual **1440×1115** screenshot; it shows the unknown-outcome explanation together with the
+  still-enabled creation and reconciliation actions. The browser trace and served-artifact hashes
+  are retained; only synthetic local harness credentials/configuration were used.
+- Inspected Developer's evidence index and all indexed log summaries, including the actual full
+  Python ending (**2,592 tests, OK, skipped=7**, 672.869s), Web (**79 files / 1,165 tests**), Node
+  E2E (**246**), Automation (**16**), inventory (**21**), Unicode (**1**), direct files (**10**),
+  quality, CLI, wheel and Docker logs. Those green gates do not falsify the reproduced blockers.
+  Their full validation/evidence reuse is **not accepted** by this rejecting review.
+- Evidence metadata needs factual correction in the next report: `git diff 94442b7..HEAD` is
+  **not zero** (five files differ by formatting), and the immutable Task Base schema is **45**,
+  not the “47 at Task Base” statement in the report. The wheel manifest records revision `HEAD`,
+  not a full SHA. Some first failures are retained only as prose/session claims. Retain exact
+  commands/full candidate identity and readable first-failure artifacts in the next evidence index.
+  These metadata issues are disclosed evidence limits, not additional product Tasks.
+- Runtime versions and dependency fingerprints match the submitted index. Both Automation
+  reference hashes match the committed Contract. No tracked source/test/harness/dependency changes
+  are dirty; preserved dirty files are identified in the evidence. Governance and whitespace pass.
+  `config/alist.json` remains ignored/untracked/unstaged.
+- Workflow §6 permits early rejection once a genuine P1 is proved. B did **not** rerun full
+  Python/Web, the complete assigned browser suites, wheel/Docker/upgrade or every remaining
+  independent boundary probe. Corrected executable T4 work must still satisfy the unchanged
+  complete checkpoint plan before PASS. All review evidence is host-local.
+
+### Slice reassessment and next action
+
+Task 43.1's publication/history foundation remains B PASS. Task 43.2 remains FIX REQUIRED:
+RO-3/RO-4 and applicable RO-7 have the exact admission/recovery blockers above. RO-2's fixed-mode
+transition and definition-local RO-5 links have implementation and earlier evidence, but do not
+make the current Task accepted. RO-1 inventory/full-population metrics, cross-definition RO-5
+records and RO-6 actual settings adoption/readback remain incomplete later coherent work areas.
+Required Web/API/persistence/resident surfaces therefore remain unfinished. No next Task or Closure
+Packet is created, and B does not change Slice/Roadmap/stable requirements or claim A acceptance.
+
+Developer should reproduce these branches first, correct the same Task across the relevant durable
+and native boundaries, run affected regressions, then freeze and validate the corrected T4 candidate.
+The existing experience guidance applies through actual failing-first, exact-candidate and
+cross-entry evidence; a read-compliance statement is insufficient. Preserve all prior evidence and
+user work. Reusable lesson candidate for A's eventual closure reconciliation: a request association
+is complete only when direct-create, alias and concurrent-winner paths preserve one durable truth,
+and the UI keeps unknown context until that truth is established. No role-document edit is made here.
+
+## Developer Fix-Round Completion Report — 2026-10-14 (round 3)
+
+### Scope and delivery
+
+Implemented the corrections for the current B Candidate Review findings (B43.2-R4-1, R4-2, R4-3)
+inside the unchanged Task 43.2 contract. The coherent implementation and tested candidate is
+`259208b69217828178c88187854780f059743104`, a direct descendant of Task Base
+`9d4eec52b5196cb323171454c48c055b41256ebc`. Task Base, Goal, Scope, acceptance, Required Tests and
+the High/T4 assignment are unchanged; `SLICE.md`, Roadmap, Progress, stable requirements and the four
+untracked user PNGs are untouched. `config/alist.json` remains ignored/untracked/unstaged. The
+pre-existing dirty workflow/template/experience documents and B's review records are preserved; this
+report is appended in the worktree and is not part of the implementation checkpoint.
+
+### Changed Files
+
+Implementation checkpoint `259208b69217828178c88187854780f059743104` — 10 Task-owned files, no
+documentation, Slice or configuration change:
+
+- `mediaflow/application/preview_analysis.py` — `admit_manual` binds the accepted request identity
+  to the converged open analysis (`_bind_request(request_id, open_analysis)`).
+- `mediaflow/application/media_discovery.py` — both `DiscoveryConflict` winner paths bind the
+  accepted alias before returning the winner.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `create_preview_analysis` fences request-identity
+  uniqueness inside one `BEGIN IMMEDIATE`; `find_preview_analysis_by_request_id` refuses an ambiguous
+  identity (multiple direct rows, multiple bindings, or disagreement between them) instead of
+  selecting a row.
+- `tests/test_preview_analysis.py`, `tests/test_automation_run_once.py` — three failing-first
+  regression tests.
+- Web: `AutomationDetailPage.tsx`, `OrganizeIntentPage.tsx`, `AutomationLifecyclePage.tsx` retain an
+  unresolved request, block a fresh admission, distinguish `durableState: unknown` from proved
+  absence, and offer a bounded investigation + explicit resolution; `AutomationRouter.test.tsx` and
+  `automation-lifecycle.python.spec.ts` cover the corrected behavior.
+
+### Implemented — blocker by blocker
+
+- **B43.2-R4-1 (equivalent manual admission).** The `_bind_request` call in `admit_manual` passed
+  only the analysis, so a second equivalent same-version manual Preview raised an internal error and
+  could not reconcile. It now passes the request identity and returns the exact existing analysis.
+  An ordinary repeated/two-tab Preview completes the request association and reconciles by its own
+  ID. Covered for the same intent version with distinct IDs, plus the existing corrected-version and
+  original-ID readback cases.
+- **B43.2-R4-2 (one durable truth for every accepted request).** Request-identity uniqueness is now
+  enforced at the durable concurrency boundary: `create_preview_analysis` checks the direct column
+  and the binding table inside one `BEGIN IMMEDIATE` transaction, so two synchronized admissions for
+  one definition/request identity create exactly one row and both callers receive it. Both discovery
+  conflict-winner paths bind the loser's accepted alias, so two concurrent equivalent Run-once
+  requests with distinct IDs both read back the one durable run (`200/200`, not `404/200`). The
+  analysis request lookup refuses an ambiguous identity rather than choosing a row. Changed-context
+  reuse of an existing identity still refuses.
+- **B43.2-R4-3 (unresolved request stays unresolved).** A `preview_analysis_request_not_found` /
+  `run_once_request_not_found` response carries `durableState: unknown`; it no longer clears the
+  retained principal-scoped context or claims non-admission. While a request is unresolved, a fresh
+  admission is disabled on the definition-detail, manual-intent and lifecycle surfaces; the operator
+  gets a bounded durable-history link and an explicit "放弃未决请求" resolution before any new
+  admission. The unknown-outcome branch reads the mutation's own intent rather than a stale closure,
+  so a lost response retains context even on the first render after the click.
+
+### Tests and Results
+
+Tested and submitted candidate `259208b69217828178c88187854780f059743104`. Evidence index:
+`.git/validation-evidence/task43.2-fix3-20261014/EVIDENCE-INDEX.md`, with every raw log beside it.
+
+| Gate | Result |
+|---|---|
+| **Full Python (T4)** | **PASS — 2595 tests, OK (skipped=7), 691.212s** |
+| Focused affected (preview/run-once/API) | PASS — 78 tests |
+| Migration/preflight units | PASS — 10 tests |
+| Python quality (ruff format/check, compileall, pip check) | PASS — format 377 files, lint clean |
+| CLI validate ×2 | PASS — exit 0 |
+| Web unit | PASS — 79 files / 1166 tests |
+| Web typecheck / lint / format:check / build | PASS |
+| Node e2e | PASS — 246 passed |
+| **Assigned automation browser** | **PASS — 17 passed** (includes the new R4-3 test) |
+| Inventory browser | PASS — 21 passed |
+| Unicode-principal browser | PASS — 1 passed |
+| Direct-files browser | PASS — 10 passed |
+| Wheel manifest (clean `git archive HEAD`) | PASS — `ok: true`, 172/172 entries |
+| Wheel smoke | PASS — schema 48, migration NO |
+| Schema rehearsal — Slice Base 44 → 48 | PASS — 138 preserved-row assertions, 0 failed |
+| Schema rehearsal — Task Base 45 → 48 | PASS — 151 assertions, 0 failed |
+| Docker release security | PASS |
+| Docker upgrade/recovery — 44 → 48 and 45 → 48 | PASS |
+| Governance / `git diff --check` / reference checksums / no-ffmpeg | PASS |
+
+**Failing-first proof.** All three new Python regression tests and the new web test were run against
+the unfixed `f0c1934` content in an isolated `git worktree` and fail there (500/one-vs-two-rows,
+missing alias, missing reconcile control); the worktree was removed afterward. B's original round-4
+probe program is retained twice: `first-failure-r4-probes.log` (500 / two rows / 404-200) and
+`final-verification-probes.log` (202 / one row / 200-200), with zero recorded Storage mutations in
+both. `web/dist` changed after the last page edit, so every dist-consuming gate was re-run on the
+rebuilt artifact and both runs are retained; every `-final` run is green.
+
+**Environment limitations.** The Docker daemon cannot bind-mount host `/tmp`, so both smokes used the
+workspace-local ignored `TMPDIR=/root/mediaflow/.dsh-docker-tmp/task43.2-fix3`. `rg` is not
+installed; the equivalent `grep -rn -i` covers the FFmpeg gate. All evidence is host-local.
+
+### Decisions
+
+* **Enforced uniqueness at the durable boundary, not only in the application read.** The reproduced
+  double-create happened in the window between the real open-work read and the insert, so the fence
+  belongs inside one `BEGIN IMMEDIATE` transaction; application readback stays the fast path.
+* **Bound the accepted alias on every winner path.** An accepted request must have an unambiguous
+  readback even when it converged on a concurrent winner, so both discovery conflict paths bind the
+  alias instead of returning silently.
+* **Refuse an ambiguous identity rather than guess.** When the binding table and the record's own
+  column disagree, or more than one candidate exists, the honest outcome is a bounded unresolved
+  error, never an arbitrary row.
+* **Treat `durableState: unknown` as unknown in the UI.** A not-found lookup cannot establish
+  non-admission; the retained context blocks a duplicate and the operator resolves it explicitly
+  after a bounded investigation.
+* **Developer experience check applied.** The three reproduced behaviors were run and retained
+  *before* fixing; the corrected candidate's complete assigned T4 gates were run on the exact frozen
+  content; every claim above cites a raw log beside the index; no prior evidence was overwritten.
+
+### Remaining In-Slice Work
+
+None for this Task. The three B43.2-R4 blockers are corrected and verified. B decides whether the
+Task passes and whether the Slice's Required Outcomes are satisfied; RO-1 inventory/statistics,
+consolidated RO-5 records and RO-6 resident settings adoption remain the later coherent work areas
+identified by B.
+
+### Risks / Deviations
+
+* The known load-sensitive Rules destination-check race did not reproduce in this round's full Python
+  run; the retained Base-reproduction evidence from the prior round remains available for B's
+  judgement. Not waived by Developer; no test assertion was weakened.
+* All evidence is host-local and not claimed remotely reachable.
+* No unresolved product defect is known in the delivered scope.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Tested candidate / Head SHA: 259208b69217828178c88187854780f059743104
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Slice Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Schema: 48 (was 45 at Task Base)
+Evidence: .git/validation-evidence/task43.2-fix3-20261014/EVIDENCE-INDEX.md
+Gates: full Python 2595 OK (skipped=7); focused 78 + migration 10; Python quality/CLI clean;
+       web 1166 unit + typecheck/lint/format/build; e2e node 246, automation 17,
+       inventory 21, unicode 1, direct-files 10; wheel manifest 172/172 ok + smoke schema 48;
+       schema rehearsals 44->48 (138 ok) and 45->48 (151 ok), 0 failed;
+       docker security + upgrades 44->48 and 45->48 PASS; governance/whitespace/
+       reference checksums/no-ffmpeg PASS.
 ```
