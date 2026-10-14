@@ -7580,6 +7580,20 @@ const server = createServer(async (req, res) => {
   const session = manualSession(req);
   const recordManualRequestForSession = (entry) =>
     recordManualRequest({ ...entry, session });
+  // The same read-only identity projection the real backend serves at
+  // /api/v1/auth/principal: pages that retain a principal-scoped
+  // unknown-outcome context read the exact confirmed identity before an
+  // admission can start, so the fake server must model it too.
+  if (url.pathname === "/api/v1/auth/principal" && req.method === "GET") {
+    if (EXPIRED_TOKENS.has(token) || !KNOWN_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    sendJson(res, 200, {
+      principal_id: token === "e2e-readonly-token" ? "e2e-readonly" : "operator",
+    });
+    return;
+  }
   // The checked activation is served ONLY on the exact dedicated operations
   // route the real backend publishes, before the generic operations alias
   // rewrite: a non-operations spelling or a mismatched Draft revision must
