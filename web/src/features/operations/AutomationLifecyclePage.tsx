@@ -23,10 +23,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { useAuthToken, useAuthGeneration } from "../../shared/api/auth-context";
+import { useAuthToken } from "../../shared/api/auth-context";
 import { newRequestId } from "../../shared/api/request-id";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
+import { usePrincipalIdentity } from "./principal-identity-query";
 import {
   admitAutomationRunOnce,
   reconcileAutomationRunOnce,
@@ -37,7 +38,6 @@ import {
   fetchAutomationEditProjection,
   fetchAutomationFormAuthority,
   fetchAutomationRemovalImpact,
-  fetchAuthenticatedPrincipal,
   previewAutomationSchedule,
   removeAutomationDefinitionFocused,
   saveAutomationDefinitionFocused,
@@ -369,20 +369,16 @@ registerPrincipalSessionDataCleaner(() => {
 
 export function AutomationLifecyclePage() {
   const token = useAuthToken();
-  const authGeneration = useAuthGeneration();
   // The principal identity the backend confirms for this token: the pending
-  // Copy intent's session key is scoped to it, so another principal's unknown
-  // outcome can never be reconciled as this one's result.
-  const principalQuery = useQuery({
-    queryKey: ["authenticated-principal", authGeneration],
-    queryFn: () => fetchAuthenticatedPrincipal(token),
-    enabled: token !== null,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const principalId = principalQuery.data?.principalId ?? null;
+  // Copy/Run-once intent's session key is scoped to it, so another principal's
+  // unknown outcome can never be reconciled as this one's result. The
+  // identity is also established *before* a Run-once/copy admission POST, so
+  // an unknown outcome is always retained for this exact principal
+  // (B43.2-R5-2).
+  const principalIdentity = usePrincipalIdentity();
+  const principalId = principalIdentity.resolved
+    ? principalIdentity.principalId
+    : null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const params = useParams({ strict: false }) as { definitionId?: string };
@@ -786,6 +782,21 @@ export function AutomationLifecyclePage() {
   };
   const runOnceMutation = useMutation({
     mutationFn: (id: string) => {
+      // The Run-once admission context is retained principal-scoped. The
+      // identity is established before the POST, so an unknown outcome is
+      // always retained for this exact principal (B43.2-R5-2); admitting
+      // while the identity is unresolved could not prove whose request it
+      // was.
+      const identity = principalIdentity;
+      if (!identity.resolved) {
+        return Promise.reject(
+          new Error(
+            identity.reason === "loading"
+              ? "principal-identity-pending"
+              : "principal-identity-unavailable",
+          ),
+        );
+      }
       const requestId = newRequestId();
       const intent: PendingRunOnce = {
         definitionId: id,
@@ -794,8 +805,8 @@ export function AutomationLifecyclePage() {
         fingerprint: observedFingerprint,
       };
       if (requestId !== null) {
-        writePendingRunOnce(principalId, intent);
-        setPendingRunOnce(intent);
+        writePendingRunOnce(identity.principalId, intent);
+        setPendingRunOnceState(intent);
       }
       return admitAutomationRunOnce(token, {
         definitionId: id,
@@ -804,11 +815,14 @@ export function AutomationLifecyclePage() {
         expectedRevisionId: observedAuthority?.revisionId ?? null,
         expectedRevisionVersion: observedAuthority?.version ?? null,
         expectedRevisionDigest: observedAuthority?.digest ?? null,
-      }).then((result) => ({ result, intent }));
+      }).then((result) => ({
+        result,
+        principalId: identity.principalId,
+      }));
     },
     retry: false,
     onMutate: () => setError(null),
-    onSuccess: ({ result }) => {
+    onSuccess: ({ result, principalId: admittedPrincipalId }) => {
       if (!result.ok || result.model === undefined) {
         const unknown =
           result.status === 0 ||
@@ -825,14 +839,14 @@ export function AutomationLifecyclePage() {
         }
         // A proved rejection clears the retained intent.
         setPendingRunOnce(null);
-        writePendingRunOnce(principalId, null);
+        writePendingRunOnce(admittedPrincipalId, null);
         setError(
           `Run once was rejected (${result.code ?? "unknown"}). ${result.nextAction ?? "Reload the current state and review the definition bounds."}`,
         );
         return;
       }
       setPendingRunOnce(null);
-      writePendingRunOnce(principalId, null);
+      writePendingRunOnce(admittedPrincipalId, null);
       void navigate({
         to: "/operations/automation/run-once/$discoveryId",
         params: { discoveryId: result.model.discoveryId },
@@ -1403,12 +1417,20 @@ export function AutomationLifecyclePage() {
                     type="button"
                     disabled={
                       runOnceMutation.isPending ||
-                      pendingRunOnceForRoute !== null
+                      pendingRunOnceForRoute !== null ||
+                      !principalIdentity.resolved
                     }
                     onClick={() => runOnceMutation.mutate(routeTargetId)}
                   >
                     {runOnceMutation.isPending ? "Starting..." : "运行一次"}
                   </Button>
+                  {!principalIdentity.resolved && (
+                    <p className="mf-dashboard-meta">
+                      {principalIdentity.reason === "loading"
+                        ? "正在确认当前登录身份；确认后才能发起运行一次，以保证未决请求能被完整保留。"
+                        : "当前登录身份暂不可用，运行一次暂不能发起；请稍后刷新重试。未决请求的核对不受影响。"}
+                    </p>
+                  )}
                   {pendingRunOnceForRoute !== null && (
                     <Button
                       type="button"

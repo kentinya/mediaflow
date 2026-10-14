@@ -1474,6 +1474,63 @@ class RunOnceApiTests(_RunOnceFixture):
                 self.assertEqual(next(iter(identities)), readback.discovery_id)
             self.assertEqual([], value.source.mutations)
 
+    def test_discovery_alias_refuses_an_identity_claimed_by_other_work(
+        self,
+    ) -> None:
+        """B43.2-R5-1: the discovery alias writer validates the identity too.
+
+        A request identity already durably claimed by another admission (a
+        direct analysis row) must be refused by a delayed alias writer, so the
+        identity never names two durable facts.  The refused writer reports an
+        explicit admission-request conflict, never a second acceptance.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            request_id = "30303030-3030-4030-8030-303030303030"
+            # The identity is claimed by an analysis through its own column.
+            value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            discovery = value.run_once.admit("nightly", actor="operator")
+            self.assertIsNone(discovery.admission_request_id)
+            with self.assertRaises(DiscoveryError):
+                value.discovery._bind_request(request_id, discovery)
+            bindings = value.repository._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", request_id),
+            ).fetchall()
+            self.assertEqual([], bindings)
+            self.assertEqual([], value.source.mutations)
+
+    def test_discovery_admission_refuses_an_identity_claimed_by_other_work(
+        self,
+    ) -> None:
+        """B43.2-R5-1: the discovery direct-create writer validates too.
+
+        A Run-once admission whose client request identity already names a
+        durable analysis must refuse instead of recording a second, cross-family
+        admission for the same identity.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            request_id = "40404040-4040-4040-8040-404040404040"
+            value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            with self.assertRaises(DiscoveryError) as caught:
+                value.run_once.admit("nightly", actor="operator", admission_request_id=request_id)
+            self.assertIn("admission request identity", str(caught.exception))
+            rows = value.repository._connection.execute(
+                "SELECT discovery_id FROM media_discoveries "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", request_id),
+            ).fetchall()
+            self.assertEqual([], rows)
+            self.assertEqual([], value.source.mutations)
+
     def test_malformed_run_once_body_is_rejected(self) -> None:
         with self.journey(source_scope="Movies") as value:
             status, _ = self.request(

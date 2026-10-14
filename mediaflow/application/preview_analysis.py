@@ -926,10 +926,13 @@ class PreviewAnalysisService:
         admission exists), that request's own identity is bound to the same
         durable record, so a lost response for this request reconciles by its
         own ID instead of a bounded absence.  A request that created its own
-        row is already readable through the row's own column.  A binding
-        failure is never swallowed silently: it means this identity is already
-        bound to different work, which is a reconciliation conflict, not a
-        success.
+        row is already readable through the row's own column.
+
+        The binder enforces the complete principal/request invariant (B43.2-R5-1):
+        when another writer has already durably claimed this identity for
+        different work, the bind refuses and so must this admission — the
+        convergence outcome is a bounded, actionable refusal, never a second
+        ``accepted`` answer for one request identity.
         """
 
         if admission_request_id is None:
@@ -937,13 +940,21 @@ class PreviewAnalysisService:
         binder = getattr(self._repository, "bind_admission_request", None)
         if not callable(binder):
             return
-        binder(
-            actor=analysis.actor,
-            admission_request_id=admission_request_id,
-            kind="preview-analysis",
-            target_id=analysis.analysis_id,
-            created_at=self._clock(),
-        )
+        try:
+            binder(
+                actor=analysis.actor,
+                admission_request_id=admission_request_id,
+                kind="preview-analysis",
+                target_id=analysis.analysis_id,
+                created_at=self._clock(),
+            )
+        except PreviewAnalysisConflict as error:
+            raise PreviewAnalysisConflict(
+                "this analysis request identity is already bound to different "
+                "durable work, so this admission was not accepted; reconcile the "
+                "original request by its ID or start with a new request identity",
+                details={"requestIdReuse": True},
+            ) from error
 
     def _require_version(self, analysis_id: str, expected_version: int) -> PreviewAnalysis:
         if isinstance(expected_version, bool) or not isinstance(expected_version, int):

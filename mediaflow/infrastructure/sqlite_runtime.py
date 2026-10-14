@@ -10090,6 +10090,48 @@ class SQLiteTaskRepository:
                             "this discovery admission request identity already exists",
                             details={"discoveryId": request_match["discovery_id"]},
                         )
+                    # The record's own column of the *other* family is also a
+                    # durable fact naming this request identity (B43.2-R5-1):
+                    # one identity names exactly one admission, so a request
+                    # already claimed by a preview analysis cannot become a
+                    # second, cross-family discovery.
+                    analysis_match = self._connection.execute(
+                        "SELECT analysis_id FROM preview_analyses "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (discovery.actor, discovery.admission_request_id),
+                    ).fetchone()
+                    if analysis_match is not None:
+                        raise DiscoveryConflict(
+                            "this discovery admission request identity is already "
+                            "bound to different durable work",
+                            details={"analysisId": analysis_match["analysis_id"]},
+                        )
+                    # The alias table is the other durable fact naming this
+                    # request identity (B43.2-R5-1): an accepted request that
+                    # converged on already-open work is bound there, so a
+                    # second direct row for the same identity must refuse
+                    # instead of manufacturing ambiguous evidence.
+                    binding_match = self._connection.execute(
+                        "SELECT kind, target_id FROM admission_request_bindings "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (discovery.actor, discovery.admission_request_id),
+                    ).fetchone()
+                    if binding_match is not None:
+                        if (
+                            binding_match["kind"] == "media-discovery"
+                            and binding_match["target_id"] == discovery.discovery_id
+                        ):
+                            # The identity already names exactly this record;
+                            # the insert below would duplicate it.
+                            raise DiscoveryConflict(
+                                "this discovery admission request identity already exists",
+                                details={"discoveryId": binding_match["target_id"]},
+                            )
+                        raise DiscoveryConflict(
+                            "this discovery admission request identity is already "
+                            "bound to different durable work",
+                            details={"discoveryId": binding_match["target_id"]},
+                        )
                 admission_signature = self._admission_signature(discovery)
                 open_match = self._connection.execute(
                     "SELECT discovery_id FROM media_discoveries "
@@ -10660,14 +10702,41 @@ class SQLiteTaskRepository:
                             "this preview analysis admission request identity already exists",
                             details={"analysisId": request_match["analysis_id"]},
                         )
+                    # The record's own column of the *other* family is also a
+                    # durable fact naming this request identity (B43.2-R5-1):
+                    # one identity names exactly one admission, so a request
+                    # already claimed by a media discovery cannot become a
+                    # second, cross-family analysis.
+                    discovery_match = self._connection.execute(
+                        "SELECT discovery_id FROM media_discoveries "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (analysis.actor, analysis.admission_request_id),
+                    ).fetchone()
+                    if discovery_match is not None:
+                        raise PreviewAnalysisConflict(
+                            "this preview analysis admission request identity is "
+                            "already bound to different durable work",
+                            details={"discoveryId": discovery_match["discovery_id"]},
+                        )
                     binding_match = self._connection.execute(
-                        "SELECT target_id FROM admission_request_bindings "
+                        "SELECT kind, target_id FROM admission_request_bindings "
                         "WHERE actor=? AND admission_request_id=? LIMIT 1",
                         (analysis.actor, analysis.admission_request_id),
                     ).fetchone()
                     if binding_match is not None:
+                        if (
+                            binding_match["kind"] == "preview-analysis"
+                            and binding_match["target_id"] == analysis.analysis_id
+                        ):
+                            # The identity already names exactly this record;
+                            # the insert below would duplicate it.
+                            raise PreviewAnalysisConflict(
+                                "this preview analysis admission request identity already exists",
+                                details={"analysisId": binding_match["target_id"]},
+                            )
                         raise PreviewAnalysisConflict(
-                            "this preview analysis admission request identity is already bound",
+                            "this preview analysis admission request identity is "
+                            "already bound to different durable work",
                             details={"analysisId": binding_match["target_id"]},
                         )
                 self._connection.execute(
@@ -10843,6 +10912,15 @@ class SQLiteTaskRepository:
         bounded absence.  The association is created exactly once per
         ``(actor, request_id)``; a re-bind that names a different target is
         refused rather than silently rewritten.
+
+        The complete principal/request invariant is checked here too, not only
+        in ``create_*`` (B43.2-R5-1): inside one ``BEGIN IMMEDIATE``
+        transaction the writer validates *both* durable facts — the binding
+        table and the record's own ``admission_request_id`` column — so a
+        request identity whose direct row already names different work can
+        never additionally gain an alias.  Accepting both would manufacture
+        ambiguous evidence the readback must then refuse; refusing the
+        incompatible reuse keeps exactly one durable truth per identity.
         """
 
         if not isinstance(actor, str) or not actor.strip():
@@ -10855,19 +10933,52 @@ class SQLiteTaskRepository:
             raise ValueError("admission request target identity is required")
         if created_at.tzinfo is None:
             raise ValueError("admission request binding timestamp needs timezone")
-        with self._lock, self._connection:
-            existing = self._connection.execute(
-                "SELECT target_id FROM admission_request_bindings "
-                "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                (actor, admission_request_id),
-            ).fetchone()
-            if existing is not None:
-                if existing["target_id"] == target_id:
-                    return
-                raise PreviewAnalysisConflict(
-                    "this admission request identity is already bound to different durable work"
-                )
+        with self._lock:
             try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                existing = self._connection.execute(
+                    "SELECT kind, target_id FROM admission_request_bindings "
+                    "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                    (actor, admission_request_id),
+                ).fetchone()
+                if existing is not None:
+                    if existing["target_id"] == target_id and existing["kind"] == kind:
+                        self._connection.commit()
+                        return
+                    raise PreviewAnalysisConflict(
+                        "this admission request identity is already bound to "
+                        "different durable work; start the new admission with a "
+                        "new request identity",
+                        details={"requestIdReuse": True},
+                    )
+                # The record's own column is the other durable fact: a request
+                # identity may name exactly one admission across both families.
+                direct_row = self._connection.execute(
+                    "SELECT analysis_id FROM preview_analyses "
+                    "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                    (actor, admission_request_id),
+                ).fetchone()
+                direct_id = direct_row["analysis_id"] if direct_row is not None else None
+                if direct_row is None:
+                    cross_row = self._connection.execute(
+                        "SELECT discovery_id FROM media_discoveries "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (actor, admission_request_id),
+                    ).fetchone()
+                    if cross_row is not None:
+                        direct_id = cross_row["discovery_id"]
+                if direct_id is not None and direct_id != target_id:
+                    raise PreviewAnalysisConflict(
+                        "this admission request identity already names different "
+                        "durable work; start the new admission with a new "
+                        "request identity",
+                        details={"requestIdReuse": True},
+                    )
+                if direct_id is not None:
+                    # The request already names this exact work through the
+                    # record's own column; the alias would be redundant.
+                    self._connection.commit()
+                    return
                 self._connection.execute(
                     "INSERT INTO admission_request_bindings "
                     "(actor, admission_request_id, kind, target_id, created_at) "
@@ -10880,10 +10991,21 @@ class SQLiteTaskRepository:
                         created_at.isoformat(),
                     ),
                 )
+                self._connection.commit()
+            except PreviewAnalysisConflict:
+                self._connection.rollback()
+                raise
             except sqlite3.IntegrityError as error:
+                self._connection.rollback()
                 raise PreviewAnalysisConflict(
-                    "this admission request identity is already bound to different durable work"
+                    "this admission request identity is already bound to "
+                    "different durable work; start the new admission with a new "
+                    "request identity",
+                    details={"requestIdReuse": True},
                 ) from error
+            except BaseException:
+                self._connection.rollback()
+                raise
 
     def find_open_preview_analysis(
         self,

@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 from mediaflow.application.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewService,
@@ -37,7 +38,22 @@ from mediaflow.application.preview_analysis import (
     PreviewAnalysisService,
     PreviewAnalysisWorker,
 )
-from mediaflow.domain.preview_analysis import PreviewAnalysisError, PreviewAnalysisStatus
+from mediaflow.domain.media_discovery import (
+    DiscoveryBudgets,
+    DiscoveryConflict,
+    DiscoveryCounters,
+    DiscoveryEntryKind,
+    DiscoveryIncompleteReason,
+    DiscoveryProgress,
+    DiscoveryScopeEntry,
+    DiscoveryStatus,
+    MediaDiscovery,
+)
+from mediaflow.domain.preview_analysis import (
+    PreviewAnalysisConflict,
+    PreviewAnalysisError,
+    PreviewAnalysisStatus,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -847,6 +863,267 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             self.assertEqual(1, len(rows))
             self.assertEqual(next(iter(identities)), rows[0]["analysis_id"])
             self.assertEqual([], value.source.mutations)
+
+    def test_alias_write_refuses_a_request_identity_already_named_by_a_direct_row(
+        self,
+    ) -> None:
+        """B43.2-R5-1: the invariant holds at the alias writer too.
+
+        The durable request identity is claimed by a *direct* analysis row
+        while an equivalent convergence has not yet written its alias.  The
+        delayed alias write must validate the direct fact inside its
+        transaction and refuse the incompatible reuse, so one request identity
+        can never end up naming two analyses (which the readback must then
+        refuse as ambiguous evidence).
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            shared_request = "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5"
+            # The version-1 analysis exists as durable open work first.
+            value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=intent.version,
+            )
+            # The operator corrects the intent: it advances to version 2.
+            item = intent.items[0]
+            changed = value.intents.update_choice(
+                intent.intent_id,
+                item.item_id,
+                item.choice,
+                expected_version=intent.version,
+                expected_item_version=item.version,
+                actor="operator",
+            )
+            self.assertGreater(changed.version, intent.version)
+            # The corrected version-2 analysis owns the request identity
+            # through its own column (the direct fact).
+            direct = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=changed.version,
+                admission_request_id=shared_request,
+            )
+            self.assertEqual(changed.version, direct.intent_version)
+            # Now the delayed alias writer converges on the stale version-1
+            # open work with the same identity: it must refuse, never accept.
+            with self.assertRaises(PreviewAnalysisConflict):
+                value.repository.bind_admission_request(
+                    actor="operator",
+                    admission_request_id=shared_request,
+                    kind="preview-analysis",
+                    target_id=str(uuid4()),
+                    created_at=value.clock(),
+                )
+            # The identity stays unambiguous: exactly the direct row, no
+            # binding, and the readback still proves it after reopen.
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND admission_request_id=?",
+                ("operator", shared_request),
+            ).fetchall()
+            self.assertEqual([direct.analysis_id], [row["analysis_id"] for row in rows])
+            bindings = value.repository._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", shared_request),
+            ).fetchall()
+            self.assertEqual([], bindings)
+            with SQLiteTaskRepository(self.database) as reopened:
+                readback = reopened.find_preview_analysis_by_request_id(
+                    actor="operator", admission_request_id=shared_request
+                )
+                self.assertIsNotNone(readback)
+                self.assertEqual(direct.analysis_id, readback.analysis_id)
+            self.assertEqual([], value.source.mutations)
+
+    def test_concurrent_alias_and_direct_writers_keep_one_durable_truth(
+        self,
+    ) -> None:
+        """B43.2-R5-1: the race order cannot manufacture ambiguous evidence.
+
+        Two writers for the *same* request identity — an alias acceptance for
+        a version-2 convergence and a direct create for a *changed* definition
+        context — race with only real repository/service calls between them.
+        Exactly one durable analysis ends up owning the identity; the other
+        writer is refused instead of being reported as accepted.
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            shared_request = "b6b6b6b6-b6b6-4b6b-8b6b-b6b6b6b6b6b6"
+            # The operator saves one choice: the intent advances to version 2
+            # and an open version-2 analysis exists, so a version-2 request
+            # converges and binds; a definition-analysis request with the
+            # *same* identity creates its own row directly.
+            item = intent.items[0]
+            changed = value.intents.update_choice(
+                intent.intent_id,
+                item.item_id,
+                item.choice,
+                expected_version=intent.version,
+                expected_item_version=item.version,
+                actor="operator",
+            )
+            value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=changed.version,
+            )
+            entered, release = threading.Event(), threading.Event()
+            original_bind = value.repository.bind_admission_request
+
+            def paused_bind(**kwargs):
+                # Delay only the real alias writer; production behavior is
+                # otherwise unmodified.
+                if kwargs["admission_request_id"] == shared_request:
+                    entered.set()
+                    assert release.wait(timeout=10)
+                return original_bind(**kwargs)
+
+            value.repository.bind_admission_request = paused_bind
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                alias_request = pool.submit(
+                    value.analyses.admit_manual,
+                    intent.intent_id,
+                    actor="operator",
+                    expected_version=changed.version,
+                    admission_request_id=shared_request,
+                )
+                assert entered.wait(timeout=5)
+                direct = value.analyses.admit_definition(
+                    "nightly",
+                    actor="operator",
+                    admission_request_id=shared_request,
+                )
+                release.set()
+                try:
+                    alias_request.result(timeout=10)
+                except PreviewAnalysisConflict:
+                    # The delayed alias writer was refused: it never reported
+                    # this identity as accepted for other work.
+                    pass
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND admission_request_id=?",
+                ("operator", shared_request),
+            ).fetchall()
+            bindings = value.repository._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", shared_request),
+            ).fetchall()
+            # Exactly one durable fact names the identity, and it is the
+            # analysis the identity's owner actually receives.
+            durable_ids = {row["analysis_id"] for row in rows} | {
+                row["target_id"] for row in bindings
+            }
+            self.assertEqual(1, len(durable_ids), durable_ids)
+            self.assertEqual(direct.analysis_id, next(iter(durable_ids)))
+            self.assertEqual(
+                direct.analysis_id,
+                value.analyses.find_by_request_id(
+                    actor="operator", admission_request_id=shared_request
+                ).analysis_id,
+            )
+            self.assertEqual([], value.source.mutations)
+
+    def test_discovery_create_refuses_a_request_identity_bound_to_an_analysis(
+        self,
+    ) -> None:
+        """B43.2-R5-1: every durable writer validates the complete identity.
+
+        The discovery writer consults the alias table too: a request identity
+        that already names a durable analysis must not become a second,
+        cross-family admission for the same principal.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            request_id = "c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7"
+            value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            discovery = MediaDiscovery(
+                str(uuid4()),
+                "operator",
+                "library",
+                "source",
+                value.revision.revision_id,
+                value.revision.digest,
+                DiscoveryStatus.QUEUED,
+                1,
+                DiscoveryBudgets(),
+                DiscoveryProgress(
+                    "queued",
+                    (DiscoveryScopeEntry("Movies", DiscoveryEntryKind.DIRECTORY),),
+                    DiscoveryCounters(),
+                    DiscoveryIncompleteReason.NONE,
+                    (),
+                    (),
+                    (),
+                    ("Movies",),
+                    None,
+                    None,
+                    (),
+                    "queued",
+                ),
+                value.clock(),
+                value.clock(),
+                admission_request_id=request_id,
+            )
+            with self.assertRaises(DiscoveryConflict):
+                value.repository.create_media_discovery(discovery)
+            rows = value.repository._connection.execute(
+                "SELECT discovery_id FROM media_discoveries "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", request_id),
+            ).fetchall()
+            self.assertEqual([], rows)
+            self.assertEqual([], value.source.mutations)
+
+    def test_alias_write_refuses_a_cross_family_identity(self) -> None:
+        """B43.2-R5-1: one request identity names one admission, not two kinds."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            request_id = "d8d8d8d8-d8d8-4d8d-8d8d-d8d8d8d8d8d8"
+            analysis = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            with self.assertRaises(PreviewAnalysisConflict):
+                value.repository.bind_admission_request(
+                    actor="operator",
+                    admission_request_id=request_id,
+                    kind="media-discovery",
+                    target_id=str(uuid4()),
+                    created_at=value.clock(),
+                )
+            # The refused write left no second durable fact.
+            bindings = value.repository._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=?",
+                ("operator", request_id),
+            ).fetchall()
+            self.assertEqual([], bindings)
+            self.assertEqual([], value.source.mutations)
+            # And the analysis is still the one provable record.
+            readback = value.analyses.find_by_request_id(
+                actor="operator", admission_request_id=request_id
+            )
+            self.assertEqual(analysis.analysis_id, readback.analysis_id)
 
     def test_analysis_admission_survives_sqlite_close_and_reopen(self) -> None:
         with self.journey() as value:

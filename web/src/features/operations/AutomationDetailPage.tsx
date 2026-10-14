@@ -27,8 +27,6 @@ import {
   revokeAutomationAuthority,
 } from "../../shared/api/api-client";
 import { newRequestId } from "../../shared/api/request-id";
-import { useAuthGeneration } from "../../shared/api/auth-context";
-import { fetchAuthenticatedPrincipal } from "../../shared/api/api-client";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
@@ -40,6 +38,7 @@ import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import { describeAutomationRunMode } from "../../entities/operations/automation";
+import { usePrincipalIdentity } from "./principal-identity-query";
 
 const PREVIEW_ANALYSIS_INTENT_PREFIX =
   "mediaflow.operations.automation-preview-analysis:";
@@ -123,7 +122,6 @@ export function AutomationDetailPage() {
     from: "/operations/automation/definition/$definitionId",
   });
   const token = useAuthToken();
-  const authGeneration = useAuthGeneration();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [confirmGrant, setConfirmGrant] = useState(false);
@@ -131,19 +129,10 @@ export function AutomationDetailPage() {
   // The principal identity the backend confirms for this token: the retained
   // exact-Preview intent's session key is scoped to it, so another principal's
   // unknown outcome can never be reconciled as this one's result.
-  const principalQuery = useQuery({
-    queryKey: ["authenticated-principal", authGeneration],
-    queryFn: () => fetchAuthenticatedPrincipal(token),
-    enabled: token !== null,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 60_000,
-  });
-  const principalId =
-    principalQuery.data !== undefined
-      ? (principalQuery.data.principalId ?? null)
-      : null;
+  const principalIdentity = usePrincipalIdentity();
+  const principalId = principalIdentity.resolved
+    ? principalIdentity.principalId
+    : null;
 
   const [pendingPreviewAnalysisOverride, setPendingPreviewAnalysisState] =
     useState<PendingPreviewAnalysis | null>(null);
@@ -166,24 +155,42 @@ export function AutomationDetailPage() {
 
   const previewMutation = useMutation({
     mutationFn: () => {
+      // The admission context is retained principal-scoped. The identity is
+      // established before the POST, so an unknown outcome is always
+      // retained for this exact principal (B43.2-R5-2); admitting while the
+      // identity is unresolved could not prove whose request it was.
+      const identity = principalIdentity;
+      if (!identity.resolved) {
+        return Promise.reject(
+          new Error(
+            identity.reason === "loading"
+              ? "principal-identity-pending"
+              : "principal-identity-unavailable",
+          ),
+        );
+      }
       const requestId = newRequestId();
       const intent: PendingPreviewAnalysis | null =
         requestId === null ? null : { definitionId, requestId };
       if (intent !== null) {
-        writePendingPreviewAnalysis(principalId, intent);
-        setPendingPreviewAnalysis(intent);
+        writePendingPreviewAnalysis(identity.principalId, intent);
+        setPendingPreviewAnalysisState(intent);
       }
       return admitDefinitionPreviewAnalysis(token, {
         definitionId,
         admissionRequestId: requestId,
-      }).then((result) => ({ result, intent }));
+      }).then((result) => ({
+        result,
+        intent,
+        principalId: identity.principalId,
+      }));
     },
     retry: false,
     onMutate: () => setError(null),
-    onSuccess: ({ result, intent }) => {
+    onSuccess: ({ result, intent, principalId: admittedPrincipalId }) => {
       if (result.ok && result.model !== undefined) {
         setPendingPreviewAnalysis(null);
-        writePendingPreviewAnalysis(principalId, null);
+        writePendingPreviewAnalysis(admittedPrincipalId, null);
         void navigate({
           to: "/operations/automation/preview-analyses/$analysisId",
           params: { analysisId: result.model.analysisId },
@@ -204,7 +211,7 @@ export function AutomationDetailPage() {
         return;
       }
       setPendingPreviewAnalysis(null);
-      writePendingPreviewAnalysis(principalId, null);
+      writePendingPreviewAnalysis(admittedPrincipalId, null);
       setError(
         `Creating the Preview was rejected (${result.code}). Reload the current state and try again; nothing is retried automatically.`,
       );
@@ -591,7 +598,8 @@ export function AutomationDetailPage() {
                   disabled={
                     !definition.actions.preview.available ||
                     previewMutation.isPending ||
-                    pendingPreviewAnalysis !== null
+                    pendingPreviewAnalysis !== null ||
+                    !principalIdentity.resolved
                   }
                   onClick={() => previewMutation.mutate()}
                 >
@@ -599,6 +607,13 @@ export function AutomationDetailPage() {
                     ? "Creating Preview…"
                     : "Create exact Preview"}
                 </Button>
+                {!principalIdentity.resolved && (
+                  <p className="mf-dashboard-meta">
+                    {principalIdentity.reason === "loading"
+                      ? "正在确认当前登录身份；确认后才能发起精确预览，以保证未决请求能被完整保留。"
+                      : "当前登录身份暂不可用，精确预览暂不能发起；请稍后刷新重试。未决请求的核对不受影响。"}
+                  </p>
+                )}
                 {pendingPreviewAnalysis !== null ? (
                   <>
                     <Button

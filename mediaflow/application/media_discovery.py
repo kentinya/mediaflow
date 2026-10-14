@@ -88,6 +88,7 @@ from mediaflow.domain.media_discovery import (
     is_settlement_status,
 )
 from mediaflow.domain.organizer import StorageLocation
+from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
@@ -814,6 +815,12 @@ class MediaDiscoveryService:
         actually created instead of a bounded absence that reads as "no work
         exists".  A request that created its own row is already readable
         through the record's own column.
+
+        The binder enforces the complete principal/request invariant
+        (B43.2-R5-1): when another writer has already durably claimed this
+        identity for different work, the bind refuses and so must this
+        admission — the convergence outcome is a bounded, actionable refusal,
+        never a second ``accepted`` answer for one request identity.
         """
 
         if admission_request_id is None:
@@ -821,13 +828,27 @@ class MediaDiscoveryService:
         binder = getattr(self._repository, "bind_admission_request", None)
         if not callable(binder):
             return
-        binder(
-            actor=discovery.actor,
-            admission_request_id=admission_request_id,
-            kind="media-discovery",
-            target_id=discovery.discovery_id,
-            created_at=self._clock(),
-        )
+        try:
+            binder(
+                actor=discovery.actor,
+                admission_request_id=admission_request_id,
+                kind="media-discovery",
+                target_id=discovery.discovery_id,
+                created_at=self._clock(),
+            )
+        except PreviewAnalysisConflict as error:
+            raise DiscoveryError(
+                "this discovery request identity is already bound to different "
+                "durable work, so this admission was not accepted; reconcile the "
+                "original request by its ID or start with a new request identity",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request ID for its original admission, or start "
+                    "this one with a new request ID"
+                ),
+                details={"requestIdReuse": True},
+            ) from error
 
     def _reconcile_admission_request(
         self,

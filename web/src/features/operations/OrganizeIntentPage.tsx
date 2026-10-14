@@ -26,13 +26,12 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import {
   admitManualPreviewAnalysis,
   reconcilePreviewAnalysis,
-  fetchAuthenticatedPrincipal,
   updateOrganizeChoice,
 } from "../../shared/api/api-client";
 import { newRequestId } from "../../shared/api/request-id";
-import { useAuthGeneration } from "../../shared/api/auth-context";
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
 import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
+import { usePrincipalIdentity } from "./principal-identity-query";
 import type {
   OrganizeChoiceModel,
   OrganizeIntentItemModel,
@@ -404,7 +403,6 @@ export function OrganizeIntentPage() {
   const filesReturn = readFilesReturnContext(searchParams);
   const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
-  const authGeneration = useAuthGeneration();
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -412,19 +410,10 @@ export function OrganizeIntentPage() {
   // The principal identity the backend confirms for this token: the retained
   // exact-Preview intent's session key is scoped to it, so another principal's
   // unknown outcome can never be reconciled as this one's result.
-  const principalQuery = useQuery({
-    queryKey: ["authenticated-principal", authGeneration],
-    queryFn: () => fetchAuthenticatedPrincipal(token),
-    enabled: token !== null,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 60_000,
-  });
-  const principalId =
-    principalQuery.data !== undefined
-      ? (principalQuery.data.principalId ?? null)
-      : null;
+  const principalIdentity = usePrincipalIdentity();
+  const principalId = principalIdentity.resolved
+    ? principalIdentity.principalId
+    : null;
   const [pendingManualAnalysisOverride, setPendingManualAnalysisState] =
     useState<PendingManualAnalysis | null>(null);
   const pendingManualAnalysis =
@@ -436,25 +425,43 @@ export function OrganizeIntentPage() {
 
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) => {
+      // The admission context is retained principal-scoped. The identity is
+      // established before the POST, so an unknown outcome is always
+      // retained for this exact principal (B43.2-R5-2); admitting while the
+      // identity is unresolved could not prove whose request it was.
+      const identity = principalIdentity;
+      if (!identity.resolved) {
+        return Promise.reject(
+          new Error(
+            identity.reason === "loading"
+              ? "principal-identity-pending"
+              : "principal-identity-unavailable",
+          ),
+        );
+      }
       const requestId = newRequestId();
       const intent: PendingManualAnalysis | null =
         requestId === null ? null : { intentId, requestId };
       if (intent !== null) {
-        writePendingManualAnalysis(principalId, intent);
-        setPendingManualAnalysis(intent);
+        writePendingManualAnalysis(identity.principalId, intent);
+        setPendingManualAnalysisState(intent);
       }
       return admitManualPreviewAnalysis(token, {
         intentId,
         expectedVersion,
         admissionRequestId: requestId,
-      }).then((value) => ({ value, intent }));
+      }).then((value) => ({
+        value,
+        intent,
+        principalId: identity.principalId,
+      }));
     },
     retry: false,
     onMutate: () => setPreviewError(null),
-    onSuccess: ({ value, intent }) => {
+    onSuccess: ({ value, intent, principalId: admittedPrincipalId }) => {
       if (value.ok && value.model !== undefined) {
         setPendingManualAnalysis(null);
-        writePendingManualAnalysis(principalId, null);
+        writePendingManualAnalysis(admittedPrincipalId, null);
         void navigate({
           to: "/operations/automation/preview-analyses/$analysisId",
           params: { analysisId: value.model.analysisId },
@@ -479,7 +486,7 @@ export function OrganizeIntentPage() {
         return;
       }
       setPendingManualAnalysis(null);
-      writePendingManualAnalysis(principalId, null);
+      writePendingManualAnalysis(admittedPrincipalId, null);
       setPreviewError(
         `精确预览被拒绝(${value.code}),没有保存更改。请刷新意图后重新生成预览。`,
       );
@@ -630,7 +637,8 @@ export function OrganizeIntentPage() {
                   disabled={
                     !intent.actions.preview.available ||
                     previewMutation.isPending ||
-                    pendingManualAnalysis !== null
+                    pendingManualAnalysis !== null ||
+                    !principalIdentity.resolved
                   }
                   onClick={() => previewMutation.mutate(intent.version)}
                 >
@@ -638,6 +646,13 @@ export function OrganizeIntentPage() {
                     ? "正在生成精确预览…"
                     : "生成精确预览"}
                 </Button>
+                {!principalIdentity.resolved && (
+                  <p className="mf-dashboard-meta">
+                    {principalIdentity.reason === "loading"
+                      ? "正在确认当前登录身份；确认后才能发起精确预览，以保证未决请求能被完整保留。"
+                      : "当前登录身份暂不可用，精确预览暂不能发起；请稍后刷新重试。未决请求的核对不受影响。"}
+                  </p>
+                )}
                 {pendingManualAnalysis !== null ? (
                   <>
                     <Button

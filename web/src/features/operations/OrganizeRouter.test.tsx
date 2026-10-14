@@ -292,6 +292,9 @@ describe("V2 manual Organize journey", () => {
   it("renders the durable intent, saves one optimistic choice edit and admits the exact analysis", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
       if (
         call.url ===
           "/api/v1/operations/organize/intents/intent-1/preview-analyses" &&

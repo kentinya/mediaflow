@@ -775,6 +775,51 @@ test("a lost exact-analysis admission stays unknown and blocks a duplicate until
   ).toBeEnabled();
 });
 
+test("a delayed principal identity cannot start an admission without retained context", async ({
+  page,
+}) => {
+  // B43.2-R5-2: the exact principal identity is established *before* the
+  // admission POST, so an unknown outcome is always retained for this exact
+  // principal. While the identity read is still pending, Create exact Preview
+  // stays blocked with its explanation; it becomes available once the
+  // backend-confirmed identity has arrived.
+  await page.request.post("/__harness__/reset-automation-definitions");
+  await page.request.post("/__harness__/restore-source-media");
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  await page.route("**/api/v1/auth/principal", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    await route.continue();
+  });
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  const create = page.getByRole("button", { name: "Create exact Preview" });
+  await expect(create).toBeVisible();
+  await expect(create).toBeDisabled();
+  await expect(page.getByText(/正在确认当前登录身份/)).toBeVisible();
+  // No admission POST leaves the browser while the identity is pending.
+  let admissionPosts = 0;
+  await page.route("**/preview-analyses", (route) => {
+    if (route.request().method() === "POST") {
+      admissionPosts += 1;
+    }
+    void route.continue();
+  });
+  await expect(create).toBeDisabled({ timeout: 2500 });
+  expect(admissionPosts).toBe(0);
+  // The identity resolves; admission becomes possible and then actually runs.
+  await expect(create).toBeEnabled({ timeout: 8000 });
+  await create.click();
+  expect(admissionPosts).toBe(1);
+});
+
 test("exact definition Preview grants a real scheduled Worker run", async ({
   page,
 }) => {

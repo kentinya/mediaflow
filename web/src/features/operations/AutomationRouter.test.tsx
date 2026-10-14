@@ -785,6 +785,9 @@ describe("V2 Automation journey", () => {
   it("admits a durable exact analysis from Create exact Preview and follows it", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
       if (
         call.url === "/api/v1/operations/automation/task-definitions/auto-task"
       ) {
@@ -855,6 +858,9 @@ describe("V2 Automation journey", () => {
     // reported as proof that no work exists.
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
       if (
         call.url === "/api/v1/operations/automation/task-definitions/auto-task"
       ) {
@@ -931,6 +937,142 @@ describe("V2 Automation journey", () => {
       expect(
         screen.getByRole("button", { name: "Create exact Preview" }),
       ).toBeEnabled(),
+    );
+  });
+
+  it("keeps admission blocked until the backend-confirmed principal identity is resolved", async () => {
+    // B43.2-R5-2: an admission that starts while the principal identity is
+    // still unknown cannot reliably retain its principal-scoped request
+    // context, so Create exact Preview waits for the exact identity and
+    // explains the wait; a failed identity read never invents one.
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        // The identity read never answers: admission must stay blocked.
+        throw new Error("identity unavailable");
+      }
+      if (
+        call.url === "/api/v1/operations/automation/task-definitions/auto-task"
+      ) {
+        return jsonResponse({ definition: definitionDocument() });
+      }
+      if (
+        call.url ===
+          "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(definitionAnalysisDocument(), 202);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation/definition/auto-task");
+
+    await screen.findByRole("heading", { name: /Automation definition/ });
+    const create = await screen.findByRole("button", {
+      name: "Create exact Preview",
+    });
+    expect(create).toBeDisabled();
+    // The failed identity read is an unavailable state, never an invented one.
+    await screen.findByText(/当前登录身份暂不可用/);
+    // No admission was submitted while the identity was unresolved.
+    expect(
+      calls.filter(
+        (item) =>
+          item.url ===
+            "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+          item.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("retains the unknown-outcome context across a delayed principal identity and reload", async () => {
+    // B43.2-R5-2: the exact principal identity is established *before* the
+    // admission POST, so the retained unknown-outcome context is durably
+    // principal-scoped and survives the identity response arriving late —
+    // including across a reload — instead of silently dropping it.
+    const user = userEvent.setup();
+    // The identity response is held back until the test releases it, so the
+    // admission decision happens while the identity is genuinely unresolved.
+    let releaseIdentity: (() => void) | null = null;
+    const identityGate = new Promise<void>((resolve) => {
+      releaseIdentity = resolve;
+    });
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return identityGate.then(() =>
+          jsonResponse({ principal_id: "operator" }),
+        );
+      }
+      if (
+        call.url === "/api/v1/operations/automation/task-definitions/auto-task"
+      ) {
+        return jsonResponse({ definition: definitionDocument() });
+      }
+      if (
+        call.url ===
+          "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+        call.method === "POST"
+      ) {
+        // The backend accepted the admission, but the response never arrives.
+        throw new Error("network dropped");
+      }
+      if (
+        call.url.startsWith(
+          "/api/v1/operations/automation/preview-analyses?admissionRequestId=",
+        )
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: "preview_analysis_request_not_found",
+              message:
+                "no exact analysis was admitted for this request identity",
+              details: {
+                durableState: "unknown",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction: "reload the exact context and request again",
+              },
+            },
+          },
+          404,
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation/definition/auto-task");
+
+    await screen.findByRole("heading", { name: /Automation definition/ });
+    // While the identity is pending the admission is blocked.
+    expect(
+      screen.getByRole("button", { name: "Create exact Preview" }),
+    ).toBeDisabled();
+    // The identity resolves, and only then does admission become possible.
+    releaseIdentity?.();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create exact Preview" }),
+      ).toBeEnabled(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Create exact Preview" }),
+    );
+    // The unknown outcome retains the exact request context.
+    await screen.findByRole("button", { name: "核对上次请求" });
+    const admitted = calls.find(
+      (item) =>
+        item.url ===
+          "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+        item.method === "POST",
+    );
+    expect(admitted?.body).toEqual(
+      expect.objectContaining({
+        admissionRequestId: expect.stringMatching(
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
+        ),
+      }),
     );
   });
 
