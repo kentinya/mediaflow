@@ -31,12 +31,8 @@ import {
 } from "../../shared/api/api-client";
 import { newRequestId } from "../../shared/api/request-id";
 import { useAuthGeneration } from "../../shared/api/auth-context";
-import {
-  registerPrincipalSessionDataCleaner,
-} from "../../shared/auth/principal-session-data";
-import {
-  principalIdStorageSegment,
-} from "../../shared/auth/principal-identity";
+import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
+import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import type {
   OrganizeChoiceModel,
   OrganizeIntentItemModel,

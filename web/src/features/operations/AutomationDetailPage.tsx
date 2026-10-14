@@ -29,12 +29,8 @@ import {
 import { newRequestId } from "../../shared/api/request-id";
 import { useAuthGeneration } from "../../shared/api/auth-context";
 import { fetchAuthenticatedPrincipal } from "../../shared/api/api-client";
-import {
-  registerPrincipalSessionDataCleaner,
-} from "../../shared/auth/principal-session-data";
-import {
-  principalIdStorageSegment,
-} from "../../shared/auth/principal-identity";
+import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
+import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
   automationDefinitionQueryKey,
   automationDefinitionQueryOptions,
@@ -145,13 +141,14 @@ export function AutomationDetailPage() {
     staleTime: 60_000,
   });
   const principalId =
-    principalQuery.data !== undefined ? (principalQuery.data.principalId ?? null) : null;
+    principalQuery.data !== undefined
+      ? (principalQuery.data.principalId ?? null)
+      : null;
 
   const [pendingPreviewAnalysisOverride, setPendingPreviewAnalysisState] =
     useState<PendingPreviewAnalysis | null>(null);
   const pendingPreviewAnalysis =
-    pendingPreviewAnalysisOverride ??
-    readPendingPreviewAnalysis(principalId);
+    pendingPreviewAnalysisOverride ?? readPendingPreviewAnalysis(principalId);
   const setPendingPreviewAnalysis = (intent: PendingPreviewAnalysis | null) => {
     setPendingPreviewAnalysisState(intent);
     writePendingPreviewAnalysis(principalId, intent);
