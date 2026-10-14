@@ -34,7 +34,9 @@ interface Call {
   readonly body: unknown;
 }
 
-function recordingFetch(respond: (call: Call) => Response | undefined): {
+function recordingFetch(
+  respond: (call: Call) => Response | Promise<Response> | undefined,
+): {
   calls: Call[];
 } {
   const calls: Call[] = [];
@@ -945,7 +947,6 @@ describe("V2 Automation journey", () => {
     // still unknown cannot reliably retain its principal-scoped request
     // context, so Create exact Preview waits for the exact identity and
     // explains the wait; a failed identity read never invents one.
-    const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         // The identity read never answers: admission must stay blocked.
@@ -994,7 +995,7 @@ describe("V2 Automation journey", () => {
     const user = userEvent.setup();
     // The identity response is held back until the test releases it, so the
     // admission decision happens while the identity is genuinely unresolved.
-    let releaseIdentity: (() => void) | null = null;
+    let releaseIdentity: () => void = () => {};
     const identityGate = new Promise<void>((resolve) => {
       releaseIdentity = resolve;
     });
@@ -1050,7 +1051,7 @@ describe("V2 Automation journey", () => {
       screen.getByRole("button", { name: "Create exact Preview" }),
     ).toBeDisabled();
     // The identity resolves, and only then does admission become possible.
-    releaseIdentity?.();
+    releaseIdentity();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Create exact Preview" }),
