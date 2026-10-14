@@ -746,9 +746,7 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
                 admission_request_id=second_request,
             )
             self.assertNotEqual(first.analysis_id, second.analysis_id)
-            self.assertEqual(
-                first_request, first.admission_request_id, first.admission_request_id
-            )
+            self.assertEqual(first_request, first.admission_request_id, first.admission_request_id)
             self.assertEqual(
                 second_request,
                 second.admission_request_id,
@@ -1041,13 +1039,10 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             # A proved absence before anything was admitted.
             status, absent = self.request(
                 value,
-                "/api/v1/operations/automation/preview-analyses"
-                f"?admissionRequestId={request_id}",
+                f"/api/v1/operations/automation/preview-analyses?admissionRequestId={request_id}",
             )
             self.assertEqual(404, status)
-            self.assertEqual(
-                "preview_analysis_request_not_found", absent["error"]["code"]
-            )
+            self.assertEqual("preview_analysis_request_not_found", absent["error"]["code"])
             self.assertEqual("unknown", absent["error"]["details"]["durableState"])
             # Admit a definition analysis with that identity, then reconcile.
             admitted = value.analyses.admit_definition(
@@ -1055,16 +1050,14 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             )
             status, reconciled = self.request(
                 value,
-                "/api/v1/operations/automation/preview-analyses"
-                f"?admissionRequestId={request_id}",
+                f"/api/v1/operations/automation/preview-analyses?admissionRequestId={request_id}",
             )
             self.assertEqual(200, status, reconciled)
             self.assertEqual(admitted.analysis_id, reconciled["analysisId"])
             # Another principal never reads this identity's analysis.
             status, _foreign = self.request(
                 value,
-                "/api/v1/operations/automation/preview-analyses"
-                f"?admissionRequestId={request_id}",
+                f"/api/v1/operations/automation/preview-analyses?admissionRequestId={request_id}",
                 token=VIEWER_TOKEN,
             )
             self.assertEqual(404, status)

@@ -794,9 +794,7 @@ class MediaDiscoveryService:
             snapshot_digest=snapshot_digest,
         )
 
-    def _bind_request(
-        self, admission_request_id: str | None, discovery: MediaDiscovery
-    ) -> None:
+    def _bind_request(self, admission_request_id: str | None, discovery: MediaDiscovery) -> None:
         """Keep every accepted request identity durably readable.
 
         When a request *converges* on already-open work (its equivalent
