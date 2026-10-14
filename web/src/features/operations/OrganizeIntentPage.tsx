@@ -7,6 +7,11 @@
  * saw, so a concurrent change is rejected atomically instead of silently
  * overwriting another edit. Editing a choice invalidates earlier Preview
  * evidence, and the page never treats a Preview as execution authority.
+ *
+ * The durable exact-Preview admission carries a client-generated request
+ * identity: a lost or malformed response is an *unknown* durable outcome, so
+ * the exact context is retained (principal-scoped) and reconciled by its own
+ * request id before any resubmission is offered.
  */
 
 import { useState } from "react";
@@ -20,8 +25,18 @@ import {
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   admitManualPreviewAnalysis,
+  reconcilePreviewAnalysis,
+  fetchAuthenticatedPrincipal,
   updateOrganizeChoice,
 } from "../../shared/api/api-client";
+import { newRequestId } from "../../shared/api/request-id";
+import { useAuthGeneration } from "../../shared/api/auth-context";
+import {
+  registerPrincipalSessionDataCleaner,
+} from "../../shared/auth/principal-session-data";
+import {
+  principalIdStorageSegment,
+} from "../../shared/auth/principal-identity";
 import type {
   OrganizeChoiceModel,
   OrganizeIntentItemModel,
@@ -63,6 +78,73 @@ function displayEnum(value: string): string {
 function safeValue(value: string | null): string {
   return value === null || value === "" ? "—" : value;
 }
+
+const MANUAL_ANALYSIS_INTENT_PREFIX =
+  "mediaflow.operations.organize-preview-analysis:";
+
+function manualAnalysisIntentSessionKey(principalId: string): string {
+  return `${MANUAL_ANALYSIS_INTENT_PREFIX}${principalIdStorageSegment(principalId)}`;
+}
+
+interface PendingManualAnalysis {
+  readonly intentId: string;
+  readonly requestId: string;
+}
+
+function readPendingManualAnalysis(
+  principalId: string | null,
+): PendingManualAnalysis | null {
+  if (principalId === null || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(
+      manualAnalysisIntentSessionKey(principalId),
+    );
+    if (raw === null) return null;
+    const value = JSON.parse(raw) as unknown;
+    if (value === null || typeof value !== "object") return null;
+    const source = value as Record<string, unknown>;
+    if (
+      typeof source.intentId !== "string" ||
+      typeof source.requestId !== "string" ||
+      source.requestId.length === 0
+    ) {
+      return null;
+    }
+    return { intentId: source.intentId, requestId: source.requestId };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingManualAnalysis(
+  principalId: string | null,
+  intent: PendingManualAnalysis | null,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (principalId === null) return;
+    const key = manualAnalysisIntentSessionKey(principalId);
+    if (intent === null) {
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(key, JSON.stringify(intent));
+    }
+  } catch {
+    // Persisting the reconciliation context is best-effort: the operator can
+    // always reconcile from the durable analysis history after a reconnect.
+  }
+}
+
+registerPrincipalSessionDataCleaner(() => {
+  if (typeof window === "undefined") return;
+  const storage = window.sessionStorage;
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(MANUAL_ANALYSIS_INTENT_PREFIX)) keys.push(key);
+  }
+  for (const key of keys) storage.removeItem(key);
+});
 
 function ChoiceEditor({
   intentId,
@@ -326,18 +408,56 @@ export function OrganizeIntentPage() {
   const filesReturn = readFilesReturnContext(searchParams);
   const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
+  const authGeneration = useAuthGeneration();
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const intentQuery = useQuery(organizeIntentQueryOptions(token, intentId));
+  // The principal identity the backend confirms for this token: the retained
+  // exact-Preview intent's session key is scoped to it, so another principal's
+  // unknown outcome can never be reconciled as this one's result.
+  const principalQuery = useQuery({
+    queryKey: ["authenticated-principal", authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 60_000,
+  });
+  const principalId =
+    principalQuery.data !== undefined
+      ? (principalQuery.data.principalId ?? null)
+      : null;
+  const [pendingManualAnalysisOverride, setPendingManualAnalysisState] =
+    useState<PendingManualAnalysis | null>(null);
+  const pendingManualAnalysis =
+    pendingManualAnalysisOverride ?? readPendingManualAnalysis(principalId);
+  const setPendingManualAnalysis = (intent: PendingManualAnalysis | null) => {
+    setPendingManualAnalysisState(intent);
+    writePendingManualAnalysis(principalId, intent);
+  };
 
   const previewMutation = useMutation({
-    mutationFn: (expectedVersion: number) =>
-      admitManualPreviewAnalysis(token, { intentId, expectedVersion }),
+    mutationFn: (expectedVersion: number) => {
+      const requestId = newRequestId();
+      if (requestId !== null) {
+        const intent: PendingManualAnalysis = { intentId, requestId };
+        writePendingManualAnalysis(principalId, intent);
+        setPendingManualAnalysis(intent);
+      }
+      return admitManualPreviewAnalysis(token, {
+        intentId,
+        expectedVersion,
+        admissionRequestId: requestId,
+      });
+    },
     retry: false,
     onMutate: () => setPreviewError(null),
     onSuccess: (value) => {
       if (value.ok && value.model !== undefined) {
+        setPendingManualAnalysis(null);
+        writePendingManualAnalysis(principalId, null);
         void navigate({
           to: "/operations/automation/preview-analyses/$analysisId",
           params: { analysisId: value.model.analysisId },
@@ -348,8 +468,62 @@ export function OrganizeIntentPage() {
         });
         return;
       }
+      const unknown =
+        value.status === 0 ||
+        value.status >= 500 ||
+        value.code === "malformed_response";
+      if (unknown && pendingManualAnalysis !== null) {
+        // The outcome is unknown, not absent: keep the retained intent so the
+        // operator can deliberately reconcile it before any resubmission.
+        setPreviewError(
+          "精确预览的响应未能送达或无法解读,无法确定后端是否已经受理。" +
+            "已受理的分析是持久的;请先使用“核对上次请求”,不要重复提交。",
+        );
+        return;
+      }
+      setPendingManualAnalysis(null);
+      writePendingManualAnalysis(principalId, null);
       setPreviewError(
-        `精确预览被拒绝（${value.code}），没有保存更改。请刷新意图后重新生成预览。`,
+        `精确预览被拒绝(${value.code}),没有保存更改。请刷新意图后重新生成预览。`,
+      );
+    },
+  });
+
+  // Reconcile the retained unknown exact-Preview admission from durable truth.
+  // This never creates work: it reads back the analysis the client's own
+  // request id actually produced, or reports a bounded absence.
+  const reconcileManualAnalysisMutation = useMutation({
+    mutationFn: (intent: PendingManualAnalysis) =>
+      reconcilePreviewAnalysis(token, { admissionRequestId: intent.requestId }),
+    retry: false,
+    onMutate: () => setPreviewError(null),
+    onSuccess: (result) => {
+      if (result.ok && result.model !== undefined) {
+        setPendingManualAnalysis(null);
+        writePendingManualAnalysis(principalId, null);
+        void navigate({
+          to: "/operations/automation/preview-analyses/$analysisId",
+          params: { analysisId: result.model.analysisId },
+          search: {
+            ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
+            ...operationsReturnSearch(operationsReturn),
+          },
+        });
+        return;
+      }
+      if (result.code === "preview_analysis_request_not_found") {
+        setPendingManualAnalysis(null);
+        writePendingManualAnalysis(principalId, null);
+        setPreviewError(
+          "上次精确预览的请求没有在后端形成任何持久工作(响应在受理前丢失)。" +
+            "现在可以重新发起精确预览。",
+        );
+        return;
+      }
+      setPreviewError(
+        `核对上次精确预览失败(${result.code ?? "unknown"})。${
+          result.nextAction ?? "请稍后重试核对,不要重复提交。"
+        }`,
       );
     },
   });
@@ -453,6 +627,22 @@ export function OrganizeIntentPage() {
                     ? "正在生成精确预览…"
                     : "生成精确预览"}
                 </Button>
+                {pendingManualAnalysis !== null ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={reconcileManualAnalysisMutation.isPending}
+                    onClick={() =>
+                      reconcileManualAnalysisMutation.mutate(
+                        pendingManualAnalysis,
+                      )
+                    }
+                  >
+                    {reconcileManualAnalysisMutation.isPending
+                      ? "核对中..."
+                      : "核对上次请求"}
+                  </Button>
+                ) : null}
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations"

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -277,6 +278,9 @@ class MediaDiscoveryService:
             library.storage_id,
         )
         if reconciliation is not None:
+            # This new request identity converged on the already durable open
+            # discovery, so it stays readable by its own ID for reconciliation.
+            self._bind_request(admission_request_id, reconciliation)
             return reconciliation
         now = self._clock()
         discovery_id = str(uuid4())
@@ -490,6 +494,9 @@ class MediaDiscoveryService:
             snapshot_digest,
         )
         if reconciliation is not None:
+            # This new request identity converged on the already durable open
+            # Run once, so it stays readable by its own ID for reconciliation.
+            self._bind_request(admission_request_id, reconciliation)
             return reconciliation
         now = self._clock()
         progress = DiscoveryProgress(
@@ -785,6 +792,32 @@ class MediaDiscoveryService:
             definition_fingerprint=definition_fingerprint,
             snapshot_id=snapshot_id,
             snapshot_digest=snapshot_digest,
+        )
+
+    def _bind_request(
+        self, admission_request_id: str | None, discovery: MediaDiscovery
+    ) -> None:
+        """Keep every accepted request identity durably readable.
+
+        When a request *converges* on already-open work (its equivalent
+        admission exists), the request identity is bound to that same durable
+        record, so a lost response for this request reconciles to the run it
+        actually created instead of a bounded absence that reads as "no work
+        exists".  A request that created its own row is already readable
+        through the record's own column.
+        """
+
+        if admission_request_id is None:
+            return
+        binder = getattr(self._repository, "bind_admission_request", None)
+        if not callable(binder):
+            return
+        binder(
+            actor=discovery.actor,
+            admission_request_id=admission_request_id,
+            kind="media-discovery",
+            target_id=discovery.discovery_id,
+            created_at=self._clock(),
         )
 
     def _reconcile_admission_request(
@@ -1165,8 +1198,19 @@ class MediaDiscoveryService:
         worker_id: str,
         claim_token: str,
         heartbeat: Callable[[str], bool] | None = None,
+        parent_heartbeat: Callable[[], bool] | None = None,
     ) -> MediaDiscovery | None:
-        """Claim and advance one queued/expired discovery by one bounded step."""
+        """Claim and advance one queued/expired discovery by one bounded step.
+
+        ``parent_heartbeat`` is the containing processing-Worker's registration
+        heartbeat.  A blocked Storage/Provider call inside one advance step can
+        otherwise outlive the parent's stale threshold and make a *working*
+        resident Worker report unavailable, so a lease keeper keeps both the
+        discovery claim and the parent registration live for the whole
+        invocation.  The parent signal is liveness evidence only: a fault is
+        tolerated and retried on the next interval, and the discovery's own
+        claim heartbeat remains the ownership boundary.
+        """
 
         claimer = getattr(self._repository, "claim_next_media_discovery", None)
         if not callable(claimer):
@@ -1186,12 +1230,47 @@ class MediaDiscoveryService:
             def beat() -> bool:  # type: ignore[misc]
                 return heartbeat(discovery_id)
 
-        return self.run_claimed(
-            claimed.discovery_id,
-            worker_id=worker_id,
-            claim_token=claim_token,
-            heartbeat=beat,
+        if beat is None and parent_heartbeat is None:
+            return self.run_claimed(
+                claimed.discovery_id,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                heartbeat=beat,
+            )
+        stopped = threading.Event()
+
+        def keep_alive() -> None:
+            interval = max(0.05, min(5.0, self._lease_seconds / 3.0))
+            while not stopped.wait(interval):
+                try:
+                    if beat is not None:
+                        beat()
+                    if parent_heartbeat is not None:
+                        try:
+                            parent_heartbeat()
+                        except Exception:
+                            pass
+                except Exception:
+                    # A claim-renewal fault stops the keeper; the next in-loop
+                    # boundary heartbeat still reports true ownership honestly.
+                    return
+
+        keeper = threading.Thread(
+            target=keep_alive,
+            name=f"media-discovery-lease-{claimed.discovery_id[:12]}",
+            daemon=True,
         )
+        keeper.start()
+        try:
+            return self.run_claimed(
+                claimed.discovery_id,
+                worker_id=worker_id,
+                claim_token=claim_token,
+                heartbeat=beat,
+            )
+        finally:
+            stopped.set()
+            keeper.join(timeout=1)
 
     def run_claimed(
         self,

@@ -64,6 +64,24 @@ class ManualOrganizeExecutionWorker:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_id = worker_id or f"manual-organize-{secrets.token_hex(6)}"
         self._notice = notice or (lambda line: sys.stderr.write(line))
+        # The containing processing-Worker's registration heartbeat, bound by
+        # the resident assembly so a long per-item execution keeps the actual
+        # hosting process's liveness evidence fresh.  It is a liveness signal
+        # only and never changes the execution's own claim fence.
+        self._parent_heartbeat: Callable[[], bool] | None = None
+
+    def set_worker_heartbeat(self, heartbeat: Callable[[], bool]) -> None:
+        """Bind the containing processing-Worker's registration heartbeat.
+
+        Mirrors the Files transfer runner's seam: the resident assembly wires
+        its own wrapped heartbeat (registration row plus resident-presence
+        row) so a slow executor/Provider step cannot make the deployment look
+        stale while it is actually working.
+        """
+
+        if not callable(heartbeat):
+            raise ValueError("manual organize worker heartbeat must be callable")
+        self._parent_heartbeat = heartbeat
 
     @property
     def worker_id(self) -> str:
@@ -103,13 +121,31 @@ class ManualOrganizeExecutionWorker:
                 claimed.execution_id,
                 worker_id=self._worker_id,
                 claim_token=claim_token,
-                heartbeat=lambda: self._heartbeat(claimed.execution_id, claim_token),
+                heartbeat=self._execution_heartbeat(claimed.execution_id, claim_token),
                 lease_seconds=self._lease_seconds,
             )
         except Exception as error:
             self._notice(self._bounded_notice(claimed.execution_id, error))
             self._close_unstarted(claimed.execution_id, error)
             return None
+
+    def _execution_heartbeat(self, execution_id: str, claim_token: str) -> Callable[[], bool]:
+        """The execution lease heartbeat, plus the parent registration signal.
+
+        Per-item execution is heartbeat at every mutation boundary; this
+        wrapper additionally refreshes the containing registration so a slow
+        executor/Provider step never reads as a stale Worker.
+        """
+
+        def beat() -> bool:
+            if self._parent_heartbeat is not None:
+                try:
+                    self._parent_heartbeat()
+                except Exception:
+                    pass
+            return self._heartbeat(execution_id, claim_token)
+
+        return beat
 
     def _heartbeat(self, execution_id: str, claim_token: str) -> bool:
         return bool(

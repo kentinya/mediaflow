@@ -4046,6 +4046,13 @@ def _run_worker(
 
                         worker_service.heartbeat = heartbeat
                         files_transfer_worker.set_worker_heartbeat(heartbeat)
+                        # Every other runner sharing this loop keeps the same
+                        # wrapped liveness evidence (processing-Worker row plus
+                        # resident-presence row) fresh across its own long
+                        # claim, exactly like the Files transfer consumer.
+                        media_discovery_worker.set_worker_heartbeat(heartbeat)
+                        preview_analysis_worker.set_worker_heartbeat(heartbeat)
+                        manual_organize_worker.set_worker_heartbeat(heartbeat)
 
                         def step(loop: ResidentLoop) -> int:
                             if worker_service._registered and not worker_service.heartbeat():

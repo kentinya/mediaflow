@@ -830,7 +830,18 @@ describe("V2 Automation journey", () => {
         item.url ===
         "/api/v1/automation/task-definitions/auto-task/preview-analyses",
     );
-    expect(admit?.body).toEqual({});
+    // The admission carries no pin or authority material: the backend resolves
+    // the exact immutable revision at admission time.  It does carry a
+    // client-generated request identity so a lost response reconciles by its
+    // own ID instead of an unknown outcome reading as "no work exists".
+    expect(admit?.body).toEqual(
+      expect.objectContaining({
+        admissionRequestId: expect.stringMatching(
+          /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
+        ),
+      }),
+    );
+    expect(Object.keys(admit?.body ?? {})).toEqual(["admissionRequestId"]);
     // The journey continues to the durable analysis route, not a synchronous
     // definition Preview.
     await screen.findByRole("heading", { name: "精确预览分析" });

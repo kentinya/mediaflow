@@ -2832,6 +2832,56 @@ class MediaFlowApi:
                 parts[5], parts[6], method, environ, start_response, principal
             )
         if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "operations"]
+            and parts[3] == "automation"
+            and parts[4] == "preview-analyses"
+            and method == "GET"
+        ):
+            # Reconcile one lost durable-analysis response by the client's own
+            # request identity.  A proved absence is a bounded 404, never a
+            # guessed latest analysis; the read is principal-scoped and creates
+            # no work and no Draft.
+            self._require(principal, ApiPermission.READ)
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query) == {"admissionRequestId"} and len(query["admissionRequestId"]) == 1:
+                analysis_service = getattr(self, "_preview_analyses", None)
+                if analysis_service is None:
+                    return self._error(
+                        start_response,
+                        503,
+                        "service_unavailable",
+                        "durable preview analysis service is unavailable",
+                    )
+                try:
+                    reconciled = analysis_service.find_by_request_id(
+                        actor=principal.principal_id,
+                        admission_request_id=query["admissionRequestId"][0],
+                    )
+                except PreviewAnalysisError as error:
+                    return self._preview_analysis_error(start_response, error)
+                if reconciled is None:
+                    return self._error(
+                        start_response,
+                        404,
+                        "preview_analysis_request_not_found",
+                        "no exact analysis was admitted for this request identity",
+                        details={
+                            "durableState": "unknown",
+                            "sideEffects": "none",
+                            "retrySafe": True,
+                            "nextAction": (
+                                "the response was lost before admission was proved; reload the "
+                                "exact context and request the analysis again with a new "
+                                "request identity"
+                            ),
+                        },
+                    )
+                return self._response(
+                    start_response, 200, self._preview_analysis_document(reconciled)
+                )
+            raise ValueError("automation preview analysis collection query does not accept fields")
+        if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "operations", "automation"]
             and parts[4] == "preview-analyses"

@@ -174,7 +174,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 47,
+        runtime_schema_version: int = 48,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -634,11 +634,24 @@ class AutomationWorker:
         # and only executes transfers the API durably admitted; a missing
         # value means no Worker serves queued transfers.
         self._files_transfer_worker = files_transfer_worker
+        # Every runner sharing this resident loop keeps the *containing*
+        # processing-Worker registration live while its own long claim runs:
+        # a blocked discovery walk, Provider batch or exact analysis must never
+        # make a working Worker report stale.  The Files transfer runner owns
+        # the same seam already; the metadata-only runners bind it identically.
         bind_registration_heartbeat = getattr(
             self._files_transfer_worker, "set_worker_heartbeat", None
         )
         if callable(bind_registration_heartbeat):
             bind_registration_heartbeat(self.heartbeat)
+        for other_runner in (
+            self._media_discovery_worker,
+            self._preview_analysis_worker,
+            self._manual_organize_worker,
+        ):
+            binder = getattr(other_runner, "set_worker_heartbeat", None)
+            if callable(binder):
+                binder(self.heartbeat)
         # Preserve the legacy in-process helper path unless the caller supplies
         # the identity needed for durable Worker ownership and snapshot fencing.
         self._worker_registration_enabled = (

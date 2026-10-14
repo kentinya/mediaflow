@@ -331,7 +331,14 @@ from mediaflow.infrastructure.file_index_schema import (
 # evidence only — it creates no execution authority, no dummy Job and no second
 # queue — and a legacy database simply has no analysis rows, so nothing is
 # backfilled.
-SCHEMA_VERSION = 47
+# Schema 48 adds the additive ``admission_request_bindings`` table: one durable
+# association per accepted client request identity.  When an equivalent open
+# admission converges on an existing durable discovery or exact analysis, the
+# newly accepted request identity is bound to that same record, so a lost
+# response for *every* accepted request reconciles by its own ID instead of a
+# bounded absence that reads as "no work exists".  It is reconciliation evidence
+# only — it never changes which record does the work and nothing is backfilled.
+SCHEMA_VERSION = 48
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -10250,15 +10257,19 @@ class SQLiteTaskRepository:
         if not _valid_admission_request_id(admission_request_id):
             raise ValueError("media discovery admission request identity is invalid")
         with self._lock:
+            bound = self._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=? AND kind=? LIMIT 1",
+                (actor, admission_request_id, "media-discovery"),
+            ).fetchone()
             rows = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries "
                 "WHERE actor=? AND admission_request_id=? "
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT 2",
                 (actor, admission_request_id),
             ).fetchall()
-            if not rows:
-                return None
-            if len(rows) > 1:
+            direct_ids = [row["discovery_id"] for row in rows]
+            if bound is not None and direct_ids and bound["target_id"] != direct_ids[0]:
                 raise DiscoveryError(
                     "this request identity matches more than one discovery, so its original "
                     "admission cannot be proved",
@@ -10270,7 +10281,24 @@ class SQLiteTaskRepository:
                     ),
                     details={"requestIdAmbiguous": True},
                 )
-            return self._load_media_discovery_locked(rows[0]["discovery_id"])
+            if len(direct_ids) > 1:
+                raise DiscoveryError(
+                    "this request identity matches more than one discovery, so its original "
+                    "admission cannot be proved",
+                    code="admission_request_unresolved",
+                    status=409,
+                    next_action=(
+                        "inspect the existing discoveries in Operations; start any new "
+                        "selection with a new request ID"
+                    ),
+                    details={"requestIdAmbiguous": True},
+                )
+            discovery_id = (
+                bound["target_id"] if bound is not None else (direct_ids[0] if direct_ids else None)
+            )
+            if discovery_id is None:
+                return None
+            return self._load_media_discovery_locked(discovery_id)
 
     def get_media_discovery(self, discovery_id: str) -> MediaDiscovery | None:
         if not isinstance(discovery_id, str) or not discovery_id.strip():
@@ -10710,15 +10738,101 @@ class SQLiteTaskRepository:
     def find_preview_analysis_by_request_id(
         self, *, actor: str, admission_request_id: str
     ) -> PreviewAnalysis | None:
+        """The durable analysis this exact client request identity created.
+
+        The lookup consults two durable facts in order: the binding table (an
+        accepted request that *converged* on an existing open analysis is bound
+        to that same record) and the record's own ``admission_request_id``
+        column (a request that created its own row).  A row found both ways
+        must agree, otherwise the original admission cannot be proved and the
+        honest unresolved outcome is reported instead of a guessed binding.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("preview analysis actor is required")
+        if not _valid_admission_request_id(admission_request_id):
+            raise ValueError("preview analysis admission request identity is invalid")
         with self._lock:
+            bound = self._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=? AND kind=? LIMIT 1",
+                (actor, admission_request_id, "preview-analysis"),
+            ).fetchone()
             row = self._connection.execute(
                 "SELECT analysis_id FROM preview_analyses "
                 "WHERE actor=? AND admission_request_id=? LIMIT 1",
                 (actor, admission_request_id),
             ).fetchone()
-            if row is None:
+            if bound is not None and row is not None and bound["target_id"] != row["analysis_id"]:
+                raise PreviewAnalysisConflict(
+                    "this analysis request identity matches more than one durable analysis, "
+                    "so its original admission cannot be proved"
+                )
+            analysis_id = (
+                bound["target_id"] if bound is not None else (row["analysis_id"] if row else None)
+            )
+            if analysis_id is None:
                 return None
-            return self._load_preview_analysis_locked(row["analysis_id"])
+            return self._load_preview_analysis_locked(analysis_id)
+
+    def bind_admission_request(
+        self,
+        *,
+        actor: str,
+        admission_request_id: str,
+        kind: str,
+        target_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Durably associate one accepted client request identity with its work.
+
+        An equivalent open admission that *converges* on an already durable
+        record keeps its own request identity readable, so a lost response for
+        that request reconciles to the record it actually created instead of a
+        bounded absence.  The association is created exactly once per
+        ``(actor, request_id)``; a re-bind that names a different target is
+        refused rather than silently rewritten.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("admission request actor is required")
+        if not _valid_admission_request_id(admission_request_id):
+            raise ValueError("admission request identity is invalid")
+        if kind not in {"media-discovery", "preview-analysis"}:
+            raise ValueError("admission request binding kind is invalid")
+        if not isinstance(target_id, str) or not target_id.strip():
+            raise ValueError("admission request target identity is required")
+        if created_at.tzinfo is None:
+            raise ValueError("admission request binding timestamp needs timezone")
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT target_id FROM admission_request_bindings "
+                "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                (actor, admission_request_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["target_id"] == target_id:
+                    return
+                raise PreviewAnalysisConflict(
+                    "this admission request identity is already bound to different durable work"
+                )
+            try:
+                self._connection.execute(
+                    "INSERT INTO admission_request_bindings "
+                    "(actor, admission_request_id, kind, target_id, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        actor,
+                        admission_request_id,
+                        kind,
+                        target_id,
+                        created_at.isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                raise PreviewAnalysisConflict(
+                    "this admission request identity is already bound to different durable work"
+                ) from error
 
     def find_open_preview_analysis(
         self,
@@ -10728,10 +10842,17 @@ class SQLiteTaskRepository:
         definition_id: str | None,
         definition_fingerprint: str | None,
         intent_id: str | None,
+        intent_version: int | None = None,
         configuration_snapshot_id: str,
         configuration_snapshot_digest: str,
     ) -> PreviewAnalysis | None:
-        """One already durable *open* analysis for this exact pinned context."""
+        """One already durable *open* analysis for this exact pinned context.
+
+        A manual analysis is bound to the complete admitted intent context:
+        the intent *version* is part of that binding, so a corrected intent
+        (a new version after a saved choice) never silently reuses the queued
+        work admitted for an earlier version.
+        """
 
         with self._lock:
             if kind is PreviewAnalysisKind.DEFINITION:
@@ -10754,13 +10875,15 @@ class SQLiteTaskRepository:
             else:
                 row = self._connection.execute(
                     "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
-                    "AND intent_id=? AND configuration_snapshot_id=? "
+                    "AND intent_id=? AND intent_version IS ? "
+                    "AND configuration_snapshot_id=? "
                     "AND configuration_snapshot_digest=? AND status IN (?, ?) "
                     "ORDER BY created_at, analysis_id LIMIT 1",
                     (
                         actor,
                         kind.value,
                         intent_id,
+                        intent_version,
                         configuration_snapshot_id,
                         configuration_snapshot_digest,
                         PreviewAnalysisStatus.QUEUED.value,
@@ -13887,6 +14010,16 @@ class SQLiteTaskRepository:
                     ON preview_analyses(intent_id, created_at, analysis_id);
                 CREATE INDEX IF NOT EXISTS preview_analyses_request
                     ON preview_analyses(actor, admission_request_id);
+                CREATE TABLE IF NOT EXISTS admission_request_bindings (
+                    actor TEXT NOT NULL,
+                    admission_request_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (actor, admission_request_id)
+                );
+                CREATE INDEX IF NOT EXISTS admission_request_bindings_target
+                    ON admission_request_bindings(kind, target_id, created_at);
                 CREATE TABLE IF NOT EXISTS manual_previews (
                     preview_id TEXT PRIMARY KEY, intent_id TEXT NOT NULL,
                     actor TEXT NOT NULL, configuration_snapshot_id TEXT NOT NULL,

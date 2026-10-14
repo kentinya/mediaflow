@@ -51,6 +51,23 @@ class MediaDiscoveryWorker:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_id = worker_id or f"media-discovery-{secrets.token_hex(6)}"
         self._notice = notice or (lambda line: sys.stderr.write(line))
+        # The containing processing-Worker's registration heartbeat, bound by
+        # the resident assembly so a long walk keeps the actual hosting
+        # process's liveness evidence fresh.  It is a liveness signal only.
+        self._parent_heartbeat: Callable[[], bool] | None = None
+
+    def set_worker_heartbeat(self, heartbeat: Callable[[], bool]) -> None:
+        """Bind the containing processing-Worker's registration heartbeat.
+
+        Mirrors the Files transfer runner's seam: the resident assembly wires
+        its own wrapped heartbeat (registration row plus resident-presence
+        row) so a long blocked Storage call cannot make the deployment look
+        stale while it is actually working.
+        """
+
+        if not callable(heartbeat):
+            raise ValueError("media discovery worker heartbeat must be callable")
+        self._parent_heartbeat = heartbeat
 
     @property
     def worker_id(self) -> str:
@@ -88,6 +105,7 @@ class MediaDiscoveryWorker:
                 worker_id=self._worker_id,
                 claim_token=claim_token,
                 heartbeat=self._heartbeat(claim_token),
+                parent_heartbeat=self._parent_heartbeat,
             )
         except DiscoveryError as error:
             self._notice(self._bounded_notice(getattr(error, "code", None)))

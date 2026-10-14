@@ -8350,6 +8350,43 @@ export async function fetchPreviewAnalysis(
 }
 
 /**
+ * Reconcile one lost durable-analysis admission response by the client's own
+ * request identity.
+ *
+ * The request id is generated before the POST, so it proves the *actual*
+ * admission however the Active pin changed while the response was in flight.
+ * A proved absence is a bounded `preview_analysis_request_not_found`, never a
+ * guessed latest analysis.
+ */
+export async function reconcilePreviewAnalysis(
+  token: string | null,
+  options: { readonly admissionRequestId: string },
+  fetchImpl: FetchLike = fetch,
+): Promise<PreviewAnalysisReadResult> {
+  if (!isSafeIdentifier(options.admissionRequestId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${AUTOMATION_PREVIEW_ANALYSES_BASE}?admissionRequestId=${encodeURIComponent(
+        options.admissionRequestId,
+      )}`,
+      { headers: { ...operationsHeaders(token) } },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  if (!response.ok) return previewAnalysisFailure(response.status, payload);
+  return previewAnalysisSuccess(response.status, payload);
+}
+
+/**
  * Control one durable exact Preview analysis.
  *
  * Pause/cancel/resume only record a cooperative request the resident Worker

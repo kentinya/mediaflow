@@ -166,6 +166,9 @@ class PreviewAnalysisService:
             snapshot_digest=snapshot_digest,
         )
         if open_analysis is not None:
+            # This new request identity converged on the already durable open
+            # work, so it stays readable by its own ID for reconciliation.
+            self._bind_request(request_id, open_analysis)
             return open_analysis
         now = self._clock()
         analysis = PreviewAnalysis(
@@ -248,10 +251,17 @@ class PreviewAnalysisService:
             definition_id=None,
             definition_fingerprint=None,
             intent_id=intent_id,
+            intent_version=intent.version,
             snapshot_id=intent.snapshot_id,
             snapshot_digest=intent.snapshot_digest,
         )
         if open_analysis is not None:
+            # The open-work match includes the complete manual intent binding:
+            # a corrected intent version is a *different* analysis, so it is
+            # never silently answered by the earlier version's queued work.
+            # This new request identity converged on the durable work, so it
+            # stays readable by its own ID for reconciliation.
+            self._bind_request(open_analysis)
             return open_analysis
         now = self._clock()
         analysis = PreviewAnalysis(
@@ -360,6 +370,7 @@ class PreviewAnalysisService:
         worker_id: str,
         claim_token: str,
         heartbeat: Callable[[str], bool] | None = None,
+        parent_heartbeat: Callable[[], bool] | None = None,
     ) -> PreviewAnalysis | None:
         claimer = getattr(self._repository, "claim_next_preview_analysis", None)
         if not callable(claimer):
@@ -377,6 +388,7 @@ class PreviewAnalysisService:
             worker_id=worker_id,
             claim_token=claim_token,
             heartbeat=heartbeat,
+            parent_heartbeat=parent_heartbeat,
         )
 
     def run_claimed(
@@ -386,8 +398,19 @@ class PreviewAnalysisService:
         worker_id: str,
         claim_token: str,
         heartbeat: Callable[[str], bool] | None = None,
+        parent_heartbeat: Callable[[], bool] | None = None,
     ) -> PreviewAnalysis:
-        """Advance one claimed analysis to a settled boundary."""
+        """Advance one claimed analysis to a settled boundary.
+
+        ``parent_heartbeat`` is the *containing* processing-Worker's own
+        registration heartbeat.  While this analysis's walk or Provider batch
+        blocks in a single long call, the lease keeper below keeps both the
+        analysis claim and the parent registration live, so the resident
+        Worker's readiness never reports a false stale while it is actually
+        working.  A parent-heartbeat fault is tolerated (bounded, retried on
+        the next interval) exactly like the Files transfer keeper's; the
+        analysis lease renewal itself remains the publication fence.
+        """
 
         analysis = self._read(analysis_id)
         if analysis is None:
@@ -407,7 +430,16 @@ class PreviewAnalysisService:
             interval = max(0.05, min(5.0, self._lease_seconds / 3.0))
             while not stopped.wait(interval):
                 try:
-                    if not heartbeat_call(analysis_id):
+                    renewed = heartbeat_call(analysis_id)
+                    if parent_heartbeat is not None:
+                        # The parent registration is a liveness signal, not the
+                        # analysis fence: its fault never settles the analysis,
+                        # and the next interval retries it.
+                        try:
+                            parent_heartbeat()
+                        except Exception:
+                            pass
+                    if not renewed:
                         lease_lost.set()
                         return
                 except Exception:  # a heartbeat failure fences publication
@@ -617,6 +649,14 @@ class PreviewAnalysisService:
             persist=False,
             analysis_checkpoint=checkpoint,
         )
+
+    def find_by_request_id(self, *, actor: str, admission_request_id: str):
+        """The durable analysis one exact client request identity created."""
+
+        finder = getattr(self._repository, "find_preview_analysis_by_request_id", None)
+        if not callable(finder):
+            return None
+        return finder(actor=actor, admission_request_id=admission_request_id)
 
     def _definition_pin(self, definition_id: str, revision_id: str | None) -> tuple[str, str, str]:
         """The exact immutable revision and definition identity the analysis consumes."""
@@ -859,6 +899,7 @@ class PreviewAnalysisService:
         definition_id: str | None,
         definition_fingerprint: str | None,
         intent_id: str | None,
+        intent_version: int | None = None,
         snapshot_id: str,
         snapshot_digest: str,
     ) -> PreviewAnalysis | None:
@@ -871,8 +912,37 @@ class PreviewAnalysisService:
             definition_id=definition_id,
             definition_fingerprint=definition_fingerprint,
             intent_id=intent_id,
+            intent_version=intent_version,
             configuration_snapshot_id=snapshot_id,
             configuration_snapshot_digest=snapshot_digest,
+        )
+
+    def _bind_request(
+        self, admission_request_id: str | None, analysis: PreviewAnalysis
+    ) -> None:
+        """Keep every accepted request identity durably readable.
+
+        When a request *converges* on already-open work (its equivalent
+        admission exists), that request's own identity is bound to the same
+        durable record, so a lost response for this request reconciles by its
+        own ID instead of a bounded absence.  A request that created its own
+        row is already readable through the row's own column.  A binding
+        failure is never swallowed silently: it means this identity is already
+        bound to different work, which is a reconciliation conflict, not a
+        success.
+        """
+
+        if admission_request_id is None:
+            return
+        binder = getattr(self._repository, "bind_admission_request", None)
+        if not callable(binder):
+            return
+        binder(
+            actor=analysis.actor,
+            admission_request_id=admission_request_id,
+            kind="preview-analysis",
+            target_id=analysis.analysis_id,
+            created_at=self._clock(),
         )
 
     def _require_version(self, analysis_id: str, expected_version: int) -> PreviewAnalysis:
@@ -990,6 +1060,24 @@ class PreviewAnalysisWorker:
     ) -> None:
         self._service = analysis_service
         self._worker_id = worker_id or f"preview-analysis-{secrets.token_hex(6)}"
+        # The containing processing-Worker's registration heartbeat, bound by
+        # the resident assembly so a long analysis keeps the actual hosting
+        # process's liveness evidence fresh.  It is a liveness signal only: it
+        # never changes the analysis's own claim or publication fence.
+        self._parent_heartbeat: Callable[[], bool] | None = None
+
+    def set_worker_heartbeat(self, heartbeat: Callable[[], bool]) -> None:
+        """Bind the containing processing-Worker's registration heartbeat.
+
+        Mirrors the Files transfer runner's seam: the resident assembly wires
+        its own wrapped heartbeat (registration row plus resident-presence
+        row) so a long discovery/Provider call cannot make the deployment look
+        stale while it is actually working.
+        """
+
+        if not callable(heartbeat):
+            raise ValueError("preview analysis worker heartbeat must be callable")
+        self._parent_heartbeat = heartbeat
 
     @property
     def worker_id(self) -> str:
@@ -1001,7 +1089,9 @@ class PreviewAnalysisWorker:
 
     def run_next(self) -> PreviewAnalysis | None:
         return self._service.claim_and_run(
-            worker_id=self._worker_id, claim_token=secrets.token_urlsafe(32)
+            worker_id=self._worker_id,
+            claim_token=secrets.token_urlsafe(32),
+            parent_heartbeat=self._parent_heartbeat,
         )
 
 

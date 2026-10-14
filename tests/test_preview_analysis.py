@@ -632,6 +632,139 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             self.assertEqual(409, status, refused)
             self.assertEqual("admission_request_conflict", refused["error"]["code"])
 
+    def test_a_corrected_intent_version_is_not_silently_answered_by_stale_open_work(
+        self,
+    ) -> None:
+        """A new request for a changed intent version never reports old work.
+
+        The operator saved a choice after version 1 was already queued, then
+        requested an exact analysis of version 2 with a *new* request ID. The
+        open-work reconciliation must include the complete manual intent
+        binding (the admitted version), so the version-2 request either admits
+        its own version-2 analysis or refuses explicitly; it can never return
+        the version-1 analysis as the version-2 admission (B43.2-R3-1).
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            first = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=intent.version,
+                admission_request_id="66666666-6666-4666-8666-666666666666",
+            )
+            self.assertEqual(intent.version, first.intent_version)
+            # The operator saves one choice: the intent advances to version 2.
+            item = intent.items[0]
+            changed = value.intents.update_choice(
+                intent.intent_id,
+                item.item_id,
+                item.choice,
+                expected_version=intent.version,
+                expected_item_version=item.version,
+                actor="operator",
+            )
+            self.assertGreater(changed.version, intent.version)
+            # A corrected exact analysis is requested with a NEW request ID.
+            corrected = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=changed.version,
+                admission_request_id="77777777-7777-4777-8777-777777777777",
+            )
+            self.assertNotEqual(first.analysis_id, corrected.analysis_id)
+            self.assertEqual(changed.version, corrected.intent_version)
+            # The corrected analysis settles into an exact Preview of the
+            # corrected intent rather than failing on a stale binding. The
+            # superseded version-1 analysis honestly fails its stale pinned
+            # version: its intent was corrected after it was admitted, so it
+            # can never publish a Preview of choices the operator replaced.
+            # Both analyses share one admitted created_at, so the Worker may
+            # claim either first; the durable per-identity outcome is what the
+            # invariant fixes, not the claim order.
+            settled: dict[str, object] = {}
+            while True:
+                result = value.worker.run_next()
+                if result is None:
+                    break
+                settled[result.analysis_id] = result
+            self.assertEqual({first.analysis_id, corrected.analysis_id}, set(settled))
+            settled_corrected = settled[corrected.analysis_id]
+            settled_first = settled[first.analysis_id]
+            self.assertEqual(PreviewAnalysisStatus.COMPLETED, settled_corrected.status)
+            self.assertIsNotNone(settled_corrected.preview_id)
+            self.assertEqual(PreviewAnalysisStatus.FAILED, settled_first.status)
+            self.assertIsNone(settled_first.preview_id)
+            preview = value.manual_previews.get_readonly(settled_corrected.preview_id)
+            self.assertEqual(changed.version, preview.intent_version)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_two_open_version_requests_with_new_ids_keep_their_own_lookups(
+        self,
+    ) -> None:
+        """Each accepted request identity stays readable by its own ID.
+
+        Two requests for two different intent versions of one intent converge
+        on two durable analyses; each submitted request ID must reconcile to
+        the analysis it actually created, never to the other one.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            first_request = "88888888-8888-4888-8888-888888888888"
+            first = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=intent.version,
+                admission_request_id=first_request,
+            )
+            item = intent.items[0]
+            changed = value.intents.update_choice(
+                intent.intent_id,
+                item.item_id,
+                item.choice,
+                expected_version=intent.version,
+                expected_item_version=item.version,
+                actor="operator",
+            )
+            second_request = "99999999-9999-4999-8999-999999999999"
+            second = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=changed.version,
+                admission_request_id=second_request,
+            )
+            self.assertNotEqual(first.analysis_id, second.analysis_id)
+            self.assertEqual(
+                first_request, first.admission_request_id, first.admission_request_id
+            )
+            self.assertEqual(
+                second_request,
+                second.admission_request_id,
+                second.admission_request_id,
+            )
+            readback_first = value.analyses.find_by_request_id(
+                actor="operator", admission_request_id=first_request
+            )
+            readback_second = value.analyses.find_by_request_id(
+                actor="operator", admission_request_id=second_request
+            )
+            self.assertIsNotNone(readback_first)
+            self.assertIsNotNone(readback_second)
+            self.assertEqual(first.analysis_id, readback_first.analysis_id)
+            self.assertEqual(second.analysis_id, readback_second.analysis_id)
+
     def test_analysis_admission_survives_sqlite_close_and_reopen(self) -> None:
         with self.journey() as value:
             admitted = value.analyses.admit_definition("nightly", actor="operator")
@@ -829,6 +962,115 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
                     "SELECT COUNT(*) FROM automation_task_definition_previews"
                 ).fetchone()[0],
             )
+
+    def test_resident_registration_stays_live_during_a_long_analysis(self) -> None:
+        """A long analysis keeps the containing Worker's registration live.
+
+        While the exact analysis blocks inside one Storage/Provider call, the
+        lease keeper refreshes both the analysis claim *and* the parent
+        processing-Worker registration, so real readiness never reports the
+        working Worker stale (B43.2-R3-3).
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            value.analyses._clock = lambda: datetime.now(UTC)
+            value.analyses._lease_seconds = 0.3
+            from mediaflow.application.automation import AutomationWorker
+
+            parent = AutomationWorker(
+                value.repository,
+                lambda *_args: None,
+                worker_id="resident-probe",
+                heartbeat_interval_seconds=0.1,
+                runtime_schema_version=48,
+                preview_analysis_worker=value.worker,
+            )
+            parent.register()
+            entered = threading.Event()
+            release = threading.Event()
+            original = value.definition_previews._discover
+
+            def blocking_discover(*args, **kwargs):
+                entered.set()
+                release.wait(timeout=15)
+                return original(*args, **kwargs)
+
+            value.definition_previews._discover = blocking_discover
+            analysis = value.analyses.admit_definition("nightly", actor="operator")
+            thread = threading.Thread(target=parent._run_preview_analysis_work, daemon=True)
+            try:
+                thread.start()
+                self.assertTrue(entered.wait(timeout=5))
+                before = value.repository.get_worker(parent.worker_id)
+                # Well past the parent's stale threshold (max(3x interval,10s)
+                # would be 10s; use 0.5s of analysis time and check the
+                # heartbeat actually advanced instead of sleeping 10 real
+                # seconds — the threshold formula is exercised below).
+                time.sleep(0.5)
+                after = value.repository.get_worker(parent.worker_id)
+                self.assertIsNotNone(before)
+                self.assertIsNotNone(after)
+                self.assertGreater(after.last_heartbeat_at, before.last_heartbeat_at)
+                current = value.analyses.get(analysis.analysis_id)
+                self.assertIsNotNone(current.claim_expires_at)
+                self.assertGreater(current.claim_expires_at, datetime.now(UTC))
+            finally:
+                release.set()
+                thread.join(timeout=10)
+                value.definition_previews._discover = original
+            self.assertEqual(
+                PreviewAnalysisStatus.COMPLETED,
+                value.analyses.get(analysis.analysis_id).status,
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_lost_analysis_response_reconciles_by_the_request_identity(self) -> None:
+        """A lost analysis admission response reads back its proved original.
+
+        The request identity is generated before the POST, so a lost or
+        malformed response is an *unknown* outcome, not a rejection: the
+        operator reconciles it by its own ID, and a proved absence is a
+        bounded 404 rather than a guessed latest analysis.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            request_id = "22222222-3333-4222-8222-333333333333"
+            # A proved absence before anything was admitted.
+            status, absent = self.request(
+                value,
+                "/api/v1/operations/automation/preview-analyses"
+                f"?admissionRequestId={request_id}",
+            )
+            self.assertEqual(404, status)
+            self.assertEqual(
+                "preview_analysis_request_not_found", absent["error"]["code"]
+            )
+            self.assertEqual("unknown", absent["error"]["details"]["durableState"])
+            # Admit a definition analysis with that identity, then reconcile.
+            admitted = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=request_id
+            )
+            status, reconciled = self.request(
+                value,
+                "/api/v1/operations/automation/preview-analyses"
+                f"?admissionRequestId={request_id}",
+            )
+            self.assertEqual(200, status, reconciled)
+            self.assertEqual(admitted.analysis_id, reconciled["analysisId"])
+            # Another principal never reads this identity's analysis.
+            status, _foreign = self.request(
+                value,
+                "/api/v1/operations/automation/preview-analyses"
+                f"?admissionRequestId={request_id}",
+                token=VIEWER_TOKEN,
+            )
+            self.assertEqual(404, status)
+            # The read created no additional work.
+            self.assertEqual(1, len(value.analyses.list(actor="operator")))
+            self.assertEqual([], value.source.mutations)
 
     def test_manual_analysis_admits_promptly_and_completes(self) -> None:
         self.media("Movies/One.2001.mkv")

@@ -330,14 +330,24 @@ class _RunOnceFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
+            from mediaflow.application.automation_task_definition_preview import (
+                AutomationTaskDefinitionPreviewService,
+            )
             from mediaflow.application.preview_analysis import (
                 PreviewAnalysisService,
                 PreviewAnalysisWorker,
             )
 
+            definition_previews = AutomationTaskDefinitionPreviewService(
+                repository,
+                managed,
+                runtime_resolver=lambda snapshot_id, digest: runtime,
+                storages=dict(storages),
+                clock=self.clock,
+            )
             analyses = PreviewAnalysisService(
                 repository,
-                definition_previews=None,
+                definition_previews=definition_previews,
                 manual_previews=previews,
                 clock=self.clock,
             )
@@ -394,6 +404,7 @@ class _RunOnceFixture(unittest.TestCase):
                 intents=intents,
                 previews=previews,
                 discovery=discovery,
+                definition_previews=definition_previews,
                 analyses=analyses,
                 analysis_worker=analysis_worker,
                 execution=execution,
@@ -875,6 +886,64 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual(first.discovery_id, second.discovery_id)
             third = value.run_once.admit("nightly", actor="operator")
             self.assertEqual(first.discovery_id, third.discovery_id)
+
+    def test_every_accepted_request_identity_keeps_its_own_durable_lookup(
+        self,
+    ) -> None:
+        """Each accepted request ID reconciles to the work it actually created.
+
+        Two equivalent Run-once requests from the same principal converge on
+        one durable discovery — but *both* submitted request identities are
+        durably associated with that admission, so a lost response for either
+        one reconciles by its own ID instead of a bounded 404 that reads as
+        "no work exists" (B43.2-R3-2).
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            first_request = "12121212-1212-4212-8212-121212121212"
+            second_request = "34343434-3434-4343-8434-343434343434"
+            first = value.run_once.admit(
+                "nightly", actor="operator", admission_request_id=first_request
+            )
+            second = value.run_once.admit(
+                "nightly", actor="operator", admission_request_id=second_request
+            )
+            # Equivalent open work converges on one durable discovery.
+            self.assertEqual(first.discovery_id, second.discovery_id)
+            # Each accepted identity stays verifiably associated with it.
+            readback_first = value.discovery.find_by_request_id(
+                actor="operator", admission_request_id=first_request
+            )
+            readback_second = value.discovery.find_by_request_id(
+                actor="operator", admission_request_id=second_request
+            )
+            self.assertIsNotNone(readback_first)
+            self.assertIsNotNone(readback_second)
+            self.assertEqual(first.discovery_id, readback_first.discovery_id)
+            self.assertEqual(second.discovery_id, readback_second.discovery_id)
+            self.assertEqual([], value.source.mutations)
+
+    def test_definition_analysis_request_alias_keeps_its_own_durable_lookup(
+        self,
+    ) -> None:
+        """A definition-analysis request ID that converged on open work stays readable."""
+
+        with self.journey() as value:
+            first_request = "56565656-5656-4565-8565-565656565656"
+            second_request = "78787878-7878-4787-8787-787878787878"
+            first = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=first_request
+            )
+            second = value.analyses.admit_definition(
+                "nightly", actor="operator", admission_request_id=second_request
+            )
+            self.assertEqual(first.analysis_id, second.analysis_id)
+            readback_second = value.analyses.find_by_request_id(
+                actor="operator", admission_request_id=second_request
+            )
+            self.assertIsNotNone(readback_second)
+            self.assertEqual(first.analysis_id, readback_second.analysis_id)
 
     def test_run_once_requires_the_published_definition(self) -> None:
         with self.journey() as value:
