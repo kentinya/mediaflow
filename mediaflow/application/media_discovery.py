@@ -357,6 +357,12 @@ class MediaDiscoveryService:
                 library.storage_id,
             )
             if winner is not None:
+                # The winner was admitted by a concurrent equivalent request
+                # with its own identity.  This request was accepted onto that
+                # same durable record, so its identity must stay readable too;
+                # otherwise its lost-response lookup reports a bounded absence
+                # for work that was actually accepted (B43.2-R4-2).
+                self._bind_request(admission_request_id, winner)
                 return winner
             raise
 
@@ -563,6 +569,11 @@ class MediaDiscoveryService:
                 snapshot_digest,
             )
             if winner is not None:
+                # The concurrent equivalent Run once was admitted under its own
+                # request identity; this request converged on the same durable
+                # run, so its identity is bound too and its own reconciliation
+                # read cannot report a bounded absence (B43.2-R4-2).
+                self._bind_request(admission_request_id, winner)
                 return winner
             raise
 

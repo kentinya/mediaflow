@@ -1421,6 +1421,59 @@ class RunOnceApiTests(_RunOnceFixture):
                 )
             self.assertEqual("definition_stale", caught.exception.code)
 
+    def test_concurrent_equivalent_new_ids_both_stay_reconcilable(self) -> None:
+        """B43.2-R4-2: an accepted concurrent alias is never a bounded 404.
+
+        Two equivalent Run-once requests with distinct IDs synchronize only
+        between the real open-work read and the durable create, so one wins the
+        identity race.  The loser converged on the winner's record, so its own
+        request ID must remain a verifiable association: the winner path must
+        bind it, not return and leave the lookup reporting "no work exists".
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            barrier = threading.Barrier(2)
+            original = value.discovery._reconcile_definition_admission
+            call_lock = threading.Lock()
+            calls = 0
+
+            def synchronized_find(*args, **kwargs):
+                nonlocal calls
+                result = original(*args, **kwargs)
+                with call_lock:
+                    calls += 1
+                    call = calls
+                if call <= 2:
+                    barrier.wait(timeout=10)
+                return result
+
+            value.discovery._reconcile_definition_admission = synchronized_find
+            request_ids = [
+                "10101010-1010-4010-8010-101010101010",
+                "20202020-2020-4020-8020-202020202020",
+            ]
+
+            def admit(request_id):
+                return value.run_once.admit(
+                    "nightly", actor="operator", admission_request_id=request_id
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                admissions = list(pool.map(admit, request_ids))
+            identities = {item.discovery_id for item in admissions}
+            self.assertEqual(1, len(identities))
+            for request_id in request_ids:
+                readback = value.discovery.find_by_request_id(
+                    actor="operator", admission_request_id=request_id
+                )
+                self.assertIsNotNone(readback, request_id)
+                self.assertEqual(next(iter(identities)), readback.discovery_id)
+            self.assertEqual([], value.source.mutations)
+
     def test_malformed_run_once_body_is_rejected(self) -> None:
         with self.journey(source_scope="Movies") as value:
             status, _ = self.request(

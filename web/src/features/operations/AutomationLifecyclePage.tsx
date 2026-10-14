@@ -862,13 +862,14 @@ export function AutomationLifecyclePage() {
         return;
       }
       if (result.code === "run_once_request_not_found") {
-        // A proved absence: the original request never became durable work, so
-        // the retained intent can be discarded and a fresh Run once offered.
-        setPendingRunOnce(null);
-        writePendingRunOnce(principalId, null);
+        // A bounded absence cannot establish that no work was admitted: the
+        // API reports `durableState: unknown`, and an accepted concurrent
+        // equivalent request can be exactly the case that has no alias
+        // (B43.2-R4-2/R4-3).  Keep the retained intent until the operator
+        // deliberately resolves it.
         setError(
-          "上次运行一次的请求没有在后端形成任何持久工作（响应在受理前丢失）。" +
-            "现在可以重新发起运行一次。",
+          "核对没有找到这次运行一次的持久工作,但这不能证明后端没有受理:" +
+            "响应可能在写入前丢失。请先查看持久历史/任务中心确认,再决定是否放弃这次请求。",
         );
         return;
       }
@@ -1420,6 +1421,21 @@ export function AutomationLifecyclePage() {
                       {reconcileRunOnceMutation.isPending
                         ? "核对中..."
                         : "核对上次请求"}
+                    </Button>
+                  )}
+                  {pendingRunOnceForRoute !== null && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setPendingRunOnce(null);
+                        setError(
+                          "已放弃这次未决运行一次的本地上下文。后端可能仍保留了它实际受理的工作;" +
+                            "如需继续,请重新发起运行一次并留意新请求的身份。",
+                        );
+                      }}
+                    >
+                      放弃未决请求
                     </Button>
                   )}
                   <Button

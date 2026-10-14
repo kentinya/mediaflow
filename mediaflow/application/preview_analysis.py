@@ -260,8 +260,10 @@ class PreviewAnalysisService:
             # a corrected intent version is a *different* analysis, so it is
             # never silently answered by the earlier version's queued work.
             # This new request identity converged on the durable work, so it
-            # stays readable by its own ID for reconciliation.
-            self._bind_request(open_analysis)
+            # stays readable by its own ID for reconciliation: an ordinary
+            # repeated/two-tab manual Preview must reconcile to the exact
+            # existing analysis instead of failing its second admission.
+            self._bind_request(request_id, open_analysis)
             return open_analysis
         now = self._clock()
         analysis = PreviewAnalysis(

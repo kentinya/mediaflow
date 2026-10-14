@@ -848,6 +848,92 @@ describe("V2 Automation journey", () => {
     await screen.findByText("排队中");
   });
 
+  it("keeps an unresolved exact-Preview request blocking and never treats 404 as proved absence", async () => {
+    // B43.2-R4-3: a lost admission response is an unknown durable outcome.
+    // While it stays unresolved, a fresh admission must not replace the
+    // retained context, and the API's `durableState: unknown` 404 must not be
+    // reported as proof that no work exists.
+    const user = userEvent.setup();
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/automation/task-definitions/auto-task"
+      ) {
+        return jsonResponse({ definition: definitionDocument() });
+      }
+      if (
+        call.url ===
+          "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+        call.method === "POST"
+      ) {
+        // The backend accepted the admission, but the response never arrives.
+        throw new Error("network dropped");
+      }
+      if (
+        call.url.startsWith(
+          "/api/v1/operations/automation/preview-analyses?admissionRequestId=",
+        )
+      ) {
+        return jsonResponse(
+          {
+            error: {
+              code: "preview_analysis_request_not_found",
+              message:
+                "no exact analysis was admitted for this request identity",
+              details: {
+                durableState: "unknown",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction: "reload the exact context and request again",
+              },
+            },
+          },
+          404,
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation/definition/auto-task");
+
+    await screen.findByRole("heading", { name: /Automation definition/ });
+    await user.click(
+      await screen.findByRole("button", { name: "Create exact Preview" }),
+    );
+    // The unknown outcome retains the exact request context.
+    await screen.findByRole("button", { name: "核对上次请求" });
+    const create = await screen.findByRole("button", {
+      name: "Create exact Preview",
+    });
+    expect(create).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "核对上次请求" }));
+    // A bounded absence is reported as unresolved, never as "no work exists".
+    await screen.findByText(/但这不能证明后端没有受理/);
+    expect(
+      screen.getByRole("button", { name: "Create exact Preview" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "放弃未决请求" }),
+    ).toBeInTheDocument();
+    // No second admission was submitted.
+    expect(
+      calls.filter(
+        (item) =>
+          item.url ===
+            "/api/v1/automation/task-definitions/auto-task/preview-analyses" &&
+          item.method === "POST",
+      ),
+    ).toHaveLength(1);
+
+    // Only the explicit resolution clears the retained context.
+    await user.click(screen.getByRole("button", { name: "放弃未决请求" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Create exact Preview" }),
+      ).toBeEnabled(),
+    );
+  });
+
   it("saves the bounded Draft form and never submits a digest", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {

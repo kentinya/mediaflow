@@ -10634,12 +10634,42 @@ class SQLiteTaskRepository:
     # ------------------------------------------------------------------
 
     def create_preview_analysis(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
-        """Persist one admitted exact analysis, rejecting a duplicate identity."""
+        """Persist one admitted exact analysis, rejecting a duplicate identity.
+
+        The request-identity check and the insert commit inside one
+        ``BEGIN IMMEDIATE`` transaction, so two concurrent admissions for the
+        *same* principal/request identity cannot both observe "not found" and
+        then each create a durable analysis.  The loser raises the bounded
+        conflict and re-reads the one record the winner actually created
+        (B43.2-R4-2); application-level readback stays the normal fast path.
+        """
 
         if not isinstance(analysis, PreviewAnalysis):
             raise ValueError("preview analysis projection is required")
-        with self._lock, self._connection:
+        with self._lock:
             try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                if analysis.admission_request_id is not None:
+                    request_match = self._connection.execute(
+                        "SELECT analysis_id FROM preview_analyses "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (analysis.actor, analysis.admission_request_id),
+                    ).fetchone()
+                    if request_match is not None:
+                        raise PreviewAnalysisConflict(
+                            "this preview analysis admission request identity already exists",
+                            details={"analysisId": request_match["analysis_id"]},
+                        )
+                    binding_match = self._connection.execute(
+                        "SELECT target_id FROM admission_request_bindings "
+                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                        (analysis.actor, analysis.admission_request_id),
+                    ).fetchone()
+                    if binding_match is not None:
+                        raise PreviewAnalysisConflict(
+                            "this preview analysis admission request identity is already bound",
+                            details={"analysisId": binding_match["target_id"]},
+                        )
                 self._connection.execute(
                     "INSERT INTO preview_analyses "
                     "(analysis_id, kind, actor, configuration_snapshot_id, "
@@ -10682,10 +10712,18 @@ class SQLiteTaskRepository:
                         analysis.updated_at.isoformat(),
                     ),
                 )
+                self._connection.commit()
+            except PreviewAnalysisConflict:
+                self._connection.rollback()
+                raise
             except sqlite3.IntegrityError as error:
+                self._connection.rollback()
                 raise PreviewAnalysisConflict(
                     "a preview analysis with this identity already exists"
                 ) from error
+            except BaseException:
+                self._connection.rollback()
+                raise
         return analysis
 
     def get_preview_analysis(self, analysis_id: str) -> PreviewAnalysis | None:
@@ -10755,21 +10793,34 @@ class SQLiteTaskRepository:
         with self._lock:
             bound = self._connection.execute(
                 "SELECT target_id FROM admission_request_bindings "
-                "WHERE actor=? AND admission_request_id=? AND kind=? LIMIT 1",
+                "WHERE actor=? AND admission_request_id=? AND kind=? LIMIT 2",
                 (actor, admission_request_id, "preview-analysis"),
-            ).fetchone()
-            row = self._connection.execute(
+            ).fetchall()
+            rows = self._connection.execute(
                 "SELECT analysis_id FROM preview_analyses "
-                "WHERE actor=? AND admission_request_id=? LIMIT 1",
+                "WHERE actor=? AND admission_request_id=? "
+                "ORDER BY created_at, analysis_id LIMIT 2",
                 (actor, admission_request_id),
-            ).fetchone()
-            if bound is not None and row is not None and bound["target_id"] != row["analysis_id"]:
+            ).fetchall()
+            direct_ids = [row["analysis_id"] for row in rows]
+            bound_ids = {row["target_id"] for row in bound}
+            # The request identity is only proof when it names exactly one
+            # durable analysis.  Any disagreement between the binding table
+            # and the record's own column — or more than one candidate on
+            # either side — is an ambiguous admission that must stay honestly
+            # unresolved instead of selecting an arbitrary row (B43.2-R4-2).
+            if len(direct_ids) > 1 or len(bound_ids) > 1:
+                raise PreviewAnalysisConflict(
+                    "this analysis request identity matches more than one durable analysis, "
+                    "so its original admission cannot be proved"
+                )
+            if bound_ids and direct_ids and bound_ids != set(direct_ids):
                 raise PreviewAnalysisConflict(
                     "this analysis request identity matches more than one durable analysis, "
                     "so its original admission cannot be proved"
                 )
             analysis_id = (
-                bound["target_id"] if bound is not None else (row["analysis_id"] if row else None)
+                next(iter(bound_ids)) if bound_ids else (direct_ids[0] if direct_ids else None)
             )
             if analysis_id is None:
                 return None

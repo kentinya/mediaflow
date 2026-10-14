@@ -167,19 +167,20 @@ export function AutomationDetailPage() {
   const previewMutation = useMutation({
     mutationFn: () => {
       const requestId = newRequestId();
-      if (requestId !== null) {
-        const intent: PendingPreviewAnalysis = { definitionId, requestId };
+      const intent: PendingPreviewAnalysis | null =
+        requestId === null ? null : { definitionId, requestId };
+      if (intent !== null) {
         writePendingPreviewAnalysis(principalId, intent);
         setPendingPreviewAnalysis(intent);
       }
       return admitDefinitionPreviewAnalysis(token, {
         definitionId,
         admissionRequestId: requestId,
-      });
+      }).then((result) => ({ result, intent }));
     },
     retry: false,
     onMutate: () => setError(null),
-    onSuccess: (result) => {
+    onSuccess: ({ result, intent }) => {
       if (result.ok && result.model !== undefined) {
         setPendingPreviewAnalysis(null);
         writePendingPreviewAnalysis(principalId, null);
@@ -193,7 +194,7 @@ export function AutomationDetailPage() {
         result.status === 0 ||
         result.status >= 500 ||
         result.code === "malformed_response";
-      if (unknown && pendingPreviewAnalysis !== null) {
+      if (unknown && intent !== null) {
         // The outcome is unknown, not absent: keep the retained intent so the
         // operator can deliberately reconcile it before any resubmission.
         setError(
@@ -229,13 +230,14 @@ export function AutomationDetailPage() {
         return;
       }
       if (result.code === "preview_analysis_request_not_found") {
-        // A proved absence: the original request never became durable work,
-        // so the retained intent can be discarded and a fresh request offered.
-        setPendingPreviewAnalysis(null);
-        writePendingPreviewAnalysis(principalId, null);
+        // The reconcile lookup proved *nothing*: the API reports
+        // `durableState: unknown`, because a bounded absence cannot establish
+        // that no work was admitted (B43.2-R4-3).  Keep the exact retained
+        // context and require a bounded investigation plus an explicit
+        // resolution before any fresh admission replaces it.
         setError(
-          "上次精确预览的请求没有在后端形成任何持久工作(响应在受理前丢失)。" +
-            "现在可以重新发起精确预览。",
+          "核对没有找到这次请求的持久工作,但这不能证明后端没有受理:" +
+            "响应可能在写入前丢失。请先查看持久历史/任务中心确认,再决定是否放弃这次请求。",
         );
         return;
       }
@@ -246,6 +248,18 @@ export function AutomationDetailPage() {
       );
     },
   });
+
+  // Resolve one still-unresolved request only after the operator explicitly
+  // accepts the bounded uncertainty: nothing is deleted and no work is
+  // replayed, but the retained context stops blocking a deliberate new
+  // admission (B43.2-R4-3).
+  const discardPreviewIntent = () => {
+    setPendingPreviewAnalysis(null);
+    setError(
+      "已放弃这次未决请求的本地上下文。后端可能仍保留了它实际受理的工作;" +
+        "如需继续,请重新发起精确预览并留意新请求的身份。",
+    );
+  };
 
   const draftMutation = useMutation({
     mutationFn: (activeRevisionId: string) =>
@@ -576,7 +590,8 @@ export function AutomationDetailPage() {
                   type="button"
                   disabled={
                     !definition.actions.preview.available ||
-                    previewMutation.isPending
+                    previewMutation.isPending ||
+                    pendingPreviewAnalysis !== null
                   }
                   onClick={() => previewMutation.mutate()}
                 >
@@ -585,18 +600,36 @@ export function AutomationDetailPage() {
                     : "Create exact Preview"}
                 </Button>
                 {pendingPreviewAnalysis !== null ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={reconcilePreviewMutation.isPending}
-                    onClick={() =>
-                      reconcilePreviewMutation.mutate(pendingPreviewAnalysis)
-                    }
-                  >
-                    {reconcilePreviewMutation.isPending
-                      ? "核对中..."
-                      : "核对上次请求"}
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={reconcilePreviewMutation.isPending}
+                      onClick={() =>
+                        reconcilePreviewMutation.mutate(pendingPreviewAnalysis)
+                      }
+                    >
+                      {reconcilePreviewMutation.isPending
+                        ? "核对中..."
+                        : "核对上次请求"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={discardPreviewIntent}
+                    >
+                      放弃未决请求
+                    </Button>
+                    {/* Bounded investigation: the durable Operations history
+                        is where an accepted-but-unreconciled admission is
+                        visible, so the operator can look before resolving. */}
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations"
+                    >
+                      查看持久历史
+                    </Link>
+                  </>
                 ) : null}
                 {definition.draftState.present ? (
                   <Link

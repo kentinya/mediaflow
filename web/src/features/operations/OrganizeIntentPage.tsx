@@ -437,8 +437,9 @@ export function OrganizeIntentPage() {
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) => {
       const requestId = newRequestId();
-      if (requestId !== null) {
-        const intent: PendingManualAnalysis = { intentId, requestId };
+      const intent: PendingManualAnalysis | null =
+        requestId === null ? null : { intentId, requestId };
+      if (intent !== null) {
         writePendingManualAnalysis(principalId, intent);
         setPendingManualAnalysis(intent);
       }
@@ -446,11 +447,11 @@ export function OrganizeIntentPage() {
         intentId,
         expectedVersion,
         admissionRequestId: requestId,
-      });
+      }).then((value) => ({ value, intent }));
     },
     retry: false,
     onMutate: () => setPreviewError(null),
-    onSuccess: (value) => {
+    onSuccess: ({ value, intent }) => {
       if (value.ok && value.model !== undefined) {
         setPendingManualAnalysis(null);
         writePendingManualAnalysis(principalId, null);
@@ -468,7 +469,7 @@ export function OrganizeIntentPage() {
         value.status === 0 ||
         value.status >= 500 ||
         value.code === "malformed_response";
-      if (unknown && pendingManualAnalysis !== null) {
+      if (unknown && intent !== null) {
         // The outcome is unknown, not absent: keep the retained intent so the
         // operator can deliberately reconcile it before any resubmission.
         setPreviewError(
@@ -508,11 +509,12 @@ export function OrganizeIntentPage() {
         return;
       }
       if (result.code === "preview_analysis_request_not_found") {
-        setPendingManualAnalysis(null);
-        writePendingManualAnalysis(principalId, null);
+        // A bounded absence cannot establish that no work was admitted: the
+        // API reports `durableState: unknown` (B43.2-R4-3).  Keep the exact
+        // retained context until the operator deliberately resolves it.
         setPreviewError(
-          "上次精确预览的请求没有在后端形成任何持久工作(响应在受理前丢失)。" +
-            "现在可以重新发起精确预览。",
+          "核对没有找到这次请求的持久工作,但这不能证明后端没有受理:" +
+            "响应可能在写入前丢失。请先查看持久历史/任务中心确认,再决定是否放弃这次请求。",
         );
         return;
       }
@@ -523,6 +525,18 @@ export function OrganizeIntentPage() {
       );
     },
   });
+
+  // Resolve one still-unresolved request only after the operator explicitly
+  // accepts the bounded uncertainty: nothing is deleted and no work is
+  // replayed, but the retained context stops blocking a deliberate new
+  // admission (B43.2-R4-3).
+  const discardManualAnalysisIntent = () => {
+    setPendingManualAnalysis(null);
+    setPreviewError(
+      "已放弃这次未决请求的本地上下文。后端可能仍保留了它实际受理的工作;" +
+        "如需继续,请重新生成精确预览并留意新请求的身份。",
+    );
+  };
 
   return (
     <AuthorizedReadBoundary
@@ -615,7 +629,8 @@ export function OrganizeIntentPage() {
                   type="button"
                   disabled={
                     !intent.actions.preview.available ||
-                    previewMutation.isPending
+                    previewMutation.isPending ||
+                    pendingManualAnalysis !== null
                   }
                   onClick={() => previewMutation.mutate(intent.version)}
                 >
@@ -624,20 +639,29 @@ export function OrganizeIntentPage() {
                     : "生成精确预览"}
                 </Button>
                 {pendingManualAnalysis !== null ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={reconcileManualAnalysisMutation.isPending}
-                    onClick={() =>
-                      reconcileManualAnalysisMutation.mutate(
-                        pendingManualAnalysis,
-                      )
-                    }
-                  >
-                    {reconcileManualAnalysisMutation.isPending
-                      ? "核对中..."
-                      : "核对上次请求"}
-                  </Button>
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={reconcileManualAnalysisMutation.isPending}
+                      onClick={() =>
+                        reconcileManualAnalysisMutation.mutate(
+                          pendingManualAnalysis,
+                        )
+                      }
+                    >
+                      {reconcileManualAnalysisMutation.isPending
+                        ? "核对中..."
+                        : "核对上次请求"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={discardManualAnalysisIntent}
+                    >
+                      放弃未决请求
+                    </Button>
+                  </>
                 ) : null}
                 <Link
                   className="mf-button mf-button-secondary"

@@ -718,6 +718,63 @@ test("corrupt published evidence is reported as unavailable, never a draft or ab
   await expect(page.getByText(/NEVER PUBLISHED browser draft/)).toHaveCount(0);
 });
 
+test("a lost exact-analysis admission stays unknown and blocks a duplicate until resolved", async ({
+  page,
+}) => {
+  // B43.2-R4-3 regression: the admission response is lost before the backend
+  // can be proved to have accepted it. The page must retain the exact request
+  // context across a real reload, keep the fresh admission blocked, and report
+  // the reconcile lookup's bounded absence as *unresolved* rather than as
+  // proved non-admission. Only an explicit resolution may clear it.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  // Abort only the admission POST: the response never reaches the browser, so
+  // the durable outcome is genuinely unknown.
+  await page.route("**/preview-analyses", (route) => {
+    if (route.request().method() === "POST") {
+      void route.abort();
+    } else {
+      void route.continue();
+    }
+  });
+  await page.getByRole("button", { name: "Create exact Preview" }).click();
+  await expect(page.getByText(/无法确定后端是否已经受理/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Create exact Preview" }),
+  ).toBeDisabled();
+
+  // A real page reload restores the principal-scoped unresolved intent.
+  await page.reload();
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("button", { name: "Create exact Preview" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "核对上次请求" }).click();
+  await expect(page.getByText(/但这不能证明后端没有受理/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Create exact Preview" }),
+  ).toBeDisabled();
+
+  // Only the explicit resolution clears the retained context; nothing is
+  // replayed and no work is executed.
+  await page.getByRole("button", { name: "放弃未决请求" }).click();
+  await expect(
+    page.getByRole("button", { name: "Create exact Preview" }),
+  ).toBeEnabled();
+});
+
 test("exact definition Preview grants a real scheduled Worker run", async ({
   page,
 }) => {

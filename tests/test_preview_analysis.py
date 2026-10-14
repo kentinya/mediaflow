@@ -763,6 +763,91 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             self.assertEqual(first.analysis_id, readback_first.analysis_id)
             self.assertEqual(second.analysis_id, readback_second.analysis_id)
 
+    def test_equivalent_manual_request_with_a_new_id_returns_the_same_analysis(
+        self,
+    ) -> None:
+        """B43.2-R4-1: a repeated/two-tab manual Preview must not fail.
+
+        A second equivalent request for the *same* intent version with a new
+        request ID converges on the already durable analysis and must complete
+        the request association and return that exact analysis, instead of an
+        internal error that leaves the operator unable to reconcile.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            first_request = "abababab-abab-4bab-8bab-abababababab"
+            second_request = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+            first = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=intent.version,
+                admission_request_id=first_request,
+            )
+            second = value.analyses.admit_manual(
+                intent.intent_id,
+                actor="operator",
+                expected_version=intent.version,
+                admission_request_id=second_request,
+            )
+            self.assertEqual(first.analysis_id, second.analysis_id)
+            readback_second = value.analyses.find_by_request_id(
+                actor="operator", admission_request_id=second_request
+            )
+            self.assertIsNotNone(readback_second)
+            self.assertEqual(first.analysis_id, readback_second.analysis_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_concurrent_same_request_analysis_creates_one_durable_record(
+        self,
+    ) -> None:
+        """B43.2-R4-2: the durable create fences the request identity.
+
+        Two requests for the same definition/request identity synchronize only
+        between the real open-work read and the create, so both observe "no open
+        work".  The request-identity uniqueness must hold at the durable
+        concurrency boundary: exactly one analysis row exists and both callers
+        receive it.
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        with self.journey() as value:
+            barrier = threading.Barrier(2)
+            original = value.analyses._find_open
+
+            def synchronized_find(**kwargs):
+                result = original(**kwargs)
+                barrier.wait(timeout=10)
+                return result
+
+            value.analyses._find_open = synchronized_find
+            request_id = "efefefef-efef-4fef-8fef-efefefefefef"
+
+            def admit(_index):
+                return value.analyses.admit_definition(
+                    "nightly", actor="operator", admission_request_id=request_id
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(admit, range(2)))
+            identities = {item.analysis_id for item in results}
+            self.assertEqual(1, len(identities), identities)
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND admission_request_id=?",
+                ("operator", request_id),
+            ).fetchall()
+            self.assertEqual(1, len(rows))
+            self.assertEqual(next(iter(identities)), rows[0]["analysis_id"])
+            self.assertEqual([], value.source.mutations)
+
     def test_analysis_admission_survives_sqlite_close_and_reopen(self) -> None:
         with self.journey() as value:
             admitted = value.analyses.admit_definition("nightly", actor="operator")
