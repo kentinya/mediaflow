@@ -7590,7 +7590,8 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, {
-      principal_id: token === "e2e-readonly-token" ? "e2e-readonly" : "operator",
+      principal_id:
+        token === "e2e-readonly-token" ? "e2e-readonly" : "operator",
     });
     return;
   }
