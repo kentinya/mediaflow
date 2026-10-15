@@ -31,12 +31,12 @@ test("a Unicode principal can admit and reconcile a batch after reload", async (
     page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible();
   await page.getByRole("link", { name: "任务中心", exact: true }).click();
-  await page
-    .getByRole("row")
-    .filter({ hasText: seeded.runId })
-    .getByRole("button")
-    .first()
-    .click();
+  const batchRun = page.getByRole("button", {
+    name: "Batch，整理详情",
+    exact: true,
+  });
+  await expect(batchRun).toBeVisible();
+  await batchRun.click();
 
   const selector = page.getByLabel(
     `选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`,
