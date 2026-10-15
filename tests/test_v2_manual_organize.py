@@ -76,6 +76,7 @@ from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.storage_fixtures import PagedMemoryStorage
 from tests.test_configuration_objects import example_document
 from tests.test_manual_organize_preview import manual_snapshot
 
@@ -178,6 +179,7 @@ class _JourneyFixtureMixin:
         conflict_strategy: ConflictStrategy = ConflictStrategy.MANUAL,
         target_hard_link: bool | None = None,
         register_worker: bool = True,
+        source_storage=None,
     ):
         with self._journey_environment(
             names=names,
@@ -186,6 +188,7 @@ class _JourneyFixtureMixin:
             conflict_strategy=conflict_strategy,
             target_hard_link=target_hard_link,
             register_worker=register_worker,
+            source_storage=source_storage,
         ) as value:
             try:
                 yield value
@@ -202,6 +205,7 @@ class _JourneyFixtureMixin:
         conflict_strategy,
         target_hard_link,
         register_worker,
+        source_storage,
     ):
         """Build the whole journey graph; the caller owns the repository."""
 
@@ -215,8 +219,9 @@ class _JourneyFixtureMixin:
             candidates = []
             for position, name in enumerate(names, start=1):
                 path = Path(name)
-                (source_root / path).parent.mkdir(parents=True, exist_ok=True)
-                (source_root / path).write_bytes((name.encode() + b"x" * 200)[:123])
+                if source_storage is None:
+                    (source_root / path).parent.mkdir(parents=True, exist_ok=True)
+                    (source_root / path).write_bytes((name.encode() + b"x" * 200)[:123])
                 candidates.append(
                     MediaCandidate(
                         "tmdb",
@@ -233,7 +238,8 @@ class _JourneyFixtureMixin:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_bytes(b"existing-destination")
 
-            source_storage = LocalStorage("source", source_root)
+            if source_storage is None:
+                source_storage = LocalStorage("source", source_root)
             target_storage = LocalStorage("target", target_root)
             library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
 
@@ -495,7 +501,12 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         short_path = f"LongFolder/{long_name}"
         self.assertEqual(1222, len(long_path))
 
-        with self.journey(names=(short_path, long_path)) as value:
+        # Retain both same-named sources and the full 1222-character provider
+        # path without depending on the host Local filesystem's path limit.
+        source = PagedMemoryStorage("source", read_only=False)
+        for path in (short_path, long_path):
+            source.add_file(path, size=123)
+        with self.journey(names=(short_path, long_path), source_storage=source) as value:
             long_record = next(
                 record
                 for record in value.index.list_by_resource_library("library")

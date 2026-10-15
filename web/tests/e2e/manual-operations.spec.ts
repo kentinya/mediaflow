@@ -113,13 +113,15 @@ test.describe.serial("durable Scan state", () => {
     await expect
       .poll(async () => (await itemIds.allTextContents()).join(","))
       .not.toBe(firstPageIds.join(","));
-    const secondPageIds = await itemIds.allTextContents();
-    expect(secondPageIds.length).toBe(
+    // A loading table is also different from page one. Wait for the complete
+    // next page before reading its IDs and checking that the pages are disjoint.
+    await expect(itemIds).toHaveCount(
       Math.min(
         firstPageIds.length,
         SEEDED_SCAN_ITEM_COUNT - firstPageIds.length,
       ),
     );
+    const secondPageIds = await itemIds.allTextContents();
     expect(secondPageIds.some((id) => firstPageIds.includes(id))).toBe(false);
 
     const pagedReads = requestsTo(

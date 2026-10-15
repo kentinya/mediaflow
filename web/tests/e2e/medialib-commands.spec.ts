@@ -76,14 +76,18 @@ function apiRequestsOf(page: Page): string[] {
  *
  * The row menu deliberately dismisses itself on any scroll (it must never point
  * at a row that moved away), and a click that first scrolls the row into view
- * can therefore close the menu it just opened. The bounded re-click here is the
- * same recovery an operator performs; if the control genuinely could not open,
- * every attempt fails and the journey still fails closed.
+ * can therefore close the menu it just opened. Finish revealing/focusing the
+ * row and let the browser dispatch that scroll before invoking the menu.
  */
 async function openRowMenu(page: Page, name: RegExp): Promise<void> {
   const row = page.getByRole("row", { name });
   await expect(row).toBeVisible();
+  await row.scrollIntoViewIfNeeded();
   await row.focus();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+  );
   await page.keyboard.press("Shift+F10");
   await expect(page.getByRole("menu")).toBeVisible();
 }
