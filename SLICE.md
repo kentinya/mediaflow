@@ -62,9 +62,18 @@ Automation (`V2-AUTO-009`). This constrains the future Slice45 Contract as follo
 - The task center's new-task journey offers only organization. Remove independent Scan and Preview
   creation choices and their ordinary task-center entry points, including secondary menus and
   legacy create-page links; renaming or hiding them behind another task-center action is insufficient.
+- The user further clarified that standalone Scan itself must be completely retired, not merely
+  hidden in V2. Remove its Web pages/actions, API/CLI admission and executable scan-only/repeat-run
+  paths, standalone runtime orchestration and code used exclusively by that feature. A diagnostic
+  label, legacy entry or compatible executor must not preserve standalone Scan. Keep only code
+  actually shared with internal organization or needed to read recorded historical evidence.
 - Discovery/scanning, parsing, recognition, metadata lookup, planning and zero-mutation exact Preview
   remain stages of the organization journey. Preview does not grant execution authority; actual
   organization still requires applicable explicit intent and all existing execution safety checks.
+- Internal scanning dependencies are not a reason to retain the standalone Scan feature. Any
+  organization/Automation stability or recovery path that currently instructs the operator to run
+  a separate Scan must instead complete the required observation within its own bounded workflow;
+  do not bypass stability checks or leave a recovery action pointing to a retired feature.
 - Historical Scan/Preview records retain their recorded identity, outcomes and audit visibility;
   history is not a new-creation or repeat-run entry and must never be relabelled as real organization.
 - Existing file-maintenance/transfer results remain distinct recorded work. This creation decision
@@ -74,8 +83,10 @@ Automation (`V2-AUTO-009`). This constrains the future Slice45 Contract as follo
 - Automation's existing organization-only product amendment remains in force. This decision does
   not resume frozen Slice43, import its unaccepted implementation or claim its target is delivered.
 
-The confirmed direction does not retire all diagnostic Scan/Preview/DryRun APIs or CLI capabilities,
-change Rules tests, remove internal analysis or weaken immutable Preview/authorization boundaries.
+Standalone Scan retirement does not remove shared internal discovery, filtering, stability checks,
+Rules tests, diagnostic Preview/DryRun capabilities or immutable Preview/authorization boundaries.
+Historical Scan data remains read-only evidence; retirement never deletes user media or recorded
+results and does not add an executable compatibility path.
 The complete surface and acceptance contract must be checkpointed as ACTIVE before B plans a Task.
 
 ## Required Outcomes and Required Surfaces
