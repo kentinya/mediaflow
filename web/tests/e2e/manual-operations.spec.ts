@@ -247,7 +247,7 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   // The unified inventory landing keeps the manual journey discoverable with
   // its Chinese business presentation.
   await expect(
-    page.getByRole("heading", { name: "操作与任务", exact: true }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);

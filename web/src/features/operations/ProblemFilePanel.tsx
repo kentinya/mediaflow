@@ -24,6 +24,7 @@ import {
   RUN_DISPOSITION_LABELS,
   RUN_ITEM_STATUS_LABELS,
 } from "../../entities/operations/run-detail";
+import type { TaskFailureExplanation } from "../../entities/operations/task";
 import {
   RUN_PROBLEM_LABELS,
   type RunProblemType,
@@ -46,6 +47,145 @@ const EFFECT_CERTAINTY_LABELS: Readonly<Record<string, string>> = {
   unknown: "未知",
 };
 
+const ACTION_LABELS: Readonly<Record<string, string>> = {
+  retry: "显式重新检查",
+  continue: "继续安全分析",
+  ignore: "按策略忽略",
+  resolve: "保存当前决定",
+  resolve_recognition: "确认识别类型",
+  resolve_metadata: "确认元数据选择",
+  resolve_metadata_correction: "确认元数据修正",
+  resolve_classification: "确认分类目标",
+  resolve_conflict: "处理文件冲突",
+  investigate: "核查当前效果",
+  inspect_analysis: "查看关联分析",
+  inspect: "核查当前效果",
+};
+
+const STAGE_LABELS: Readonly<Record<string, string>> = {
+  pending: "待处理",
+  processing: "进行中",
+  scanning: "扫描",
+  parsing: "解析",
+  recognition: "识别",
+  metadata: "元数据",
+  naming: "命名",
+  classification: "分类",
+  strategy: "整理策略",
+  storage: "存储操作",
+  analyze: "安全分析",
+  organizing: "整理执行",
+  waiting_confirm: "等待确认",
+  waiting_recognition: "等待识别决定",
+  waiting_metadata: "等待元数据决定",
+  waiting_metadata_correction: "等待元数据修正",
+  waiting_classification: "等待分类决定",
+  failed: "失败",
+  completed: "已完成",
+  cancelled: "已取消",
+  paused: "已暂停",
+};
+
+const FAILURE_COPY: Readonly<
+  Record<string, { readonly reason: string; readonly nextAction: string }>
+> = {
+  analysis_interrupted: {
+    reason: "安全分析中断",
+    nextAction: "修复分析依赖后，显式重新核查此文件。",
+  },
+  execution_outcome_unknown: {
+    reason: "执行结果尚未确认",
+    nextAction: "先核对已记录的效果证据，再决定下一步。",
+  },
+  storage_permission_denied: {
+    reason: "目标存储拒绝操作",
+    nextAction: "检查目标存储权限，再按允许操作处理此文件。",
+  },
+  unsupported_capability: {
+    reason: "存储不支持所需操作",
+    nextAction: "调整存储能力或操作策略，再按允许操作处理此文件。",
+  },
+  denied_capability: {
+    reason: "当前策略未允许所需操作",
+    nextAction: "检查存储权限或策略，再按允许操作处理此文件。",
+  },
+  destination_collision: {
+    reason: "目标文件已存在",
+    nextAction: "检查目标并明确选择安全的冲突处理方式。",
+  },
+  attachment_collision: {
+    reason: "关联附件目标已存在",
+    nextAction: "检查附件目标并明确选择安全的冲突处理方式。",
+  },
+  invalid_destination: {
+    reason: "目标路径无效",
+    nextAction: "修正目标路径后，再按允许操作处理此文件。",
+  },
+  storage_failure: {
+    reason: "存储操作未完成",
+    nextAction: "核对来源和目标状态，再决定是否继续。",
+  },
+  provider_failure: {
+    reason: "元数据服务未完成查询",
+    nextAction: "检查元数据服务状态，再按允许操作重新检查此文件。",
+  },
+  uncertain_effect: {
+    reason: "存储变更结果尚未确认",
+    nextAction: "先核对已记录的执行效果，不要直接重放操作。",
+  },
+  partial_effect: {
+    reason: "部分存储操作已完成",
+    nextAction: "先核对已完成的效果，再决定后续操作。",
+  },
+  unattended_authority: {
+    reason: "自动执行授权未满足",
+    nextAction: "检查授权状态，再使用后端允许的后续操作。",
+  },
+  unstable_source: {
+    reason: "来源文件仍在变化",
+    nextAction: "等待文件稳定，再按允许操作重新检查。",
+  },
+  recognition_failure: {
+    reason: "未能完成媒体识别",
+    nextAction: "检查识别证据并处理待确认决定，再继续此文件。",
+  },
+  metadata_failure: {
+    reason: "未能确认媒体元数据",
+    nextAction: "检查元数据证据并处理待确认决定，再继续此文件。",
+  },
+  naming_failure: {
+    reason: "未能生成安全的目标名称",
+    nextAction: "检查命名规则后，再按允许操作处理此文件。",
+  },
+  classification_failure: {
+    reason: "未能确定安全的目标位置",
+    nextAction: "检查分类规则和目标位置，再按允许操作处理此文件。",
+  },
+  workflow_failure: {
+    reason: "整理流程未完成",
+    nextAction: "查看该文件的耐久证据，并只执行后端列出的允许操作。",
+  },
+};
+
+function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? "其他处理阶段";
+}
+
+function failureCopy(
+  failure: TaskFailureExplanation | null,
+  problem: RunProblemType,
+): { readonly reason: string; readonly nextAction: string } {
+  if (failure === null) {
+    return { reason: "当前问题", nextAction: PROBLEM_NEXT_STEP[problem] };
+  }
+  return (
+    FAILURE_COPY[failure.category] ?? {
+      reason: "处理原因暂无法归类",
+      nextAction: "查看该文件的耐久证据，并只执行后端列出的允许操作。",
+    }
+  );
+}
+
 function safeValue(value: string | null | undefined): string {
   return value === null || value === undefined || value === "" ? "—" : value;
 }
@@ -54,11 +194,14 @@ function safeValue(value: string | null | undefined): string {
 function ProblemItemCard({
   item,
   problem,
+  onOpenEvidence,
 }: {
   readonly item: TaskItemSummary;
   readonly problem: RunProblemType;
+  readonly onOpenEvidence: (taskId: string, itemId: string) => void;
 }) {
   const checkpoint = item.checkpoint;
+  const explanation = failureCopy(item.failure, problem);
   return (
     <li className="mf-problem-item">
       <div className="mf-problem-item-head">
@@ -74,7 +217,7 @@ function ProblemItemCard({
         <div>
           <dt>阶段 / 尝试</dt>
           <dd>
-            {item.stage} · {item.attempts} 次
+            {stageLabel(item.stage)} · {item.attempts} 次
             {checkpoint?.blockerKind
               ? ` · 阻塞：${checkpoint.blockerKind}`
               : ""}
@@ -90,9 +233,7 @@ function ProblemItemCard({
         <div>
           <dt>原因与下一步</dt>
           <dd>
-            {item.failure
-              ? `${item.failure.category}：${item.failure.nextAction}`
-              : PROBLEM_NEXT_STEP[problem]}
+            {explanation.reason}：{explanation.nextAction}
           </dd>
         </div>
         <div>
@@ -108,11 +249,28 @@ function ProblemItemCard({
           <dt>允许动作</dt>
           <dd>
             {checkpoint?.permittedActionIds.length
-              ? checkpoint.permittedActionIds.join("、")
+              ? checkpoint.permittedActionIds
+                  .map((action) => ACTION_LABELS[action])
+                  .filter((action): action is string => action !== undefined)
+                  .join("、") || "存在后端许可的后续步骤"
               : "无直接动作，请核查"}
           </dd>
         </div>
+        <div>
+          <dt>完成步骤、附件与恢复关联</dt>
+          <dd>
+            执行步骤、附件结果和恢复尝试记录可在该文件的耐久证据中核对；读取本页不会重放操作。
+          </dd>
+        </div>
       </dl>
+      <button
+        type="button"
+        className="mf-button mf-button-secondary"
+        disabled={item.taskId === ""}
+        onClick={() => onOpenEvidence(item.taskId, item.itemId)}
+      >
+        查看该文件证据与恢复记录
+      </button>
     </li>
   );
 }
@@ -120,10 +278,16 @@ function ProblemItemCard({
 export function ProblemFilePanel({
   runId,
   problem,
+  cursor,
+  onPage,
+  onOpenEvidence,
   onClose,
 }: {
   readonly runId: string;
   readonly problem: RunProblemType;
+  readonly cursor: string | null;
+  readonly onPage: (cursor: string, direction: "forward" | "backward") => void;
+  readonly onOpenEvidence: (taskId: string, itemId: string) => void;
   readonly onClose: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -132,7 +296,7 @@ export function ProblemFilePanel({
     runProblemItemsQueryOptions(token, {
       runId,
       problem,
-      cursor: null,
+      cursor,
       active: true,
     }),
   );
@@ -225,6 +389,7 @@ export function ProblemFilePanel({
                     key={item.itemId}
                     item={item}
                     problem={problem}
+                    onOpenEvidence={onOpenEvidence}
                   />
                 ))}
               </ul>
@@ -239,6 +404,32 @@ export function ProblemFilePanel({
                 {page.dispositions.failed_partial}、
                 {RUN_DISPOSITION_LABELS.success} {page.dispositions.success}）。
               </p>
+              <div className="mf-actions" aria-label="问题文件分页">
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  disabled={page.previousCursor === null}
+                  onClick={() =>
+                    page.previousCursor &&
+                    onPage(page.previousCursor, "backward")
+                  }
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  disabled={page.nextCursor === null}
+                  onClick={() =>
+                    page.nextCursor && onPage(page.nextCursor, "forward")
+                  }
+                >
+                  下一页
+                </button>
+                <span className="mf-dashboard-meta">
+                  本页 {page.items.length} 项 / 匹配 {page.matchingTotal} 项
+                </span>
+              </div>
               <p className="mf-dashboard-meta">
                 当前问题：
                 {page.items[0]?.checkpoint?.blockerKind

@@ -35,6 +35,7 @@ import {
   type RunOverviewRead,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { isSafeOperationsSourceScope } from "../../shared/navigation/operations-return";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -94,6 +95,7 @@ const RUN_PAGE_LIMIT = 20;
 interface RunListFilters {
   readonly status: string;
   readonly command: string;
+  readonly source: string;
   readonly q: string;
   readonly from: string;
   readonly to: string;
@@ -103,6 +105,11 @@ interface RunListFilters {
 
 /** The server cursor page, reflected in the URL so paging survives reload. */
 interface RunPageState {
+  readonly cursor: string | null;
+  readonly direction: "forward" | "backward";
+}
+
+interface ProblemPageState {
   readonly cursor: string | null;
   readonly direction: "forward" | "backward";
 }
@@ -140,6 +147,7 @@ function readAttentionFacet(search: Record<string, unknown>): boolean {
 function readFilters(search: Record<string, unknown>): RunListFilters {
   const status = readSafeSearchValue(search, "status");
   const command = readSafeSearchValue(search, "command");
+  const source = readSafeSearchValue(search, "source");
   const q = readSafeSearchValue(search, "q");
   const from = readSafeSearchValue(search, "from");
   const to = readSafeSearchValue(search, "to");
@@ -151,6 +159,10 @@ function readFilters(search: Record<string, unknown>): RunListFilters {
     command:
       command && (command === "all" || COMMAND_TOKEN.test(command))
         ? command
+        : "all",
+    source:
+      source === "" || isSafeOperationsSourceScope(source)
+        ? source || "all"
         : "all",
     q: q.length <= 128 ? q : "",
     from: from && DATE_TOKEN.test(from) ? from : "",
@@ -179,6 +191,23 @@ function readPageState(search: Record<string, unknown>): RunPageState {
   };
 }
 
+function readProblemPageState(
+  search: Record<string, unknown>,
+): ProblemPageState {
+  const cursor = readSafeSearchValue(search, "problemCursor");
+  const direction = readSafeSearchValue(search, "problemDir");
+  if (direction !== "" && direction !== "forward" && direction !== "backward") {
+    return { cursor: null, direction: "forward" };
+  }
+  if (cursor !== "" && !CURSOR_TOKEN.test(cursor)) {
+    return { cursor: null, direction: "forward" };
+  }
+  return {
+    cursor: cursor === "" ? null : cursor,
+    direction: direction === "backward" ? "backward" : "forward",
+  };
+}
+
 type RunSearchValue = string | boolean;
 
 /** A safe default filter state (no narrowing). */
@@ -186,6 +215,7 @@ function defaultFilters(): RunListFilters {
   return {
     status: "all",
     command: "all",
+    source: "all",
     q: "",
     from: "",
     to: "",
@@ -223,6 +253,7 @@ function filtersToSearch(
   const search: Record<string, RunSearchValue> = {};
   if (filters.status !== "all") search["status"] = filters.status;
   if (filters.command !== "all") search["command"] = filters.command;
+  if (filters.source !== "all") search["source"] = filters.source;
   if (filters.q) search["q"] = filters.q;
   if (filters.from) search["from"] = filters.from;
   if (filters.to) search["to"] = filters.to;
@@ -262,6 +293,7 @@ function isFiltered(filters: RunListFilters): boolean {
     filters.attention ||
     filters.status !== "all" ||
     filters.command !== "all" ||
+    filters.source !== "all" ||
     filters.q !== "" ||
     filters.from !== "" ||
     filters.to !== ""
@@ -314,6 +346,7 @@ export function OperationsLanding() {
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
+  const problemPage = readProblemPageState(searchParams);
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -355,6 +388,7 @@ export function OperationsLanding() {
     runInventoryQueryOptions(token, {
       status: effectiveStatus as RunStatus | null,
       command: effectiveCommand,
+      source: filters.source === "all" ? null : filters.source,
       q: filters.q || null,
       from: filters.from || null,
       to: filters.to || null,
@@ -435,6 +469,37 @@ export function OperationsLanding() {
     void navigate({ to: "/operations", search: listSearch(), replace: true });
   };
 
+  const turnProblemPage = (
+    nextCursor: string,
+    nextDirection: "forward" | "backward",
+  ) => {
+    const search = listSearch();
+    search["problemRun"] = problemRunId;
+    search["problemCursor"] = nextCursor;
+    search["problemDir"] = nextDirection;
+    void navigate({ to: "/operations", search, replace: true });
+  };
+
+  const openProblemItemEvidence = (taskId: string, itemId: string) => {
+    const returnSearch = listSearch();
+    returnSearch["problemRun"] = problemRunId;
+    if (problemPage.cursor !== null) {
+      returnSearch["problemCursor"] = problemPage.cursor;
+      returnSearch["problemDir"] = problemPage.direction;
+    }
+    const returnContext = operationsReturnContextFromSearch(returnSearch);
+    void navigate({
+      to: "/operations/tasks/$taskId",
+      params: { taskId },
+      search: {
+        returnOps: returnContext,
+        ...runDetailStateSearch(
+          readRunDetailState({ tab: "detail", item: itemId }),
+        ),
+      },
+    });
+  };
+
   /** Move one server page by replacing the URL (no extra history entries). */
   const turnPage = (
     nextCursor: string,
@@ -504,13 +569,10 @@ export function OperationsLanding() {
   return (
     <div className="mf-dashboard mf-operations-inventory">
       <header className="mf-dashboard-head">
-        <h2>操作与任务</h2>
+        <h2>任务中心</h2>
         <RefreshControl onRefresh={refreshAll} refreshing={anyFetching} />
       </header>
-      <AuthorizedReadBoundary
-        query={query}
-        unavailableTitle="操作与任务暂不可用"
-      >
+      <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
         {({ isFetching, refresh }) => (
           <>
             {page !== null && (
@@ -551,6 +613,33 @@ export function OperationsLanding() {
                     >
                       搜索
                     </button>
+                    <label htmlFor="run-source-filter">来源</label>
+                    <select
+                      id="run-source-filter"
+                      value={filters.source}
+                      onChange={(event) =>
+                        applyFilters({ source: event.target.value || "all" })
+                      }
+                    >
+                      <option value="all">全部来源</option>
+                      {page?.summary.sources.map((sourceOption) => (
+                        <option
+                          key={sourceOption.value}
+                          value={sourceOption.value}
+                        >
+                          {sourceOption.label}
+                        </option>
+                      ))}
+                      {filters.source !== "all" &&
+                        page?.summary.sources.every(
+                          (sourceOption) =>
+                            sourceOption.value !== filters.source,
+                        ) && (
+                          <option value={filters.source}>
+                            {filters.source}
+                          </option>
+                        )}
+                    </select>
                     <label htmlFor="run-status-filter">状态</label>
                     <select
                       id="run-status-filter"
@@ -787,6 +876,9 @@ export function OperationsLanding() {
                   key={`${problemRunId}:${view}`}
                   runId={problemRunId}
                   problem={view}
+                  cursor={problemPage.cursor}
+                  onPage={turnProblemPage}
+                  onOpenEvidence={openProblemItemEvidence}
                   onClose={closeProblemRun}
                 />
               )}
@@ -828,8 +920,8 @@ function ViewSummary({
     );
   }
   // The recovery views advertise their own problem-file counts; the lifecycle
-  // views advertise the population partitions.  Counts are over the whole
-  // authorized population, never just the current page.
+  // views advertise the population partitions. Totals are over the full
+  // filtered population, never just the current page.
   const cards = isRecoveryView(view)
     ? [
         {
@@ -907,7 +999,10 @@ function ViewSummary({
           各类型计数会重叠。
         </p>
       )}
-      <p className="mf-dashboard-meta">{page.population}</p>
+      <p className="mf-dashboard-meta">
+        统计按当前筛选后的完整总体计算，翻页不改变数字。来源选项来自完整授权总体。
+        任务列表合并授权范围内的 Job 与 Task，并按明确关联去重。
+      </p>
     </section>
   );
 }
@@ -996,13 +1091,17 @@ function RunTable({
                     <button
                       type="button"
                       className="mf-run-select"
+                      aria-label={`${run.sourceScope ?? commandLabelOf(run)}，${commandLabelOf(run)}详情`}
                       onClick={() => onSelect(run.runId)}
                     >
-                      {commandLabelOf(run)}{" "}
+                      {run.sourceScope ?? commandLabelOf(run)}
+                    </button>
+                    <span className="mf-run-kind">
+                      {commandLabelOf(run)} ·{" "}
                       <span className="mf-run-identity">
                         {runIdentityOf(run)}
                       </span>
-                    </button>
+                    </span>
                     {detail === null && (
                       <span className="mf-run-kind">（无原生详情）</span>
                     )}
@@ -1040,7 +1139,7 @@ function RunTable({
                   </td>
                   <td>{formatDate(run.createdAt)}</td>
                   {recovery && (
-                    <td>{page.summary.problemFiles[view] ?? "—"} 个文件</td>
+                    <td>{run.problemFileCounts?.[view] ?? "不可用"} 个文件</td>
                   )}
                   {recovery && (
                     <td>

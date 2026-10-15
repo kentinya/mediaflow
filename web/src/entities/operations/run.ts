@@ -210,6 +210,8 @@ export interface RunSummary {
   readonly attention: boolean;
   /** The current, real recovery problem types this Task has outstanding. */
   readonly problemTypes: readonly RunProblemType[];
+  /** Per-type distinct affected primary-file counts for this exact Task. */
+  readonly problemFileCounts: Readonly<Record<RunProblemType, number>> | null;
   readonly configurationSnapshotId: string | null;
   readonly workerId: string | null;
   /** The selected-run detail progress projection. Present on the overview
@@ -260,6 +262,7 @@ export interface RunInventoryPage {
   readonly q: string | null;
   readonly from: string | null;
   readonly to: string | null;
+  readonly source: string | null;
   /** True only when the submitted `attention=true` facet restricted this
    * page's population to the overlapping attention statuses. */
   readonly attention: boolean;
@@ -287,6 +290,10 @@ export interface RunInventorySummary {
   readonly ended: number | null;
   readonly problemTasks: Readonly<Record<RunProblemType, number>>;
   readonly problemFiles: Readonly<Record<RunProblemType, number>>;
+  /** Whether totals describe the submitted filters or the full population. */
+  readonly scope: "current_filters" | "authorized_population" | null;
+  /** Source choices stay available across filter changes from this population. */
+  readonly sourceOptionsScope: "authorized_population" | null;
   /** Distinct durable historical source scopes of the population. */
   readonly sources: readonly {
     readonly value: string;
@@ -530,13 +537,14 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     fail();
   }
   const attention = flag(source, "attention");
-  // The current-problem facet and the problem-type list must agree exactly:
-  // a run is attention precisely when it currently has at least one real
-  // problem.  A server that reports an approximate facet is rejected.
+  // Every technical recovery problem is actionable, but a safe continuation
+  // step can need attention without belonging to a technical type.
   const problemTypes = normalizeProblemTypes(source["problem_types"]);
-  if (attention !== problemTypes.length > 0) {
-    fail();
-  }
+  if (!attention && problemTypes.length > 0) fail();
+  const problemFileCounts = normalizeOptionalProblemCounts(
+    source["problem_file_counts"],
+    "run.problem_file_counts",
+  );
   const jobId = optionalText(source, "job_id");
   const taskId = optionalText(source, "task_id");
   const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId, jobId);
@@ -564,6 +572,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     pauseRequested: flag(source, "pause_requested"),
     attention,
     problemTypes,
+    problemFileCounts,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     workerId: optionalText(source, "worker_id"),
     progress:
@@ -811,6 +820,7 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
     q: normalizeRunFilterEcho(source, "q"),
     from: normalizeRunFilterEcho(source, "from"),
     to: normalizeRunFilterEcho(source, "to"),
+    source: normalizeRunFilterEcho(source, "source"),
     attention,
     total: boundedTotal,
     truncated: flag(source, "truncated"),
@@ -866,6 +876,15 @@ function normalizeProblemCounts(
   return counts as Readonly<Record<RunProblemType, number>>;
 }
 
+function normalizeOptionalProblemCounts(
+  value: unknown,
+  field: string,
+): Readonly<Record<RunProblemType, number>> | null {
+  return value === undefined || value === null
+    ? null
+    : normalizeProblemCounts(value, field);
+}
+
 function normalizeRunSummarySummary(value: unknown): RunInventorySummary {
   if (value === undefined || value === null) {
     return {
@@ -878,6 +897,8 @@ function normalizeRunSummarySummary(value: unknown): RunInventorySummary {
       problemFiles: emptyProblemCounts(),
       sources: [],
       sourcesTruncated: false,
+      scope: null,
+      sourceOptionsScope: null,
     };
   }
   const source = readRecord(value, "summary");
@@ -893,6 +914,8 @@ function normalizeRunSummarySummary(value: unknown): RunInventorySummary {
       problemFiles: emptyProblemCounts(),
       sources: [],
       sourcesTruncated: false,
+      scope: null,
+      sourceOptionsScope: null,
     };
   }
   const count = (field: string): number => {
@@ -916,6 +939,18 @@ function normalizeRunSummarySummary(value: unknown): RunInventorySummary {
       source["problem_files"],
       "problem_files",
     ),
+    scope:
+      source["scope"] === "current_filters"
+        ? "current_filters"
+        : source["scope"] === "authorized_population" ||
+            source["scope"] === undefined
+          ? "authorized_population"
+          : fail(),
+    sourceOptionsScope:
+      source["source_options_scope"] === "authorized_population" ||
+      source["source_options_scope"] === undefined
+        ? "authorized_population"
+        : fail(),
     sources: normalizeSourceOptions(source["sources"]),
     sourcesTruncated: flag(source, "sources_truncated"),
   };

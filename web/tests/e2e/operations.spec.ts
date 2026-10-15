@@ -61,14 +61,14 @@ async function openJobDetail(page: Page, jobId: string) {
   ).toBeVisible();
 }
 
-test("操作与任务 inventory shows the run list, cards and workspace links", async ({
+test("任务中心 inventory shows the run list, views and workspace links", async ({
   page,
 }) => {
   await connect(page);
   await openOperations(page);
 
   await expect(
-    page.getByRole("heading", { name: "操作与任务", exact: true }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   // Real data renders with Chinese business labels.
   await expect(page.getByRole("table")).toBeVisible();
@@ -434,30 +434,34 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
 });
 
-test("the Operations workspace is keyboard operable and responsive", async ({
+test("task-center views stay keyboard operable and discoverable when narrow", async ({
   page,
 }) => {
   await connect(page);
-  await openTaskList(page);
-
-  // Keyboard: reach the status filter and change it without a pointer.
-  await page.getByLabel("Filter by status").focus();
-  await page.keyboard.press("ArrowDown");
-  await expect(page.getByLabel("Filter by status")).not.toHaveValue("all");
+  await openOperations(page);
+  const views = page.getByRole("navigation", { name: "任务中心视图" });
+  const all = views.getByRole("button", { name: "全部任务", exact: true });
+  await all.focus();
+  await expect(all).toBeFocused();
+  await page.keyboard.press("Tab");
+  const running = views.getByRole("button", { name: "进行中", exact: true });
+  await expect(running).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/view=running/);
+  await expect(running).toHaveAttribute("aria-current", "page");
 
   await page.setViewportSize({ width: 380, height: 720 });
-  await expect(page.getByLabel("Filter by work kind")).toBeVisible();
+  const failure = views.getByRole("button", { name: "失败恢复", exact: true });
+  await failure.focus();
+  await expect(failure).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/view=failure/);
   await expect(
-    page.getByRole("heading", { name: "Tasks", exact: true }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(
-    page.getByRole("heading", { name: "Tasks", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Reset filters" }).first(),
-  ).toBeVisible();
+  await expect(views).toBeVisible();
 });
 
 test("dropping credential-like Operations search state on reconnect", async ({
@@ -525,7 +529,7 @@ test("inventory count card applies its server filter and the run overview opens 
   // Selecting a run opens the bounded overview with durable facts only.
   await page
     .getByRole("row", { name: /job-005/ })
-    .getByRole("button", { name: /job-005/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -545,7 +549,7 @@ test("inventory count card applies its server filter and the run overview opens 
   // entry with its filter intact instead of leaving the route.
   await page
     .getByRole("row", { name: /job-005/ })
-    .getByRole("button", { name: /job-005/ })
+    .getByRole("button")
     .first()
     .click();
   await expect(page).toHaveURL(/run=job-005/);
@@ -632,7 +636,8 @@ test("the selected run detail shows truthful progress and its accounting basis",
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("button", { name: /job-001/ })
+    .getByRole("row", { name: /job-001/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -668,7 +673,8 @@ test("item and record filters page on the server and survive a reload", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("button", { name: /job-001/ })
+    .getByRole("row", { name: /job-001/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -730,7 +736,8 @@ test("one item's evidence opens through exact links and closes again", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("button", { name: /job-001/ })
+    .getByRole("row", { name: /job-001/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -770,7 +777,8 @@ test("the native action downloads the eligible linked Task's result package", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("button", { name: /job-001/ })
+    .getByRole("row", { name: /job-001/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -804,7 +812,8 @@ test("a pre-Task admission states queue truth and refuses an empty download", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("button", { name: /job-002/ })
+    .getByRole("row", { name: /job-002/ })
+    .getByRole("button")
     .first()
     .click();
   const detail = page.getByRole("region", { name: "运行详情" });

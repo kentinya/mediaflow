@@ -614,7 +614,7 @@ test("a refreshed discovery page reconnects to the same durable discovery with i
     .getByRole("navigation", { name: "Primary" })
     .getByRole("link", { name: "Operations" })
     .click();
-  await expect(page.getByRole("heading", { name: "操作与任务" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "整理发现", level: 3 }),
   ).toBeVisible();

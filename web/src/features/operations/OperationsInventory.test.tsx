@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
-import { operationsLandingSearch } from "../../shared/navigation/operations-return";
+import {
+  operationsLandingSearch,
+  parseOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import { renderApp } from "../../../tests/utils";
 
 const TOKEN = "operations-inventory-token";
@@ -56,6 +59,13 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     pause_requested: false,
     attention: false,
     problem_types: [],
+    problem_file_counts: {
+      recognition: 0,
+      metadata: 0,
+      classification: 0,
+      conflict: 0,
+      failure: 0,
+    },
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
@@ -73,6 +83,8 @@ function summaryDocument(overrides: Record<string, unknown> = {}) {
   };
   return {
     available: true,
+    scope: "current_filters",
+    source_options_scope: "authorized_population",
     total: 1,
     running: 1,
     attention: 0,
@@ -101,6 +113,7 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
     attention_count: 0,
     view: null,
     problem: null,
+    source: null,
     summary: summaryDocument(),
     population:
       "unified job/task run inventory, deduplicated by explicit task linkage",
@@ -130,6 +143,8 @@ function readinessPayload(overrides: Record<string, unknown> = {}) {
 function managementReadinessPayload() {
   return {
     available: true,
+    scope: "current_filters",
+    source_options_scope: "authorized_population",
     infrastructureReady: true,
     asOf: "2026-08-22T12:00:00+00:00",
     sideEffects: "none",
@@ -255,7 +270,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     // Chinese business labels describe operation and state.
     expect((await screen.findAllByText("扫描")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
@@ -272,6 +287,12 @@ describe("Operations run inventory landing", () => {
     expect(
       screen.getAllByRole("button", { name: /需要处理/ }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        /任务列表合并授权范围内的 Job 与 Task，并按明确关联去重/,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/unified job\/task run inventory/)).toBeNull();
     // Worker readiness and manual entries stay discoverable.
     expect((await screen.findAllByText(/Worker 就绪/)).length).toBeGreaterThan(
       0,
@@ -285,11 +306,25 @@ describe("Operations run inventory landing", () => {
   it("submits server filters, applies card filters and resets to the same population", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
-    stubInventoryJourney(pageDocument({ items: [], total: 0 }), requested);
+    stubInventoryJourney(
+      pageDocument({
+        items: [],
+        total: 0,
+        summary: summaryDocument({
+          total: 2,
+          running: 1,
+          sources: [
+            { value: "Movies/alpha", label: "Movies/alpha" },
+            { value: "Movies/beta", label: "Movies/beta" },
+          ],
+        }),
+      }),
+      requested,
+    );
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     await waitFor(() =>
       expect(
         requested.some((url) => url.includes("/api/v1/operations/runs")),
@@ -312,6 +347,13 @@ describe("Operations run inventory landing", () => {
       expect(requested.some((url) => url.includes("status=failed"))).toBe(true),
     );
 
+    await user.selectOptions(screen.getByLabelText("来源"), "Movies/beta");
+    await waitFor(() =>
+      expect(
+        requested.some((url) => url.includes("source=Movies%2Fbeta")),
+      ).toBe(true),
+    );
+
     await user.click(screen.getAllByRole("button", { name: "重置筛选" })[0]!);
     await waitFor(() =>
       expect(
@@ -319,7 +361,8 @@ describe("Operations run inventory landing", () => {
           (url) =>
             url.includes("/api/v1/operations/runs") &&
             !url.includes("status=failed") &&
-            !url.includes("q="),
+            !url.includes("q=") &&
+            !url.includes("source="),
         ),
       ).toBe(true),
     );
@@ -441,7 +484,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
       await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
@@ -468,9 +511,9 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
-      await screen.findByRole("heading", { name: "操作与任务暂不可用" }),
+      await screen.findByRole("heading", { name: "任务中心暂不可用" }),
     ).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -482,7 +525,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
       await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
@@ -558,6 +601,13 @@ describe("Operations run inventory landing", () => {
           status: "failed",
           attention: true,
           problem_types: ["failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
         }),
       ],
       status_counts: { failed: 1 },
@@ -682,6 +732,13 @@ describe("Operations run inventory landing", () => {
           status: "failed",
           attention: true,
           problem_types: ["failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
         }),
       ],
       status_counts: { failed: 1 },
@@ -706,7 +763,7 @@ describe("Operations run inventory landing", () => {
           metadata: 0,
           classification: 0,
           conflict: 0,
-          failure: 2,
+          failure: 21,
         },
       }),
     });
@@ -754,29 +811,44 @@ describe("Operations run inventory landing", () => {
           },
         },
       ],
-      total: 3,
-      matching_total: 1,
+      total: 30,
+      matching_total: 21,
       dispositions: {
-        pending: 1,
+        pending: 20,
         active: 0,
         waiting: 0,
-        success: 1,
+        success: 2,
         skipped: 0,
-        failed_partial: 1,
+        failed_partial: 8,
         ignored: 0,
         cancelled: 0,
       },
       uncertain_success: 0,
-      truncated: false,
+      truncated: true,
       previous_cursor: null,
-      next_cursor: null,
+      next_cursor: "page-two",
       sideEffects: "none",
+    };
+    const problemItemsPageTwo = {
+      ...problemItems,
+      items: [
+        {
+          ...problemItems.items[0],
+          item_id: "item-b",
+          source_path: "Movies/b.mkv",
+        },
+      ],
+      truncated: false,
+      previous_cursor: "page-one",
+      next_cursor: null,
     };
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
       if (url.includes("/problem-items")) {
-        return jsonResponse(problemItems);
+        return jsonResponse(
+          url.includes("cursor=page-two") ? problemItemsPageTwo : problemItems,
+        );
       }
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(recoveryPage);
@@ -796,7 +868,18 @@ describe("Operations run inventory landing", () => {
     const { router } = renderApp("/ui-v2/operations?view=failure");
 
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByRole("button", { name: "处理失败" }));
+    const recoveryRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("task-002"));
+    expect(recoveryRow).toBeDefined();
+    if (recoveryRow === undefined) {
+      throw new Error("recovery row was not rendered");
+    }
+    expect(within(recoveryRow).getByText("1 个文件")).toBeVisible();
+    expect(within(recoveryRow).queryByText("21 个文件")).toBeNull();
+    await user.click(
+      within(recoveryRow).getByRole("button", { name: "处理失败" }),
+    );
     await waitFor(() =>
       expect(router.history.location.search).toContain("problemRun=task-002"),
     );
@@ -808,23 +891,62 @@ describe("Operations run inventory landing", () => {
     expect(
       (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
     ).toBeGreaterThan(0);
-    expect(within(panel).getByText(/匹配 1 个文件/)).toBeVisible();
+    expect(within(panel).getByText(/匹配 21 个文件/)).toBeVisible();
     expect(within(panel).getByText(/无存储变更/)).toBeVisible();
-    expect(within(panel).getAllByText(/retry/).length).toBeGreaterThan(0);
+    expect(within(panel).getByText(/元数据服务未完成查询/)).toBeVisible();
+    expect(within(panel).getByText(/检查元数据服务状态/)).toBeVisible();
+    expect(within(panel).queryByText("provider_failure")).toBeNull();
+    expect(within(panel).getByText("显式重新检查")).toBeVisible();
+    expect(within(panel).queryByText("retry", { exact: true })).toBeNull();
     expect(
       requested.some(
         (url) =>
           url.includes("problem-items") && url.includes("problem=failure"),
       ),
     ).toBe(true);
-    // Returning to the list preserves the exact view/filter context.
+    await user.click(within(panel).getByRole("button", { name: "下一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(router.history.location.search).toContain(
+        "problemCursor=page-two",
+      ),
+    );
+    expect(router.history.location.search).toContain("problemDir=forward");
+    await user.click(within(panel).getByRole("button", { name: "上一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(router.history.location.search).toContain(
+        "problemCursor=page-one",
+      ),
+    );
+    await user.click(within(panel).getByRole("button", { name: "下一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
+    ).toBeGreaterThan(0);
     await user.click(
-      within(panel).getByRole("button", { name: "返回任务列表" }),
+      within(panel).getByRole("button", {
+        name: "查看该文件证据与恢复记录",
+      }),
     );
     await waitFor(() =>
-      expect(router.history.location.search).not.toContain("problemRun"),
+      expect(router.history.location.pathname).toBe(
+        "/ui-v2/operations/tasks/task-002",
+      ),
     );
-    expect(router.history.location.search).toContain("view=failure");
+    expect(router.history.location.search).toContain("item=item-b");
+    const returnContext = new URLSearchParams(
+      router.history.location.search,
+    ).get("returnOps");
+    expect(parseOperationsReturnContext(returnContext)).toMatchObject({
+      view: "failure",
+      problemRun: "task-002",
+      problemCursor: "page-two",
+      problemDir: "forward",
+    });
   });
 
   it("renders an honest scan-error run instead of rejecting the page", async () => {
@@ -848,7 +970,7 @@ describe("Operations run inventory landing", () => {
     // Legal independent scan errors never read as a malformed document and
     // never read as an empty inventory.
     expect(
-      screen.queryByRole("heading", { name: "操作与任务暂不可用" }),
+      screen.queryByRole("heading", { name: "任务中心暂不可用" }),
     ).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "还没有运行记录" }),
@@ -894,7 +1016,7 @@ describe("Operations run inventory landing", () => {
 
     const before = overviewReads();
     const header = screen
-      .getByRole("heading", { name: "操作与任务" })
+      .getByRole("heading", { name: "任务中心" })
       .closest("header");
     if (header === null) {
       throw new Error("landing header was not rendered");

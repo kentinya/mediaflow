@@ -208,7 +208,7 @@ test.describe("manual organize journey", () => {
 
     await page.getByRole("button", { name: "核对提交结果" }).click();
     await expect(
-      page.getByRole("heading", { name: "操作与任务", exact: true }),
+      page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(/command=manual_organize/);
     await expect(page).toHaveURL(/run=organize-task-e2e-001/);
@@ -396,7 +396,7 @@ test.describe("manual organize journey", () => {
     await connect(page, READ_ONLY_TOKEN);
     // The unified inventory landing renders with its Chinese business heading.
     await expect(
-      page.getByRole("heading", { name: "操作与任务", exact: true }),
+      page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
     // The task-center entry is the native `新建整理任务` journey start; a
     // read-only principal is offered neither the old nor the new control.

@@ -10,6 +10,7 @@
 
 import { RULE_FAMILIES } from "../../entities/rules/rules-workspace";
 import {
+  isSafeOperationsSourceScope,
   parseOperationsReturnContext,
   operationsReturnContextFromSearch,
 } from "./operations-return";
@@ -811,6 +812,10 @@ export function allowlistedDestinationSearch(
     setSafe(allowed, "q", current.get("q"));
     setSafe(allowed, "from", current.get("from"));
     setSafe(allowed, "to", current.get("to"));
+    const source = current.get("source");
+    if (source !== null && isSafeOperationsSourceScope(source)) {
+      setSafe(allowed, "source", source);
+    }
     setSafe(allowed, "run", current.get("run"));
     // The selected recovery problem run and its closed problem type survive
     // a reconnect so the exact Task/type file list reopens.  The view and
@@ -833,6 +838,16 @@ export function allowlistedDestinationSearch(
     const direction = current.get("dir");
     if (direction === "forward" || direction === "backward") {
       allowed.set("dir", direction);
+    }
+    setFilterToken(
+      allowed,
+      "problemCursor",
+      current.get("problemCursor"),
+      CURSOR_TOKEN,
+    );
+    const problemDirection = current.get("problemDir");
+    if (problemDirection === "forward" || problemDirection === "backward") {
+      allowed.set("problemDir", problemDirection);
     }
     // The manual Scan/Preview scope selector carries one closed scope kind and
     // one bounded configured library identity, exactly like the retired
@@ -889,7 +904,10 @@ export function allowlistedDestinationSearch(
     if (path === "/operations/tasks/$taskId") {
       // The Task detail additionally owns the run detail context (tab,
       // filters, cursors, inspected item) that its tabs restore on
-      // reconnect.
+      // reconnect. A task-center-originated file evidence link also keeps its
+      // bounded return context so the durable evidence page has a direct path
+      // back to the exact filtered Task/type problem list after reconnect.
+      setJourneyOperationsContext(allowed, current);
       setRunDetailTokens(allowed, current);
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;

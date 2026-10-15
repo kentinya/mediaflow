@@ -13574,7 +13574,11 @@ class MediaFlowApi:
             problem_type = view
         raw_source = values.get("source", [""])[0]
         source = None if raw_source in {"", "all"} else raw_source
-        if source is not None and not _TASK_COMMAND_FILTER.fullmatch(source):
+        if source is not None and (
+            len(source) > 512
+            or source != source.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in source)
+        ):
             raise ValueError("operations run source filter is invalid")
         raw_command = values.get("command", [""])[0]
         command = None if raw_command in {"", "all"} else raw_command
@@ -13728,6 +13732,7 @@ class MediaFlowApi:
             "attention": query["attention"],
             "view": query["view"],
             "problem_type": query["problem"],
+            "source": query["source"],
         }
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
             window = repository.operations_runs_window(before=cursor.position, **arguments)
@@ -13744,7 +13749,12 @@ class MediaFlowApi:
         # overlapping population, so the card keeps showing exactly the count
         # it filters to.
         attention_count = window.attention_count
-        summary = self._operations_run_summary(repository)
+        raw_summary = getattr(window, "summary", None)
+        summary = (
+            self._public_operations_run_summary(raw_summary)
+            if isinstance(raw_summary, dict)
+            else {"available": False}
+        )
         return self._response(
             start_response,
             200,
@@ -13757,6 +13767,7 @@ class MediaFlowApi:
                 "attention": bool(query["attention"]),
                 "view": query["view"],
                 "problem": query["problem"],
+                "source": bounded_identity_path(query["source"]),
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
                 "total": window.total,
@@ -13790,20 +13801,36 @@ class MediaFlowApi:
         if not callable(reader):
             return {"available": False}
         summary = reader()
+        return MediaFlowApi._public_operations_run_summary(summary)
+
+    @staticmethod
+    def _public_operations_run_summary(summary: dict[str, object]) -> dict[str, object]:
+        """Redact bounded source options before publishing snapshot statistics."""
+
+        summary = dict(summary)
         # The source options are published through the same bounded identity
         # boundary as the run rows: a legacy absolute host/adapter root, a
         # private endpoint or a credential-shaped scope never reaches the
-        # public document, and a redacted value is shown as the shared marker.
+        # public document.  Redacted markers are omitted because they cannot
+        # be submitted as a useful exact source filter and could conflate
+        # unrelated private locations.
         raw_sources = summary.get("sources")
         if isinstance(raw_sources, list):
-            summary["sources"] = [
-                {
-                    "value": bounded_identity_path(entry.get("value")) or "[redacted-path]",
-                    "label": bounded_identity_path(entry.get("label")) or "[redacted-path]",
-                }
-                for entry in raw_sources
-                if isinstance(entry, dict)
-            ]
+            sources: list[dict[str, str]] = []
+            redacted = False
+            for entry in raw_sources:
+                if not isinstance(entry, dict):
+                    redacted = True
+                    continue
+                value = bounded_identity_path(entry.get("value"))
+                label = bounded_identity_path(entry.get("label"))
+                if value in (None, "[redacted-path]") or label in (None, "[redacted-path]"):
+                    redacted = True
+                    continue
+                sources.append({"value": value, "label": label})
+            summary["sources"] = sources
+            if redacted:
+                summary["sources_truncated"] = True
         return summary
 
     def _operations_run_overview(
@@ -14658,6 +14685,7 @@ class MediaFlowApi:
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
             "problem_types": list(overview.problem_types),
+            "problem_file_counts": dict(overview.problem_file_counts),
             "configuration_snapshot_id": overview.configuration_snapshot_id,
             "worker_id": overview.worker_id,
             "sideEffects": "none",

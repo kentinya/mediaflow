@@ -466,6 +466,9 @@ describe("unified run inventory reads", () => {
       "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1",
     );
     expect(runInventoryUrl({})).toBe("/api/v1/operations/runs");
+    expect(runInventoryUrl({ source: "Movies/beta" })).toBe(
+      "/api/v1/operations/runs?source=Movies%2Fbeta",
+    );
     // The attention facet is appended only when it is actually submitted, so
     // an unfiltered read keeps its exact original address, and a falsy/null
     // facet never emits a parameter the backend would reject.

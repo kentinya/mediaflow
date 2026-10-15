@@ -1629,6 +1629,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                     repository.get_item(source_item.item_id).status,
                     TaskItemStatus.PENDING,
                 )
+                failed_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(failed_overview)
+                assert failed_overview is not None
+                self.assertTrue(failed_overview.attention)
+                self.assertEqual(("failure",), failed_overview.problem_types)
             history = Path(environment["root"] / "history.jsonl")
             self.assertNotIn("provider exception marker", history.read_text(encoding="utf-8"))
 
@@ -1648,6 +1653,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                     actor="operator",
                 )
                 self.assertNotEqual(second.request_id, admitted.request_id)
+                accepted_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(accepted_overview)
+                assert accepted_overview is not None
+                self.assertTrue(accepted_overview.attention)
+                self.assertEqual((), accepted_overview.problem_types)
             self._continue(environment, source_task, source_item)
             self._run_worker(
                 environment,
@@ -1664,6 +1674,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                 )
                 requests = repository.list_recovery_requests(source_item.item_id)
                 self.assertEqual(len(requests), 2)
+                completed_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(completed_overview)
+                assert completed_overview is not None
+                self.assertTrue(completed_overview.attention)
+                self.assertEqual((), completed_overview.problem_types)
 
     def test_zero_mutation_falsified_through_real_seams_and_tree_snapshot(self) -> None:
         def tree_snapshot(root: Path) -> tuple[tuple[str, int, int], ...]:
@@ -1929,6 +1944,17 @@ class RecoveryContinuationTests(unittest.TestCase):
                 source_before = repository.get_item(run.items[0].task_item_id)
                 self.assertIsNotNone(source_before)
                 self.assertEqual(TaskItemStatus.PENDING.value, source_before.status.value)
+                source_overview = repository.operations_run(run.task_id)
+                self.assertIsNotNone(source_overview)
+                assert source_overview is not None
+                self.assertTrue(source_overview.attention)
+                self.assertEqual((), source_overview.problem_types)
+                self.assertEqual(
+                    0,
+                    dict(source_overview.problem_file_counts).get("failure"),
+                    "a completed analysis continuation remains a generic safe next step, "
+                    "not a technical failure",
+                )
 
             # The completed DryRun unlocks one exact continued execution authority.
             continued_services = self._manual_services(environment, provider)
@@ -2007,6 +2033,11 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertEqual(link["source_task_id"], run.task_id)
             self.assertEqual(link["source_item_id"], run.items[0].task_item_id)
             self.assertEqual(link["analysis_task_id"], continuation.new_task_id)
+            authorized_overview = continued_services["task_repository"].operations_run(run.task_id)
+            self.assertIsNotNone(authorized_overview)
+            assert authorized_overview is not None
+            self.assertTrue(authorized_overview.attention)
+            self.assertEqual((), authorized_overview.problem_types)
 
             self.assertTrue(environment["source_file"].exists())
             status, item_before_execution = api_request(
@@ -2070,6 +2101,11 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertIsNotNone(persisted_link)
             self.assertEqual("consumed", persisted_link.status.value)
             self.assertEqual(completed["execution_id"], persisted_link.execution_id)
+            consumed_overview = continued_services["task_repository"].operations_run(run.task_id)
+            self.assertIsNotNone(consumed_overview)
+            assert consumed_overview is not None
+            self.assertFalse(consumed_overview.attention)
+            self.assertEqual((), consumed_overview.problem_types)
             with SQLiteTaskRepository(environment["database"]) as repository:
                 authorization = repository.get_manual_execution_authorization(
                     link["authorization_id"]

@@ -336,10 +336,11 @@ class OperationsRunOverview:
     completed_items: int | None = None
     failed_items: int | None = None
     pause_requested: bool = False
-    #: The current, real operator-attention facet.  It is derived from durable
-    #: evidence (an unresolved decision/repair/investigation, an actionable
-    #: failure, or a withheld continuation) — never from a plain status name.
-    #: A run can carry it and still be counted in its own status partition.
+    #: The current, real operator-attention facet. It is derived from durable
+    #: evidence (an unresolved decision/repair, safe continuation step or
+    #: investigation), never from a plain status name. Some human steps are
+    #: not one of the five technical recovery types, so attention may be true
+    #: with no problem type.
     attention: bool = False
     #: The five recovery problem types this Task currently has outstanding
     #: (recognition/metadata/classification/conflict/failure).  A Task may
@@ -347,6 +348,9 @@ class OperationsRunOverview:
     #: checkpoint / continuation evidence the recovery lists read.  Empty
     #: means the Task currently has no outstanding recovery problem.
     problem_types: tuple[str, ...] = ()
+    #: Distinct affected primary files for each current problem type on this
+    #: exact Task. Attachment steps remain grouped under their primary file.
+    problem_file_counts: tuple[tuple[str, int], ...] = ()
     configuration_snapshot_id: str | None = None
     worker_id: str | None = None
 

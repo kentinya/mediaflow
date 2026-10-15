@@ -49,6 +49,10 @@ test("capture the nine task-center views and the problem-file states", async ({
 }) => {
   mkdirSync(OUTPUT, { recursive: true });
   await request.post(`${BASE}/__harness__/seed-task-center-problems`);
+  const paged = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problem-page`)
+  ).json()) as { readonly taskId: string; readonly itemCount: number };
+  expect(paged.itemCount).toBe(21);
   await connect(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.getByRole("link", { name: "Operations", exact: true }).click();
@@ -62,7 +66,7 @@ test("capture the nine task-center views and the problem-file states", async ({
     await views.getByRole("button", { name: label, exact: true }).click();
     await expect(views).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "操作与任务", exact: true }),
+      page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
     await page.waitForTimeout(250);
     await page.screenshot({
@@ -71,14 +75,19 @@ test("capture the nine task-center views and the problem-file states", async ({
     });
   }
 
-  // The exact Task/type problem-file list (one recovery row's own action).
+  // The exact Task/type problem-file list (one recovery row's own action),
+  // including its actual next page rather than a synthetic short fixture.
   await views.getByRole("button", { name: "失败恢复", exact: true }).click();
-  const row = page.getByRole("row").filter({ hasText: "处理失败" }).first();
+  const row = page.getByRole("row").filter({ hasText: paged.taskId });
   await row.getByRole("button", { name: "处理失败" }).click();
   const problemPanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(problemPanel).toBeVisible();
-  // Wait for the server-filtered file list, not the loading state.
-  await expect(problemPanel.getByText(/匹配 \d+ 个文件/)).toBeVisible();
+  await expect(problemPanel.getByText(/匹配 21 个文件/)).toBeVisible();
+  await problemPanel.getByRole("button", { name: "下一页" }).click();
+  await expect(problemPanel.getByText(/Failure20\.mkv/).first()).toBeVisible();
+  await expect(problemPanel.getByText(/安全分析中断/)).toBeVisible();
+  await expect(problemPanel.getByText(/修复分析依赖后/)).toBeVisible();
+  await expect(problemPanel.getByText(/analysis_interrupted/)).toHaveCount(0);
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-problem-files.png`,
@@ -98,4 +107,56 @@ test("capture the nine task-center views and the problem-file states", async ({
     path: `${OUTPUT}/task-center-narrow.png`,
     fullPage: false,
   });
+
+  // Re-entry is explicit because the credential is memory-only. The same
+  // source, Task/type and file cursor must restore after the login boundary.
+  await views.getByRole("button", { name: "失败恢复", exact: true }).click();
+  await page
+    .getByRole("row")
+    .filter({ hasText: paged.taskId })
+    .getByRole("button", { name: "处理失败" })
+    .click();
+  await page
+    .getByRole("region", { name: "问题文件处理" })
+    .getByRole("button", { name: "下一页" })
+    .click();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/problemCursor=/);
+  const restoredPanel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(restoredPanel.getByText(/Failure20\.mkv/).first()).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-reconnected.png`,
+    fullPage: false,
+  });
+
+  // Capture a bounded read-failure state separately from the authenticated
+  // re-entry state. The route is removed before reconnect so it cannot mask
+  // the real Python service or leave a failed fixture active.
+  await page.route("**/api/v1/operations/runs*", async (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "service_unavailable" } }),
+    }),
+  );
+  await views.getByRole("button", { name: "已结束", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Operations unavailable", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Reload the current Active runtime and retry the same read.",
+    ),
+  ).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-read-failure.png`,
+    fullPage: false,
+  });
+  await page.unroute("**/api/v1/operations/runs*");
 });

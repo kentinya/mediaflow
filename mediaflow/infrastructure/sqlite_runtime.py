@@ -539,6 +539,10 @@ class OperationsRunsWindow:
     #: The population-scoped current-problem facet count over the same
     #: filtered population (never just the returned page).
     attention_count: int = 0
+    #: Filter-scoped task/file statistics and source options from this same
+    #: database read snapshot. Source options are drawn from the authorized
+    #: population so operators can change the current source filter.
+    summary: dict[str, object] | None = None
 
 
 _JOB_RUN_STATUS_MAP = {
@@ -5494,69 +5498,51 @@ class SQLiteTaskRepository:
         # persisted Job→Task link, a transfer Task, or the standalone Task
         # anchor.  Every problem probe below binds to this same identity.
         task_identity = "COALESCE(runs.linked_task_id, runs.transfer_task_id, runs.anchor_id)"
-        resolved_stages = (
-            "'conflict_resolved', 'recognition_resolved', 'metadata_resolved', "
-            "'metadata_correction_resolved', 'classification_resolved', "
-            "'task_retry_requested'"
-        )
+        problem_predicates = {
+            problem: self._problem_item_predicate(problem)[0] for problem in RECOVERY_PROBLEM_TYPES
+        }
 
-        def actionable_failure(alias: str) -> str:
-            """An item whose failure still needs a human repair/investigation.
-
-            A failure that a resolved review or an already-admitted retry
-            request has moved past its terminal stage is not a current
-            failure problem: the item keeps its durable evidence but stops
-            occupying the recovery list.  A genuinely new blocker on the
-            same item still contributes through its own type.
-            """
-
+        def task_item_exists(problem: str) -> str:
+            predicate = problem_predicates[problem].replace("i.", "problem_items.")
             return (
-                f"(({alias}.status IN ('failed', 'partial')"
-                f" AND {alias}.stage NOT IN ({resolved_stages}))"
-                f" OR ({alias}.status = 'pending'"
-                f" AND ({alias}.stage = 'task_retry_requested'"
-                f" OR {alias}.stage LIKE '%\\_resolved' ESCAPE '\\')))"
+                "EXISTS (SELECT 1 FROM task_items problem_items "
+                f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
             )
 
+        def task_item_count(problem: str) -> str:
+            predicate = problem_predicates[problem].replace("i.", "problem_items.")
+            return (
+                "(SELECT COUNT(DISTINCT problem_items.item_id) FROM task_items problem_items "
+                f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
+            )
+
+        actionable_failure = task_item_exists("failure")
+        # A resolved review or admitted analysis/retry is no longer a
+        # technical failure. Its pending safe-continuation step remains in
+        # the generic attention view until a later durable outcome replaces
+        # that state. This keeps it discoverable without inventing a failure.
+        safe_continuation = (
+            "EXISTS (SELECT 1 FROM task_items continuation_items "
+            f"WHERE continuation_items.task_id = {task_identity} "
+            "AND continuation_items.status = 'pending' "
+            "AND (continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
+            "OR (continuation_items.stage = 'task_retry_requested' AND NOT EXISTS ("
+            "SELECT 1 FROM manual_recovery_links recovery_links WHERE "
+            "recovery_links.source_item_id = continuation_items.item_id "
+            "AND recovery_links.status = 'consumed'))))"
+        )
         attention_sql = (
             "CASE WHEN EXISTS (SELECT 1 FROM task_items attention_items"
             f" WHERE attention_items.task_id = {task_identity}"
-            " AND (attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
-            " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm')"
-            f" OR {actionable_failure('attention_items')})) THEN 1 ELSE 0 END"
+            " AND attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
+            " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm'))"
+            f" OR {actionable_failure} OR {safe_continuation} THEN 1 ELSE 0 END"
         )
-        recognition_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items recog_items"
-            " JOIN recognition_reviews recog ON recog.item_id = recog_items.item_id"
-            f" WHERE recog_items.task_id = {task_identity}"
-            " AND recog.status = 'pending'"
-            " AND recog_items.status IN ('waiting_recognition', 'pending'))"
-            " THEN 1 ELSE 0 END"
-        )
-        metadata_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items meta_items"
-            f" WHERE meta_items.task_id = {task_identity}"
-            " AND meta_items.status IN ('waiting_metadata', 'waiting_metadata_correction'))"
-            " THEN 1 ELSE 0 END"
-        )
-        classification_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items class_items"
-            f" WHERE class_items.task_id = {task_identity}"
-            " AND class_items.status = 'waiting_classification') THEN 1 ELSE 0 END"
-        )
-        conflict_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items conflict_items"
-            " JOIN conflict_confirmations conflict ON conflict.item_id = conflict_items.item_id"
-            f" WHERE conflict_items.task_id = {task_identity}"
-            " AND conflict.status = 'pending'"
-            " AND conflict_items.status IN ('waiting_confirm', 'pending'))"
-            " THEN 1 ELSE 0 END"
-        )
-        failure_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items failure_items"
-            f" WHERE failure_items.task_id = {task_identity}"
-            f" AND {actionable_failure('failure_items')}) THEN 1 ELSE 0 END"
-        )
+        problem_sql = {
+            problem: f"CASE WHEN {task_item_exists(problem)} THEN 1 ELSE 0 END"
+            for problem in RECOVERY_PROBLEM_TYPES
+        }
+        problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
         document = f"""
             SELECT runs.*,
                    task_status.status AS linked_task_status,
@@ -5646,11 +5632,16 @@ class SQLiteTaskRepository:
                    -- item state or continuation.  A resolved review leaves
                    -- its item pending at a *_resolved stage, so it stops
                    -- contributing; a new blocker contributes to its own type.
-                   {recognition_sql} AS has_recognition_problem,
-                   {metadata_sql} AS has_metadata_problem,
-                   {classification_sql} AS has_classification_problem,
-                   {conflict_sql} AS has_conflict_problem,
-                   {failure_sql} AS has_failure_problem
+                   {problem_sql["recognition"]} AS has_recognition_problem,
+                   {problem_sql["metadata"]} AS has_metadata_problem,
+                   {problem_sql["classification"]} AS has_classification_problem,
+                   {problem_sql["conflict"]} AS has_conflict_problem,
+                   {problem_sql["failure"]} AS has_failure_problem,
+                   {problem_file_sql["recognition"]} AS problem_recognition_files,
+                   {problem_file_sql["metadata"]} AS problem_metadata_files,
+                   {problem_file_sql["classification"]} AS problem_classification_files,
+                   {problem_file_sql["conflict"]} AS problem_conflict_files,
+                   {problem_file_sql["failure"]} AS problem_failure_files
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
@@ -5806,6 +5797,32 @@ class SQLiteTaskRepository:
             f"SELECT COUNT(*) AS value_count FROM ({document})"
             f" {filter_where}" + (" AND" if filter_clauses else " WHERE") + " derived_attention = 1"
         )
+        summary_sql = f"""SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN derived_status NOT IN (
+                'completed', 'partial_success', 'failed', 'cancelled'
+            ) THEN 1 ELSE 0 END) AS running,
+            SUM(derived_attention) AS attention,
+            SUM(CASE WHEN derived_status IN (
+                'completed', 'partial_success', 'failed', 'cancelled'
+            ) THEN 1 ELSE 0 END) AS ended,
+            SUM(has_recognition_problem) AS recognition_tasks,
+            SUM(has_metadata_problem) AS metadata_tasks,
+            SUM(has_classification_problem) AS classification_tasks,
+            SUM(has_conflict_problem) AS conflict_tasks,
+            SUM(has_failure_problem) AS failure_tasks,
+            SUM(problem_recognition_files) AS recognition_files,
+            SUM(problem_metadata_files) AS metadata_files,
+            SUM(problem_classification_files) AS classification_files,
+            SUM(problem_conflict_files) AS conflict_files,
+            SUM(problem_failure_files) AS failure_files
+            FROM ({document}) {filter_where}"""
+        sources_sql = f"""SELECT effective_scope AS value, COUNT(*) AS value_count
+            FROM ({document})
+            WHERE effective_scope IS NOT NULL AND effective_scope <> ''
+            GROUP BY effective_scope
+            ORDER BY value_count DESC, value ASC
+            LIMIT 51"""
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -5822,11 +5839,36 @@ class SQLiteTaskRepository:
                         "value_count"
                     ]
                 )
+                summary_row = self._connection.execute(summary_sql, filter_parameters).fetchone()
+                source_rows = self._connection.execute(sources_sql).fetchall()
             except BaseException:
                 self._connection.execute("ROLLBACK")
                 raise
             else:
                 self._connection.execute("COMMIT")
+        source_options = [
+            {"value": str(row["value"]), "label": str(row["value"])} for row in source_rows[:50]
+        ]
+        summary = {
+            "available": True,
+            "scope": "current_filters",
+            "source_options_scope": "authorized_population",
+            "total": int(summary_row["total"] or 0),
+            "running": int(summary_row["running"] or 0),
+            "attention": int(summary_row["attention"] or 0),
+            "ended": int(summary_row["ended"] or 0),
+            "problem_tasks": {
+                problem: int(summary_row[f"{problem}_tasks"] or 0)
+                for problem in RECOVERY_PROBLEM_TYPES
+            },
+            "problem_files": {
+                problem: int(summary_row[f"{problem}_files"] or 0)
+                for problem in RECOVERY_PROBLEM_TYPES
+            },
+            "sources": source_options,
+            "sources_truncated": len(source_rows) > 50,
+            "sideEffects": "none",
+        }
         if reverse:
             # The window fetches the ``limit`` rows nearest the boundary
             # oldest-first; one extra row proves an older page behind them.
@@ -5845,6 +5887,7 @@ class SQLiteTaskRepository:
             has_next=has_next,
             has_previous=has_previous,
             attention_count=attention_count,
+            summary=summary,
         )
 
     def operations_runs_page(
@@ -5987,54 +6030,16 @@ class SQLiteTaskRepository:
         (the run detail keeps them separately).
         """
 
-        queries = {
-            "recognition": (
-                "SELECT COUNT(DISTINCT recog_items.item_id) AS value_count"
-                " FROM task_items recog_items"
-                " JOIN recognition_reviews recog ON recog.item_id = recog_items.item_id"
-                " WHERE recog.status = 'pending'"
-                " AND recog_items.status IN ('waiting_recognition', 'pending')"
-                " AND recog_items.task_id IN (SELECT anchor_id FROM ({}))"
-            ),
-            "metadata": (
-                "SELECT COUNT(DISTINCT meta_items.item_id) AS value_count"
-                " FROM task_items meta_items"
-                " WHERE meta_items.status IN ('waiting_metadata', 'waiting_metadata_correction')"
-                " AND meta_items.task_id IN (SELECT anchor_id FROM ({}))"
-            ),
-            "classification": (
-                "SELECT COUNT(DISTINCT class_items.item_id) AS value_count"
-                " FROM task_items class_items"
-                " WHERE class_items.status = 'waiting_classification'"
-                " AND class_items.task_id IN (SELECT anchor_id FROM ({}))"
-            ),
-            "conflict": (
-                "SELECT COUNT(DISTINCT conflict_items.item_id) AS value_count"
-                " FROM task_items conflict_items"
-                " JOIN conflict_confirmations conflict ON conflict.item_id = conflict_items.item_id"
-                " WHERE conflict.status = 'pending'"
-                " AND conflict_items.status IN ('waiting_confirm', 'pending')"
-                " AND conflict_items.task_id IN (SELECT anchor_id FROM ({}))"
-            ),
-            "failure": (
-                "SELECT COUNT(DISTINCT failure_items.item_id) AS value_count"
-                " FROM task_items failure_items"
-                " WHERE ((failure_items.status IN ('failed', 'partial')"
-                " AND failure_items.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
-                " 'metadata_resolved', 'metadata_correction_resolved',"
-                " 'classification_resolved', 'task_retry_requested'))"
-                " OR (failure_items.status = 'pending'"
-                " AND (failure_items.stage = 'task_retry_requested'"
-                " OR failure_items.stage LIKE '%\\_resolved' ESCAPE '\\')))"
-                " AND failure_items.task_id IN (SELECT anchor_id FROM ({}))"
-            ),
-        }
-        counts: dict[str, int] = {}
-        for problem, query in queries.items():
-            counts[problem] = int(
-                self._connection.execute(query.format(document)).fetchone()["value_count"] or 0
-            )
-        return counts
+        row = self._connection.execute(
+            f"""SELECT
+                SUM(problem_recognition_files) AS recognition,
+                SUM(problem_metadata_files) AS metadata,
+                SUM(problem_classification_files) AS classification,
+                SUM(problem_conflict_files) AS conflict,
+                SUM(problem_failure_files) AS failure
+                FROM ({document})"""
+        ).fetchone()
+        return {problem: int(row[problem] or 0) for problem in RECOVERY_PROBLEM_TYPES}
 
     # -- Selected-run detail reads (Slice 42 RO-3) --------------------------
 
@@ -6445,14 +6450,33 @@ class SQLiteTaskRepository:
                 (),
             )
         if problem_type == "failure":
+
+            def latest_request(alias: str) -> str:
+                """Keep only the last admission for equal as well as ordered times."""
+
+                return (
+                    "NOT EXISTS (SELECT 1 FROM recovery_requests newer_requests "
+                    f"WHERE newer_requests.item_id = {alias}.item_id AND ("
+                    f"newer_requests.requested_at > {alias}.requested_at OR ("
+                    f"newer_requests.requested_at = {alias}.requested_at AND "
+                    f"newer_requests.request_id > {alias}.request_id)))"
+                )
+
             return (
                 "((i.status IN ('failed', 'partial')"
                 " AND i.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
                 " 'metadata_resolved', 'metadata_correction_resolved',"
                 " 'classification_resolved', 'task_retry_requested'))"
-                " OR (i.status = 'pending'"
-                " AND (i.stage = 'task_retry_requested'"
-                " OR i.stage LIKE '%\\_resolved' ESCAPE '\\')))",
+                " OR (i.status = 'pending' AND i.stage = 'task_retry_requested' AND ("
+                "EXISTS (SELECT 1 FROM recovery_requests failed_requests "
+                "WHERE failed_requests.item_id = i.item_id AND failed_requests.status = 'failed' "
+                f"AND {latest_request('failed_requests')}) "
+                "OR EXISTS (SELECT 1 FROM recovery_continuations failed_continuations "
+                "JOIN recovery_requests continuation_requests "
+                "ON continuation_requests.request_id = failed_continuations.request_id "
+                "WHERE failed_continuations.source_item_id = i.item_id "
+                "AND failed_continuations.status = 'failed' "
+                f"AND {latest_request('continuation_requests')}))))",
                 (),
             )
         raise ValueError("run problem item type is invalid")
@@ -6793,6 +6817,10 @@ class SQLiteTaskRepository:
         problem_types = tuple(
             problem for problem in RECOVERY_PROBLEM_TYPES if bool(row[f"has_{problem}_problem"])
         )
+        problem_file_counts = tuple(
+            (problem, int(row[f"problem_{problem}_files"] or 0))
+            for problem in RECOVERY_PROBLEM_TYPES
+        )
         return OperationsRunOverview(
             run_kind=run_kind,
             run_id=anchor_id,
@@ -6820,6 +6848,7 @@ class SQLiteTaskRepository:
             pause_requested=bool(row["pause_requested"]),
             attention=bool(row["derived_attention"]),
             problem_types=problem_types,
+            problem_file_counts=problem_file_counts,
             configuration_snapshot_id=(
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
             ),

@@ -25,10 +25,13 @@ const LIST_KEYS = new Set([
   "q",
   "from",
   "to",
+  "source",
   "attention",
   "view",
   "problem",
   "problemRun",
+  "problemCursor",
+  "problemDir",
   "cursor",
   "dir",
   "run",
@@ -47,6 +50,27 @@ const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const DATE_TOKEN = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|\+00:00)?)?$/;
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
 const IDENTIFIER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const SOURCE_SCOPE_TOKEN =
+  /^(?![/\\~])(?![A-Za-z]:)(?![A-Za-z][A-Za-z0-9+.-]*:)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*(?:api[_-]?key|password|secret|token)\s*=)[^\\]{1,512}$/i;
+
+function containsControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Shared bounded source-scope grammar for list, URL, and return contexts. */
+export function isSafeOperationsSourceScope(value: string): boolean {
+  return (
+    value === value.trim() &&
+    !containsControlCharacters(value) &&
+    SOURCE_SCOPE_TOKEN.test(value)
+  );
+}
 /** The nine closed task-center view tokens. */
 const VIEW_TOKEN =
   /^(?:all|running|attention|ended|recognition|metadata|classification|conflict|failure)$/;
@@ -151,15 +175,20 @@ export function parseOperationsReturnContext(
       case "to":
         if (DATE_TOKEN.test(value)) put(key, value);
         break;
+      case "source":
+        if (isSafeOperationsSourceScope(value)) put(key, value);
+        break;
       case "attention":
         if (value === "true") put(key, true);
         break;
       case "cursor":
+      case "problemCursor":
       case "icur":
       case "rcur":
         if (CURSOR_TOKEN.test(value)) put(key, value);
         break;
       case "dir":
+      case "problemDir":
       case "idir":
       case "rdir":
         if (value === "forward" || value === "backward") put(key, value);

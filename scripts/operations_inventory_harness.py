@@ -80,6 +80,7 @@ from mediaflow.application.automation import AutomationWorker  # noqa: E402
 from mediaflow.application.classification_review import ClassificationReviewService  # noqa: E402
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
+from mediaflow.application.conflict_resolution import ConfirmationService  # noqa: E402
 from mediaflow.application.file_catalog import FileCatalogService  # noqa: E402
 from mediaflow.application.manual_organize_worker import (  # noqa: E402
     ManualOrganizeExecutionWorker,
@@ -125,9 +126,18 @@ from mediaflow.domain.metadata import (  # noqa: E402
     MetadataIdentificationStatus,
 )
 from mediaflow.domain.organizer import (  # noqa: E402
+    AttachmentPolicy,
+    Conflict,
+    ConflictStrategy,
+    ConflictType,
     ExecutionEffectCertainty,
     ExecutionResult,
     ExecutionStatus,
+    OrganizeOperationType,
+    OrganizePlan,
+    OrganizePolicy,
+    PlanStatus,
+    StorageLocation,
 )
 from mediaflow.domain.recognition import (  # noqa: E402
     RecognitionResult,
@@ -513,6 +523,7 @@ class AppState:
         self.recovery_run: dict[str, str] | None = None
         self.recovery_batch_run: dict[str, object] | None = None
         self.task_center_problems: dict[str, object] | None = None
+        self.task_center_problem_page: dict[str, object] | None = None
 
     @property
     def database(self) -> Path:
@@ -1928,6 +1939,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     managed = state.managed
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
     now = datetime.now(UTC)
+    snapshot = managed.active
 
     def begin(task_id: str, item_id: str, filename: str) -> PersistentTaskItem:
         item = PersistentTaskItem(
@@ -1952,6 +1964,9 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
         "organize",
         execute_authorized=False,
         scope_path="TaskCenter/Mixed",
+        configuration_snapshot_id=snapshot.revision_id,
+        configuration_snapshot_digest=snapshot.digest,
+        require_configuration_snapshot=True,
     )
     recognition_types = (RecognitionType("A", "Movie"), RecognitionType("B", "TV"))
     recognition_service = RecognitionReviewService(state.repository, recognition_types)
@@ -1980,6 +1995,175 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
                 retry_safe=True,
                 next_action="repair the destination Storage permission, then re-check this item",
             ).encode(),
+        )
+    )
+
+    # One successful sibling with a durable Result and one unknown-effect
+    # failure keep terminal success and uncertain mutation evidence visible
+    # beside the zero-effect technical failure. The unknown checkpoint is
+    # deliberately inspect-only.
+    success_item_id = f"{mixed.task_id}-success"
+    success_path = "TaskCenter/Mixed/Completed.mkv"
+    success_item = dataclasses.replace(
+        begin(mixed.task_id, success_item_id, success_path),
+        status=TaskItemStatus.SUCCESS,
+        stage="completed",
+        plan_id=f"{mixed.task_id}-success-plan",
+        destination_storage_id="target-storage",
+        destination_path="Movies/Completed/Completed.mkv",
+        execution_status="SUCCESS",
+    )
+    state.repository.upsert_item(success_item)
+    state.repository.append_result(
+        PersistentResultRecord(
+            result_id=f"{mixed.task_id}-success-result",
+            task_id=mixed.task_id,
+            item_id=success_item_id,
+            source_storage_id="source-storage",
+            source_path=success_path,
+            destination_storage_id="target-storage",
+            destination_path="Movies/Completed/Completed.mkv",
+            recognition_type="A",
+            provider="tmdb",
+            provider_id="451",
+            metadata_policy_id="A",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="A",
+            operation="MOVE",
+            status="SUCCESS",
+            created_at=now,
+            title="Completed sibling",
+            completed_operations=("MOVE", "ATTACHMENT_MOVE"),
+            attachment_count=1,
+            effect_certainty="verified_complete",
+        )
+    )
+
+    unknown_item_id = f"{mixed.task_id}-unknown-effect"
+    unknown_path = "TaskCenter/Mixed/UnknownEffect.mkv"
+    unknown_failure = FailureExplanation(
+        category="execution_outcome_unknown",
+        message="the destination effect could not be verified",
+        durable_state="inspection_required",
+        side_effects="unknown",
+        retry_safe=False,
+        next_action="inspect the recorded effect evidence before deciding what to do next",
+    )
+    unknown_item = dataclasses.replace(
+        begin(mixed.task_id, unknown_item_id, unknown_path),
+        status=TaskItemStatus.FAILED,
+        stage="execution_outcome_unknown",
+        plan_id=f"{mixed.task_id}-unknown-plan",
+        execution_status="FAILED",
+        error=unknown_failure.encode(),
+    )
+    state.repository.upsert_item(unknown_item)
+    state.repository.append_result(
+        PersistentResultRecord(
+            result_id=f"{mixed.task_id}-unknown-result",
+            task_id=mixed.task_id,
+            item_id=unknown_item_id,
+            source_storage_id="source-storage",
+            source_path=unknown_path,
+            destination_storage_id="target-storage",
+            destination_path="Movies/UnknownEffect/UnknownEffect.mkv",
+            recognition_type="A",
+            provider="tmdb",
+            provider_id="452",
+            metadata_policy_id="A",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="A",
+            operation="MOVE",
+            status="FAILED",
+            created_at=now,
+            title="Unknown effect sibling",
+            completed_operations=("MOVE",),
+            effect_certainty="unknown",
+            uncertain_effects=("mutation_outcome",),
+            error=unknown_failure.encode(),
+        )
+    )
+
+    # The same primary file has both a primary destination conflict and an
+    # attached subtitle conflict. Both durable confirmations point back to
+    # one TaskItem, so recovery counts one affected primary file rather than
+    # two attachment steps.
+    conflict_item_id = f"{mixed.task_id}-conflict"
+    conflict_source = "TaskCenter/Mixed/ConflictMovie.mkv"
+    conflict_item = dataclasses.replace(
+        begin(mixed.task_id, conflict_item_id, conflict_source),
+        status=TaskItemStatus.WAITING_CONFIRM,
+        stage="waiting_confirm",
+        plan_id=f"{mixed.task_id}-conflict-plan",
+    )
+    confirmation_service = ConfirmationService(state.repository)
+    conflict_policy = OrganizePolicy(
+        f"{mixed.task_id}-conflict-policy",
+        OrganizeOperationType.MOVE,
+        ConflictStrategy.MANUAL,
+        attachments=AttachmentPolicy(enabled=True),
+    )
+
+    def create_pending_conflict(
+        source_path: str,
+        target_path: str,
+        plan_id: str,
+        *,
+        publish_item: bool = True,
+    ) -> None:
+        plan = OrganizePlan(
+            source_storage_id="source-storage",
+            target_storage_id="target-storage",
+            source=source_path,
+            target=target_path,
+            recognition_type_id="A",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id=conflict_policy.policy_id,
+            conflicts=(
+                Conflict(
+                    ConflictType.DESTINATION_EXISTS,
+                    source_path,
+                    target_path,
+                    "destination already exists",
+                ),
+            ),
+            status=PlanStatus.CONFLICT,
+            plan_id=plan_id,
+            source_location=StorageLocation("source-storage", source_path),
+            destination_location=StorageLocation("target-storage", target_path),
+        )
+        confirmation_service.create(
+            task_id=mixed.task_id,
+            item_id=conflict_item_id,
+            plan=plan,
+            policy=conflict_policy,
+            item=conflict_item if publish_item else None,
+        )
+
+    create_pending_conflict(
+        conflict_source,
+        "Movies/ConflictMovie.mkv",
+        f"{mixed.task_id}-primary-conflict-plan",
+    )
+    create_pending_conflict(
+        "TaskCenter/Mixed/ConflictMovie.en.srt",
+        "Movies/ConflictMovie.en.srt",
+        f"{mixed.task_id}-attachment-conflict-plan",
+        publish_item=False,
+    )
+
+    state.repository.update_task(
+        dataclasses.replace(
+            mixed,
+            status=PersistentTaskStatus.PARTIAL_SUCCESS,
+            updated_at=now,
+            completed_at=now,
+            total_items=6,
+            completed_items=1,
+            failed_items=2,
         )
     )
 
@@ -2063,12 +2247,79 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
             f"{mixed.task_id}-recog-1",
         ],
         "mixedFailureItemId": failure_item_id,
+        "mixedSuccessItemId": success_item_id,
+        "mixedUnknownItemId": unknown_item_id,
+        "mixedConflictItemId": conflict_item_id,
         "classificationTaskId": classified.task_id,
         "classificationItemId": f"{classified.task_id}-class",
         "metadataTaskId": metadata.task_id,
         "metadataItemId": f"{metadata.task_id}-metadata",
     }
     return dict(state.task_center_problems)
+
+
+def seed_task_center_problem_page(state: AppState) -> dict[str, object]:
+    """Create 21 real zero-effect failures for the server-paged file journey."""
+
+    if state.task_center_problem_page is not None:
+        return dict(state.task_center_problem_page)
+    now = datetime.now(UTC)
+    snapshot = state.managed.active
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    task = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        scope_path="TaskCenter/PagedFailures",
+        configuration_snapshot_id=snapshot.revision_id,
+        configuration_snapshot_digest=snapshot.digest,
+        require_configuration_snapshot=True,
+        status=PersistentTaskStatus.FAILED,
+    )
+    explanation = FailureExplanation(
+        category="analysis_interrupted",
+        message="the analysis worker stopped before a Storage mutation",
+        durable_state="failure is recorded",
+        side_effects="none",
+        retry_safe=True,
+        next_action="repair the analysis dependency, then explicitly re-check this item",
+    ).encode()
+    item_ids: list[str] = []
+    for index in range(21):
+        item_id = f"{task.task_id}-failure-{index:02d}"
+        source_path = f"TaskCenter/PagedFailures/Failure{index:02d}.mkv"
+        item_ids.append(item_id)
+        state.repository.upsert_item(
+            PersistentTaskItem(
+                item_id=item_id,
+                task_id=task.task_id,
+                storage_id="source-storage",
+                resource_library_id="source",
+                source_path=source_path,
+                source_display=source_path,
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                attempts=1,
+                created_at=now + timedelta(microseconds=index),
+                updated_at=now + timedelta(microseconds=index),
+                error=explanation,
+            )
+        )
+    state.repository.update_task(
+        dataclasses.replace(
+            task,
+            updated_at=now,
+            completed_at=now,
+            total_items=len(item_ids),
+            failed_items=len(item_ids),
+        )
+    )
+    state.task_center_problem_page = {
+        "taskId": task.task_id,
+        "itemCount": len(item_ids),
+        "firstItemId": item_ids[0],
+        "lastItemId": item_ids[-1],
+    }
+    return dict(state.task_center_problem_page)
 
 
 def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:
@@ -2204,6 +2455,8 @@ def application(environ, start_response):
             document = run_manual_worker_once(STATE)
         elif path == "/__harness__/seed-task-center-problems" and method == "POST":
             document = seed_task_center_problem_journey(STATE)
+        elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":
+            document = seed_task_center_problem_page(STATE)
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             document = seed_task_item_recovery_journey(STATE)
         elif path == "/__harness__/run-task-item-recovery-worker" and method == "POST":

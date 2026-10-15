@@ -1263,6 +1263,8 @@ export interface RunInventoryQueryOptions {
   readonly q?: string | null;
   readonly from?: string | null;
   readonly to?: string | null;
+  /** Exact bounded historical source scope; cursor-bound with all filters. */
+  readonly source?: string | null;
   /** Submit the overlapping attention facet (`attention=true`); a null or
    * absent value reads the unfiltered population. */
   readonly attention?: boolean | null;
@@ -1282,6 +1284,7 @@ export function runInventoryUrl(options: RunInventoryQueryOptions): string {
   if (options.q) params.set("q", options.q);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
+  if (options.source) params.set("source", options.source);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   // The facet is a boolean server parameter: only `attention=true` restricts

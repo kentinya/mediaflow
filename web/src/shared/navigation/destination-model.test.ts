@@ -374,6 +374,19 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("keeps a bounded task-center return path on exact Task evidence links", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks/$taskId",
+          "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
+            "&tab=detail&item=item-9&token=secret",
+        ),
+      ).toBe(
+        "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
+          "&item=item-9",
+      );
+    });
+
     it("carries the Organize journey return contexts through continuation", () => {
       // The intent page keeps both bounded back contexts: the Files origin
       // triple and the serialized task-center list context.

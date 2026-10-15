@@ -13,7 +13,11 @@ export default defineConfig({
     "**/operations-principal-identity.python.spec.ts",
     "**/operations-task-center-visual.python.spec.ts",
   ],
-  fullyParallel: true,
+  // The Node fake API is one process with shared in-memory state. Keep one
+  // worker so another test cannot reset or mutate a journey's fixture while
+  // its browser is still reading it.
+  fullyParallel: false,
+  workers: 1,
   forbidOnly: true,
   reporter: [["list"]],
   use: {

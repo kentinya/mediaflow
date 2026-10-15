@@ -33,6 +33,7 @@ from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
+from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.classification import (
     ClassificationPolicy,
     ClassificationResult,
@@ -343,6 +344,90 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         self.assertEqual(4, page["total"])
         self.assertEqual(4, page["attention_count"])
 
+    def test_source_filter_accepts_historical_paths_and_scopes_summary(self) -> None:
+        alpha = self._task("organize", scope="Movies/alpha")
+        self._failure_problem(alpha.task_id, "alpha-file")
+        beta = self._task("organize", scope="Movies/beta")
+        self._failure_problem(beta.task_id, "beta-file")
+
+        page = self._page("view=failure&source=Movies%2Falpha")
+        self.assertEqual(1, page["total"])
+        self.assertEqual([alpha.task_id], [item["task_id"] for item in page["items"]])
+        self.assertEqual(1, page["summary"]["total"])
+        self.assertEqual(1, page["summary"]["problem_tasks"]["failure"])
+        self.assertEqual(1, page["summary"]["problem_files"]["failure"])
+        self.assertEqual("Movies/alpha", page["source"])
+        self.assertEqual(
+            {"Movies/alpha", "Movies/beta"},
+            {entry["value"] for entry in page["summary"]["sources"]},
+        )
+        self.assertEqual("current_filters", page["summary"]["scope"])
+        self.assertEqual("authorized_population", page["summary"]["source_options_scope"])
+
+    def test_redacted_source_options_are_not_selectable_filters(self) -> None:
+        summary = MediaFlowApi._public_operations_run_summary(
+            {
+                "available": True,
+                "sources": [
+                    {"value": "Movies/public", "label": "Movies/public"},
+                    {"value": "/private/media", "label": "/private/media"},
+                ],
+                "sources_truncated": False,
+            }
+        )
+        self.assertEqual(
+            [{"value": "Movies/public", "label": "Movies/public"}],
+            summary["sources"],
+        )
+        self.assertTrue(summary["sources_truncated"])
+
+    def test_page_row_has_its_own_problem_file_count(self) -> None:
+        two = self._task("organize", scope="Movies/two")
+        self._failure_problem(two.task_id, "two-a")
+        self._failure_problem(two.task_id, "two-b")
+        one = self._task("organize", scope="Movies/one")
+        self._failure_problem(one.task_id, "one-a")
+
+        page = self._page("view=failure")
+        by_task = {item["task_id"]: item for item in page["items"]}
+        self.assertEqual(2, by_task[two.task_id]["problem_file_counts"]["failure"])
+        self.assertEqual(1, by_task[one.task_id]["problem_file_counts"]["failure"])
+        self.assertEqual(3, page["summary"]["problem_files"]["failure"])
+
+    def test_page_and_filter_summary_share_the_window_snapshot(self) -> None:
+        original = self.repository.operations_runs_window
+
+        def admit_after_snapshot(**arguments):
+            window = original(**arguments)
+            self._task("scan", scope="Movies/concurrent")
+            return window
+
+        self.repository.operations_runs_window = admit_after_snapshot
+        page = self._page()
+        self.assertEqual(0, page["total"])
+        self.assertEqual(0, page["summary"]["total"])
+        self.assertEqual([], page["summary"]["sources"])
+
+    def test_linked_job_row_counts_problem_files_through_its_task(self) -> None:
+        task = self._task("organize", scope="Movies/linked")
+        self._recognition_problem(task.task_id, "linked-a")
+        self._recognition_problem(task.task_id, "linked-b")
+        job = AutomationJob(
+            "job-linked-count",
+            AutomationCommand.PREVIEW,
+            AutomationJobStatus.PENDING,
+            NOW,
+            NOW,
+            task_id=task.task_id,
+            source_scope="Movies/linked",
+        )
+        self.repository.create_job(job)
+
+        page = self._page("view=recognition")
+        self.assertEqual(1, page["total"])
+        self.assertEqual("job-linked-count", page["items"][0]["run_id"])
+        self.assertEqual(2, page["items"][0]["problem_file_counts"]["recognition"])
+
     def test_plain_queue_admission_is_not_attention(self) -> None:
         self._task("scan")
         page = self._page("view=attention")
@@ -447,18 +532,15 @@ class RecoveryListTests(_TaskCenterTestCase):
         review_id = self._recognition_problem(task.task_id, "recog-item")
         self.assertEqual(1, self._page("view=recognition")["total"])
         # Resolving the recognition review leaves the item pending at a
-        # *_resolved stage: the recognition list empties.  The resolved
-        # analysis still has one explicit continuation action, so the Task
-        # transfers to the failure/continuation list rather than staying a
-        # stale recognition blocker or silently disappearing.
+        # *_resolved stage: it is no longer a recognition blocker or a
+        # technical failure. Its safe-analysis continuation remains visible
+        # in the generic attention view until the operator continues it.
         RecognitionReviewService(
             self.repository,
             (RecognitionType("A", "Movie"), RecognitionType("B", "TV")),
         ).resolve(review_id, "A", actor="operator")
         self.assertEqual(0, self._page("view=recognition")["total"])
-        transferred = self._page("view=failure")
-        self.assertEqual(1, transferred["total"])
-        self.assertEqual(["failure"], transferred["items"][0]["problem_types"])
+        self.assertEqual(0, self._page("view=failure")["total"])
         self.assertEqual(1, self._page("view=attention")["total"])
         # A genuinely new classification blocker on the same Task appears in
         # the classification list alongside the continuation problem.
@@ -466,7 +548,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertEqual(1, self._page("view=classification")["total"])
         classification = self._page("view=classification")
         self.assertEqual(
-            {"failure", "classification"},
+            {"classification"},
             set(classification["items"][0]["problem_types"]),
         )
 

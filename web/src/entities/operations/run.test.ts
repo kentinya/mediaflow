@@ -286,7 +286,7 @@ describe("run summary normalization", () => {
     expect(attention.problemTypes).toEqual(["recognition"]);
   });
 
-  it("rejects an attention facet that disagrees with the problem list", () => {
+  it("allows generic continuation attention without inventing a problem type", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({
@@ -296,9 +296,11 @@ describe("run summary normalization", () => {
         }),
       ),
     ).toThrow(RunNormalizationError);
-    expect(() =>
-      normalizeRunSummary(runDocument({ status: "failed", attention: true })),
-    ).toThrow(RunNormalizationError);
+    const continuation = normalizeRunSummary(
+      runDocument({ status: "pending", attention: true, problem_types: [] }),
+    );
+    expect(continuation.attention).toBe(true);
+    expect(continuation.problemTypes).toEqual([]);
   });
 
   it("rejects a duplicated or unknown problem type", () => {
