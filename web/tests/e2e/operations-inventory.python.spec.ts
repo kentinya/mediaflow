@@ -128,10 +128,19 @@ test("the inventory renders real producer runs with truthful labels", async ({
   await expect(page.getByText("计划任务").first()).toBeVisible();
   await expect(page.getByText("自动化").first()).toBeVisible();
   await expect(page.getByText("手动").first()).toBeVisible();
-  // Attention is an overlapping facet of the same population.
+  // The nine sibling views share one horizontal navigation row, and the
+  // summary is over the whole authorized population.
+  const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(
-    page.getByText(/需要关注（与状态计数重叠，不是独立终态）/),
+    views.getByRole("button", { name: "全部任务", exact: true }),
   ).toBeVisible();
+  await expect(
+    views.getByRole("button", { name: "需要处理", exact: true }),
+  ).toBeVisible();
+  await expect(
+    views.getByRole("button", { name: "失败恢复", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("任务总数").first()).toBeVisible();
 
   // Worker waiting: no Worker is registered yet, and the landing reports the
   // backend's own condition instead of inventing readiness.
@@ -2309,4 +2318,173 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
       exact: true,
     }),
   ).toBeVisible();
+});
+
+/**
+ * Slice 45 RO-1/RO-3 — the nine sibling task-center views and the exact
+ * Task/type problem file list.
+ *
+ * The mixed problem population is created by `POST /__harness__/seed-task-center-problems`
+ * through the real production services (RecognitionReviewService,
+ * ClassificationReviewService, MetadataCorrectionService and a real failed
+ * TaskItem). This journey drives only the browser: the nine views, their
+ * complete-population summary, the overlapping cross-Task recovery lists and
+ * the exact per-type file list are all server queries the page issues.
+ */
+test("the nine views and the exact Task/type problem file list work natively", async ({
+  page,
+  request,
+}) => {
+  const api = recordApiCalls(page);
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problems`)
+  ).json()) as {
+    readonly mixedTaskId: string;
+    readonly mixedRecognitionItemIds: readonly string[];
+    readonly mixedFailureItemId: string;
+    readonly classificationTaskId: string;
+    readonly metadataTaskId: string;
+  };
+  expect(seeded.mixedTaskId).toBeTruthy();
+
+  await connect(page);
+  await openInventory(page);
+
+  // The nine sibling views share one horizontal navigation row.
+  const views = page.getByRole("navigation", { name: "任务中心视图" });
+  for (const label of [
+    "全部任务",
+    "进行中",
+    "需要处理",
+    "已结束",
+    "识别恢复",
+    "元数据恢复",
+    "分类恢复",
+    "冲突处理",
+    "失败恢复",
+  ]) {
+    await expect(
+      views.getByRole("button", { name: label, exact: true }),
+    ).toBeVisible();
+  }
+
+  // The recognition recovery view groups one Task per current problem type.
+  await views.getByRole("button", { name: "识别恢复", exact: true }).click();
+  await expect(page).toHaveURL(/view=recognition/);
+  const recognitionRow = page
+    .getByRole("row")
+    .filter({ hasText: seeded.mixedTaskId });
+  await expect(recognitionRow).toHaveCount(1);
+  await expect(recognitionRow).toContainText("识别问题");
+  // The summary counts the complete authorized population, and the two
+  // recognition files of the one mixed Task are reported separately.
+  await expect(page.getByText("待处理任务").first()).toBeVisible();
+  await expect(page.getByText("涉及文件").first()).toBeVisible();
+
+  // The row's own action opens the exact Task/type file list, server-filtered.
+  await recognitionRow.getByRole("button", { name: "处理问题" }).click();
+  await expect(page).toHaveURL(/problemRun=/);
+  const panel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(panel).toBeVisible();
+  await expect(
+    panel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
+  ).toBeVisible();
+  await expect(panel.getByText(/匹配 2 个文件/)).toBeVisible();
+  for (const itemId of seeded.mixedRecognitionItemIds) {
+    await expect(panel.getByText(new RegExp(itemId))).toBeVisible();
+  }
+  // The failure file of the same Task must NOT appear in the recognition list.
+  await expect(panel.getByText(/mixed-failure/)).toHaveCount(0);
+  // The panel is a locate surface: it offers no execution authority.
+  await expect(panel.getByText(/保存决定或修复条件不会直接执行/)).toBeVisible();
+  // A server-side problem read happened and every call was a GET.
+  expect(
+    api.some(
+      (entry) =>
+        entry.path.endsWith("/problem-items") &&
+        entry.search.includes("problem=recognition"),
+    ),
+  ).toBe(true);
+  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+
+  // Returning preserves the exact view context.
+  await panel.getByRole("button", { name: "返回任务列表" }).click();
+  await expect(page).not.toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/view=recognition/);
+
+  // The classification and metadata views each group their own Task.
+  await views.getByRole("button", { name: "分类恢复", exact: true }).click();
+  await expect(page).toHaveURL(/view=classification/);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.classificationTaskId }),
+  ).toHaveCount(1);
+  await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
+  await expect(page).toHaveURL(/view=metadata/);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.metadataTaskId }),
+  ).toHaveCount(1);
+
+  // The failure view includes the mixed Task (its unresolved failure file),
+  // so the same Task appears in more than one recovery list.
+  await views.getByRole("button", { name: "失败恢复", exact: true }).click();
+  await expect(page).toHaveURL(/view=failure/);
+  await expect(
+    page.getByRole("row").filter({ hasText: seeded.mixedTaskId }),
+  ).toHaveCount(1);
+
+  // A plain queued admission is not a manual to-do: the attention view never
+  // includes the pre-Task pending Jobs seeded earlier in this suite.
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
+  await expect(page).toHaveURL(/view=attention/);
+  const attentionRows = page.getByRole("row").filter({ hasText: "待处理" });
+  await expect(attentionRows).toHaveCount(0);
+
+  // Every product read stayed a GET.
+  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+});
+
+test("the nine views survive authentication continuation and a real restart", async ({
+  page,
+  request,
+}) => {
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-task-center-problems`)
+  ).json()) as { readonly mixedTaskId: string };
+
+  await connect(page);
+  await openInventory(page);
+  await page.getByRole("button", { name: "失败恢复" }).click();
+  await expect(page).toHaveURL(/view=failure/);
+  await page
+    .getByRole("row")
+    .filter({ hasText: seeded.mixedTaskId })
+    .getByRole("button", { name: "处理失败" })
+    .click();
+  await expect(page).toHaveURL(/problemRun=/);
+
+  // The API token is memory-only: a reload returns to the entry boundary
+  // while the exact view and problem-run context travels as the allowlisted
+  // continuation destination.
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/view=failure/);
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(
+    page.getByRole("region", { name: "问题文件处理" }),
+  ).toBeVisible();
+
+  // A real runtime restart over the same SQLite file keeps the same durable
+  // problems: the recognition list still groups the mixed Task.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/problemRun=/);
+  const panel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText(/匹配 1 个文件/)).toBeVisible();
 });

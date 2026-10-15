@@ -56,7 +56,6 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.operations_run import (
-    ATTENTION_RUN_STATUSES,
     known_command_label,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -420,9 +419,12 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(run["library_kind"], "media")
 
     def test_pause_request_is_distinct_and_attention_overlaps_status(self) -> None:
-        # A waiting item turns the run into the waiting facet: it stays in its
-        # own status partition while also counting as attention.
-        self.repository.create_task(_waiting_task("waiting-task"))
+        # A real pending recognition review turns the run into the attention
+        # facet while it stays in its own status partition. Attention is a
+        # current-problem fact, not a plain status name.
+        waiting = _waiting_task("waiting-task")
+        self.repository.create_task(waiting)
+        _seed_recognition_problem(self.repository, waiting.task_id, "waiting-item")
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         run = page["items"][0]
         self.assertEqual(run["status"], "partial_success")
@@ -430,8 +432,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         # Attention is an overlapping facet of the same population, not a
         # mutually exclusive terminal state.
         self.assertTrue(run["attention"])
-        attention_statuses = {item.value for item in ATTENTION_RUN_STATUSES}
-        self.assertIn(run["status"], attention_statuses)
+        self.assertEqual(run["problem_types"], ["recognition"])
         self.assertEqual(page["status_counts"], {"partial_success": 1})
         self.assertEqual(page["attention_count"], 1)
 
@@ -444,8 +445,24 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         # A request is not an acknowledged pause: the aggregate stays running.
         self.assertEqual(run["status"], "running")
         self.assertTrue(run["pause_requested"])
+        # A plain running admission has no current problem and is not attention.
+        self.assertFalse(run["attention"])
         self.assertEqual(page["status_counts"], {"running": 1})
         self.assertEqual(page["attention_count"], 0)
+
+    def test_plain_pending_queue_admission_is_not_attention(self) -> None:
+        """A queued admission with no real problem is not a manual to-do (RO-1)."""
+
+        self.repository.create_task(
+            task("queued-task", command="preview", status=PersistentTaskStatus.PENDING, rank=0)
+        )
+        _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        run = page["items"][0]
+        self.assertEqual(run["status"], "pending")
+        self.assertFalse(run["attention"])
+        self.assertEqual(run["problem_types"], [])
+        self.assertEqual(page["attention_count"], 0)
+        self.assertEqual(page["summary"]["attention"], 0)
 
     # -- AC-T2: authoritative query/counts -------------------------------
 
@@ -566,7 +583,8 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             cursor,
             "operations_runs",
             expected_scope=(
-                "principal=viewer;status=completed;attention=false;command=all;q=;from=;to="
+                "principal=viewer;status=completed;attention=false;view=all;"
+                "problem=all;source=all;command=all;q=;from=;to="
             ),
         )
         self.assertEqual(decoded.direction, CursorDirection.NEXT)
@@ -721,6 +739,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                 )
             )
         expected_counts = {"completed": 30, "failed": 5}
+        # The five failed Tasks carry no durable review/item evidence, so they
+        # are honest failures but not a current operator to-do: attention is a
+        # real current-problem facet, never a blanket status.
         pages: list[dict] = []
         cursor: str | None = None
         for _ in range(4):
@@ -732,7 +753,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             self.assertEqual(35, page["total"])
             self.assertEqual(expected_counts, page["status_counts"])
             self.assertEqual(35, sum(page["status_counts"].values()))
-            self.assertEqual(5, page["attention_count"])
+            self.assertEqual(0, page["attention_count"])
             pages.append(page)
             cursor = page["next_cursor"]
             if cursor is None:
@@ -831,7 +852,12 @@ class RunInventoryTestCase(_InventoryApiTestCase):
     def test_attention_facet_filters_the_population_and_binds_the_cursor(
         self,
     ) -> None:
-        """The attention card's filter is explicit, composable and cursor-bound."""
+        """The attention card's filter is explicit, composable and cursor-bound.
+
+        Attention is the real current-problem facet: a plain queued/failed
+        Task without durable review evidence is not included, and a Task with
+        a genuine pending problem is.
+        """
 
         self.repository.create_task(task("at-pending", status=PersistentTaskStatus.PENDING, rank=0))
         self.repository.create_task(task("at-failed", status=PersistentTaskStatus.FAILED, rank=1))
@@ -840,15 +866,18 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         )
         self.repository.create_task(task("at-done", status=PersistentTaskStatus.COMPLETED, rank=3))
         self.repository.create_task(task("at-done2", status=PersistentTaskStatus.COMPLETED, rank=4))
+        # Only the failed Task has a real, unresolved problem (a pending
+        # recognition review); the others are plain statuses.
+        _seed_recognition_problem(self.repository, "at-failed", "at-failed-item")
 
         code, page, _ = request(self.api, "GET", "/api/v1/operations/runs", query="attention=true")
         self.assertEqual(200, code)
         self.assertIs(page["attention"], True)
-        self.assertEqual(3, page["total"])
-        self.assertEqual({"pending": 1, "failed": 1, "partial_success": 1}, page["status_counts"])
-        self.assertEqual(3, page["attention_count"])
+        self.assertEqual(1, page["total"])
+        self.assertEqual({"failed": 1}, page["status_counts"])
+        self.assertEqual(1, page["attention_count"])
         self.assertEqual(
-            {"at-pending", "at-failed", "at-partial"},
+            {"at-failed"},
             {item["run_id"] for item in page["items"]},
         )
         # The facet composes with the other filters.
@@ -858,7 +887,8 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(200, code)
         self.assertEqual(1, composed["total"])
         self.assertEqual("at-failed", composed["items"][0]["run_id"])
-        # Absent/false/all keep the unfiltered population.
+        # Absent/false/all keep the unfiltered population; the facet count is
+        # still the real current-problem count over that population.
         for value in ("", "all", "false"):
             with self.subTest(value=value):
                 code, plain, _ = request(
@@ -870,7 +900,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                 self.assertEqual(200, code)
                 self.assertIs(plain["attention"], False)
                 self.assertEqual(5, plain["total"])
-                self.assertEqual(3, plain["attention_count"])
+                self.assertEqual(1, plain["attention_count"])
         # An invalid facet value rejects safely instead of silently dropping.
         code, error_body, _ = request(
             self.api, "GET", "/api/v1/operations/runs", query="attention=maybe"
@@ -884,19 +914,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         )
         self.assertEqual(200, code)
         cursor = first["next_cursor"]
-        self.assertIsNotNone(cursor)
-        code, continued, _ = request(
-            self.api,
-            "GET",
-            "/api/v1/operations/runs",
-            query=f"attention=true&limit=1&cursor={cursor}",
-        )
-        self.assertEqual(200, code)
-        self.assertEqual(1, len(continued["items"]))
-        self.assertNotEqual(
-            [item["run_id"] for item in first["items"]],
-            [item["run_id"] for item in continued["items"]],
-        )
+        self.assertIsNone(cursor)
         for mismatched in (f"limit=1&cursor={cursor}", f"attention=false&limit=1&cursor={cursor}"):
             with self.subTest(query=mismatched):
                 code, body, _ = request(
@@ -1484,6 +1502,50 @@ def _waiting_task(task_id: str) -> PersistentTask:
         ),
         completed_items=1,
         failed_items=1,
+    )
+
+
+def _seed_recognition_problem(repository, task_id: str, item_id: str) -> None:
+    """Create one durable pending recognition review on a Task's item.
+
+    The item is moved to the real ``waiting_recognition`` state through the
+    production recognition-review write path, so the run inventory derives a
+    genuine current problem instead of a fixture flag.
+    """
+
+    from datetime import UTC, datetime
+
+    from mediaflow.domain.recognition import (
+        RecognitionResult,
+        RecognitionStatus,
+        RecognitionType,
+    )
+    from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
+
+    now = datetime.now(UTC)
+    repository.upsert_item(
+        PersistentTaskItem(
+            item_id,
+            task_id,
+            "source",
+            "movies",
+            f"Movies/{item_id}.mkv",
+            f"Movies/{item_id}.mkv",
+            TaskItemStatus.PROCESSING,
+            "recognizing",
+            1,
+            now,
+            now,
+        )
+    )
+    from mediaflow.application.recognition_review import RecognitionReviewService
+
+    RecognitionReviewService(
+        repository,
+        (RecognitionType("A", "Movie"), RecognitionType("B", "TV")),
+    ).create(
+        repository.get_item(item_id),
+        RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
     )
 
 

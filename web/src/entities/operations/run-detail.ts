@@ -34,6 +34,7 @@ import {
   normalizeManualPreviewPlan,
   type ManualPreviewPlanModel,
 } from "./preview";
+import { RUN_PROBLEM_TYPES, type RunProblemType } from "./run";
 
 /** The mutually exclusive primary-item dispositions, in presentation order. */
 export const RUN_DISPOSITIONS = [
@@ -381,6 +382,84 @@ export function normalizeRunItemsPage(payload: unknown): RunItemsPage {
     runId: text(source, "run_id"),
     taskId: optionalText(source, "task_id"),
     statusFilter,
+    limit: count(source, "limit"),
+    items,
+    total,
+    matchingTotal,
+    dispositions,
+    uncertainSuccess: count(source, "uncertain_success"),
+    truncated: flag(source, "truncated"),
+    previousCursor: optionalText(source, "previous_cursor"),
+    nextCursor: optionalText(source, "next_cursor"),
+    unavailable: optionalText(source, "unavailable"),
+  };
+}
+
+// -- Problem-type file pages (Slice 45 RO-3) --------------------------------
+
+/**
+ * One problem-type-filtered file page of a recovery list entry.
+ *
+ * The page is the exact Task/type file list the recovery row opens: it is
+ * server-filtered and server-paged on the same durable predicate the list view
+ * uses, so the browser never pages the whole Task to filter locally.  A Task
+ * with no linked Task reports explicit unavailability instead of an empty
+ * success.
+ */
+export interface RunProblemItemsPage {
+  readonly runId: string;
+  readonly taskId: string | null;
+  readonly problem: RunProblemType;
+  readonly limit: number;
+  readonly items: readonly TaskItemSummary[];
+  readonly total: number;
+  readonly matchingTotal: number;
+  readonly dispositions: Readonly<Record<RunDisposition, number>>;
+  readonly uncertainSuccess: number;
+  readonly truncated: boolean;
+  readonly previousCursor: string | null;
+  readonly nextCursor: string | null;
+  readonly unavailable: string | null;
+}
+
+export function normalizeRunProblemItemsPage(
+  payload: unknown,
+): RunProblemItemsPage {
+  const source = readRecord(payload, "run problem items");
+  let problem: RunProblemType;
+  try {
+    problem = normalizeEnum(
+      source["problem"],
+      "problem_items.problem",
+      RUN_PROBLEM_TYPES,
+    );
+  } catch {
+    return fail();
+  }
+  const rawItems = source["items"];
+  if (!Array.isArray(rawItems) || rawItems.length > 100) {
+    fail();
+  }
+  const items = rawItems.map((item) =>
+    normalizeTaskItemSummary(readRecord(item, "item")),
+  );
+  const dispositions = dispositionCounts(source);
+  const total = count(source, "total");
+  const matchingTotal = count(source, "matching_total");
+  const partitionTotal = RUN_DISPOSITIONS.reduce(
+    (sum, disposition) => sum + dispositions[disposition],
+    0,
+  );
+  if (partitionTotal !== total) {
+    fail();
+  }
+  if (matchingTotal > total || items.length > matchingTotal) {
+    fail();
+  }
+  return {
+    runId: text(source, "run_id"),
+    taskId: optionalText(source, "task_id"),
+    problem,
     limit: count(source, "limit"),
     items,
     total,

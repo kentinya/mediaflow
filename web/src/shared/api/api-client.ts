@@ -703,17 +703,21 @@ import {
   normalizeRunOverview,
   RUN_STATUSES,
   type RunInventoryPage,
+  type RunProblemType,
   type RunStatus,
   type RunSummary,
+  type RunView,
 } from "../../entities/operations/run";
 import {
   normalizeRunItemsPage,
   normalizeRunRecordsPage,
   normalizeRunItemEvidence,
+  normalizeRunProblemItemsPage,
   normalizeRunExportPackage,
   type RunExportPackage,
   type RunItemEvidence,
   type RunItemsPage,
+  type RunProblemItemsPage,
   type RunRecordsPage,
 } from "../../entities/operations/run-detail";
 import {
@@ -1262,6 +1266,11 @@ export interface RunInventoryQueryOptions {
   /** Submit the overlapping attention facet (`attention=true`); a null or
    * absent value reads the unfiltered population. */
   readonly attention?: boolean | null;
+  /** One of the nine sibling views; null/absent reads the full population. */
+  readonly view?: RunView | null;
+  /** One cross-Task recovery problem type; null/absent applies no problem
+   * filter beyond the selected view's own predicate. */
+  readonly problem?: RunProblemType | null;
   readonly limit?: number;
   readonly cursor?: string | null;
 }
@@ -1278,6 +1287,8 @@ export function runInventoryUrl(options: RunInventoryQueryOptions): string {
   // The facet is a boolean server parameter: only `attention=true` restricts
   // the population, so an unfiltered read keeps its exact original URL.
   if (options.attention) params.set("attention", "true");
+  if (options.view) params.set("view", options.view);
+  if (options.problem) params.set("problem", options.problem);
   const qs = params.toString();
   return `/api/v1/operations/runs${qs ? `?${qs}` : ""}`;
 }
@@ -1418,6 +1429,29 @@ export function runItemEvidenceUrl(runId: string, itemId: string): string {
   return `${runDetailBase(runId)}/items/${encodeURIComponent(itemId)}`;
 }
 
+/**
+ * One problem-type file page of a recovery list entry (Slice 45 RO-3).
+ *
+ * The problem type is a closed backend token; the page is server-filtered and
+ * server-paged on the same durable predicate the recovery list uses.
+ */
+export interface RunProblemItemsQueryOptions {
+  readonly runId: string;
+  readonly problem: RunProblemType;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function runProblemItemsUrl(
+  options: RunProblemItemsQueryOptions,
+): string {
+  const params = new URLSearchParams();
+  params.set("problem", options.problem);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  return `${runDetailBase(options.runId)}/problem-items?${params.toString()}`;
+}
+
 export function runExportUrl(runId: string, limit: number): string {
   return `${runDetailBase(runId)}/export?limit=${String(limit)}`;
 }
@@ -1456,6 +1490,28 @@ async function parseRunDetailResponse<T>(
 }
 
 export type RunItemsRead = OperationsRead<RunItemsPage>;
+
+export type RunProblemItemsRead = OperationsRead<RunProblemItemsPage>;
+
+export async function fetchRunProblemItems(
+  token: string | null,
+  options: RunProblemItemsQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunProblemItemsRead> {
+  if (!isSafeIdentifier(options.runId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runProblemItemsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRunProblemItemsPage);
+}
 
 export async function fetchRunItems(
   token: string | null,

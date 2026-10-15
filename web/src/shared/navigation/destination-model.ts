@@ -575,6 +575,12 @@ const DELIVERY_STATUS_FILTER_TOKEN = /^[a-z][a-z0-9-]{0,31}$/;
 const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 /** A run-inventory cursor URL may carry only the bounded cursor alphabet. */
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
+/** The nine closed task-center view tokens. */
+const RUN_VIEW_TOKEN =
+  /^(?:all|running|attention|ended|recognition|metadata|classification|conflict|failure)$/;
+/** The five closed recovery problem tokens. */
+const RUN_PROBLEM_TOKEN =
+  /^(?:recognition|metadata|classification|conflict|failure)$/;
 /** The bounded Files live-directory grammar `returnPath` may carry. */
 const RETURN_PATH_TOKEN =
   // eslint-disable-next-line no-control-regex
@@ -806,6 +812,17 @@ export function allowlistedDestinationSearch(
     setSafe(allowed, "from", current.get("from"));
     setSafe(allowed, "to", current.get("to"));
     setSafe(allowed, "run", current.get("run"));
+    // The selected recovery problem run and its closed problem type survive
+    // a reconnect so the exact Task/type file list reopens.  The view and
+    // problem tokens are closed grammars, never arbitrary state.
+    setSafe(allowed, "problemRun", current.get("problemRun"));
+    setFilterToken(allowed, "view", current.get("view"), RUN_VIEW_TOKEN);
+    setFilterToken(
+      allowed,
+      "problem",
+      current.get("problem"),
+      RUN_PROBLEM_TOKEN,
+    );
     // The attention facet travels only as its one literal `true` value, so a
     // reconnect restores exactly the facet the card applied — never a value
     // the backend would reject.

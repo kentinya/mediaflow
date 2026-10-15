@@ -79,6 +79,49 @@ const ATTENTION_RUN_STATUSES = [
   "failed",
   "waiting",
 ];
+// The nine sibling task-center views and the five recovery problem types the
+// fake mirrors from the authoritative Python contract.
+const RUN_VIEWS = [
+  "all",
+  "running",
+  "attention",
+  "ended",
+  "recognition",
+  "metadata",
+  "classification",
+  "conflict",
+  "failure",
+];
+const RUN_PROBLEM_TYPES = [
+  "recognition",
+  "metadata",
+  "classification",
+  "conflict",
+  "failure",
+];
+/** The fake's durable current-problem evidence per Task.
+ *
+ * The fake population has no item-level rows, so it derives the same
+ * *semantic* fact the Python repository derives from durable review/item
+ * evidence: an unresolved failure or a withheld continuation is a real
+ * current problem, while a plain queued/running/completed admission is not.
+ * Keeping this next to the view constants lets the list, the summary and the
+ * per-type file list agree exactly, as the real backend does.
+ */
+function taskProblemTypes(task) {
+  if (!task) return [];
+  const problems = [];
+  if (task.status === "failed" || task.status === "partial_success") {
+    problems.push("failure");
+  }
+  if (task.status === "paused" && task.command !== "files_transfer") {
+    problems.push("failure");
+  }
+  if (task.status === "running" && task.pause_requested) {
+    problems.push("failure");
+  }
+  return problems;
+}
 const SAFE_RUN_TIME_FILTER =
   /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|\+00:00)?)?$/;
 const RUN_COMMAND_LABELS = {
@@ -11497,17 +11540,17 @@ const server = createServer(async (req, res) => {
     return `status=${status ?? "all"};command=${command ?? "all"}`;
   }
 
-  function runScope(status, command, q, from, to, attention) {
+  function runScope(status, command, q, from, to, attention, view, problem) {
     return [
+      `principal-independent`,
       `status=${status ?? "all"}`,
+      `attention=${attention ? "true" : "false"}`,
+      `view=${view ?? "all"}`,
+      `problem=${problem ?? "all"}`,
       `command=${command ?? "all"}`,
       `q=${q ?? ""}`,
       `from=${from ?? ""}`,
       `to=${to ?? ""}`,
-      // The attention facet is part of the cursor scope binding, exactly like
-      // the Python contract: a cursor minted for one facet is refused for the
-      // other, so a filter change can never replay the wrong population.
-      `attention=${attention ? "true" : "false"}`,
     ].join(";");
   }
 
@@ -11577,6 +11620,8 @@ const server = createServer(async (req, res) => {
         pause_requested: linked?.pause_requested ?? false,
         configuration_snapshot_id: job.configuration_snapshot_id ?? null,
         worker_id: job.worker_id ?? null,
+        problem_types: taskProblemTypes(linked),
+        attention: taskProblemTypes(linked).length > 0,
         sideEffects: "none",
       });
     }
@@ -11606,6 +11651,8 @@ const server = createServer(async (req, res) => {
         pause_requested: task.pause_requested,
         configuration_snapshot_id: task.configuration_snapshot_id ?? null,
         worker_id: null,
+        problem_types: taskProblemTypes(task),
+        attention: taskProblemTypes(task).length > 0,
         sideEffects: "none",
       });
     }
@@ -11617,13 +11664,16 @@ const server = createServer(async (req, res) => {
   }
 
   function runRunDocument(run, progress, lifecycle, continuation) {
-    const attention = ATTENTION_RUN_STATUSES.includes(run.status);
+    const attention = Array.isArray(run.problem_types)
+      ? run.problem_types.length > 0
+      : ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
       // Bounded destination-scope evidence; the fake population records no
       // run-level target scope, exactly like a legacy admission row.
       target_scope: null,
       attention,
+      problem_types: Array.isArray(run.problem_types) ? run.problem_types : [],
       // The selected-run overview carries the durable progress projection;
       // the inventory page leaves it absent, exactly like the Python
       // `_operations_runs_page` / `_operations_run_overview` split.
@@ -11747,6 +11797,57 @@ const server = createServer(async (req, res) => {
 
   function runItemsPopulation(taskId) {
     return TASK_ITEMS.filter((item) => item.task_id === taskId);
+  }
+
+  /**
+   * Whether one durable item currently carries the given recovery problem.
+   *
+   * Mirrors the authoritative Python predicate semantics for the fake's item
+   * population: a resolved review or an already-admitted retry moves an item
+   * past its terminal stage, so it stops contributing to the failure list.
+   * The fake has no review rows, so it derives the type from the durable item
+   * state/blocker the fixtures already carry.
+   */
+  function runItemMatchesProblem(item, problem) {
+    const blockerKind = item.checkpoint?.blocker_kind ?? null;
+    const rawStage = String(item.checkpoint?.raw_stage ?? item.stage ?? "");
+    if (problem === "recognition") {
+      return (
+        item.status === "waiting_recognition" || blockerKind === "recognition"
+      );
+    }
+    if (problem === "metadata") {
+      return (
+        item.status === "waiting_metadata" ||
+        item.status === "waiting_metadata_correction" ||
+        blockerKind === "metadata" ||
+        blockerKind === "metadata_correction"
+      );
+    }
+    if (problem === "classification") {
+      return (
+        item.status === "waiting_classification" ||
+        blockerKind === "classification"
+      );
+    }
+    if (problem === "conflict") {
+      return item.status === "waiting_confirm" || blockerKind === "conflict";
+    }
+    if (problem === "failure") {
+      const resolvedStages = [
+        "conflict_resolved",
+        "recognition_resolved",
+        "metadata_resolved",
+        "metadata_correction_resolved",
+        "classification_resolved",
+        "task_retry_requested",
+      ];
+      if (resolvedStages.includes(rawStage)) {
+        return false;
+      }
+      return item.status === "failed" || item.status === "partial";
+    }
+    return false;
   }
 
   /** The latest durable Result per item (created_at desc, result_id desc). */
@@ -13351,13 +13452,45 @@ const server = createServer(async (req, res) => {
       return;
     }
     const attention = rawAttention === "true" || rawAttention === "yes";
+    const rawView = url.searchParams.get("view");
+    const view =
+      rawView === null || rawView === "" || rawView === "all" ? null : rawView;
+    if (view !== null && !RUN_VIEWS.includes(view)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawProblem = url.searchParams.get("problem");
+    let problem =
+      rawProblem === null || rawProblem === "" || rawProblem === "all"
+        ? null
+        : rawProblem;
+    if (problem !== null && !RUN_PROBLEM_TYPES.includes(problem)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (view !== null && RUN_PROBLEM_TYPES.includes(view)) {
+      if (problem !== null && problem !== view) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      problem = view;
+    }
     const rawLimit = url.searchParams.get("limit");
     const limit = rawLimit === null ? 20 : Number(rawLimit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    const scope = runScope(status, command, q, from, to, attention);
+    const scope = runScope(
+      status,
+      command,
+      q,
+      from,
+      to,
+      attention,
+      view,
+      problem,
+    );
     const rawCursor = url.searchParams.get("cursor");
     let offset = null;
     if (rawCursor !== null && rawCursor !== "") {
@@ -13394,22 +13527,57 @@ const server = createServer(async (req, res) => {
     }
     if (attention) {
       // The facet composes with every other business filter and restricts the
-      // population to the overlapping attention statuses — it is never a
-      // label-only card. Totals and partitions below are computed from this
-      // filtered population, so `attention_count` equals `total` here.
-      filtered = filtered.filter((run) =>
-        ATTENTION_RUN_STATUSES.includes(run.status),
+      // population to the real current-problem facet — it is never a
+      // label-only card.
+      filtered = filtered.filter((run) => run.attention);
+    }
+    if (view === "running") {
+      filtered = filtered.filter(
+        (run) =>
+          !["completed", "partial_success", "failed", "cancelled"].includes(
+            run.status,
+          ),
       );
+    } else if (view === "ended") {
+      filtered = filtered.filter((run) =>
+        ["completed", "partial_success", "failed", "cancelled"].includes(
+          run.status,
+        ),
+      );
+    } else if (view === "attention") {
+      filtered = filtered.filter((run) => run.attention);
+    }
+    if (problem !== null) {
+      filtered = filtered.filter((run) => run.problem_types.includes(problem));
     }
     const page = collectionPage(filtered, limit, offset);
     const statusCounts = {};
     let attentionCount = 0;
     for (const run of filtered) {
       statusCounts[run.status] = (statusCounts[run.status] ?? 0) + 1;
+      if (run.attention) attentionCount += 1;
     }
-    for (const attentionStatus of ATTENTION_RUN_STATUSES) {
-      attentionCount += statusCounts[attentionStatus] ?? 0;
+    // The summary is over the complete authorized population, never just the
+    // returned page; the recovery counts are overlapping and are deliberately
+    // not required to sum to the total.
+    const complete = buildRunInventory();
+    const problemTasks = {};
+    const problemFiles = {};
+    for (const type of RUN_PROBLEM_TYPES) {
+      problemTasks[type] = complete.filter((run) =>
+        run.problem_types.includes(type),
+      ).length;
+      problemFiles[type] = complete
+        .filter((run) => run.problem_types.includes(type))
+        .reduce((sum, run) => sum + (run.total_items ?? 0), 0);
     }
+    const sources = [
+      ...new Set(
+        complete.map((run) => run.source_scope).filter((value) => value),
+      ),
+    ]
+      .slice(0, 50)
+      .map((value) => ({ value, label: value }));
     sendJson(res, 200, {
       items: page.page.map((run) => runRunDocument(run)),
       limit,
@@ -13417,12 +13585,35 @@ const server = createServer(async (req, res) => {
       command,
       q,
       attention,
+      view,
+      problem,
       from,
       to,
       total: filtered.length,
       truncated: page.next !== null,
       status_counts: statusCounts,
       attention_count: attentionCount,
+      summary: {
+        available: true,
+        total: complete.length,
+        running: complete.filter(
+          (run) =>
+            !["completed", "partial_success", "failed", "cancelled"].includes(
+              run.status,
+            ),
+        ).length,
+        attention: complete.filter((run) => run.attention).length,
+        ended: complete.filter((run) =>
+          ["completed", "partial_success", "failed", "cancelled"].includes(
+            run.status,
+          ),
+        ).length,
+        problem_tasks: problemTasks,
+        problem_files: problemFiles,
+        sources,
+        sources_truncated: false,
+        sideEffects: "none",
+      },
       population:
         "unified job/task run inventory, deduplicated by explicit task linkage",
       sideEffects: "none",
@@ -13473,6 +13664,132 @@ const server = createServer(async (req, res) => {
   // or repeated query keys, an out-of-set filter, an out-of-range limit or a
   // cursor minted for another run/filter state are all refused with
   // `invalid_request`).
+  if (
+    url.pathname.match(
+      /^\/api\/v1\/operations\/runs\/([^/]+)\/problem-items$/,
+    ) &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const problemRunId = decodeURIComponent(
+      url.pathname.match(
+        /^\/api\/v1\/operations\/runs\/([^/]+)\/problem-items$/,
+      )[1],
+    );
+    if (
+      rejectUnknownRunDetailQuery(url.searchParams, [
+        "limit",
+        "cursor",
+        "problem",
+      ])
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const problem = url.searchParams.get("problem");
+    if (problem === null || !RUN_PROBLEM_TYPES.includes(problem)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const problemLimit = parseRunDetailLimit(
+      url.searchParams.get("limit"),
+      20,
+      100,
+    );
+    if (problemLimit === null) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const problemRun = resolveRunByIdentifier(problemRunId);
+    if (problemRun === null) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const problemScope = `run=${problemRun.run_id};task=${
+      problemRun.task_id ?? "-"
+    };problem=${problem}`;
+    const rawProblemCursor = url.searchParams.get("cursor");
+    let problemOffset = null;
+    if (rawProblemCursor !== null && rawProblemCursor !== "") {
+      problemOffset = decodeCollectionCursor(
+        rawProblemCursor,
+        "run_problem_items",
+        problemScope,
+      );
+      if (problemOffset === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+    }
+    if (problemRun.task_id === null) {
+      sendJson(res, 200, {
+        run_id: problemRun.run_id,
+        task_id: null,
+        problem,
+        limit: problemLimit,
+        items: [],
+        total: 0,
+        matching_total: 0,
+        dispositions: emptyRunDispositions(),
+        uncertain_success: 0,
+        truncated: false,
+        previous_cursor: null,
+        next_cursor: null,
+        unavailable: RUN_PRE_TASK_REASON,
+        sideEffects: "none",
+      });
+      return;
+    }
+    const problemItems = runItemsPopulation(problemRun.task_id).filter((item) =>
+      runItemMatchesProblem(item, problem),
+    );
+    const problemPage = collectionPage(
+      problemItems,
+      problemLimit,
+      problemOffset,
+    );
+    const problemDispositions = emptyRunDispositions();
+    for (const item of runItemsPopulation(problemRun.task_id)) {
+      problemDispositions[runDispositionOf(item.status)] += 1;
+    }
+    const problemTotal = Object.values(problemDispositions).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    sendJson(res, 200, {
+      run_id: problemRun.run_id,
+      task_id: problemRun.task_id,
+      problem,
+      limit: problemLimit,
+      items: problemPage.page,
+      total: problemTotal,
+      matching_total: problemItems.length,
+      dispositions: problemDispositions,
+      uncertain_success: runUncertainSuccess(problemRun.task_id),
+      truncated: problemPage.next !== null,
+      previous_cursor:
+        problemPage.previous === null
+          ? null
+          : encodeCollectionCursor(
+              "run_problem_items",
+              problemScope,
+              problemPage.previous,
+            ),
+      next_cursor:
+        problemPage.next === null
+          ? null
+          : encodeCollectionCursor(
+              "run_problem_items",
+              problemScope,
+              problemPage.next,
+            ),
+      sideEffects: "none",
+    });
+    return;
+  }
+
   const runDetailMatch = url.pathname.match(
     /^\/api\/v1\/operations\/runs\/([^/]+)\/(items|records|export)(?:\/([^/]+))?$/,
   );

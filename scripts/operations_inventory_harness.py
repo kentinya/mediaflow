@@ -77,6 +77,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from mediaflow.application.automation import AutomationWorker  # noqa: E402
+from mediaflow.application.classification_review import ClassificationReviewService  # noqa: E402
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
 from mediaflow.application.file_catalog import FileCatalogService  # noqa: E402
@@ -102,6 +103,12 @@ from mediaflow.domain.automation import (  # noqa: E402
     AutomationJob,
     AutomationJobStatus,
 )
+from mediaflow.domain.classification import (  # noqa: E402
+    ClassificationPolicy,
+    ClassificationResult,
+    ClassificationRule,
+    ClassificationStatus,
+)
 from mediaflow.domain.configuration_management import (  # noqa: E402
     ConfigurationDestinationPrecheckStatus,
     ConfigurationStorageCheckStatus,
@@ -110,13 +117,23 @@ from mediaflow.domain.configuration_management import (  # noqa: E402
 from mediaflow.domain.failure import FailureExplanation  # noqa: E402
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord  # noqa: E402
 from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence  # noqa: E402
-from mediaflow.domain.metadata import MediaCandidate, MediaType  # noqa: E402
+from mediaflow.domain.metadata import (  # noqa: E402
+    MediaCandidate,
+    MediaIdentity,
+    MediaType,
+    MetadataIdentificationResult,
+    MetadataIdentificationStatus,
+)
 from mediaflow.domain.organizer import (  # noqa: E402
     ExecutionEffectCertainty,
     ExecutionResult,
     ExecutionStatus,
 )
-from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus  # noqa: E402
+from mediaflow.domain.recognition import (  # noqa: E402
+    RecognitionResult,
+    RecognitionStatus,
+    RecognitionType,
+)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal  # noqa: E402
 from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentResultRecord,
@@ -495,6 +512,7 @@ class AppState:
         self.continuation_task_id: str | None = None
         self.recovery_run: dict[str, str] | None = None
         self.recovery_batch_run: dict[str, object] | None = None
+        self.task_center_problems: dict[str, object] | None = None
 
     @property
     def database(self) -> Path:
@@ -1889,6 +1907,170 @@ def continuation_journey_state(state: AppState) -> dict[str, object]:
     }
 
 
+def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
+    """Create the mixed cross-Task problem population for the nine views.
+
+    Every problem is written through the production service its real producer
+    uses (``RecognitionReviewService``, ``ClassificationReviewService``, the
+    conflict confirmation write path), and every unresolved failure item is a
+    real ``task_items`` row.  No fixture flag fakes a current problem, so the
+    nine views, their counts and their per-type file lists can only be derived
+    from durable evidence.  One Task deliberately carries several problem
+    types at once so the overlapping-list semantics are provable.
+
+    Nothing here mutates Storage or calls a Provider; the temporary root and
+    the synthetic MetadataProvider are the same isolated fixture the other
+    journeys use.
+    """
+
+    if state.task_center_problems is not None:
+        return dict(state.task_center_problems)
+    managed = state.managed
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    now = datetime.now(UTC)
+
+    def begin(task_id: str, item_id: str, filename: str) -> PersistentTaskItem:
+        item = PersistentTaskItem(
+            item_id=item_id,
+            task_id=task_id,
+            storage_id="source-storage",
+            resource_library_id="source",
+            source_path=filename,
+            source_display=filename,
+            status=TaskItemStatus.PROCESSING,
+            stage="recognizing",
+            attempts=1,
+            created_at=now,
+            updated_at=now,
+        )
+        state.repository.upsert_item(item)
+        return item
+
+    # Task 1: two recognition files and one unresolved technical failure.  The
+    # task therefore belongs to both the recognition and failure lists.
+    mixed = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        scope_path="TaskCenter/Mixed",
+    )
+    recognition_types = (RecognitionType("A", "Movie"), RecognitionType("B", "TV"))
+    recognition_service = RecognitionReviewService(state.repository, recognition_types)
+    for index in range(2):
+        item_id = f"{mixed.task_id}-recog-{index}"
+        recognition_service.create(
+            begin(mixed.task_id, item_id, f"TaskCenter/Mixed/Recog{index}.mkv"),
+            RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+        )
+    failure_item_id = f"{mixed.task_id}-failure"
+    failure_item = begin(
+        mixed.task_id,
+        failure_item_id,
+        "TaskCenter/Mixed/Broken.mkv",
+    )
+    state.repository.upsert_item(
+        dataclasses.replace(
+            failure_item,
+            status=TaskItemStatus.FAILED,
+            stage="failed",
+            error=FailureExplanation(
+                category="storage_permission_denied",
+                message="the destination Storage rejected the write",
+                durable_state="no_media_moved",
+                side_effects="none",
+                retry_safe=True,
+                next_action="repair the destination Storage permission, then re-check this item",
+            ).encode(),
+        )
+    )
+
+    # Task 2: one classification file, proving the classification list.
+    classified = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        scope_path="TaskCenter/Classified",
+    )
+    classification_policy = ClassificationPolicy(
+        "classification-a",
+        "Classification A",
+        rules=(
+            ClassificationRule(
+                "rule-1",
+                "Rule 1",
+                "media-target",
+                "Movies",
+                priority=10,
+            ),
+        ),
+    )
+    ClassificationReviewService(state.repository).create(
+        begin(
+            classified.task_id,
+            f"{classified.task_id}-class",
+            "TaskCenter/Classified/Unclassified.mkv",
+        ),
+        ClassificationResult(
+            policy_id=classification_policy.policy_id,
+            recognition_type_id="A",
+            status=ClassificationStatus.UNCLASSIFIED,
+        ),
+        classification_policy,
+        MediaIdentity(
+            "tmdb",
+            "101",
+            MediaType.MOVIE,
+            "Unclassified",
+            year=2001,
+        ),
+    )
+
+    # Task 3: one pending Metadata correction candidate.
+    metadata = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        scope_path="TaskCenter/Metadata",
+    )
+    from mediaflow.application.metadata_correction import MetadataCorrectionService
+    from mediaflow.domain.parser import ParseResult
+
+    metadata_policy = next(
+        value
+        for value in managed.runtime.strategy.metadata_policies
+        if value.policy_id == "C" and value.enabled
+    )
+    MetadataCorrectionService(state.repository, (metadata_policy,)).create(
+        begin(
+            metadata.task_id,
+            f"{metadata.task_id}-metadata",
+            "TaskCenter/Metadata/Unknown.mkv",
+        ),
+        MetadataIdentificationResult(
+            status=MetadataIdentificationStatus.NOT_FOUND,
+            recognition_type=RecognitionType("C", "Special"),
+            query="Unknown",
+        ),
+        metadata_policy,
+        ParseResult(
+            title_candidate="Unknown",
+            year=1999,
+            original_filename="Unknown.mkv",
+        ),
+    )
+
+    state.task_center_problems = {
+        "mixedTaskId": mixed.task_id,
+        "mixedRecognitionItemIds": [
+            f"{mixed.task_id}-recog-0",
+            f"{mixed.task_id}-recog-1",
+        ],
+        "mixedFailureItemId": failure_item_id,
+        "classificationTaskId": classified.task_id,
+        "classificationItemId": f"{classified.task_id}-class",
+        "metadataTaskId": metadata.task_id,
+        "metadataItemId": f"{metadata.task_id}-metadata",
+    }
+    return dict(state.task_center_problems)
+
+
 def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:
     """Execute one real standalone `organize --execute`-shape run.
 
@@ -2020,6 +2202,8 @@ def application(environ, start_response):
             document = register_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             document = run_manual_worker_once(STATE)
+        elif path == "/__harness__/seed-task-center-problems" and method == "POST":
+            document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
             document = seed_task_item_recovery_journey(STATE)
         elif path == "/__harness__/run-task-item-recovery-worker" and method == "POST":

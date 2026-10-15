@@ -38,15 +38,20 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
+  RUN_PROBLEM_LABELS,
+  RUN_PROBLEM_TYPES,
   RUN_STATUSES,
   RUN_STATUS_LABELS,
-  RUN_STATUS_FILTERS,
   RUN_TRIGGER_LABELS,
+  RUN_VIEWS,
+  RUN_VIEW_LABELS,
   TERMINAL_RUN_STATUSES,
-  isAttentionRun,
+  isRecoveryView,
   type RunInventoryPage,
+  type RunProblemType,
   type RunStatus,
   type RunSummary,
+  type RunView,
 } from "../../entities/operations/run";
 import {
   runInventoryQueryOptions,
@@ -55,6 +60,7 @@ import {
 } from "./run-query";
 import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { ProblemFilePanel } from "./ProblemFilePanel";
 import {
   readRunDetailState,
   runDetailStateSearch,
@@ -175,6 +181,42 @@ function readPageState(search: Record<string, unknown>): RunPageState {
 
 type RunSearchValue = string | boolean;
 
+/** A safe default filter state (no narrowing). */
+function defaultFilters(): RunListFilters {
+  return {
+    status: "all",
+    command: "all",
+    q: "",
+    from: "",
+    to: "",
+    attention: false,
+  };
+}
+
+/**
+ * The submitted view. The router's default search parser may deliver the
+ * literal as a string; anything outside the nine modelled views falls back to
+ * the unfiltered `全部任务` view instead of being replayed against the server.
+ */
+function readView(search: Record<string, unknown>): RunView {
+  const value = readSafeSearchValue(search, "view");
+  return (RUN_VIEWS as readonly string[]).includes(value)
+    ? (value as RunView)
+    : "all";
+}
+
+/**
+ * The submitted recovery problem type. A recovery view owns its own problem
+ * predicate; this explicit value only narrows a lifecycle view. An
+ * out-of-contract value reads as no problem filter.
+ */
+function readProblem(search: Record<string, unknown>): RunProblemType | null {
+  const value = readSafeSearchValue(search, "problem");
+  return (RUN_PROBLEM_TYPES as readonly string[]).includes(value)
+    ? (value as RunProblemType)
+    : null;
+}
+
 function filtersToSearch(
   filters: RunListFilters,
 ): Record<string, RunSearchValue> {
@@ -189,6 +231,24 @@ function filtersToSearch(
   // `attention=%22true%22`, which the reconnect allowlist and an operator
   // reading the address bar would not recognise as the facet.
   if (filters.attention) search["attention"] = true;
+  return search;
+}
+
+/**
+ * The complete URL search of one list state: the submitted filters, the
+ * selected view and the explicit problem narrowing (only meaningful outside a
+ * recovery view, which already owns its own problem predicate).
+ */
+function listStateSearch(
+  filters: RunListFilters,
+  view: RunView,
+  problem: RunProblemType | null,
+): Record<string, RunSearchValue> {
+  const search = filtersToSearch(filters);
+  if (view !== "all") search["view"] = view;
+  if (problem !== null && !isRecoveryView(view)) {
+    search["problem"] = problem;
+  }
   return search;
 }
 
@@ -246,11 +306,14 @@ export function OperationsLanding() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const navigate = useNavigate();
   const filters = readFilters(searchParams);
+  const view = readView(searchParams);
+  const problem = readProblem(searchParams);
   const chosenLibraryId = readSafeSearchValue(
     searchParams,
     "resourceLibraryId",
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
+  const problemRunId = readSafeSearchValue(searchParams, "problemRun");
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -296,6 +359,8 @@ export function OperationsLanding() {
       from: filters.from || null,
       to: filters.to || null,
       attention: filters.attention ? true : null,
+      view: view === "all" ? null : view,
+      problem: view !== "all" && !isRecoveryView(view) ? problem : null,
       limit: RUN_PAGE_LIMIT,
       cursor,
     }),
@@ -303,7 +368,7 @@ export function OperationsLanding() {
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -319,13 +384,26 @@ export function OperationsLanding() {
     // for the previous population is never carried into a new one.
     void navigate({
       to: "/operations",
-      search: filtersToSearch({ ...filters, ...next }),
+      search: listStateSearch({ ...filters, ...next }, view, problem),
+      replace: true,
+    });
+  };
+
+  /** Switch to one of the nine sibling views, always from the first page. */
+  const selectView = (next: RunView) => {
+    void navigate({
+      to: "/operations",
+      search: listStateSearch(filters, next, null),
       replace: true,
     });
   };
 
   const resetFilters = () => {
-    void navigate({ to: "/operations", search: {}, replace: true });
+    void navigate({
+      to: "/operations",
+      search: listStateSearch(defaultFilters(), view, null),
+      replace: true,
+    });
   };
 
   const selectRun = (runId: string) => {
@@ -346,12 +424,23 @@ export function OperationsLanding() {
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
   };
 
+  /** Open the exact Task/type problem file list of one recovery row. */
+  const openProblemRun = (runId: string) => {
+    const search = listSearch();
+    search["problemRun"] = runId;
+    void navigate({ to: "/operations", search, replace: false });
+  };
+
+  const closeProblemRun = () => {
+    void navigate({ to: "/operations", search: listSearch(), replace: true });
+  };
+
   /** Move one server page by replacing the URL (no extra history entries). */
   const turnPage = (
     nextCursor: string,
     nextDirection: "forward" | "backward",
   ) => {
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     search["cursor"] = nextCursor;
     search["dir"] = nextDirection;
     if (selectedId !== "") {
@@ -367,7 +456,7 @@ export function OperationsLanding() {
     if (selectedId === "") {
       return;
     }
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -425,8 +514,9 @@ export function OperationsLanding() {
         {({ isFetching, refresh }) => (
           <>
             {page !== null && (
-              <CountCards page={page} onCard={applyFilters} filters={filters} />
+              <ViewSummary page={page} view={view} onSelectView={selectView} />
             )}
+            <ViewNavigation view={view} onSelectView={selectView} />
             <div
               className={
                 selectedId !== ""
@@ -584,7 +674,9 @@ export function OperationsLanding() {
                     page={page}
                     selectedId={selectedId}
                     direction={direction}
+                    view={view}
                     onSelect={selectRun}
+                    onOpenProblem={openProblemRun}
                     onForward={() => {
                       if (page.nextCursor) {
                         turnPage(page.nextCursor, "forward");
@@ -690,6 +782,14 @@ export function OperationsLanding() {
                   onSelectRun={selectRun}
                 />
               )}
+              {problemRunId !== "" && isRecoveryView(view) && (
+                <ProblemFilePanel
+                  key={`${problemRunId}:${view}`}
+                  runId={problemRunId}
+                  problem={view}
+                  onClose={closeProblemRun}
+                />
+              )}
             </div>
             <WorkerReadinessSection query={readinessQuery} />
             <DiscoveryReadbackSection query={discoveriesQuery} />
@@ -708,58 +808,140 @@ export function OperationsLanding() {
   );
 }
 
-function CountCards({
+function ViewSummary({
   page,
-  onCard,
-  filters,
+  view,
+  onSelectView,
 }: {
   readonly page: RunInventoryPage;
-  readonly onCard: (next: Partial<RunListFilters>) => void;
-  readonly filters: RunListFilters;
+  readonly view: RunView;
+  readonly onSelectView: (next: RunView) => void;
 }) {
-  const orderedStatuses = RUN_STATUS_FILTERS.filter(
-    (status) => (page.statusCounts[status] ?? 0) > 0,
-  );
+  const summary = page.summary;
+  if (!summary.available) {
+    return (
+      <section className="mf-count-section" aria-label="任务统计">
+        <StatusBanner variant="info" title="统计暂不可用">
+          <p>后端未提供完整授权总体的统计；列表仍会按服务器筛选和分页显示。</p>
+        </StatusBanner>
+      </section>
+    );
+  }
+  // The recovery views advertise their own problem-file counts; the lifecycle
+  // views advertise the population partitions.  Counts are over the whole
+  // authorized population, never just the current page.
+  const cards = isRecoveryView(view)
+    ? [
+        {
+          key: "problem-tasks",
+          value: summary.problemTasks[view],
+          label: "待处理任务",
+          target: view,
+        },
+        {
+          key: "problem-files",
+          value: summary.problemFiles[view],
+          label: "涉及文件",
+          target: view,
+        },
+        {
+          key: "all",
+          value: summary.total,
+          label: "任务总数",
+          target: "all" as RunView,
+        },
+        {
+          key: "attention",
+          value: summary.attention,
+          label: "需要处理",
+          target: "attention" as RunView,
+        },
+      ]
+    : [
+        {
+          key: "all",
+          value: summary.total,
+          label: "任务总数",
+          target: "all" as RunView,
+        },
+        {
+          key: "running",
+          value: summary.running,
+          label: "进行中",
+          target: "running" as RunView,
+        },
+        {
+          key: "attention",
+          value: summary.attention,
+          label: "需要处理",
+          target: "attention" as RunView,
+        },
+        {
+          key: "ended",
+          value: summary.ended,
+          label: "已结束",
+          target: "ended" as RunView,
+        },
+      ];
   return (
-    <section className="mf-count-section" aria-label="运行统计">
+    <section className="mf-count-section" aria-label="任务统计">
       <ul className="mf-count-grid">
-        <li className="mf-count-card">
-          <span className="mf-count-value">{page.total}</span>
-          <span className="mf-count-label">全部运行（当前筛选范围）</span>
-        </li>
-        <li className="mf-count-card">
-          <button
-            type="button"
-            className="mf-card-button"
-            onClick={() => onCard({ attention: !filters.attention })}
-            aria-pressed={filters.attention}
-          >
-            <span className="mf-count-value">{page.attentionCount}</span>
-            <span className="mf-count-label">
-              需要关注（与状态计数重叠，不是独立终态）
-            </span>
-          </button>
-        </li>
-        {orderedStatuses.map((status) => (
-          <li className="mf-count-card" key={status}>
+        {cards.map((card) => (
+          <li className="mf-count-card" key={card.key}>
             <button
               type="button"
               className="mf-card-button"
-              onClick={() => onCard({ status })}
-              aria-pressed={filters.status === status}
+              onClick={() => onSelectView(card.target)}
+              aria-pressed={view === card.target}
             >
-              <span className="mf-count-value">
-                {page.statusCounts[status] ?? 0}
-              </span>
-              <span className="mf-count-label">
-                {RUN_STATUS_LABELS[status]}
-              </span>
+              <span className="mf-count-value">{card.value ?? "不可用"}</span>
+              <span className="mf-count-label">{card.label}</span>
             </button>
           </li>
         ))}
       </ul>
+      {summary.attention !== null && summary.attention > 0 && (
+        <p className="mf-dashboard-meta">
+          {summary.attention}{" "}
+          个任务需要处理，可按恢复类型集中查看。同一任务可能涉及多种问题，
+          各类型计数会重叠。
+        </p>
+      )}
       <p className="mf-dashboard-meta">{page.population}</p>
     </section>
+  );
+}
+
+/**
+ * The nine sibling task-center views on one horizontal navigation row.
+ *
+ * Each tab is an independent deep-linkable server query; narrow screens
+ * scroll the row horizontally instead of hiding a recovery view.
+ */
+function ViewNavigation({
+  view,
+  onSelectView,
+}: {
+  readonly view: RunView;
+  readonly onSelectView: (next: RunView) => void;
+}) {
+  return (
+    <nav
+      className="mf-run-tabs mf-view-tabs"
+      aria-label="任务中心视图"
+      style={{ overflowX: "auto" }}
+    >
+      {RUN_VIEWS.map((candidate) => (
+        <button
+          key={candidate}
+          type="button"
+          aria-current={view === candidate ? "page" : undefined}
+          onClick={() => onSelectView(candidate)}
+        >
+          {RUN_VIEW_LABELS[candidate]}
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -767,17 +949,22 @@ function RunTable({
   page,
   selectedId,
   direction,
+  view,
   onSelect,
+  onOpenProblem,
   onForward,
   onBackward,
 }: {
   readonly page: RunInventoryPage;
   readonly selectedId: string;
   readonly direction: "forward" | "backward";
+  readonly view: RunView;
   readonly onSelect: (runId: string) => void;
+  readonly onOpenProblem: (runId: string) => void;
   readonly onForward: () => void;
   readonly onBackward: () => void;
 }) {
+  const recovery = isRecoveryView(view);
   return (
     <>
       <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
@@ -791,6 +978,8 @@ function RunTable({
               <th>触发方式</th>
               <th>状态</th>
               <th>创建时间</th>
+              {recovery && <th>涉及文件</th>}
+              {recovery && <th>操作</th>}
             </tr>
           </thead>
           <tbody>
@@ -804,28 +993,18 @@ function RunTable({
                   aria-selected={selected}
                 >
                   <td>
-                    {detail !== null ? (
-                      <button
-                        type="button"
-                        className="mf-run-select"
-                        onClick={() => onSelect(run.runId)}
-                      >
-                        {commandLabelOf(run)}{" "}
-                        <span className="mf-run-identity">
-                          {runIdentityOf(run)}
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="mf-run-select"
-                        onClick={() => onSelect(run.runId)}
-                      >
-                        {commandLabelOf(run)}{" "}
-                        <span className="mf-run-identity">
-                          {runIdentityOf(run)}
-                        </span>
-                      </button>
+                    <button
+                      type="button"
+                      className="mf-run-select"
+                      onClick={() => onSelect(run.runId)}
+                    >
+                      {commandLabelOf(run)}{" "}
+                      <span className="mf-run-identity">
+                        {runIdentityOf(run)}
+                      </span>
+                    </button>
+                    {detail === null && (
+                      <span className="mf-run-kind">（无原生详情）</span>
                     )}
                   </td>
                   <td>
@@ -844,18 +1023,36 @@ function RunTable({
                   <td>{RUN_TRIGGER_LABELS[run.trigger]}</td>
                   <td>
                     <span
-                      className={
-                        isAttentionRun(run.status)
-                          ? "mf-run-attention"
-                          : undefined
-                      }
+                      className={run.attention ? "mf-run-attention" : undefined}
                     >
                       {RUN_STATUS_LABELS[run.status]}
                     </span>
                     {run.pauseRequested && "（已请求暂停）"}
                     {run.status === "unknown" && "（证据不足）"}
+                    {run.problemTypes.length > 0 && (
+                      <span className="mf-run-kind">
+                        {" "}
+                        {run.problemTypes
+                          .map((problem) => RUN_PROBLEM_LABELS[problem])
+                          .join("、")}
+                      </span>
+                    )}
                   </td>
                   <td>{formatDate(run.createdAt)}</td>
+                  {recovery && (
+                    <td>{page.summary.problemFiles[view] ?? "—"} 个文件</td>
+                  )}
+                  {recovery && (
+                    <td>
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        onClick={() => onOpenProblem(run.runId)}
+                      >
+                        {view === "failure" ? "处理失败" : "处理问题"}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

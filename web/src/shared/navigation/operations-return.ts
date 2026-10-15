@@ -26,6 +26,9 @@ const LIST_KEYS = new Set([
   "from",
   "to",
   "attention",
+  "view",
+  "problem",
+  "problemRun",
   "cursor",
   "dir",
   "run",
@@ -44,6 +47,12 @@ const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const DATE_TOKEN = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|\+00:00)?)?$/;
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
 const IDENTIFIER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+/** The nine closed task-center view tokens. */
+const VIEW_TOKEN =
+  /^(?:all|running|attention|ended|recognition|metadata|classification|conflict|failure)$/;
+/** The five closed recovery problem tokens. */
+const PROBLEM_TOKEN =
+  /^(?:recognition|metadata|classification|conflict|failure)$/;
 /** The closed serialization alphabet URLSearchParams itself can produce.
  * The bound covers the worst-case legal landing state (two 512-char server
  * cursors plus bounded filters) so a legitimate context is never truncated;
@@ -157,10 +166,17 @@ export function parseOperationsReturnContext(
         break;
       case "run":
       case "item":
+      case "problemRun":
       case "tab":
       case "istat":
       case "rkind":
         if (IDENTIFIER_TOKEN.test(value)) put(key, value);
+        break;
+      case "view":
+        if (VIEW_TOKEN.test(value)) put(key, value);
+        break;
+      case "problem":
+        if (PROBLEM_TOKEN.test(value)) put(key, value);
         break;
       default:
         break;

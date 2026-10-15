@@ -174,12 +174,13 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
 )
 from mediaflow.domain.operations_run import (
-    ATTENTION_RUN_STATUSES,
     DISCOVERY_COMMAND_LABEL,
+    RECOVERY_PROBLEM_TYPES,
     RUN_DISPOSITIONS,
     RUN_RECORD_KINDS,
     OperationsRunRecord,
     OperationsRunStatus,
+    OperationsRunView,
     known_command_label,
 )
 from mediaflow.domain.organizer import ConflictStrategy
@@ -9825,7 +9826,7 @@ class MediaFlowApi:
                 return "/api/v1/operations/runs"
             if len(parts) == 5:
                 return "/api/v1/operations/runs/{id}"
-            if len(parts) == 6 and parts[5] in {"items", "records", "export"}:
+            if len(parts) == 6 and parts[5] in {"items", "records", "export", "problem-items"}:
                 return f"/api/v1/operations/runs/{{id}}/{parts[5]}"
             if len(parts) == 7 and parts[5] == "items":
                 return "/api/v1/operations/runs/{id}/items/{itemId}"
@@ -11060,6 +11061,7 @@ class MediaFlowApi:
             "tasks": "task_id",
             "jobs": "job_id",
             "run_items": "item_id",
+            "run_problem_items": "item_id",
             "run_records": "record_id",
             "task_items": "item_id",
             "task_results": "result_id",
@@ -13498,6 +13500,8 @@ class MediaFlowApi:
             return self._operations_run_item_evidence(
                 parts[4], parts[6], environ, start_response, principal
             )
+        if len(parts) == 6 and parts[5] == "problem-items":
+            return self._operations_run_problem_items(parts[4], environ, start_response, principal)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     @classmethod
@@ -13511,13 +13515,44 @@ class MediaFlowApi:
         """
 
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"limit", "cursor", "status", "command", "q", "from", "to", "attention"}
+        allowed = {
+            "limit",
+            "cursor",
+            "status",
+            "command",
+            "q",
+            "from",
+            "to",
+            "attention",
+            "view",
+            "problem",
+            "source",
+        }
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
             raise ValueError(
                 "operations runs query accepts limit, cursor, status, command, q, from, to, "
-                "and attention once"
+                "attention, view, problem, and source once"
             )
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["50"])[0], "run")
+        raw_view = values.get("view", ["all"])[0]
+        if raw_view in {"", "all"}:
+            view = None
+        elif raw_view in {item.value for item in OperationsRunView}:
+            view = raw_view
+        else:
+            raise ValueError("operations run view filter is invalid")
+        raw_problem = values.get("problem", [""])[0]
+        if raw_problem in {"", "all"}:
+            problem_type = None
+        elif raw_problem in set(RECOVERY_PROBLEM_TYPES):
+            problem_type = raw_problem
+        else:
+            raise ValueError("operations run problem filter is invalid")
+        if view in RECOVERY_PROBLEM_TYPES and problem_type is not None and problem_type != view:
+            # A recovery view already owns its problem type; a contradicting
+            # explicit problem is a rejected filter, never a silently
+            # different population.
+            raise ValueError("operations run problem filter contradicts the view")
         raw_status = values.get("status", [""])[0]
         if raw_status in {"", "all"}:
             status = None
@@ -13532,6 +13567,15 @@ class MediaFlowApi:
             attention = True
         else:
             raise ValueError("operations run attention filter is invalid")
+        # A recovery view always applies its own problem filter server-side;
+        # the standalone `problem` parameter lets the operator narrow a
+        # lifecycle view without inventing a client-side filter.
+        if view in RECOVERY_PROBLEM_TYPES:
+            problem_type = view
+        raw_source = values.get("source", [""])[0]
+        source = None if raw_source in {"", "all"} else raw_source
+        if source is not None and not _TASK_COMMAND_FILTER.fullmatch(source):
+            raise ValueError("operations run source filter is invalid")
         raw_command = values.get("command", [""])[0]
         command = None if raw_command in {"", "all"} else raw_command
         if command is not None and not _TASK_COMMAND_FILTER.fullmatch(command):
@@ -13550,6 +13594,9 @@ class MediaFlowApi:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         raw_cursor = values.get("cursor")
         cursor = (
@@ -13568,6 +13615,9 @@ class MediaFlowApi:
             "command": command,
             "search": search,
             "attention": attention,
+            "view": view,
+            "problem": problem_type,
+            "source": source,
             "created_after": created_after,
             "created_before": created_before,
             "scope": scope,
@@ -13612,6 +13662,9 @@ class MediaFlowApi:
         created_after: datetime | None,
         created_before: datetime | None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> str:
         """Deterministic cursor scope binding filters and the reading principal.
 
@@ -13620,14 +13673,18 @@ class MediaFlowApi:
         replay recovers as an invalid cursor, never as a silently different
         page.  The digest hides the identity from the cursor payload itself.
         Every submitted population filter — including the overlapping
-        attention facet — is bound the same way, so a cursor minted for one
-        filter state is refused as soon as any filter differs.
+        attention facet, the selected view and the recovery problem type — is
+        bound the same way, so a cursor minted for one filter state is refused
+        as soon as any filter differs.
         """
 
         parts = [
             f"principal={principal_id}",
             f"status={status or 'all'}",
             f"attention={'true' if attention else 'false'}",
+            f"view={view or 'all'}",
+            f"problem={problem_type or 'all'}",
+            f"source={source or 'all'}",
             f"command={command or 'all'}",
             f"q={search or ''}",
             f"from={created_after.isoformat() if created_after else ''}",
@@ -13669,6 +13726,8 @@ class MediaFlowApi:
             "created_after": query["created_after"],
             "created_before": query["created_before"],
             "attention": query["attention"],
+            "view": query["view"],
+            "problem_type": query["problem"],
         }
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
             window = repository.operations_runs_window(before=cursor.position, **arguments)
@@ -13680,15 +13739,12 @@ class MediaFlowApi:
         has_next = bool(window.has_next)
         has_previous = bool(window.has_previous)
         scope: str = query["scope"]
-        # The attention count is the overlapping facet over the same filtered
-        # population — never a mutually exclusive terminal state.  With the
-        # attention facet applied, the page *is* that overlapping population,
-        # so the card keeps showing exactly the count it filters to.
-        attention_count = sum(
-            count
-            for value, count in window.status_counts.items()
-            if value in {item.value for item in ATTENTION_RUN_STATUSES}
-        )
+        # The current-problem facet is the exact same derived fact the page
+        # rows carry: with the attention facet applied, the page *is* that
+        # overlapping population, so the card keeps showing exactly the count
+        # it filters to.
+        attention_count = window.attention_count
+        summary = self._operations_run_summary(repository)
         return self._response(
             start_response,
             200,
@@ -13699,12 +13755,15 @@ class MediaFlowApi:
                 "command": query["command"],
                 "q": query["search"],
                 "attention": bool(query["attention"]),
+                "view": query["view"],
+                "problem": query["problem"],
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
                 "total": window.total,
                 "truncated": has_next,
                 "status_counts": window.status_counts,
                 "attention_count": attention_count,
+                "summary": summary,
                 "population": (
                     "unified job/task run inventory, deduplicated by explicit task linkage"
                 ),
@@ -13715,6 +13774,37 @@ class MediaFlowApi:
                 "next_cursor": self._run_page_cursor(page, has_next, CursorDirection.NEXT, scope),
             },
         )
+
+    @staticmethod
+    def _operations_run_summary(repository) -> dict[str, object]:
+        """The complete-authorized-population summary of the nine views (RO-1).
+
+        Read from one repository read snapshot over the whole authorized
+        population, never from the browser's current page, so the summary
+        cards and the view counts stay truthful while the operator filters and
+        pages.  A repository without the summary read publishes an explicit
+        unavailable summary instead of fabricated zeros.
+        """
+
+        reader = getattr(repository, "operations_run_summary", None)
+        if not callable(reader):
+            return {"available": False}
+        summary = reader()
+        # The source options are published through the same bounded identity
+        # boundary as the run rows: a legacy absolute host/adapter root, a
+        # private endpoint or a credential-shaped scope never reaches the
+        # public document, and a redacted value is shown as the shared marker.
+        raw_sources = summary.get("sources")
+        if isinstance(raw_sources, list):
+            summary["sources"] = [
+                {
+                    "value": bounded_identity_path(entry.get("value")) or "[redacted-path]",
+                    "label": bounded_identity_path(entry.get("label")) or "[redacted-path]",
+                }
+                for entry in raw_sources
+                if isinstance(entry, dict)
+            ]
+        return summary
 
     def _operations_run_overview(
         self, run_id: str, start_response: Callable, principal: ResolvedApiPrincipal
@@ -13990,6 +14080,40 @@ class MediaFlowApi:
         )
 
     @classmethod
+    def _run_problem_items_scope(cls, principal_id: str, overview, problem: str) -> str:
+        """Deterministic cursor scope for one problem-type file list."""
+
+        return (
+            f"principal={principal_id};run={overview.run_id};"
+            f"task={overview.task_id or '-'};problem={problem}"
+        )
+
+    @classmethod
+    def _run_problem_items_query(
+        cls, environ: dict, principal_id: str, overview
+    ) -> tuple[int, str, DecodedCursor | None, str]:
+        """Bounded problem-file page state plus its filter-bound cursor."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "problem"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("run problem item query accepts limit, cursor, and problem once")
+        limit = MediaFlowApi._parse_bounded_limit(
+            values.get("limit", ["20"])[0], "run problem item"
+        )
+        problem = values.get("problem", [""])[0]
+        if problem not in RECOVERY_PROBLEM_TYPES:
+            raise ValueError("run problem item type is invalid")
+        scope = cls._run_problem_items_scope(principal_id, overview, problem)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(raw_cursor[0], "run_problem_items", expected_scope=scope)
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return limit, problem, cursor, scope
+
+    @classmethod
     def _run_records_scope(cls, principal_id: str, overview, kind: str | None) -> str:
         """Deterministic cursor scope binding principal, run/task/job and kind."""
 
@@ -14154,6 +14278,109 @@ class MediaFlowApi:
                 ),
                 "next_cursor": self._page_cursor(
                     "run_items",
+                    window.page,
+                    window.has_next,
+                    CursorDirection.NEXT,
+                    scope=scope,
+                ),
+                "sideEffects": "none",
+            },
+        )
+
+    def _operations_run_problem_items(
+        self, run_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """One problem-type-filtered file page of a recovery list entry (RO-3).
+
+        The recovery row leads to the exact Task/type file list, server-
+        filtered and server-paged on the same durable predicate the list view
+        uses.  A Task with no linked Task (a pre-Task admission) reports honest
+        item unavailability instead of an empty success, and a file carrying
+        several problems still appears once per type.
+        """
+
+        repository = self._repository
+        if repository is None or not callable(
+            getattr(repository, "operations_run_problem_items_window", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "run problem items are unavailable for this runtime",
+            )
+        overview, progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        limit, problem, cursor, scope = self._run_problem_items_query(
+            environ, principal.principal_id, overview
+        )
+        task_id = overview.task_id
+        if task_id is None:
+            return self._response(
+                start_response,
+                200,
+                {
+                    "run_id": overview.run_id,
+                    "task_id": None,
+                    "problem": problem,
+                    "limit": limit,
+                    "items": [],
+                    "total": 0,
+                    "matching_total": 0,
+                    "dispositions": {key: 0 for key in RUN_DISPOSITIONS},
+                    "uncertain_success": 0,
+                    "truncated": False,
+                    "previous_cursor": None,
+                    "next_cursor": None,
+                    "unavailable": (
+                        progress.unavailable_reason
+                        if progress is not None and progress.unavailable_reason
+                        else "this run has no linked Task yet"
+                    ),
+                    "sideEffects": "none",
+                },
+            )
+        window = repository.operations_run_problem_items_window(
+            task_id,
+            problem,
+            limit=limit,
+            after=cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None,
+            before=(
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            ),
+        )
+        items = [
+            self._task_item_document(
+                item,
+                bounded=True,
+                checkpoint=self._checkpoint_service.summary(item.item_id, task_id=task_id),
+            )
+            for item in window.page
+        ]
+        return self._response(
+            start_response,
+            200,
+            {
+                "run_id": overview.run_id,
+                "task_id": task_id,
+                "problem": problem,
+                "limit": limit,
+                "items": items,
+                "total": window.total,
+                "matching_total": window.matching_total,
+                "dispositions": dict(window.dispositions),
+                "uncertain_success": window.uncertain_success,
+                "truncated": window.has_next,
+                "previous_cursor": self._page_cursor(
+                    "run_problem_items",
+                    window.page,
+                    window.has_previous,
+                    CursorDirection.PREVIOUS,
+                    scope=scope,
+                ),
+                "next_cursor": self._page_cursor(
+                    "run_problem_items",
                     window.page,
                     window.has_next,
                     CursorDirection.NEXT,
@@ -14430,6 +14657,7 @@ class MediaFlowApi:
             "failed_items": overview.failed_items,
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
+            "problem_types": list(overview.problem_types),
             "configuration_snapshot_id": overview.configuration_snapshot_id,
             "worker_id": overview.worker_id,
             "sideEffects": "none",

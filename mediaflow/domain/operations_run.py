@@ -78,6 +78,88 @@ ATTENTION_RUN_STATUSES = frozenset(
 )
 
 
+class OperationsRunView(StrEnum):
+    """The nine sibling task-center views (RO-1).
+
+    The first four are lifecycle partitions of the whole authorized
+    population; the last five are overlapping cross-Task recovery lists that
+    group one Task per current problem type.  They share one horizontal
+    navigation row and one authoritative query, but each is an independent
+    deep-linkable list.
+    """
+
+    ALL = "all"
+    RUNNING = "running"
+    ATTENTION = "attention"
+    ENDED = "ended"
+    RECOGNITION = "recognition"
+    METADATA = "metadata"
+    CLASSIFICATION = "classification"
+    CONFLICT = "conflict"
+    FAILURE = "failure"
+
+
+#: The four lifecycle views; the remaining views are recovery types.
+RUN_VIEW_LIFECYCLE = frozenset(
+    {
+        OperationsRunView.ALL,
+        OperationsRunView.RUNNING,
+        OperationsRunView.ATTENTION,
+        OperationsRunView.ENDED,
+    }
+)
+
+#: The five cross-Task recovery problem types, in display order.
+RECOVERY_PROBLEM_TYPES: tuple[str, ...] = (
+    "recognition",
+    "metadata",
+    "classification",
+    "conflict",
+    "failure",
+)
+
+#: A view's recovery problem type, or ``None`` for a lifecycle view.
+RUN_VIEW_PROBLEM_TYPE: Mapping[str, str | None] = MappingProxyType(
+    {
+        OperationsRunView.ALL.value: None,
+        OperationsRunView.RUNNING.value: None,
+        OperationsRunView.ATTENTION.value: None,
+        OperationsRunView.ENDED.value: None,
+        OperationsRunView.RECOGNITION.value: "recognition",
+        OperationsRunView.METADATA.value: "metadata",
+        OperationsRunView.CLASSIFICATION.value: "classification",
+        OperationsRunView.CONFLICT.value: "conflict",
+        OperationsRunView.FAILURE.value: "failure",
+    }
+)
+
+#: Chinese business labels for the nine views.
+RUN_VIEW_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "all": "全部任务",
+        "running": "进行中",
+        "attention": "需要处理",
+        "ended": "已结束",
+        "recognition": "识别恢复",
+        "metadata": "元数据恢复",
+        "classification": "分类恢复",
+        "conflict": "冲突处理",
+        "failure": "失败恢复",
+    }
+)
+
+#: Chinese business labels for the five recovery problem types.
+RECOVERY_PROBLEM_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "recognition": "识别问题",
+        "metadata": "元数据问题",
+        "classification": "分类问题",
+        "conflict": "冲突问题",
+        "failure": "失败问题",
+    }
+)
+
+
 def derive_run_status(
     job: AutomationJob | None,
     task: PersistentTask | None,
@@ -254,12 +336,19 @@ class OperationsRunOverview:
     completed_items: int | None = None
     failed_items: int | None = None
     pause_requested: bool = False
+    #: The current, real operator-attention facet.  It is derived from durable
+    #: evidence (an unresolved decision/repair/investigation, an actionable
+    #: failure, or a withheld continuation) — never from a plain status name.
+    #: A run can carry it and still be counted in its own status partition.
     attention: bool = False
+    #: The five recovery problem types this Task currently has outstanding
+    #: (recognition/metadata/classification/conflict/failure).  A Task may
+    #: carry several at once; each is derived from the same durable review /
+    #: checkpoint / continuation evidence the recovery lists read.  Empty
+    #: means the Task currently has no outstanding recovery problem.
+    problem_types: tuple[str, ...] = ()
     configuration_snapshot_id: str | None = None
     worker_id: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "attention", self.status in ATTENTION_RUN_STATUSES)
 
 
 # -- Selected-run detail: progress, items and operation records (RO-3) -------

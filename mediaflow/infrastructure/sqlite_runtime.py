@@ -157,9 +157,9 @@ from mediaflow.domain.notification import (
     NotificationEventType,
 )
 from mediaflow.domain.operations_run import (
-    ATTENTION_RUN_STATUSES,
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
+    RECOVERY_PROBLEM_TYPES,
     RUN_RECORD_KINDS,
     OperationsRunItemWindow,
     OperationsRunOverview,
@@ -168,6 +168,7 @@ from mediaflow.domain.operations_run import (
     OperationsRunRecordWindow,
     OperationsRunStatus,
     OperationsRunTrigger,
+    OperationsRunView,
     disposition_partition,
     known_command_label,
     statuses_for_disposition,
@@ -535,6 +536,9 @@ class OperationsRunsWindow:
     status_counts: dict[str, int]
     has_next: bool
     has_previous: bool
+    #: The population-scoped current-problem facet count over the same
+    #: filtered population (never just the returned page).
+    attention_count: int = 0
 
 
 _JOB_RUN_STATUS_MAP = {
@@ -5392,15 +5396,21 @@ class SQLiteTaskRepository:
         created_after: datetime | None,
         created_before: datetime | None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[list[str], list[object]]:
         """Bounded WHERE clauses shared by the page and the count queries.
 
         Every clause binds to a real persisted column of the unified
         population; nothing infers a link or a label from free-form data.
         ``attention`` is an explicit, composable population facet over the
-        overlapping attention statuses — it never replaces the status
+        derived current-problem facet — it never replaces the status
         partition and is always submitted as a first-class filter, so a
-        cursor minted with it can never be replayed without it.
+        cursor minted with it can never be replayed without it.  ``view``
+        selects one of the nine sibling views and ``problem_type`` selects
+        one cross-Task recovery list; both are real persisted-evidence
+        filters rather than client-side page filtering.
         """
 
         clauses: list[str] = []
@@ -5409,9 +5419,35 @@ class SQLiteTaskRepository:
             clauses.append("derived_status = ?")
             parameters.append(status)
         if attention:
-            attention_statuses = sorted(value.value for value in ATTENTION_RUN_STATUSES)
-            clauses.append(f"derived_status IN ({', '.join('?' for _ in attention_statuses)})")
-            parameters.extend(attention_statuses)
+            clauses.append("derived_attention = 1")
+        if view is not None:
+            if view == OperationsRunView.RUNNING.value:
+                # Real unfinished work: queued, executing, continuable-paused
+                # or waiting on internal stability.  The complement of the
+                # ended view, so the two lifecycle views partition the
+                # population without a gap.
+                clauses.append(
+                    "derived_status NOT IN ('completed', 'partial_success', 'failed', 'cancelled')"
+                )
+            elif view == OperationsRunView.ENDED.value:
+                clauses.append(
+                    "derived_status IN ('completed', 'partial_success', 'failed', 'cancelled')"
+                )
+            elif view == OperationsRunView.ATTENTION.value:
+                clauses.append("derived_attention = 1")
+            elif view in {
+                OperationsRunView.RECOGNITION.value,
+                OperationsRunView.METADATA.value,
+                OperationsRunView.CLASSIFICATION.value,
+                OperationsRunView.CONFLICT.value,
+                OperationsRunView.FAILURE.value,
+            }:
+                clauses.append(f"has_{view}_problem = 1")
+        if problem_type is not None:
+            clauses.append(f"has_{problem_type}_problem = 1")
+        if source is not None:
+            clauses.append("effective_scope = ?")
+            parameters.append(source)
         if command is not None:
             clauses.append("(effective_command = ? OR effective_command LIKE ? ESCAPE '\\')")
             parameters.extend((command, _command_family_pattern(command)))
@@ -5454,6 +5490,73 @@ class SQLiteTaskRepository:
         """
 
         media_prefix = f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}%"
+        # The exact Task identity of this run: the linked Task through the
+        # persisted Job→Task link, a transfer Task, or the standalone Task
+        # anchor.  Every problem probe below binds to this same identity.
+        task_identity = "COALESCE(runs.linked_task_id, runs.transfer_task_id, runs.anchor_id)"
+        resolved_stages = (
+            "'conflict_resolved', 'recognition_resolved', 'metadata_resolved', "
+            "'metadata_correction_resolved', 'classification_resolved', "
+            "'task_retry_requested'"
+        )
+
+        def actionable_failure(alias: str) -> str:
+            """An item whose failure still needs a human repair/investigation.
+
+            A failure that a resolved review or an already-admitted retry
+            request has moved past its terminal stage is not a current
+            failure problem: the item keeps its durable evidence but stops
+            occupying the recovery list.  A genuinely new blocker on the
+            same item still contributes through its own type.
+            """
+
+            return (
+                f"(({alias}.status IN ('failed', 'partial')"
+                f" AND {alias}.stage NOT IN ({resolved_stages}))"
+                f" OR ({alias}.status = 'pending'"
+                f" AND ({alias}.stage = 'task_retry_requested'"
+                f" OR {alias}.stage LIKE '%\\_resolved' ESCAPE '\\')))"
+            )
+
+        attention_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items attention_items"
+            f" WHERE attention_items.task_id = {task_identity}"
+            " AND (attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
+            " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm')"
+            f" OR {actionable_failure('attention_items')})) THEN 1 ELSE 0 END"
+        )
+        recognition_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items recog_items"
+            " JOIN recognition_reviews recog ON recog.item_id = recog_items.item_id"
+            f" WHERE recog_items.task_id = {task_identity}"
+            " AND recog.status = 'pending'"
+            " AND recog_items.status IN ('waiting_recognition', 'pending'))"
+            " THEN 1 ELSE 0 END"
+        )
+        metadata_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items meta_items"
+            f" WHERE meta_items.task_id = {task_identity}"
+            " AND meta_items.status IN ('waiting_metadata', 'waiting_metadata_correction'))"
+            " THEN 1 ELSE 0 END"
+        )
+        classification_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items class_items"
+            f" WHERE class_items.task_id = {task_identity}"
+            " AND class_items.status = 'waiting_classification') THEN 1 ELSE 0 END"
+        )
+        conflict_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items conflict_items"
+            " JOIN conflict_confirmations conflict ON conflict.item_id = conflict_items.item_id"
+            f" WHERE conflict_items.task_id = {task_identity}"
+            " AND conflict.status = 'pending'"
+            " AND conflict_items.status IN ('waiting_confirm', 'pending'))"
+            " THEN 1 ELSE 0 END"
+        )
+        failure_sql = (
+            "CASE WHEN EXISTS (SELECT 1 FROM task_items failure_items"
+            f" WHERE failure_items.task_id = {task_identity}"
+            f" AND {actionable_failure('failure_items')}) THEN 1 ELSE 0 END"
+        )
         document = f"""
             SELECT runs.*,
                    task_status.status AS linked_task_status,
@@ -5532,7 +5635,22 @@ class SQLiteTaskRepository:
                        WHEN runs.job_status IN ('completed', 'failed', 'cancelled') THEN
                            runs.job_status
                        ELSE 'unknown'
-                   END AS derived_status
+                   END AS derived_status,
+                   -- The current, real operator-attention facet (RO-1).  It is
+                   -- true only when this run has an outstanding decision,
+                   -- repair or investigation derived from the same durable
+                   -- review/checkpoint/continuation evidence the recovery
+                   -- lists read.  A plain queue admission is not attention.
+                   {attention_sql} AS derived_attention,
+                   -- Per-type problem evidence, each from a durable review,
+                   -- item state or continuation.  A resolved review leaves
+                   -- its item pending at a *_resolved stage, so it stops
+                   -- contributing; a new blocker contributes to its own type.
+                   {recognition_sql} AS has_recognition_problem,
+                   {metadata_sql} AS has_metadata_problem,
+                   {classification_sql} AS has_classification_problem,
+                   {conflict_sql} AS has_conflict_problem,
+                   {failure_sql} AS has_failure_problem
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
@@ -5575,6 +5693,10 @@ class SQLiteTaskRepository:
         search: str | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[OperationsRunOverview, ...]:
         """One bounded, deterministic page of the unified run population.
 
@@ -5593,6 +5715,10 @@ class SQLiteTaskRepository:
             search=search,
             created_after=created_after,
             created_before=created_before,
+            attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         return page
 
@@ -5608,6 +5734,9 @@ class SQLiteTaskRepository:
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> OperationsRunsWindow:
         """One page window plus filter-scoped totals from one read snapshot.
 
@@ -5645,6 +5774,9 @@ class SQLiteTaskRepository:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
         page_clauses = list(filter_clauses)
@@ -5670,6 +5802,10 @@ class SQLiteTaskRepository:
             f"SELECT derived_status, COUNT(*) AS value_count FROM ({document})"
             f" {filter_where} GROUP BY derived_status"
         )
+        attention_sql = (
+            f"SELECT COUNT(*) AS value_count FROM ({document})"
+            f" {filter_where}" + (" AND" if filter_clauses else " WHERE") + " derived_attention = 1"
+        )
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -5681,6 +5817,11 @@ class SQLiteTaskRepository:
                     str(row["derived_status"]): int(row["value_count"])
                     for row in self._connection.execute(status_sql, filter_parameters).fetchall()
                 }
+                attention_count = int(
+                    self._connection.execute(attention_sql, filter_parameters).fetchone()[
+                        "value_count"
+                    ]
+                )
             except BaseException:
                 self._connection.execute("ROLLBACK")
                 raise
@@ -5703,6 +5844,7 @@ class SQLiteTaskRepository:
             status_counts=counts,
             has_next=has_next,
             has_previous=has_previous,
+            attention_count=attention_count,
         )
 
     def operations_runs_page(
@@ -5717,6 +5859,9 @@ class SQLiteTaskRepository:
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
         """Page, filtered total and status counts from one consistent basis.
 
@@ -5734,6 +5879,9 @@ class SQLiteTaskRepository:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         return window.page, window.total, window.status_counts
 
@@ -5755,6 +5903,138 @@ class SQLiteTaskRepository:
                 f"SELECT * FROM ({document}) WHERE anchor_id = ? LIMIT 1", (run_id,)
             ).fetchone()
         return self._operations_run_overview(row) if row is not None else None
+
+    def operations_run_summary(self) -> dict[str, object]:
+        """The complete-authorized-population summary of the nine views (RO-1).
+
+        Every number is derived from the same deduplicated run population and
+        the same durable problem evidence the list queries read, inside one
+        SQLite read snapshot, so the summary cards, the view counts and the
+        page rows can never disagree.  Task and file totals are separate: a
+        Task may appear in several overlapping recovery lists, and each list
+        counts only the files of its own problem type, so the recovery counts
+        are deliberately not required to sum to the total Task count.
+        """
+
+        document = self._run_query_document()
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                row = self._connection.execute(
+                    f"""SELECT
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN derived_status NOT IN (
+                            'completed', 'partial_success', 'failed', 'cancelled'
+                        ) THEN 1 ELSE 0 END) AS running,
+                        SUM(derived_attention) AS attention,
+                        SUM(CASE WHEN derived_status IN (
+                            'completed', 'partial_success', 'failed', 'cancelled'
+                        ) THEN 1 ELSE 0 END) AS ended,
+                        SUM(has_recognition_problem) AS recognition,
+                        SUM(has_metadata_problem) AS metadata,
+                        SUM(has_classification_problem) AS classification,
+                        SUM(has_conflict_problem) AS conflict,
+                        SUM(has_failure_problem) AS failure
+                    FROM ({document})"""
+                ).fetchone()
+                source_rows = self._connection.execute(
+                    f"""SELECT effective_scope AS value, COUNT(*) AS value_count
+                    FROM ({document})
+                    WHERE effective_scope IS NOT NULL AND effective_scope <> ''
+                    GROUP BY effective_scope
+                    ORDER BY value_count DESC, value ASC
+                    LIMIT 51"""
+                ).fetchall()
+                files = self._run_summary_files_locked(document)
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        # The source options are distinct durable historical scopes from the
+        # complete authorized population, bounded to 50 with an honest
+        # truncation flag.  They are never derived from the current page or a
+        # read-time Active lookup.
+        sources = [
+            {"value": str(row["value"]), "label": str(row["value"])} for row in source_rows[:50]
+        ]
+        return {
+            "available": True,
+            "total": int(row["total"] or 0),
+            "running": int(row["running"] or 0),
+            "attention": int(row["attention"] or 0),
+            "ended": int(row["ended"] or 0),
+            "problem_tasks": {
+                "recognition": int(row["recognition"] or 0),
+                "metadata": int(row["metadata"] or 0),
+                "classification": int(row["classification"] or 0),
+                "conflict": int(row["conflict"] or 0),
+                "failure": int(row["failure"] or 0),
+            },
+            "problem_files": files,
+            "sources": sources,
+            "sources_truncated": len(source_rows) > 50,
+            "sideEffects": "none",
+        }
+
+    def _run_summary_files_locked(self, document: str) -> dict[str, int]:
+        """Distinct affected primary files per recovery problem type.
+
+        Every count joins through the same persisted Task identity and the
+        same durable problem predicate as its list view.  A file that carries
+        several problems is counted once in each of its type lists; attachment
+        steps are not counted here because they are not ``task_items`` rows
+        (the run detail keeps them separately).
+        """
+
+        queries = {
+            "recognition": (
+                "SELECT COUNT(DISTINCT recog_items.item_id) AS value_count"
+                " FROM task_items recog_items"
+                " JOIN recognition_reviews recog ON recog.item_id = recog_items.item_id"
+                " WHERE recog.status = 'pending'"
+                " AND recog_items.status IN ('waiting_recognition', 'pending')"
+                " AND recog_items.task_id IN (SELECT anchor_id FROM ({}))"
+            ),
+            "metadata": (
+                "SELECT COUNT(DISTINCT meta_items.item_id) AS value_count"
+                " FROM task_items meta_items"
+                " WHERE meta_items.status IN ('waiting_metadata', 'waiting_metadata_correction')"
+                " AND meta_items.task_id IN (SELECT anchor_id FROM ({}))"
+            ),
+            "classification": (
+                "SELECT COUNT(DISTINCT class_items.item_id) AS value_count"
+                " FROM task_items class_items"
+                " WHERE class_items.status = 'waiting_classification'"
+                " AND class_items.task_id IN (SELECT anchor_id FROM ({}))"
+            ),
+            "conflict": (
+                "SELECT COUNT(DISTINCT conflict_items.item_id) AS value_count"
+                " FROM task_items conflict_items"
+                " JOIN conflict_confirmations conflict ON conflict.item_id = conflict_items.item_id"
+                " WHERE conflict.status = 'pending'"
+                " AND conflict_items.status IN ('waiting_confirm', 'pending')"
+                " AND conflict_items.task_id IN (SELECT anchor_id FROM ({}))"
+            ),
+            "failure": (
+                "SELECT COUNT(DISTINCT failure_items.item_id) AS value_count"
+                " FROM task_items failure_items"
+                " WHERE ((failure_items.status IN ('failed', 'partial')"
+                " AND failure_items.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
+                " 'metadata_resolved', 'metadata_correction_resolved',"
+                " 'classification_resolved', 'task_retry_requested'))"
+                " OR (failure_items.status = 'pending'"
+                " AND (failure_items.stage = 'task_retry_requested'"
+                " OR failure_items.stage LIKE '%\\_resolved' ESCAPE '\\')))"
+                " AND failure_items.task_id IN (SELECT anchor_id FROM ({}))"
+            ),
+        }
+        counts: dict[str, int] = {}
+        for problem, query in queries.items():
+            counts[problem] = int(
+                self._connection.execute(query.format(document)).fetchone()["value_count"] or 0
+            )
+        return counts
 
     # -- Selected-run detail reads (Slice 42 RO-3) --------------------------
 
@@ -6049,6 +6329,133 @@ class SQLiteTaskRepository:
             has_next=has_next,
             has_previous=has_previous,
         )
+
+    def operations_run_problem_items_window(
+        self,
+        task_id: str,
+        problem_type: str,
+        *,
+        limit: int = 20,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> OperationsRunItemWindow:
+        """One problem-type-filtered item page from one read snapshot (RO-3).
+
+        The recovery file list must show exactly the files of its own problem
+        type, server-filtered, so the browser never has to page the whole Task
+        and filter locally.  The predicate is the same durable review/item
+        evidence the run overview derives its problem types from: a resolved
+        review no longer contributes, a new blocker of another type does.  A
+        file carrying two problems appears once in each of its type lists,
+        which is exactly the overlapping cross-Task view the specification
+        requires.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("run problem item page limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        if problem_type not in RECOVERY_PROBLEM_TYPES:
+            raise ValueError("run problem item type is invalid")
+        predicate, parameters = self._problem_item_predicate(problem_type)
+        reverse = before is not None
+        # The population count is over the problem predicate only; the cursor
+        # narrows the page window, never the reported population.
+        page_clauses = [predicate]
+        page_parameters = list(parameters)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(i.created_at > ? OR (i.created_at = ? AND i.item_id > ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append("(i.created_at < ? OR (i.created_at = ? AND i.item_id < ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        where = " AND ".join(page_clauses)
+        order = "i.created_at DESC, i.item_id DESC" if reverse else "i.created_at, i.item_id"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                matching_total = int(
+                    self._connection.execute(
+                        f"SELECT COUNT(*) AS value_count FROM task_items i "
+                        f"WHERE i.task_id = ? AND {predicate}",
+                        (task_id, *parameters),
+                    ).fetchone()["value_count"]
+                )
+                status_counts = self._run_status_counts_locked(task_id)
+                dispositions, total = disposition_partition(status_counts)
+                uncertain_success = self._run_uncertain_success_locked(task_id)
+                rows = self._connection.execute(
+                    f"SELECT i.* FROM task_items i WHERE i.task_id = ? AND {where} "
+                    f"ORDER BY {order} LIMIT ?",
+                    (task_id, *page_parameters, limit + 1),
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        return OperationsRunItemWindow(
+            page=tuple(self._item(row) for row in rows),
+            total=total,
+            matching_total=matching_total,
+            dispositions=dispositions,
+            uncertain_success=uncertain_success,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
+    @staticmethod
+    def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
+        """The exact durable predicate of one recovery problem type.
+
+        Kept next to the run document's own problem probes so the list view
+        and its file list can never disagree about what counts as an
+        outstanding problem.  ``i`` is the ``task_items`` alias of the caller.
+        """
+
+        if problem_type == "recognition":
+            return (
+                "EXISTS (SELECT 1 FROM recognition_reviews recog "
+                "WHERE recog.item_id = i.item_id AND recog.status = 'pending')"
+                " AND i.status IN ('waiting_recognition', 'pending')",
+                (),
+            )
+        if problem_type == "metadata":
+            return (
+                "i.status IN ('waiting_metadata', 'waiting_metadata_correction')",
+                (),
+            )
+        if problem_type == "classification":
+            return ("i.status = 'waiting_classification'", ())
+        if problem_type == "conflict":
+            return (
+                "EXISTS (SELECT 1 FROM conflict_confirmations conflict "
+                "WHERE conflict.item_id = i.item_id AND conflict.status = 'pending')"
+                " AND i.status IN ('waiting_confirm', 'pending')",
+                (),
+            )
+        if problem_type == "failure":
+            return (
+                "((i.status IN ('failed', 'partial')"
+                " AND i.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
+                " 'metadata_resolved', 'metadata_correction_resolved',"
+                " 'classification_resolved', 'task_retry_requested'))"
+                " OR (i.status = 'pending'"
+                " AND (i.stage = 'task_retry_requested'"
+                " OR i.stage LIKE '%\\_resolved' ESCAPE '\\')))",
+                (),
+            )
+        raise ValueError("run problem item type is invalid")
 
     def operations_run_records_window(
         self,
@@ -6383,6 +6790,9 @@ class SQLiteTaskRepository:
             # A discovery carries no Task-item population yet; an honest
             # unknown aggregate, never a fabricated progress triple.
             total_items = None
+        problem_types = tuple(
+            problem for problem in RECOVERY_PROBLEM_TYPES if bool(row[f"has_{problem}_problem"])
+        )
         return OperationsRunOverview(
             run_kind=run_kind,
             run_id=anchor_id,
@@ -6408,6 +6818,8 @@ class SQLiteTaskRepository:
             completed_items=(None if run_kind == "discovery" else row["completed_items"]),
             failed_items=(None if run_kind == "discovery" else row["failed_items"]),
             pause_requested=bool(row["pause_requested"]),
+            attention=bool(row["derived_attention"]),
+            problem_types=problem_types,
             configuration_snapshot_id=(
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
             ),

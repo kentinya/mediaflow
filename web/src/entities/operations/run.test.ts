@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ATTENTION_RUN_STATUSES,
   RUN_STATUS_LABELS,
-  isAttentionRun,
   normalizeRunInventoryPage,
   normalizeRunOverview,
   normalizeRunSummary,
@@ -32,6 +30,7 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     failed_items: 0,
     pause_requested: false,
     attention: false,
+    problem_types: [],
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
@@ -53,6 +52,31 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
     truncated: false,
     status_counts: { completed: 1 },
     attention_count: 0,
+    view: null,
+    problem: null,
+    summary: {
+      available: true,
+      total: 1,
+      running: 0,
+      attention: 0,
+      ended: 1,
+      problem_tasks: {
+        recognition: 0,
+        metadata: 0,
+        classification: 0,
+        conflict: 0,
+        failure: 0,
+      },
+      problem_files: {
+        recognition: 0,
+        metadata: 0,
+        classification: 0,
+        conflict: 0,
+        failure: 0,
+      },
+      sources: [],
+      sources_truncated: false,
+    },
     population: "unified job/task run inventory",
     sideEffects: "none",
     previous_cursor: null,
@@ -244,24 +268,53 @@ describe("run summary normalization", () => {
     expect(unknown.commandLabel).toBeNull();
   });
 
-  it("keeps the backend attention facet exact", () => {
-    expect(() =>
-      normalizeRunSummary(runDocument({ status: "failed", attention: false })),
-    ).toThrow(RunNormalizationError);
+  it("derives the attention facet from the real current-problem list", () => {
+    // A plain failed status without durable problem evidence is not attention.
+    const plain = normalizeRunSummary(
+      runDocument({ status: "failed", attention: false, problem_types: [] }),
+    );
+    expect(plain.attention).toBe(false);
+    expect(plain.problemTypes).toEqual([]);
     const attention = normalizeRunSummary(
-      runDocument({ status: "failed", attention: true }),
+      runDocument({
+        status: "failed",
+        attention: true,
+        problem_types: ["recognition"],
+      }),
     );
     expect(attention.attention).toBe(true);
-    expect(isAttentionRun("failed")).toBe(true);
-    expect(isAttentionRun("running")).toBe(false);
-    expect(isAttentionRun("completed")).toBe(false);
+    expect(attention.problemTypes).toEqual(["recognition"]);
   });
 
-  it("models every backend attention status", () => {
-    for (const status of ATTENTION_RUN_STATUSES) {
-      expect(isAttentionRun(status)).toBe(true);
-      expect(RUN_STATUS_LABELS[status]).toBeTruthy();
-    }
+  it("rejects an attention facet that disagrees with the problem list", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          status: "failed",
+          attention: false,
+          problem_types: ["failure"],
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(runDocument({ status: "failed", attention: true })),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects a duplicated or unknown problem type", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          attention: true,
+          problem_types: ["recognition", "recognition"],
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ attention: true, problem_types: ["teleported"] }),
+      ),
+    ).toThrow(RunNormalizationError);
   });
 
   it("exposes Chinese labels for every modelled state", () => {
@@ -287,7 +340,7 @@ describe("run inventory page normalization", () => {
     expect(page.nextCursor).toBe("cursor-1");
   });
 
-  it("rejects an attention count that disagrees with the modelled facet", () => {
+  it("rejects an attention count the population summary contradicts", () => {
     expect(() =>
       normalizeRunInventoryPage(
         pageDocument({
@@ -302,11 +355,40 @@ describe("run inventory page normalization", () => {
     expect(normalizeRunInventoryPage(pageDocument()).attention).toBe(false);
     const applied = normalizeRunInventoryPage(
       pageDocument({
-        items: [runDocument({ status: "failed", attention: true })],
+        items: [
+          runDocument({
+            status: "failed",
+            attention: true,
+            problem_types: ["failure"],
+          }),
+        ],
         status_counts: { failed: 1 },
         attention_count: 1,
         total: 1,
         attention: true,
+        summary: {
+          available: true,
+          total: 1,
+          running: 0,
+          attention: 1,
+          ended: 1,
+          problem_tasks: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+          problem_files: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+          sources: [],
+          sources_truncated: false,
+        },
       }),
     );
     expect(applied.attention).toBe(true);
@@ -323,8 +405,8 @@ describe("run inventory page normalization", () => {
   });
 
   it("rejects an attention echo the population does not honour", () => {
-    // The server echoed the facet over a page whose partitions are not all
-    // attention statuses: it advertised a filter it did not apply.
+    // The server echoed the facet over a page whose item does not carry it:
+    // it advertised a filter it did not apply.
     expect(() =>
       normalizeRunInventoryPage(
         pageDocument({
@@ -333,19 +415,70 @@ describe("run inventory page normalization", () => {
           attention_count: 0,
           total: 1,
           attention: true,
+          summary: {
+            available: true,
+            total: 1,
+            running: 1,
+            attention: 0,
+            ended: 0,
+            problem_tasks: {
+              recognition: 0,
+              metadata: 0,
+              classification: 0,
+              conflict: 0,
+              failure: 0,
+            },
+            problem_files: {
+              recognition: 0,
+              metadata: 0,
+              classification: 0,
+              conflict: 0,
+              failure: 0,
+            },
+            sources: [],
+            sources_truncated: false,
+          },
         }),
       ),
     ).toThrow(RunNormalizationError);
-    // Every partition is an attention status, but the facet page does not
-    // cover the whole reported population either.
+    // The facet page does not cover the whole reported population either.
     expect(() =>
       normalizeRunInventoryPage(
         pageDocument({
-          items: [runDocument({ status: "failed", attention: true })],
+          items: [
+            runDocument({
+              status: "failed",
+              attention: true,
+              problem_types: ["failure"],
+            }),
+          ],
           status_counts: { failed: 1 },
           attention_count: 1,
           total: 2,
           attention: true,
+          summary: {
+            available: true,
+            total: 2,
+            running: 0,
+            attention: 2,
+            ended: 2,
+            problem_tasks: {
+              recognition: 0,
+              metadata: 0,
+              classification: 0,
+              conflict: 0,
+              failure: 2,
+            },
+            problem_files: {
+              recognition: 0,
+              metadata: 0,
+              classification: 0,
+              conflict: 0,
+              failure: 2,
+            },
+            sources: [],
+            sources_truncated: false,
+          },
         }),
       ),
     ).toThrow(RunNormalizationError);

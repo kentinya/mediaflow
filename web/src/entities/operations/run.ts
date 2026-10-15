@@ -94,6 +94,61 @@ export const RUN_TRIGGERS = [
 ] as const;
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 
+/**
+ * The nine sibling task-center views (RO-1). The first four are lifecycle
+ * partitions; the last five are cross-Task recovery lists keyed by current
+ * problem type.
+ */
+export const RUN_VIEWS = [
+  "all",
+  "running",
+  "attention",
+  "ended",
+  "recognition",
+  "metadata",
+  "classification",
+  "conflict",
+  "failure",
+] as const;
+export type RunView = (typeof RUN_VIEWS)[number];
+
+/** The five cross-Task recovery problem types, in display order. */
+export const RUN_PROBLEM_TYPES = [
+  "recognition",
+  "metadata",
+  "classification",
+  "conflict",
+  "failure",
+] as const;
+export type RunProblemType = (typeof RUN_PROBLEM_TYPES)[number];
+
+/** Chinese labels for the nine views, in the reference navigation order. */
+export const RUN_VIEW_LABELS: Readonly<Record<RunView, string>> = {
+  all: "全部任务",
+  running: "进行中",
+  attention: "需要处理",
+  ended: "已结束",
+  recognition: "识别恢复",
+  metadata: "元数据恢复",
+  classification: "分类恢复",
+  conflict: "冲突处理",
+  failure: "失败恢复",
+};
+
+/** Chinese labels for the five recovery problem types. */
+export const RUN_PROBLEM_LABELS: Readonly<Record<RunProblemType, string>> = {
+  recognition: "识别问题",
+  metadata: "元数据问题",
+  classification: "分类问题",
+  conflict: "冲突问题",
+  failure: "失败问题",
+};
+
+/** True for one of the five cross-Task recovery views. */
+export function isRecoveryView(view: RunView): view is RunProblemType {
+  return (RUN_PROBLEM_TYPES as readonly string[]).includes(view);
+}
+
 /** Which kind of configured library owns the run's recorded scope. */
 export const RUN_LIBRARY_KINDS = ["resource", "media"] as const;
 export type RunLibraryKind = (typeof RUN_LIBRARY_KINDS)[number];
@@ -153,6 +208,8 @@ export interface RunSummary {
   readonly failedItems: number | null;
   readonly pauseRequested: boolean;
   readonly attention: boolean;
+  /** The current, real recovery problem types this Task has outstanding. */
+  readonly problemTypes: readonly RunProblemType[];
   readonly configurationSnapshotId: string | null;
   readonly workerId: string | null;
   /** The selected-run detail progress projection. Present on the overview
@@ -210,9 +267,32 @@ export interface RunInventoryPage {
   readonly truncated: boolean;
   readonly statusCounts: Readonly<Record<string, number>>;
   readonly attentionCount: number;
+  /** The selected view and problem predicate, echoed by the server. */
+  readonly view: RunView | null;
+  readonly problem: RunProblemType | null;
+  /** The complete-authorized-population summary, or an explicit unavailable
+   * shape when the runtime cannot serve it. */
+  readonly summary: RunInventorySummary;
   readonly population: string;
   readonly previousCursor: string | null;
   readonly nextCursor: string | null;
+}
+
+/** The complete-authorized-population summary of the nine views. */
+export interface RunInventorySummary {
+  readonly available: boolean;
+  readonly total: number | null;
+  readonly running: number | null;
+  readonly attention: number | null;
+  readonly ended: number | null;
+  readonly problemTasks: Readonly<Record<RunProblemType, number>>;
+  readonly problemFiles: Readonly<Record<RunProblemType, number>>;
+  /** Distinct durable historical source scopes of the population. */
+  readonly sources: readonly {
+    readonly value: string;
+    readonly label: string;
+  }[];
+  readonly sourcesTruncated: boolean;
 }
 
 export class RunNormalizationError extends Error {
@@ -450,8 +530,11 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     fail();
   }
   const attention = flag(source, "attention");
-  if (attention !== isAttentionRun(status)) {
-    // The backend attention facet and the modelled facet must agree exactly.
+  // The current-problem facet and the problem-type list must agree exactly:
+  // a run is attention precisely when it currently has at least one real
+  // problem.  A server that reports an approximate facet is rejected.
+  const problemTypes = normalizeProblemTypes(source["problem_types"]);
+  if (attention !== problemTypes.length > 0) {
     fail();
   }
   const jobId = optionalText(source, "job_id");
@@ -480,6 +563,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     failedItems,
     pauseRequested: flag(source, "pause_requested"),
     attention,
+    problemTypes,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     workerId: optionalText(source, "worker_id"),
     progress:
@@ -489,6 +573,36 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     lifecycle,
     continuation,
   };
+}
+
+/**
+ * Normalize the bounded current-problem type list of one run.
+ *
+ * Each entry must be one of the five modelled types, appear at most once and
+ * keep the canonical display order, so a malformed or duplicated list fails
+ * the whole response closed instead of rendering an approximate problem set.
+ */
+function normalizeProblemTypes(value: unknown): readonly RunProblemType[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > RUN_PROBLEM_TYPES.length) {
+    return fail();
+  }
+  const seen: RunProblemType[] = [];
+  for (const entry of value) {
+    let problem: RunProblemType;
+    try {
+      problem = normalizeEnum(entry, "problem_types", RUN_PROBLEM_TYPES);
+    } catch {
+      return fail();
+    }
+    if (seen.includes(problem)) {
+      return fail();
+    }
+    seen.push(problem);
+  }
+  return seen;
 }
 
 function normalizeRunContinuation(value: unknown): RunContinuation | null {
@@ -636,13 +750,17 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
   // The submitted attention facet echo is a required boolean: an omitted or
   // coerced flag is malformed data, never an implicit "no filter".
   const attention = flag(source, "attention");
-  // The attention count is the overlapping facet over the same population:
-  // it must equal the sum of the modelled attention partitions, never an
-  // invented separate total.
-  const modelledAttention = ATTENTION_RUN_STATUSES.reduce(
-    (sum, value) => sum + (statusCounts[value] ?? 0),
-    0,
-  );
+  const view = normalizeRunViewEcho(source["view"]);
+  const problem = normalizeRunProblemEcho(source["problem"]);
+  if (view !== null && isRecoveryView(view) && problem !== view) {
+    // A recovery view owns its problem predicate; the echoed problem must
+    // match it or the population the page describes is ambiguous.
+    fail();
+  }
+  const summary = normalizeRunSummarySummary(source["summary"]);
+  // The attention count is the population-scoped current-problem facet. When
+  // the facet is applied the whole filtered total IS that population; when it
+  // is not, the count may legitimately exceed the returned page.
   const reportedAttentionCount = (() => {
     try {
       return normalizeBoundedCount(
@@ -653,9 +771,6 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
       return fail();
     }
   })();
-  if (reportedAttentionCount !== modelledAttention) {
-    fail();
-  }
   const boundedTotal = (() => {
     try {
       return normalizeBoundedCount(source["total"], "total");
@@ -663,21 +778,21 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
       return fail();
     }
   })();
-  if (attention) {
-    // A server that echoes the applied facet must really have applied it:
-    // every partition belongs to the overlapping attention population and the
-    // whole filtered total IS that population. Echoing `attention: true` over
-    // an unfiltered page would advertise a filter the table did not apply.
-    for (const key of Object.keys(statusCounts)) {
-      if (!(ATTENTION_RUN_STATUSES as readonly string[]).includes(key)) {
-        fail();
-      }
-    }
-    if (reportedAttentionCount !== boundedTotal) {
-      fail();
-    }
+  if (attention && reportedAttentionCount !== boundedTotal) {
+    // A server that echoes the applied facet must really have applied it: the
+    // whole filtered total IS the overlapping attention population.
+    fail();
+  }
+  if (reportedAttentionCount > boundedTotal) {
+    // The attention facet is a subset of the filtered population, so its
+    // count can never exceed the total it is drawn from.
+    fail();
   }
   const pageItems = items.map((item) => normalizeRunSummary(item));
+  if (attention && pageItems.some((item) => !item.attention)) {
+    // Every returned item must really carry the applied facet.
+    fail();
+  }
   // The filtered total is at least the current page size, never below it.
   if (boundedTotal < pageItems.length) {
     fail();
@@ -700,10 +815,145 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
     total: boundedTotal,
     truncated: flag(source, "truncated"),
     statusCounts,
-    attentionCount: modelledAttention,
+    attentionCount: reportedAttentionCount,
+    view,
+    problem,
+    summary,
     population: text(source, "population"),
     previousCursor: optionalText(source, "previous_cursor"),
     nextCursor: optionalText(source, "next_cursor"),
+  };
+}
+
+function normalizeRunViewEcho(value: unknown): RunView | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return normalizeEnum(value, "view", RUN_VIEWS);
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeRunProblemEcho(value: unknown): RunProblemType | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return normalizeEnum(value, "problem", RUN_PROBLEM_TYPES);
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeProblemCounts(
+  value: unknown,
+  field: string,
+): Readonly<Record<RunProblemType, number>> {
+  const source = readRecord(value, field);
+  const counts: Record<string, number> = {};
+  for (const problem of RUN_PROBLEM_TYPES) {
+    try {
+      counts[problem] = normalizeBoundedCount(
+        source[problem],
+        `${field}.${problem}`,
+      );
+    } catch {
+      return fail();
+    }
+  }
+  return counts as Readonly<Record<RunProblemType, number>>;
+}
+
+function normalizeRunSummarySummary(value: unknown): RunInventorySummary {
+  if (value === undefined || value === null) {
+    return {
+      available: false,
+      total: null,
+      running: null,
+      attention: null,
+      ended: null,
+      problemTasks: emptyProblemCounts(),
+      problemFiles: emptyProblemCounts(),
+      sources: [],
+      sourcesTruncated: false,
+    };
+  }
+  const source = readRecord(value, "summary");
+  const available = flag(source, "available");
+  if (!available) {
+    return {
+      available: false,
+      total: null,
+      running: null,
+      attention: null,
+      ended: null,
+      problemTasks: emptyProblemCounts(),
+      problemFiles: emptyProblemCounts(),
+      sources: [],
+      sourcesTruncated: false,
+    };
+  }
+  const count = (field: string): number => {
+    try {
+      return normalizeBoundedCount(source[field], `summary.${field}`);
+    } catch {
+      return fail();
+    }
+  };
+  return {
+    available: true,
+    total: count("total"),
+    running: count("running"),
+    attention: count("attention"),
+    ended: count("ended"),
+    problemTasks: normalizeProblemCounts(
+      source["problem_tasks"],
+      "problem_tasks",
+    ),
+    problemFiles: normalizeProblemCounts(
+      source["problem_files"],
+      "problem_files",
+    ),
+    sources: normalizeSourceOptions(source["sources"]),
+    sourcesTruncated: flag(source, "sources_truncated"),
+  };
+}
+
+function normalizeSourceOptions(
+  value: unknown,
+): readonly { readonly value: string; readonly label: string }[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 50) {
+    return fail();
+  }
+  return value.map((entry) => {
+    const source = readRecord(entry, "summary.sources");
+    return {
+      value: normalizeBoundedText(
+        source["value"],
+        "summary.sources.value",
+        512,
+      ),
+      label: normalizeBoundedText(
+        source["label"],
+        "summary.sources.label",
+        512,
+      ),
+    };
+  });
+}
+
+function emptyProblemCounts(): Readonly<Record<RunProblemType, number>> {
+  return {
+    recognition: 0,
+    metadata: 0,
+    classification: 0,
+    conflict: 0,
+    failure: 0,
   };
 }
 

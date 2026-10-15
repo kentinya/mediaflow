@@ -55,9 +55,32 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     failed_items: 0,
     pause_requested: false,
     attention: false,
+    problem_types: [],
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function summaryDocument(overrides: Record<string, unknown> = {}) {
+  const zero = {
+    recognition: 0,
+    metadata: 0,
+    classification: 0,
+    conflict: 0,
+    failure: 0,
+  };
+  return {
+    available: true,
+    total: 1,
+    running: 1,
+    attention: 0,
+    ended: 0,
+    problem_tasks: zero,
+    problem_files: zero,
+    sources: [],
+    sources_truncated: false,
     ...overrides,
   };
 }
@@ -76,6 +99,9 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
     truncated: false,
     status_counts: { running: 1 },
     attention_count: 0,
+    view: null,
+    problem: null,
+    summary: summaryDocument(),
     population:
       "unified job/task run inventory, deduplicated by explicit task linkage",
     sideEffects: "none",
@@ -185,6 +211,7 @@ describe("Operations run inventory landing", () => {
             command_label: "预览",
             status: "pending",
             attention: true,
+            problem_types: ["failure"],
             source_scope: null,
             trigger: "scheduled",
             definition_id: "def-1",
@@ -196,11 +223,32 @@ describe("Operations run inventory landing", () => {
             recognized_command: false,
             status: "failed",
             attention: true,
+            problem_types: ["failure"],
           }),
         ],
         status_counts: { running: 1, pending: 1, failed: 1 },
         attention_count: 2,
         total: 3,
+        summary: summaryDocument({
+          total: 3,
+          running: 2,
+          attention: 2,
+          ended: 1,
+          problem_tasks: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 2,
+          },
+          problem_files: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 2,
+          },
+        }),
       }),
       requested,
     );
@@ -216,10 +264,14 @@ describe("Operations run inventory landing", () => {
     expect(screen.getByText(/未识别的历史命令/)).toBeVisible();
     // Missing historical scope evidence is explicitly unavailable.
     expect(screen.getByText("不可用")).toBeVisible();
-    // The attention card labels its overlapping facet semantics.
+    // The nine sibling views are present on one navigation row.
+    expect(screen.getByRole("button", { name: "全部任务" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "需要处理" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "失败恢复" })).toBeVisible();
+    // The summary advertises the whole-population attention count.
     expect(
-      screen.getByText(/需要关注（与状态计数重叠，不是独立终态）/),
-    ).toBeVisible();
+      screen.getAllByRole("button", { name: /需要处理/ }).length,
+    ).toBeGreaterThan(0);
     // Worker readiness and manual entries stay discoverable.
     expect((await screen.findAllByText(/Worker 就绪/)).length).toBeGreaterThan(
       0,
@@ -497,15 +549,42 @@ describe("Operations run inventory landing", () => {
     expect(screen.getByText(/共 3 条/)).toBeVisible();
   });
 
-  it("applies the attention facet its card advertises and never disables it", async () => {
+  it("switches to the 需要处理 view through the server and never disables it", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
     const attentionPage = pageDocument({
-      items: [runDocument({ status: "failed", attention: true })],
+      items: [
+        runDocument({
+          status: "failed",
+          attention: true,
+          problem_types: ["failure"],
+        }),
+      ],
       status_counts: { failed: 1 },
       attention_count: 1,
       total: 1,
       attention: true,
+      view: "attention",
+      summary: summaryDocument({
+        total: 2,
+        running: 1,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+      }),
     });
     const fullPage = pageDocument({
       items: [
@@ -515,18 +594,39 @@ describe("Operations run inventory landing", () => {
           task_id: "task-002",
           status: "failed",
           attention: true,
+          problem_types: ["failure"],
         }),
       ],
       status_counts: { running: 1, failed: 1 },
       attention_count: 1,
       total: 2,
+      summary: summaryDocument({
+        total: 2,
+        running: 1,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+      }),
     });
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(
-          url.includes("attention=true") ? attentionPage : fullPage,
+          url.includes("view=attention") ? attentionPage : fullPage,
         );
       }
       if (url === "/api/v1/workers/readiness") {
@@ -543,61 +643,188 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
-    const card = await screen.findByRole("button", {
-      name: /需要关注（与状态计数重叠，不是独立终态）/,
-    });
-    // The advertised facet is an operable control, never a disabled label.
-    expect(card).toBeEnabled();
-    expect(card).not.toBeDisabled();
-    expect(card).toHaveAttribute("aria-pressed", "false");
+    const tab = await screen.findByRole("button", { name: "需要处理" });
+    // The advertised view is an operable control, never a disabled label.
+    expect(tab).toBeEnabled();
+    expect(tab).not.toHaveAttribute("aria-current", "page");
 
-    const unfacetedReads = () =>
-      requested.filter(
-        (url) =>
-          url.startsWith("/api/v1/operations/runs?") &&
-          !url.includes("attention=true"),
-      ).length;
-
-    const beforeFacet = unfacetedReads();
-    await user.click(card);
+    await user.click(tab);
     await waitFor(() =>
-      expect(router.history.location.search).toContain("attention=true"),
+      expect(router.history.location.search).toContain("view=attention"),
     );
     await waitFor(() =>
-      expect(requested.some((url) => url.includes("attention=true"))).toBe(
+      expect(requested.some((url) => url.includes("view=attention"))).toBe(
         true,
       ),
     );
-    // The facet becomes its own server-side population read; the unfiltered
-    // read is not repeated while the facet is submitted.
-    expect(unfacetedReads()).toBe(beforeFacet);
-    // The card reads as pressed while its facet is submitted. The count
-    // cards disappear for one render while the facet read is in flight, so
-    // this waits for the re-rendered card instead of reading it synchronously.
+    // The active view reads as the current page.
     expect(
-      await screen.findByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
-      }),
-    ).toHaveAttribute("aria-pressed", "true");
+      await screen.findByRole("button", { name: "需要处理" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("table")).toBeVisible();
 
-    await user.click(
-      screen.getByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
+    // Switching back to 全部任务 restores the unfiltered population.
+    await user.click(screen.getByRole("button", { name: "全部任务" }));
+    await waitFor(() =>
+      expect(router.history.location.search).not.toContain("view=attention"),
+    );
+    expect(await screen.findByText("task-002")).toBeVisible();
+  });
+
+  it("opens the exact Task/type problem file list from a recovery row", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    const recoveryPage = pageDocument({
+      items: [
+        runDocument({
+          run_id: "task-002",
+          task_id: "task-002",
+          status: "failed",
+          attention: true,
+          problem_types: ["failure"],
+        }),
+      ],
+      status_counts: { failed: 1 },
+      attention_count: 1,
+      total: 1,
+      view: "failure",
+      problem: "failure",
+      summary: summaryDocument({
+        total: 1,
+        running: 0,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 2,
+        },
       }),
+    });
+    const problemItems = {
+      run_id: "task-002",
+      task_id: "task-002",
+      problem: "failure",
+      limit: 20,
+      items: [
+        {
+          item_id: "item-a",
+          task_id: "task-002",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "Movies/a.mkv",
+          status: "failed",
+          stage: "metadata",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          failure: {
+            category: "provider_failure",
+            message: "metadata lookup did not complete",
+            durableState: "failed outcome is durable",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "inspect the Provider and retry metadata analysis",
+          },
+          checkpoint: {
+            status: "failed",
+            stage: "metadata",
+            raw_stage: "metadata",
+            blocker_kind: null,
+            blocker_id: null,
+            effect_certainty: "none",
+            retry_safety: "safe",
+            permitted_action_ids: ["retry"],
+            refusal_reason: null,
+            checkpoint_version: "a".repeat(64),
+            recovery_request: null,
+            recovery_continuation: null,
+          },
+        },
+      ],
+      total: 3,
+      matching_total: 1,
+      dispositions: {
+        pending: 1,
+        active: 0,
+        waiting: 0,
+        success: 1,
+        skipped: 0,
+        failed_partial: 1,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes("/problem-items")) {
+        return jsonResponse(problemItems);
+      }
+      if (url.startsWith("/api/v1/operations/runs")) {
+        return jsonResponse(recoveryPage);
+      }
+      if (url === "/api/v1/workers/readiness") {
+        return jsonResponse(readinessPayload());
+      }
+      if (url === "/api/v1/management/readiness") {
+        return jsonResponse(managementReadinessPayload());
+      }
+      if (url.startsWith("/api/v1/operations/manual-actions")) {
+        return jsonResponse(manualActionsPayload());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?view=failure");
+
+    const table = await screen.findByRole("table");
+    await user.click(within(table).getByRole("button", { name: "处理失败" }));
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("problemRun=task-002"),
+    );
+    expect(router.history.location.search).toContain("view=failure");
+    const panel = await screen.findByRole("region", { name: "问题文件处理" });
+    expect(within(panel).getByText(/失败问题 — 文件清单/)).toBeVisible();
+    // The exact Task/type file list is server-filtered: only the failure file
+    // appears, with its durable reason and next step.
+    expect(
+      (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    expect(within(panel).getByText(/匹配 1 个文件/)).toBeVisible();
+    expect(within(panel).getByText(/无存储变更/)).toBeVisible();
+    expect(within(panel).getAllByText(/retry/).length).toBeGreaterThan(0);
+    expect(
+      requested.some(
+        (url) =>
+          url.includes("problem-items") && url.includes("problem=failure"),
+      ),
+    ).toBe(true);
+    // Returning to the list preserves the exact view/filter context.
+    await user.click(
+      within(panel).getByRole("button", { name: "返回任务列表" }),
     );
     await waitFor(() =>
-      expect(router.history.location.search).not.toContain("attention=true"),
+      expect(router.history.location.search).not.toContain("problemRun"),
     );
-    // Clearing the facet restores the full population (a still-fresh bounded
-    // read may be reused instead of re-fetched), and the card reads as
-    // unpressed again.
-    expect(await screen.findByText("task-002")).toBeVisible();
-    expect(
-      await screen.findByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
-      }),
-    ).toHaveAttribute("aria-pressed", "false");
+    expect(router.history.location.search).toContain("view=failure");
   });
 
   it("renders an honest scan-error run instead of rejecting the page", async () => {
