@@ -156,20 +156,6 @@ class PreviewAnalysisService:
                 snapshot_id=snapshot_id,
                 snapshot_digest=snapshot_digest,
             )
-        open_analysis = self._find_open(
-            actor=actor,
-            kind=PreviewAnalysisKind.DEFINITION,
-            definition_id=definition_id,
-            definition_fingerprint=fingerprint,
-            intent_id=None,
-            snapshot_id=snapshot_id,
-            snapshot_digest=snapshot_digest,
-        )
-        if open_analysis is not None:
-            # This new request identity converged on the already durable open
-            # work, so it stays readable by its own ID for reconciliation.
-            self._bind_request(request_id, open_analysis)
-            return open_analysis
         now = self._clock()
         analysis = PreviewAnalysis(
             analysis_id=str(uuid4()),
@@ -189,7 +175,12 @@ class PreviewAnalysisService:
             definition_fingerprint=fingerprint,
             admission_request_id=request_id,
         )
-        return self._create(analysis)
+        # The atomic admission resolves the reusable open context and the
+        # accepted request association together inside one durable transaction,
+        # so two equivalent tabs that both observed "no open work" still
+        # converge on one analysis instead of each creating its own
+        # (B43.2-20261015-1).
+        return self._admit(analysis)
 
     def admit_manual(
         self,
@@ -245,26 +236,9 @@ class PreviewAnalysisService:
                 "manual intent version is stale; no analysis was admitted",
                 details={"currentVersion": intent.version},
             )
-        open_analysis = self._find_open(
-            actor=actor,
-            kind=PreviewAnalysisKind.MANUAL,
-            definition_id=None,
-            definition_fingerprint=None,
-            intent_id=intent_id,
-            intent_version=intent.version,
-            snapshot_id=intent.snapshot_id,
-            snapshot_digest=intent.snapshot_digest,
-        )
-        if open_analysis is not None:
-            # The open-work match includes the complete manual intent binding:
-            # a corrected intent version is a *different* analysis, so it is
-            # never silently answered by the earlier version's queued work.
-            # This new request identity converged on the durable work, so it
-            # stays readable by its own ID for reconciliation: an ordinary
-            # repeated/two-tab manual Preview must reconcile to the exact
-            # existing analysis instead of failing its second admission.
-            self._bind_request(request_id, open_analysis)
-            return open_analysis
+        # As above: the atomic admission decides reuse versus creation under one
+        # durable transaction, so two equivalent manual tabs never create two
+        # analyses for one intent version (B43.2-20261015-1).
         now = self._clock()
         analysis = PreviewAnalysis(
             analysis_id=str(uuid4()),
@@ -284,7 +258,7 @@ class PreviewAnalysisService:
             intent_version=intent.version,
             admission_request_id=request_id,
         )
-        return self._create(analysis)
+        return self._admit(analysis)
 
     # ------------------------------------------------------------------
     # Readback
@@ -678,7 +652,20 @@ class PreviewAnalysisService:
             "the manual Preview service cannot load an exact admission intent"
         )
 
-    def _create(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
+    def _admit(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
+        """Atomically resolve request identity, reusable open work and creation.
+
+        The repository's atomic admission is the authority: it resolves the
+        accepted request association and the reusable open context inside one
+        durable transaction, so two equivalent admissions cannot create two
+        analyses (B43.2-20261015-1).  A repository double that only exposes the
+        older ``create_preview_analysis`` writer still works through the bounded
+        conflict reconciliation fallback.
+        """
+
+        admit = getattr(self._repository, "admit_preview_analysis", None)
+        if callable(admit):
+            return admit(analysis)
         creator = getattr(self._repository, "create_preview_analysis", None)
         if not callable(creator):
             raise PreviewAnalysisUnavailable("durable preview analysis storage is unavailable")
@@ -892,69 +879,6 @@ class PreviewAnalysisService:
                 details={"requestIdReuse": True},
             )
         return requested
-
-    def _find_open(
-        self,
-        *,
-        actor: str,
-        kind: PreviewAnalysisKind,
-        definition_id: str | None,
-        definition_fingerprint: str | None,
-        intent_id: str | None,
-        intent_version: int | None = None,
-        snapshot_id: str,
-        snapshot_digest: str,
-    ) -> PreviewAnalysis | None:
-        finder = getattr(self._repository, "find_open_preview_analysis", None)
-        if not callable(finder):
-            return None
-        return finder(
-            actor=actor,
-            kind=kind,
-            definition_id=definition_id,
-            definition_fingerprint=definition_fingerprint,
-            intent_id=intent_id,
-            intent_version=intent_version,
-            configuration_snapshot_id=snapshot_id,
-            configuration_snapshot_digest=snapshot_digest,
-        )
-
-    def _bind_request(self, admission_request_id: str | None, analysis: PreviewAnalysis) -> None:
-        """Keep every accepted request identity durably readable.
-
-        When a request *converges* on already-open work (its equivalent
-        admission exists), that request's own identity is bound to the same
-        durable record, so a lost response for this request reconciles by its
-        own ID instead of a bounded absence.  A request that created its own
-        row is already readable through the row's own column.
-
-        The binder enforces the complete principal/request invariant (B43.2-R5-1):
-        when another writer has already durably claimed this identity for
-        different work, the bind refuses and so must this admission — the
-        convergence outcome is a bounded, actionable refusal, never a second
-        ``accepted`` answer for one request identity.
-        """
-
-        if admission_request_id is None:
-            return
-        binder = getattr(self._repository, "bind_admission_request", None)
-        if not callable(binder):
-            return
-        try:
-            binder(
-                actor=analysis.actor,
-                admission_request_id=admission_request_id,
-                kind="preview-analysis",
-                target_id=analysis.analysis_id,
-                created_at=self._clock(),
-            )
-        except PreviewAnalysisConflict as error:
-            raise PreviewAnalysisConflict(
-                "this analysis request identity is already bound to different "
-                "durable work, so this admission was not accepted; reconcile the "
-                "original request by its ID or start with a new request identity",
-                details={"requestIdReuse": True},
-            ) from error
 
     def _require_version(self, analysis_id: str, expected_version: int) -> PreviewAnalysis:
         if isinstance(expected_version, bool) or not isinstance(expected_version, int):

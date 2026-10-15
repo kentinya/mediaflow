@@ -646,6 +646,29 @@ def _valid_admission_request_id(value: object) -> bool:
     return str(parsed) == value
 
 
+def _same_analysis_context(left: PreviewAnalysis, right: PreviewAnalysis) -> bool:
+    """Whether two analyses describe the same reusable admitted context.
+
+    Used by atomic admission to decide whether a request identity that already
+    names durable work is an unchanged retry (read that record back) or a
+    changed binding (refuse).  The complete binding is compared: actor, kind,
+    immutable snapshot pin and either the definition id/fingerprint or the
+    manual intent id/version.  A corrected intent version or a republished
+    definition is therefore never silently answered by earlier work.
+    """
+
+    return (
+        left.actor == right.actor
+        and left.kind is right.kind
+        and left.configuration_snapshot_id == right.configuration_snapshot_id
+        and left.configuration_snapshot_digest == right.configuration_snapshot_digest
+        and left.definition_id == right.definition_id
+        and left.definition_fingerprint == right.definition_fingerprint
+        and left.intent_id == right.intent_id
+        and left.intent_version == right.intent_version
+    )
+
+
 class SQLiteTaskRepository:
     """Durable task/result/lock adapter sharing the configured runtime SQLite database."""
 
@@ -10676,111 +10699,118 @@ class SQLiteTaskRepository:
     # ------------------------------------------------------------------
 
     def create_preview_analysis(self, analysis: PreviewAnalysis) -> PreviewAnalysis:
-        """Persist one admitted exact analysis, rejecting a duplicate identity.
+        """Persist one admitted exact analysis under the atomic admission rule.
 
-        The request-identity check and the insert commit inside one
-        ``BEGIN IMMEDIATE`` transaction, so two concurrent admissions for the
-        *same* principal/request identity cannot both observe "not found" and
-        then each create a durable analysis.  The loser raises the bounded
-        conflict and re-reads the one record the winner actually created
-        (B43.2-R4-2); application-level readback stays the normal fast path.
+        Retained as the single durable writer for callers that already built a
+        candidate; it delegates to :meth:`admit_preview_analysis` so request
+        identity, reusable open context and creation are resolved together.
         """
 
-        if not isinstance(analysis, PreviewAnalysis):
+        return self.admit_preview_analysis(analysis)
+
+    def _insert_preview_analysis_locked(self, analysis: PreviewAnalysis) -> None:
+        """Insert one analysis row; the caller owns the surrounding transaction."""
+
+        self._connection.execute(
+            "INSERT INTO preview_analyses "
+            "(analysis_id, kind, actor, configuration_snapshot_id, "
+            "configuration_snapshot_digest, status, version, progress_json, "
+            "definition_id, definition_fingerprint, intent_id, intent_version, "
+            "preview_id, error, cancel_requested, pause_requested, claim_worker_id, "
+            "claim_token, claim_expires_at, attempts, admission_request_id, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "?, ?)",
+            (
+                analysis.analysis_id,
+                analysis.kind.value,
+                analysis.actor,
+                analysis.configuration_snapshot_id,
+                analysis.configuration_snapshot_digest,
+                analysis.status.value,
+                analysis.version,
+                json.dumps(analysis.progress.document(), ensure_ascii=False, sort_keys=True),
+                analysis.definition_id,
+                analysis.definition_fingerprint,
+                analysis.intent_id,
+                analysis.intent_version,
+                analysis.preview_id,
+                analysis.error,
+                int(analysis.cancel_requested),
+                int(analysis.pause_requested),
+                analysis.claim_worker_id,
+                analysis.claim_token,
+                (analysis.claim_expires_at.isoformat() if analysis.claim_expires_at else None),
+                analysis.attempts,
+                analysis.admission_request_id,
+                analysis.created_at.isoformat(),
+                analysis.updated_at.isoformat(),
+            ),
+        )
+
+    def admit_preview_analysis(self, candidate: PreviewAnalysis) -> PreviewAnalysis:
+        """Atomically resolve the request identity, reusable open context and creation.
+
+        Equivalent concurrent admissions for the same exact open context — two
+        browser tabs submitting distinct request identities for one definition
+        pin or one manual intent/version — must never create two durable
+        analyses.  The open-context resolution and the create/alias write commit
+        inside one ``BEGIN IMMEDIATE`` transaction, so a barrier between the
+        application's open-work read and its create cannot split the decision
+        (B43.2-20261015-1).  The application already built the candidate and
+        resolved the immutable pin; all Storage/Provider calls stay outside this
+        short transaction.
+
+        Ordering inside the transaction:
+
+        1. A request identity already durable in either family is resolved to
+           its one record; a matching context reads it back, a changed context
+           refuses, and ambiguous evidence refuses rather than guessing.
+        2. Otherwise exactly one reusable open analysis for the complete context
+           is reused and this request's alias is written to it.  More than one
+           open match refuses as ambiguous.
+        3. Otherwise the candidate row is inserted.
+        """
+
+        if not isinstance(candidate, PreviewAnalysis):
             raise ValueError("preview analysis projection is required")
         with self._lock:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
-                if analysis.admission_request_id is not None:
-                    request_match = self._connection.execute(
-                        "SELECT analysis_id FROM preview_analyses "
-                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                        (analysis.actor, analysis.admission_request_id),
-                    ).fetchone()
-                    if request_match is not None:
+                if candidate.admission_request_id is not None:
+                    existing_id = self._resolve_request_identity_locked(
+                        candidate.actor, candidate.admission_request_id
+                    )
+                    if existing_id is not None:
+                        record = self._load_preview_analysis_locked(existing_id)
+                        if record is not None and _same_analysis_context(record, candidate):
+                            self._connection.commit()
+                            return record
                         raise PreviewAnalysisConflict(
-                            "this preview analysis admission request identity already exists",
-                            details={"analysisId": request_match["analysis_id"]},
+                            "this analysis request ID is already bound to different "
+                            "analysis context",
+                            details={"requestIdReuse": True},
                         )
-                    # The record's own column of the *other* family is also a
-                    # durable fact naming this request identity (B43.2-R5-1):
-                    # one identity names exactly one admission, so a request
-                    # already claimed by a media discovery cannot become a
-                    # second, cross-family analysis.
-                    discovery_match = self._connection.execute(
-                        "SELECT discovery_id FROM media_discoveries "
-                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                        (analysis.actor, analysis.admission_request_id),
-                    ).fetchone()
-                    if discovery_match is not None:
-                        raise PreviewAnalysisConflict(
-                            "this preview analysis admission request identity is "
-                            "already bound to different durable work",
-                            details={"discoveryId": discovery_match["discovery_id"]},
+                open_ids = self._open_analysis_ids_locked(candidate)
+                if len(open_ids) > 1:
+                    raise PreviewAnalysisConflict(
+                        "more than one durable analysis is open for this exact context, "
+                        "so a reusable one cannot be proved",
+                        details={"ambiguousOpenWork": True},
+                    )
+                if open_ids:
+                    analysis_id = open_ids[0]
+                    if candidate.admission_request_id is not None:
+                        self._insert_request_binding_locked(
+                            candidate.actor,
+                            candidate.admission_request_id,
+                            "preview-analysis",
+                            analysis_id,
+                            candidate.created_at,
                         )
-                    binding_match = self._connection.execute(
-                        "SELECT kind, target_id FROM admission_request_bindings "
-                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                        (analysis.actor, analysis.admission_request_id),
-                    ).fetchone()
-                    if binding_match is not None:
-                        if (
-                            binding_match["kind"] == "preview-analysis"
-                            and binding_match["target_id"] == analysis.analysis_id
-                        ):
-                            # The identity already names exactly this record;
-                            # the insert below would duplicate it.
-                            raise PreviewAnalysisConflict(
-                                "this preview analysis admission request identity already exists",
-                                details={"analysisId": binding_match["target_id"]},
-                            )
-                        raise PreviewAnalysisConflict(
-                            "this preview analysis admission request identity is "
-                            "already bound to different durable work",
-                            details={"analysisId": binding_match["target_id"]},
-                        )
-                self._connection.execute(
-                    "INSERT INTO preview_analyses "
-                    "(analysis_id, kind, actor, configuration_snapshot_id, "
-                    "configuration_snapshot_digest, status, version, progress_json, "
-                    "definition_id, definition_fingerprint, intent_id, intent_version, "
-                    "preview_id, error, cancel_requested, pause_requested, claim_worker_id, "
-                    "claim_token, claim_expires_at, attempts, admission_request_id, "
-                    "created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?)",
-                    (
-                        analysis.analysis_id,
-                        analysis.kind.value,
-                        analysis.actor,
-                        analysis.configuration_snapshot_id,
-                        analysis.configuration_snapshot_digest,
-                        analysis.status.value,
-                        analysis.version,
-                        json.dumps(
-                            analysis.progress.document(), ensure_ascii=False, sort_keys=True
-                        ),
-                        analysis.definition_id,
-                        analysis.definition_fingerprint,
-                        analysis.intent_id,
-                        analysis.intent_version,
-                        analysis.preview_id,
-                        analysis.error,
-                        int(analysis.cancel_requested),
-                        int(analysis.pause_requested),
-                        analysis.claim_worker_id,
-                        analysis.claim_token,
-                        (
-                            analysis.claim_expires_at.isoformat()
-                            if analysis.claim_expires_at
-                            else None
-                        ),
-                        analysis.attempts,
-                        analysis.admission_request_id,
-                        analysis.created_at.isoformat(),
-                        analysis.updated_at.isoformat(),
-                    ),
-                )
+                    self._connection.commit()
+                    return self._load_preview_analysis_locked(analysis_id)
+                self._insert_preview_analysis_locked(candidate)
                 self._connection.commit()
             except PreviewAnalysisConflict:
                 self._connection.rollback()
@@ -10793,7 +10823,112 @@ class SQLiteTaskRepository:
             except BaseException:
                 self._connection.rollback()
                 raise
-        return analysis
+        return candidate
+
+    def _resolve_request_identity_locked(self, actor: str, admission_request_id: str) -> str | None:
+        """The one durable target this request identity names, or ``None``.
+
+        The binding table and both families' own ``admission_request_id``
+        columns are durable facts naming the same identity; when they disagree,
+        or more than one candidate exists on either side, the original admission
+        cannot be proved and the honest outcome is a bounded conflict rather
+        than an arbitrary row.  The caller owns the transaction.
+        """
+
+        bindings = self._connection.execute(
+            "SELECT kind, target_id FROM admission_request_bindings "
+            "WHERE actor=? AND admission_request_id=? LIMIT 2",
+            (actor, admission_request_id),
+        ).fetchall()
+        analyses = self._connection.execute(
+            "SELECT analysis_id FROM preview_analyses "
+            "WHERE actor=? AND admission_request_id=? LIMIT 2",
+            (actor, admission_request_id),
+        ).fetchall()
+        discoveries = self._connection.execute(
+            "SELECT discovery_id FROM media_discoveries "
+            "WHERE actor=? AND admission_request_id=? LIMIT 2",
+            (actor, admission_request_id),
+        ).fetchall()
+        if len(bindings) > 1 or len(analyses) > 1 or len(discoveries) > 1:
+            raise PreviewAnalysisConflict(
+                "this analysis request ID matches more than one durable record, so its "
+                "original admission cannot be proved",
+                details={"requestIdAmbiguous": True},
+            )
+        targets = {row["target_id"] for row in bindings}
+        targets |= {row["analysis_id"] for row in analyses}
+        targets |= {row["discovery_id"] for row in discoveries}
+        if len(targets) > 1:
+            raise PreviewAnalysisConflict(
+                "this analysis request ID matches more than one durable record, so its "
+                "original admission cannot be proved",
+                details={"requestIdAmbiguous": True},
+            )
+        return next(iter(targets)) if targets else None
+
+    def _open_analysis_ids_locked(self, candidate: PreviewAnalysis) -> list[str]:
+        """Every durable *open* analysis for this exact reusable context (max 2).
+
+        The match is the complete admitted binding: actor, kind, immutable
+        snapshot pin and either the definition id/fingerprint or the manual
+        intent id/version.  A corrected intent version or a republished
+        definition is a different context and stays distinct work.  The caller
+        owns the transaction.
+        """
+
+        if candidate.kind is PreviewAnalysisKind.DEFINITION:
+            rows = self._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
+                "AND definition_id=? AND definition_fingerprint IS ? "
+                "AND configuration_snapshot_id=? AND configuration_snapshot_digest=? "
+                "AND status IN (?, ?) ORDER BY created_at, analysis_id LIMIT 2",
+                (
+                    candidate.actor,
+                    candidate.kind.value,
+                    candidate.definition_id,
+                    candidate.definition_fingerprint,
+                    candidate.configuration_snapshot_id,
+                    candidate.configuration_snapshot_digest,
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                ),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
+                "AND intent_id=? AND intent_version IS ? "
+                "AND configuration_snapshot_id=? AND configuration_snapshot_digest=? "
+                "AND status IN (?, ?) ORDER BY created_at, analysis_id LIMIT 2",
+                (
+                    candidate.actor,
+                    candidate.kind.value,
+                    candidate.intent_id,
+                    candidate.intent_version,
+                    candidate.configuration_snapshot_id,
+                    candidate.configuration_snapshot_digest,
+                    PreviewAnalysisStatus.QUEUED.value,
+                    PreviewAnalysisStatus.RUNNING.value,
+                ),
+            ).fetchall()
+        return [row["analysis_id"] for row in rows]
+
+    def _insert_request_binding_locked(
+        self,
+        actor: str,
+        admission_request_id: str,
+        kind: str,
+        target_id: str,
+        created_at: datetime,
+    ) -> None:
+        """Write one accepted request alias; the caller owns the transaction."""
+
+        self._connection.execute(
+            "INSERT INTO admission_request_bindings "
+            "(actor, admission_request_id, kind, target_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (actor, admission_request_id, kind, target_id, created_at.isoformat()),
+        )
 
     def get_preview_analysis(self, analysis_id: str) -> PreviewAnalysis | None:
         with self._lock:
@@ -10951,22 +11086,11 @@ class SQLiteTaskRepository:
                         "new request identity",
                         details={"requestIdReuse": True},
                     )
-                # The record's own column is the other durable fact: a request
-                # identity may name exactly one admission across both families.
-                direct_row = self._connection.execute(
-                    "SELECT analysis_id FROM preview_analyses "
-                    "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                    (actor, admission_request_id),
-                ).fetchone()
-                direct_id = direct_row["analysis_id"] if direct_row is not None else None
-                if direct_row is None:
-                    cross_row = self._connection.execute(
-                        "SELECT discovery_id FROM media_discoveries "
-                        "WHERE actor=? AND admission_request_id=? LIMIT 1",
-                        (actor, admission_request_id),
-                    ).fetchone()
-                    if cross_row is not None:
-                        direct_id = cross_row["discovery_id"]
+                # Both families' own columns are durable facts naming the same
+                # request identity; validate them inside this transaction so a
+                # request already claimed elsewhere cannot additionally gain an
+                # alias and manufacture ambiguous evidence (B43.2-R5-1).
+                direct_id = self._resolve_request_identity_locked(actor, admission_request_id)
                 if direct_id is not None and direct_id != target_id:
                     raise PreviewAnalysisConflict(
                         "this admission request identity already names different "
@@ -10979,17 +11103,8 @@ class SQLiteTaskRepository:
                     # record's own column; the alias would be redundant.
                     self._connection.commit()
                     return
-                self._connection.execute(
-                    "INSERT INTO admission_request_bindings "
-                    "(actor, admission_request_id, kind, target_id, created_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (
-                        actor,
-                        admission_request_id,
-                        kind,
-                        target_id,
-                        created_at.isoformat(),
-                    ),
+                self._insert_request_binding_locked(
+                    actor, admission_request_id, kind, target_id, created_at
                 )
                 self._connection.commit()
             except PreviewAnalysisConflict:
@@ -11006,66 +11121,6 @@ class SQLiteTaskRepository:
             except BaseException:
                 self._connection.rollback()
                 raise
-
-    def find_open_preview_analysis(
-        self,
-        *,
-        actor: str,
-        kind: PreviewAnalysisKind,
-        definition_id: str | None,
-        definition_fingerprint: str | None,
-        intent_id: str | None,
-        intent_version: int | None = None,
-        configuration_snapshot_id: str,
-        configuration_snapshot_digest: str,
-    ) -> PreviewAnalysis | None:
-        """One already durable *open* analysis for this exact pinned context.
-
-        A manual analysis is bound to the complete admitted intent context:
-        the intent *version* is part of that binding, so a corrected intent
-        (a new version after a saved choice) never silently reuses the queued
-        work admitted for an earlier version.
-        """
-
-        with self._lock:
-            if kind is PreviewAnalysisKind.DEFINITION:
-                row = self._connection.execute(
-                    "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
-                    "AND definition_id=? AND definition_fingerprint IS ? "
-                    "AND configuration_snapshot_id=? AND configuration_snapshot_digest=? "
-                    "AND status IN (?, ?) ORDER BY created_at, analysis_id LIMIT 1",
-                    (
-                        actor,
-                        kind.value,
-                        definition_id,
-                        definition_fingerprint,
-                        configuration_snapshot_id,
-                        configuration_snapshot_digest,
-                        PreviewAnalysisStatus.QUEUED.value,
-                        PreviewAnalysisStatus.RUNNING.value,
-                    ),
-                ).fetchone()
-            else:
-                row = self._connection.execute(
-                    "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=? "
-                    "AND intent_id=? AND intent_version IS ? "
-                    "AND configuration_snapshot_id=? "
-                    "AND configuration_snapshot_digest=? AND status IN (?, ?) "
-                    "ORDER BY created_at, analysis_id LIMIT 1",
-                    (
-                        actor,
-                        kind.value,
-                        intent_id,
-                        intent_version,
-                        configuration_snapshot_id,
-                        configuration_snapshot_digest,
-                        PreviewAnalysisStatus.QUEUED.value,
-                        PreviewAnalysisStatus.RUNNING.value,
-                    ),
-                ).fetchone()
-            if row is None:
-                return None
-            return self._load_preview_analysis_locked(row["analysis_id"])
 
     def list_preview_analyses(
         self,

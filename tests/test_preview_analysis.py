@@ -837,14 +837,17 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
 
         with self.journey() as value:
             barrier = threading.Barrier(2)
-            original = value.analyses._find_open
+            original = value.analyses._admit
 
-            def synchronized_find(**kwargs):
-                result = original(**kwargs)
+            def synchronized_admit(analysis):
+                # Synchronize the two admissions at the durable admission
+                # boundary itself: both have already built their candidate and
+                # observe no open work, so only the atomic transaction can keep
+                # them from creating two records.
                 barrier.wait(timeout=10)
-                return result
+                return original(analysis)
 
-            value.analyses._find_open = synchronized_find
+            value.analyses._admit = synchronized_admit
             request_id = "efefefef-efef-4fef-8fef-efefefefefef"
 
             def admit(_index):
@@ -863,6 +866,261 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             self.assertEqual(1, len(rows))
             self.assertEqual(next(iter(identities)), rows[0]["analysis_id"])
             self.assertEqual([], value.source.mutations)
+
+    def test_concurrent_distinct_request_definition_analysis_reuses_one_record(
+        self,
+    ) -> None:
+        """B43.2-20261015-1: two tabs, distinct IDs, one open definition Preview.
+
+        Two *different* request identities for the same exact open definition
+        context synchronize only between the real open-work read and the create,
+        so both observe "no open work".  The atomic admission must still reuse
+        one analysis and keep each accepted identity readable, never accept two
+        analyses for the same open context.
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            barrier = threading.Barrier(2)
+            original = value.analyses._admit
+
+            def synchronized_admit(analysis):
+                barrier.wait(timeout=10)
+                return original(analysis)
+
+            value.analyses._admit = synchronized_admit
+            request_ids = (
+                "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+                "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
+            )
+
+            def admit(index):
+                return value.analyses.admit_definition(
+                    "nightly", actor="operator", admission_request_id=request_ids[index]
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(admit, range(2)))
+            identities = {item.analysis_id for item in results}
+            self.assertEqual(1, len(identities), identities)
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=?",
+                ("operator", "definition"),
+            ).fetchall()
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual(next(iter(identities)), rows[0]["analysis_id"])
+            # Every accepted request identity reconciles to the one record.
+            for request_id in request_ids:
+                readback = value.analyses.find_by_request_id(
+                    actor="operator", admission_request_id=request_id
+                )
+                self.assertIsNotNone(readback, request_id)
+                self.assertEqual(next(iter(identities)), readback.analysis_id)
+            # The Worker completes exactly one Preview.
+            settled = value.worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(next(iter(identities)), settled.analysis_id)
+            self.assertEqual(
+                1,
+                value.repository._connection.execute(
+                    "SELECT COUNT(*) FROM automation_task_definition_previews"
+                ).fetchone()[0],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_concurrent_distinct_request_manual_analysis_reuses_one_record(
+        self,
+    ) -> None:
+        """B43.2-20261015-1: two tabs, distinct IDs, one manual intent/version."""
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            barrier = threading.Barrier(2)
+            original = value.analyses._admit
+
+            def synchronized_admit(analysis):
+                barrier.wait(timeout=10)
+                return original(analysis)
+
+            value.analyses._admit = synchronized_admit
+            request_ids = (
+                "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3",
+                "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4",
+            )
+
+            def admit(index):
+                return value.analyses.admit_manual(
+                    intent.intent_id,
+                    actor="operator",
+                    expected_version=intent.version,
+                    admission_request_id=request_ids[index],
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(admit, range(2)))
+            identities = {item.analysis_id for item in results}
+            self.assertEqual(1, len(identities), identities)
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=?",
+                ("operator", "manual"),
+            ).fetchall()
+            self.assertEqual(1, len(rows), rows)
+            for request_id in request_ids:
+                readback = value.analyses.find_by_request_id(
+                    actor="operator", admission_request_id=request_id
+                )
+                self.assertIsNotNone(readback, request_id)
+                self.assertEqual(next(iter(identities)), readback.analysis_id)
+            settled = value.worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(next(iter(identities)), settled.analysis_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_concurrent_distinct_request_analysis_keeps_one_truth_across_connections(
+        self,
+    ) -> None:
+        """B43.2-20261015-1: the one durable truth survives reopen.
+
+        Two distinct request identities for one open definition context admit
+        through *separate* SQLite connections.  The atomic admission must still
+        produce exactly one analysis whose readback proves both accepted
+        identities, and that truth must survive closing and reopening the
+        database (not only one connection's in-memory view).
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            barrier = threading.Barrier(2)
+            request_ids = (
+                "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5",
+                "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6",
+            )
+
+            def admit(index):
+                # Each admission opens its own runtime connection, so the two
+                # transactions contend on the real database rather than a
+                # shared in-process repository.
+                with SQLiteTaskRepository(self.database) as connection:
+                    service = PreviewAnalysisService(
+                        connection,
+                        definition_previews=value.definition_previews,
+                        clock=value.clock,
+                    )
+                    barrier.wait(timeout=10)
+                    return service.admit_definition(
+                        "nightly",
+                        actor="operator",
+                        admission_request_id=request_ids[index],
+                    ).analysis_id
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                identities = set(pool.map(admit, range(2)))
+            self.assertEqual(1, len(identities), identities)
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=?",
+                ("operator", "definition"),
+            ).fetchall()
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual(next(iter(identities)), rows[0]["analysis_id"])
+            with SQLiteTaskRepository(self.database) as reopened:
+                for request_id in request_ids:
+                    readback = reopened.find_preview_analysis_by_request_id(
+                        actor="operator", admission_request_id=request_id
+                    )
+                    self.assertIsNotNone(readback, request_id)
+                    self.assertEqual(next(iter(identities)), readback.analysis_id)
+            # The resident Worker completes exactly one exact Preview for the
+            # one durable analysis.
+            settled = value.worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(next(iter(identities)), settled.analysis_id)
+            self.assertEqual(
+                1,
+                value.repository._connection.execute(
+                    "SELECT COUNT(*) FROM automation_task_definition_previews"
+                ).fetchone()[0],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_concurrent_distinct_request_manual_analysis_keeps_one_truth_across_connections(
+        self,
+    ) -> None:
+        """B43.2-20261015-1: the manual entrance keeps one truth too.
+
+        Two distinct request identities for one manual intent/version admit
+        through separate SQLite connections; exactly one analysis is durable,
+        both identities reconcile to it across reopen, and the Worker completes
+        one Preview with zero Storage mutation.
+        """
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = value.manual_previews.admit_storage_paths(
+                resource_library_id="library",
+                relative_paths=["Movies/One.2001.mkv"],
+                actor="operator",
+            )
+            barrier = threading.Barrier(2)
+            request_ids = (
+                "a7a7a7a7-a7a7-4a7a-8a7a-a7a7a7a7a7a7",
+                "b8b8b8b8-b8b8-4b8b-8b8b-b8b8b8b8b8b8",
+            )
+
+            def admit(index):
+                with SQLiteTaskRepository(self.database) as connection:
+                    service = PreviewAnalysisService(
+                        connection,
+                        manual_previews=value.manual_previews,
+                        clock=value.clock,
+                    )
+                    barrier.wait(timeout=10)
+                    return service.admit_manual(
+                        intent.intent_id,
+                        actor="operator",
+                        expected_version=intent.version,
+                        admission_request_id=request_ids[index],
+                    ).analysis_id
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                identities = set(pool.map(admit, range(2)))
+            self.assertEqual(1, len(identities), identities)
+            rows = value.repository._connection.execute(
+                "SELECT analysis_id FROM preview_analyses WHERE actor=? AND kind=?",
+                ("operator", "manual"),
+            ).fetchall()
+            self.assertEqual(1, len(rows), rows)
+            with SQLiteTaskRepository(self.database) as reopened:
+                for request_id in request_ids:
+                    readback = reopened.find_preview_analysis_by_request_id(
+                        actor="operator", admission_request_id=request_id
+                    )
+                    self.assertIsNotNone(readback, request_id)
+                    self.assertEqual(next(iter(identities)), readback.analysis_id)
+            settled = value.worker.run_next()
+            self.assertIsNotNone(settled)
+            self.assertEqual(next(iter(identities)), settled.analysis_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_alias_write_refuses_a_request_identity_already_named_by_a_direct_row(
         self,
@@ -947,14 +1205,15 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
     ) -> None:
         """B43.2-R5-1: the race order cannot manufacture ambiguous evidence.
 
-        Two writers for the *same* request identity — an alias acceptance for
-        a version-2 convergence and a direct create for a *changed* definition
-        context — race with only real repository/service calls between them.
-        Exactly one durable analysis ends up owning the identity; the other
-        writer is refused instead of being reported as accepted.
+        Two writers for the *same* request identity — an equivalent manual
+        version-2 convergence and a *changed* definition context — race with
+        only real repository/service calls between them.  The atomic admission
+        resolves the identity and the reusable context under one durable
+        transaction, so exactly one durable analysis ends up owning the
+        identity and the other writer is refused instead of being reported as
+        accepted.
         """
 
-        import threading
         from concurrent.futures import ThreadPoolExecutor
 
         self.media("Movies/One.2001.mkv")
@@ -968,7 +1227,7 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
             # The operator saves one choice: the intent advances to version 2
             # and an open version-2 analysis exists, so a version-2 request
             # converges and binds; a definition-analysis request with the
-            # *same* identity creates its own row directly.
+            # *same* identity is a changed context and must be refused.
             item = intent.items[0]
             changed = value.intents.update_choice(
                 intent.intent_id,
@@ -983,39 +1242,39 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
                 actor="operator",
                 expected_version=changed.version,
             )
-            entered, release = threading.Event(), threading.Event()
-            original_bind = value.repository.bind_admission_request
 
-            def paused_bind(**kwargs):
-                # Delay only the real alias writer; production behavior is
-                # otherwise unmodified.
-                if kwargs["admission_request_id"] == shared_request:
-                    entered.set()
-                    assert release.wait(timeout=10)
-                return original_bind(**kwargs)
-
-            value.repository.bind_admission_request = paused_bind
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                alias_request = pool.submit(
-                    value.analyses.admit_manual,
+            def admit_manual():
+                return value.analyses.admit_manual(
                     intent.intent_id,
                     actor="operator",
                     expected_version=changed.version,
                     admission_request_id=shared_request,
                 )
-                assert entered.wait(timeout=5)
-                direct = value.analyses.admit_definition(
+
+            def admit_definition():
+                return value.analyses.admit_definition(
                     "nightly",
                     actor="operator",
                     admission_request_id=shared_request,
                 )
-                release.set()
+
+            results: list[object] = []
+            conflicts: list[PreviewAnalysisConflict] = []
+
+            def run(function):
                 try:
-                    alias_request.result(timeout=10)
-                except PreviewAnalysisConflict:
-                    # The delayed alias writer was refused: it never reported
-                    # this identity as accepted for other work.
-                    pass
+                    results.append(function())
+                except PreviewAnalysisConflict as error:
+                    conflicts.append(error)
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(run, admit_manual), pool.submit(run, admit_definition)]
+                for future in futures:
+                    future.result(timeout=15)
+            # Exactly one writer was accepted; the changed-context writer is
+            # refused rather than silently reported as accepted.
+            self.assertEqual(1, len(results), (results, conflicts))
+            self.assertEqual(1, len(conflicts), (results, conflicts))
             rows = value.repository._connection.execute(
                 "SELECT analysis_id FROM preview_analyses WHERE actor=? AND admission_request_id=?",
                 ("operator", shared_request),
@@ -1031,9 +1290,10 @@ class DurableAnalysisAdmissionTests(_DurableAnalysisFixture):
                 row["target_id"] for row in bindings
             }
             self.assertEqual(1, len(durable_ids), durable_ids)
-            self.assertEqual(direct.analysis_id, next(iter(durable_ids)))
+            winner = results[0]
+            self.assertEqual(winner.analysis_id, next(iter(durable_ids)))
             self.assertEqual(
-                direct.analysis_id,
+                winner.analysis_id,
                 value.analyses.find_by_request_id(
                     actor="operator", admission_request_id=shared_request
                 ).analysis_id,
