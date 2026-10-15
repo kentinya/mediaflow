@@ -50,8 +50,10 @@ reachable. Resuming Slice43 requires explicit A reactivation and reassessment of
 ## User Goal
 
 The user selected a complete redesign of the Operations and Tasks page on 2026-10-15 and asked
-for a current-state assessment and design proposal first. The complete Contract remains pending;
-the proposal and generated concept image are discussion material, not accepted implementation scope.
+for a current-state assessment and design proposal first. The user broadly accepts the generated
+task-center homepage layout, with the confirmed changes below. Its example data is not runtime or
+acceptance authority. The complete Contract remains pending; remaining proposal details are not
+implicitly approved implementation scope.
 
 ### Confirmed direction — organization-only task creation
 
@@ -79,15 +81,49 @@ Automation (`V2-AUTO-009`). This constrains the future Slice45 Contract as follo
 - Existing file-maintenance/transfer results remain distinct recorded work. This creation decision
   does not turn them into new-task choices or silently remove their existing Files-page journeys.
 - The current concept image's standalone Scan example does not define the target creation model.
-  Other proposed layout, naming and detail-page changes still await a complete Slice Contract.
+  Layout, naming and detail-page decisions not confirmed below still await a complete Slice Contract.
 - Automation's existing organization-only product amendment remains in force. This decision does
   not resume frozen Slice43, import its unaccepted implementation or claim its target is delivered.
 
 Standalone Scan retirement does not remove shared internal discovery, filtering, stability checks,
-Rules tests, diagnostic Preview/DryRun capabilities or immutable Preview/authorization boundaries.
+Rules tests, diagnostic Preview/DryRun capabilities outside the selected organization journey, or
+immutable planning/authorization boundaries. General DryRun retirement remains undecided.
 Historical Scan data remains read-only evidence; retirement never deletes user media or recorded
 results and does not add an executable compatibility path.
 The complete surface and acceptance contract must be checkpointed as ACTIVE before B plans a Task.
+
+### Confirmed direction — integrated organization and recovery pages by type
+
+- Remove the independent Preview page/action from the organization-task journey, including its
+  recovery journey. Plan computation, exact source/configuration binding, target/conflict/effect
+  explanation and applicable explicit execution intent remain within the relevant creation or
+  recovery experience; operators do not launch or navigate a separate Preview to continue.
+  Reading or saving a decision still cannot authorize media mutation by itself.
+- Add sibling recovery-list pages on the same horizontal navigation row as `全部任务`. Each type
+  is directly reachable without first selecting a Task; the selected tab displays that type's own
+  pending-work list. This is part of the task center's existing navigation area, not a new sidebar
+  workspace or merely a task-detail link to a recovery form.
+- Each recovery page lists the accessible Tasks that currently have unresolved work of its type,
+  across Tasks. A row represents one Task in that type and shows its affected-item count, bounded
+  problem summary and contextual action. File/item processing remains independent inside the Task;
+  multiple files do not create duplicate Task rows. A Task with different outstanding problem types
+  may appear on each applicable page, with the relevant per-type scope preserved.
+- Cover the existing Recognition, Metadata candidate/correction, Classification, conflict and
+  safely recoverable failure journeys with type-specific lists and appropriate processing forms.
+  Proposed tab labels are `识别恢复`, `元数据恢复`, `分类恢复`, `冲突处理`, and `失败恢复`.
+  These extend the broadly accepted all/running/attention/ended list composition.
+- Queries, pending membership, Task/item counts, filtering and paging are backend authoritative
+  over the full authorized population, not browser filtering of the currently loaded Task page.
+  Distinguish Task counts from affected-file counts. Viewing, refreshing or switching pages admits
+  no work, calls no Metadata Provider and mutates no Storage.
+- A processing action retains the exact original Task/item/blocker, legal backend actions and
+  current version. Resolving one item updates its durable state and the affected list/counts;
+  other items and Tasks remain independent. Preserve the selected type, filters and bounded page
+  when returning or reconnecting, and explain stale, denied, unavailable and uncertain outcomes.
+- Cross-Task discovery by type is explicitly selected for Slice45; it is no longer covered by
+  Slice42's deferred global-review-inbox boundary. This does not authorize cross-Task bulk mutation,
+  a new recovery engine, automatic uncertain-effect replay or arbitrary historical reprocessing.
+  Uncertain effects retain investigation-only handling and cannot become a generic retry action.
 
 ## Required Outcomes and Required Surfaces
 
