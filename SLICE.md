@@ -49,11 +49,39 @@ reachable. Resuming Slice43 requires explicit A reactivation and reassessment of
 
 ## User Goal
 
-Pending user direction. No new business capability is selected.
+The user selected a complete redesign of the Operations and Tasks page on 2026-10-15 and asked
+for a current-state assessment and design proposal first. The complete Contract remains pending;
+the proposal and generated concept image are discussion material, not accepted implementation scope.
+
+### Confirmed direction — organization-only task creation
+
+On 2026-10-15 the user explicitly directed that new task creation remove Scan and Preview and
+retain only actual organization, following the organization-only direction already selected for
+Automation (`V2-AUTO-009`). This constrains the future Slice45 Contract as follows:
+
+- The task center's new-task journey offers only organization. Remove independent Scan and Preview
+  creation choices and their ordinary task-center entry points, including secondary menus and
+  legacy create-page links; renaming or hiding them behind another task-center action is insufficient.
+- Discovery/scanning, parsing, recognition, metadata lookup, planning and zero-mutation exact Preview
+  remain stages of the organization journey. Preview does not grant execution authority; actual
+  organization still requires applicable explicit intent and all existing execution safety checks.
+- Historical Scan/Preview records retain their recorded identity, outcomes and audit visibility;
+  history is not a new-creation or repeat-run entry and must never be relabelled as real organization.
+- Existing file-maintenance/transfer results remain distinct recorded work. This creation decision
+  does not turn them into new-task choices or silently remove their existing Files-page journeys.
+- The current concept image's standalone Scan example does not define the target creation model.
+  Other proposed layout, naming and detail-page changes still await a complete Slice Contract.
+- Automation's existing organization-only product amendment remains in force. This decision does
+  not resume frozen Slice43, import its unaccepted implementation or claim its target is delivered.
+
+The confirmed direction does not retire all diagnostic Scan/Preview/DryRun APIs or CLI capabilities,
+change Rules tests, remove internal analysis or weaken immutable Preview/authorization boundaries.
+The complete surface and acceptance contract must be checkpointed as ACTIVE before B plans a Task.
 
 ## Required Outcomes and Required Surfaces
 
-Pending. No implementation content is authorized.
+Pending the complete redesign Contract, subject to the confirmed creation constraints above.
+No implementation Task or executable change is authorized by this planning note.
 
 ## Product Experience / UX Constraints
 
