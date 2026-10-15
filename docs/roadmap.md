@@ -30,15 +30,18 @@ only in [the development workflow](development-workflow.md).
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; remove scan/plan Automation modes without conversion or compatible execution | PLANNED | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
-| 45 — Scope Pending | Reserved at user request; development goal, scope and acceptance pending | PLANNED | Accepted Slice44 baseline; explicit user priority change before Slice43 closure |
+| 45 — V2 Task Center Redesign and Recovery Pages | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation for creation and recovery, durable per-item results/controls, and complete standalone Scan retirement with shared internal discovery/stability preserved | ACTIVE | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change before Slice43 closure |
 
 ## Current boundary
 
-Slice45 is **PLANNED — scope pending**, with no active implementation Task. The isolated
-`slice/45-scope-pending` branch starts from accepted Slice44 closure
-`a72252091d5d46edf3e2114b994036ae21b08e2e`, without suspended Automation implementation.
-The user will supply the new content; A must define and commit a complete ACTIVE Contract before
-B plans a Task. No concrete new outcomes, surfaces or acceptance are invented in this reservation.
+Slice45 — **V2 Task Center Redesign and Recovery Pages** — is **ACTIVE**. The user-confirmed
+[final page specification](task-center-page-spec.md) and root Contract define nine sibling task/recovery
+lists, same-interface plan summary then explicit confirmation, and standalone Scan retirement.
+Nine named references reside under `docs/pics/任务中心-标签名.png`; their example data is illustrative.
+The isolated `slice/45-scope-pending` branch retains immutable accepted Slice44 Base
+`a72252091d5d46edf3e2114b994036ae21b08e2e` without frozen Automation code. No implementation Task
+exists yet; next is B planning inside the checkpointed Contract. ACTIVE is scope authorization,
+not delivered behavior or closure.
 
 Slice43 is **PLANNED — Development Hold: FROZEN BY USER (2026-10-15)**. Its original
 business boundary remains unchanged and unaccepted. The user authorized A to reserve an unspecified

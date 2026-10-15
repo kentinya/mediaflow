@@ -76,6 +76,8 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
     → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
     → Slice 43 — V2 Automation Workspace and Engine Settings (PLANNED; FROZEN BY USER, unaccepted)
+    → Slice 44 — Existing V2 Pages Functional Improvements (PASS / CLOSED)
+    → Slice 45 — V2 Task Center Redesign and Recovery Pages (ACTIVE; TARGET)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -592,6 +594,76 @@ Review inbox, history cleanup, universal rollback or automatic uncertain replay 
 These are accepted CURRENT facts at Implementation Head
 `ce3fc2a3e70d40279fa725b5d7dc838d11123980`, reviewed by A on 2026-10-06.
 
+## TARGET — Task Center query, summary confirmation and typed recovery (Slice45)
+
+The selected user journey and nine visual references are in
+[task-center-page-spec.md](task-center-page-spec.md); acceptance is V2-OPS-009–012 and the ACTIVE
+root Contract. This is TARGET, not an implementation claim. The accepted Slice42 CURRENT read
+model above remains the actual baseline until implementation and A closure.
+
+```text
+Nine task-center list routes + native task/type-scoped processing
+  -> shared typed authenticated query/command boundary
+  -> Python authorized run/recovery projection and shared application orchestration
+  -> existing Job / Task / TaskItem / Result / blocker / checkpoint / continuation repositories
+  -> explicit bounded prepare -> in-context exact plan summary -> explicit confirmation
+  -> existing admission / resident Worker / OrganizerExecutor
+```
+
+Extend the unified run read model with explicit view/recovery-kind semantics and bounded source,
+text/type/time filters. Query the complete authorized population before grouping each recovery
+kind by its real Task/run identity; derive Task totals and distinct affected-item totals on a
+consistent read basis. Ordinary Pending is not automatically a human-action blocker. Current
+linked blockers/checkpoints/actions determine membership; a historical failed Result alone cannot
+keep a resolved item pending. One Task may belong to several views for different unresolved items.
+Do not fetch an arbitrary page of Tasks and join/filter it in the browser or invent relations from
+labels, paths or timestamps. Preserve pre-Task admissions, historical pinned display and unknowns.
+
+Keep runtime lifecycle, per-item disposition, current problem and effect certainty separate.
+Recovery classification/action decisions belong to Python application behavior; persistence supplies
+bounded queries and indexes as needed without creating another lifecycle/queue/authority. Additive
+schema changes, if necessary, retain original Scan/DryRun outcomes, immutable pins, Results and audit
+meaning. Original and continuation attempts remain explicitly traceable rather than overwritten.
+
+Manual creation composes live ResourceLibrary source selection, existing confined discovery and
+exact source identities with the production recognition/metadata/policy/planning/attachment chain.
+Long preparation uses existing durable work/Worker boundaries, not a synchronous HTTP media loop.
+The current creation interface renders its persisted exact summary (source/completeness, eligible
+subset, attachments, operations/destinations, unready findings and destructive effects) before a
+separate explicit confirmation. Preparation has zero Storage mutation and no execution authority;
+REQ-ORG-011 remains intact. Unselected/unready preparation records remain independently inspectable
+without becoming executable authority or a fabricated formal-review backlog.
+
+Confirmation atomically binds the reviewed plans, exact selected ready subset, actor/permissions,
+source evidence, immutable runtime and permitted effects to existing execution admission. Use the
+existing revalidation, deduplication, locks/leases/fences and OrganizerExecutor mutation boundary.
+Changed material source/plan evidence requires an updated summary and fresh intent in the same
+interface. A legal old pin does not silently become today's Active. Unknown submissions reconcile
+the exact durable request; reads and reconnects never re-admit work.
+
+Recovery pages group cross-Task problems but processing stays on the selected Task/type's files.
+Reuse TaskItemRecoveryService, legal review/correction/conflict services, checkpoint admission and
+durable continuations. Safely compose analysis, then display the fresh exact summary and confirm
+mutation in context. Remove mandatory standalone Preview UI/routes/actions from creation, recovery
+and remaining-scope reauthorization; retain any useful backend immutable plan/Preview storage as an
+internal mechanism. General DryRun and Rules tests remain outside retirement. Existing within-Task
+bounded batch analysis keeps per-item acceptance/refusal; no new cross-Task mutation engine.
+
+Retire standalone Scan admissions and executable standalone command/retry/continuation branches
+across Web/API/CLI, then remove exclusively used orchestration. Keep only genuinely shared Scanner,
+scan_filters, Storage discovery/stability behavior and historical readers. Old unsupported
+standalone work stops safely and remains auditable, with no compatible scanner executor or automatic
+conversion into Organize. Organization/Automation dependencies that instruct operators to run Scan
+must perform bounded observations within their own workflow, retaining real elapsed stability checks.
+Definition-bound Automation modes and the broader workspace remain the frozen Slice43 boundary.
+
+Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
+columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,
+one-shot authority, revoked unattended authority and per-item unknown effects preserve existing
+semantics. Historical Task/Job deep links remain diagnostic native reads. Bounded visible polling,
+queries, exports and navigation create no Jobs, Provider calls or Storage mutation. No Node runtime
+server, Provider/auth redesign, distributed persistence or general rollback is introduced.
+
 ## Manual organize
 
 Manual organization uses a durable intent and exact immutable Preview before execution. The Preview
@@ -680,8 +752,9 @@ replayed.
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained targets are not Slice45 scope or a delivery claim; root SLICE.md is a content-pending
-reservation for Slice45.
+These retained Automation targets are not inherited by Slice45 or a delivery claim. Slice45's
+ACTIVE Contract separately owns Task Center, integrated manual plan-summary confirmation and
+standalone Scan retirement; Slice43 remains frozen.
 
 Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
 admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
@@ -698,9 +771,10 @@ removed mode cannot validate/activate; existing configuration correction/removal
 Persisted removed-mode work stops safely at supported boundaries with unsupported-mode/cancel/history
 guidance, without invoking old-mode processing. Keep historical evidence/intent/pins/results readable
 without exposing an executable definition mode or broadening authority. Never delete history/media,
-reinterpret old work as organizing work or replay completed/uncertain effects. Standalone Scan/Preview/
-DryRun and automatic organization's internal scanning/planning remain; this removal does not delete
-the Scanner/Planner modules or unrelated standalone command support.
+reinterpret old work as organizing work or replay completed/uncertain effects. The Automation-mode
+amendment itself does not retire independent diagnostics. Slice45's subsequent TARGET separately
+retires standalone Scan and integrates manual Preview UI; shared Scanner/Planner and general
+DryRun/Rules tests remain. CURRENT runtime behavior is not changed by these TARGET paragraphs.
 
 Run once adds a durable manual-origin association, not another queue or processing model.
 Manual automatic organization composes automatic live discovery from the published definition's

@@ -36,10 +36,26 @@ V2 acceptance. Remove scan-only/scan-and-plan mode values/aliases and definition
 scheduling/admission/execution paths, without a conversion feature or compatible old-mode executor.
 Unsupported old configuration/work fails closed through existing correction/removal/cancel guidance;
 recorded intent, pins, results and audits remain historical data, never executable authority or
-automatic organization. Standalone Scan/Preview/DryRun and automatic organization's internal analysis
-stages remain required. This is an explicit product change, not a Task-local deferral or delivery
-claim; prior V1 meanings and accepted release evidence remain in Git and are not retroactively
-re-reviewed. All other stable requirement meanings and safety invariants remain unchanged.
+automatic organization. That amendment did not retire standalone Scan/Preview/DryRun; the subsequent
+2026-10-15 amendment below now supersedes standalone Scan and selected Web Preview-entry obligations.
+Internal discovery/planning and zero-mutation guarantees remain required. This is an explicit product
+change, not a Task-local deferral or delivery claim; prior V1 meanings and accepted release evidence
+remain in Git and are not retroactively re-reviewed. All other stable requirement meanings and
+safety invariants remain unchanged.
+
+**Explicit product amendment — 2026-10-15, task center (TARGET):** the user selected nine sibling
+task-center lists, including cross-Task Recognition/Metadata/Classification/conflict/failure recovery,
+and complete retirement of the standalone Scan product across its Web/API/CLI admission and executable
+paths. This supersedes the standalone manual Scan-entry meaning of `REQ-SCAN-001` for the current V2
+program; shared internal discovery, filtering, stability and historical evidence remain required.
+Organization creation and recovery first show an exact plan summary in the current interface and
+then require explicit execution confirmation; no independent Preview page/action is a mandatory or
+alternative organization step. `UX-006`, `REQ-ORG-003/004/008/011`, per-item recovery and all safety
+invariants retain their zero-mutation calculation, exact-plan and separate-authority meanings.
+General diagnostic DryRun/Preview and Rules tests are not retired. Cross-Task recovery lists are now
+selected; cross-Task bulk mutation remains deferred. Prior V1/closed-Slice evidence stays historical.
+Stable acceptance is `V2-OPS-009`–`V2-OPS-012`; [the final page specification](task-center-page-spec.md)
+and root Contract define the selected journey. These are TARGET requirements, not delivered behavior.
 
 `REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
 and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
@@ -645,7 +661,7 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 #### **V2 操作与任务工作区（CURRENT；Slice 42 PASS / CLOSED）**
 
 本节记录 A 于 2026-10-06 验收的 CURRENT 事实，不改变下方冻结的 V1 需求及此前 Slice 的验收事实。
-`docs/pics/操作与任务.png` 只定义业务关系、页面组成与视觉风格，其中名称、数量、日期、路径、
+该闭合 Slice 的原始参考图保留在其 Git 检查点；参考中的名称、数量、日期、路径、
 海报、进度与剩余时间均不是实际数据或固定验收样本。稳定 V2 要求见 `V2-OPS-001` 至
 `V2-OPS-008`；当前范围与验收以 `SLICE.md` 为准。
 
@@ -671,6 +687,24 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 全局 Review 收件箱、跨任务批量审核、任务历史删除/保留策略、无限整库手工整理、任意历史
 Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确定 mutation 自动重放仍未交付。
 已退役的文件级重新识别、metadata rematch、re-plan 与 recognition retry-pending 接口不恢复。
+
+#### **V2 任务中心重构（TARGET；Slice45）**
+
+用户确认 [任务中心最终方案](task-center-page-spec.md) 及其九张 `docs/pics/任务中心-标签名.png`
+参考图。九个横向标签是全部任务、进行中、需要处理、已结束、识别恢复、元数据恢复、分类恢复、
+冲突处理和失败恢复；各页独立查询真实授权总体，恢复页按任务聚合并显示本类型的待处理文件数。
+同一任务可属于多个视图，不新建九套任务或恢复模型。
+
+新建仅提供真实整理，在当前界面先显示来源、完整性、主文件/附件、就绪子集、操作、目标与
+冲突/破坏性影响摘要，可展开逐项检查，然后明确确认精确范围。恢复流程也在当前处理界面
+显示新摘要并确认继续；取消独立 Preview 产品页面与强制跳转，内部零变更分析、固定计划、
+权限、版本和 OrganizerExecutor 边界不变。未就绪/未选择项状态独立，摘要本身不制造正式
+执行阻塞待办，不把未知效果或未执行项算成功，不自动重放成功/忽略/不确定项。
+
+独立 Scan 的页面、API/CLI 创建及专属执行/重试路径退役，必要共享扫描/发现/稳定性保留，
+原流程自行完成稳定性观察，不再要求先运行已退役的扫描功能。历史意图、结果和审计可读；
+整体 DryRun、Rules 测试与冻结 Slice43 的自动化工作区不在此次退役范围。
+这些是明确的 TARGET 产品修订；上方 CURRENT Slice42 和下方冻结 V1 事实不因此改写为已交付。
 
 #### **安全预览与直接文件命令**
 

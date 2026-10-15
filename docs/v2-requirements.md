@@ -75,7 +75,8 @@ delivery or an implicit dependency. Reference images define business/style, neve
 
 These requirements extend the existing Operations foundation and are delivered within Slice 42's
 accepted boundary. CURRENT behavior and explicit deferrals are documented in Architecture and
-Product Experience. Task-linked recovery is delivered; a standalone global Review inbox is deferred.
+Product Experience. Task-linked recovery is delivered; cross-Task recovery lists were deferred by
+that baseline and are selected separately by the Slice45 TARGET amendment below.
 This factual status update does not change the stable requirement IDs or acceptance meaning below.
 
 | ID | Requirement | Acceptance meaning |
@@ -89,12 +90,28 @@ This factual status update does not change the stable requirement IDs or accepta
 | V2-OPS-007 | Task controls and continuation are backend-authoritative, cooperative and Web-completable for supported paused asynchronous work. | Pause/cancel requests do not undo effects or interrupt in-flight calls. Continue queues the exact remaining safe scope with pins/fences and current authority; no CLI fallback, consumed-token reissue, revoked-grant bypass or successful/uncertain replay. |
 | V2-OPS-008 | Task-linked decisions and single/bounded failed-analysis recovery complete in native V2 with per-item safety. | Recognition, Metadata, Classification and conflict decisions use existing gates; saving decisions does not execute. Exact analysis/Preview and separate execution intent link back to the original item. Mixed selections preserve accepted/refused outcomes; uncertain mutation stays investigation-only and retired retry APIs stay retired. |
 
+## Operations and Tasks redesign — TARGET (Slice 45)
+
+The user-approved 2026-10-15 amendment extends the accepted baseline without claiming implementation.
+The final journey and nine reference images are in [task-center-page-spec.md](task-center-page-spec.md).
+It supersedes the mandatory separate Preview-page realization of `V2-OPS-006/008` and the former
+standalone Scan-entry obligation; exact zero-mutation plans, explicit execution authority, original
+historical semantics and all `V2-AUTH-*` / `V2-SAFE-*` requirements remain unchanged.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-OPS-009 | Task Center provides nine sibling list pages, including cross-Task recovery by problem type. | All/running/attention/ended and Recognition/Metadata/Classification/conflict/failure lists share one horizontal navigation row. Recovery lists group one Task per type with affected-file counts across the complete authorized population; tasks may belong to several views. Queries/counts/paging are server-authoritative, pending membership uses current problems rather than page-only filtering or blanket Pending status, and read/refresh/navigation has no work/Provider/Storage side effects. |
+| V2-OPS-010 | Organization creation first shows an exact plan summary in the current interface and then explicitly confirms its eligible selected scope. | Live ResourceLibrary file/folder selection uses bounded discovery, stability, production policy/planning and attachment behavior. Show source, completeness, ready/unready items, operations, destination, per-item effects/conflicts and destructive impacts. Preparation is zero-mutation and grants no execution authority; confirmation binds exact plans/sources/pins/subset and separately permitted effects atomically. Unselected/unready state remains independent; incomplete material bounds cannot execute a first-N prefix. Stale/unknown submission reconciles without automatic replay. No separate Preview page/action is required or offered inside the organizing journey. |
+| V2-OPS-011 | Standalone Scan is completely retired as a product while shared internal discovery and stability remain. | Remove its Web/API/CLI admission, standalone executable/retry/continuation paths and exclusively used orchestration; no hidden diagnostic alias or compatible executor. Preserve history and safely stop unsupported old standalone work without changing media or relabelling it as organization. Existing organization/Automation dependencies complete observations internally and never instruct users to invoke retired Scan; shared Scanner/filtering/stability and generic DryRun/Rules tests remain. Definition-bound Automation mode retirement remains owned by its separate frozen Contract. |
+| V2-OPS-012 | Recovery lists lead to native task/type-scoped file processing with integrated analysis, plan summary and explicit continuation. | Recognition, Metadata candidate/correction, Classification, conflict and failure use current legal backend choices/checkpoints and appropriate correctable forms. Save/analysis does not mutate media or confer execution authority; fresh mutation is confirmed against the in-context exact summary without a separate Preview route or operator-managed DryRun task. Pending lists/counts follow durable per-item resolution while retaining history, return context and successful siblings. Uncertain effects stay investigation-only; existing bounded within-Task analysis recovery preserves independent outcomes, with no new cross-Task bulk mutation. |
+
 ## Automation workspace requirements — TARGET (Slice 43)
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained targets are not Slice45 scope or a delivery claim; root SLICE.md is a content-pending
-reservation for Slice45.
+These retained Automation targets are not inherited by Slice45 or a delivery claim. Slice45's
+ACTIVE Contract separately owns the task-center redesign, standalone Scan retirement and integrated
+manual plan-summary journey; Slice43 remains frozen.
 
 The existing Automation/Settings foundations remain CURRENT. The following complete workspace
 journey is TARGET, selected from `docs/pics/自动化.png` and `docs/pics/自动化-全局设置.png` for business
@@ -110,7 +127,7 @@ logic and visual style only. Activation is not a delivery claim; the preserved S
 | V2-AUTO-006 | Automation history reaches existing native Operations result, control and per-item recovery behavior with return context. | Bound reached does not imply source exhaustion; original/continuation/sibling outcomes remain traceable. Successful/uncertain effects are not replayed, and no second task/recovery engine is introduced. |
 | V2-AUTO-007 | Global Automation settings use the shared managed authority and truthful operational meanings. | Activity capacity bounds pending plus running Jobs in the shared pool, not execution parallelism. Stale age detects lack of durable updates, not total runtime or permission to requeue. Four-field checked Save preserves unrelated settings/Drafts and uses backend validation, not reference example ranges. |
 | V2-AUTO-008 | Settings consumption is proved by the actual eligible runtime consumers. | Resident Worker/Scheduler adopt configured polling changes at safe boundaries without routine restart, including idle/long-wait transitions. Fresh consumer values/version distinguish published/adopted/pending/override/unavailable; API binding alone is insufficient. CLI overrides, heartbeats/fences and admitted pipeline pins remain authoritative. |
-| V2-AUTO-009 | Automation supports automatic organization only; the other two modes are entirely removed. | Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound publication, scheduling/admission/execution branches across Web/API/CLI. No legacy-mode inventory, conversion feature, grandfathering or compatible old-mode executor is required or permitted. Unsupported old configuration/work fails closed with existing correction/removal/cancel/history guidance. Preserve recorded intent, pins, results and audits as read-only historical data; never reinterpret it as organizing authority or replay completed/uncertain effects. Standalone Scan/Preview/DryRun and automatic organization's internal analysis stages remain. User-approved amendment and clarification dated 2026-10-13; previous V1 acceptance and safety invariants remain historical facts. |
+| V2-AUTO-009 | Automation supports automatic organization only; the other two modes are entirely removed. | Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound publication, scheduling/admission/execution branches across Web/API/CLI. No legacy-mode inventory, conversion feature, grandfathering or compatible old-mode executor is required or permitted. Unsupported old configuration/work fails closed with existing correction/removal/cancel/history guidance. Preserve recorded intent, pins, results and audits as read-only historical data; never reinterpret it as organizing authority or replay completed/uncertain effects. That amendment itself retains internal analysis and diagnostic Preview/DryRun; the subsequent V2-OPS-010–012 target separately retires standalone Scan and integrates organization's Preview UI. User-approved Automation amendment and clarification dated 2026-10-13; previous V1 acceptance and safety invariants remain historical facts. |
 
 ## Authority and evolution
 

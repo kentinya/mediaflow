@@ -721,8 +721,9 @@ boundary.
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained targets are not Slice45 scope or a delivery claim; root SLICE.md is a content-pending
-reservation for Slice45.
+These retained Automation targets are not inherited by Slice45 or a delivery claim. Slice45's
+ACTIVE task-center Contract owns its separately selected manual journey and standalone Scan removal;
+Slice43 remains frozen.
 
 The two Automation references define composition/style and business relationships only. Their
 names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
@@ -731,7 +732,9 @@ CURRENT; this complete redesign and actual per-process settings adoption are not
 The user-approved 2026-10-13 change makes automatic organization the only Automation mode in this
 TARGET journey. The clarified instruction entirely removes scan-only/scan-and-plan Automation modes,
 their definition-bound execution branches and compatibility paths; there is no conversion feature.
-Standalone Scan/Preview/DryRun remain available. CURRENT code still supports the old modes until
+That Automation amendment itself does not retire standalone diagnostics; Slice45's later TARGET
+separately retires standalone Scan and integrates the selected organization's Preview UI.
+General diagnostic DryRun and internal analysis remain. CURRENT code still supports the old modes until
 the transition is implemented. Existing accepted journeys and historical outcomes are not rewritten.
 
 - **Goal/entry:** open shared-shell `自动化` to manage long-lived source/schedule intent, inspect
@@ -937,9 +940,10 @@ boundaries remain retired.
 - **Goal:** find and follow one admitted run, understand every file outcome, and complete safe
   task-linked control/recovery in V2 without CLI commands, V1 fallback or internal-token handling.
 - **Entry:** shared-shell `操作与任务`, an existing Task/Job link, Files completion or an Automation
-  run. Follow `docs/pics/操作与任务.png` for composition/style only; names, counts, dates, paths,
-  posters, progress and ETA in the image are illustrative. Entry has a full list without selected
-  detail; explicit selection/deep link opens the right panel, full-screen on narrow layouts.
+  run. Its original visual reference remains in the accepted Slice42 Git checkpoint; names,
+  counts, dates, paths, posters, progress and ETA in that reference are illustrative. Entry has a full
+  list without selected detail; explicit selection/deep link opens the right panel, full-screen on
+  narrow layouts.
 - **Visible state:** server-filtered/searchable runs, authoritative scoped counts, operation kind,
   historical source/target scope and trigger. Explicitly linked Job/Task records count once, including
   queued/pre-Task failure; distinct occurrences/continuations remain traceable. Queue, stage, item
@@ -972,6 +976,43 @@ deletion/retention, unbounded whole-library organize, arbitrary historical Repro
 Notifications redesign, universal rollback and V1 retirement remain outside this delivery. Retired
 file-level retry/re-recognition/rematch/re-plan entry points remain retired. A accepted the complete
 Slice Base..Implementation Head on 2026-10-06; its CURRENT scope does not expand earlier closures.
+
+### TARGET — 任务中心与分类恢复（Slice45）
+
+最终页面与九张参考图见 [任务中心最终方案](task-center-page-spec.md)。
+本节是用户确认的 TARGET；上方 Slice42 CURRENT 和既有交付事实保持不变。
+
+- **目标/入口：** 在任务中心发起真实整理、查看逐文件结果，并从同一横向导航行的
+  全部任务、进行中、需要处理、已结束、识别恢复、元数据恢复、分类恢复、冲突处理、失败恢复
+  直接进入各自的列表。每个恢复页跨任务展示该类型尚需处理的任务，无须先选择一个任务。
+- **可见状态：** 任务一行一个，显示稳定业务名称、来源范围、当前阶段/结果、问题摘要及涉及
+  文件数；任务数与文件数区分，同一任务可属于多个视图。后端统一查询、分页及统计，
+  普通排队不等于需要人工处理，旧失败不等于当前问题未解决，未知数据不显示成零或成功。
+- **创建动作：** 新建仅提供整理，选择 Active 资源库和安全目录/文件范围；Files 单项、多项、
+  文件夹来源复用同一旅程。显式准备执行内部有界发现、稳定性观察与完整计划计算，长操作
+  有持久进度；同一创建界面先展示实际计划摘要，再明确确认就绪选择。摘要含来源/完整性、
+  主文件/附件数、未就绪原因、操作与目标、可展开来源→目标及冲突/覆盖/清理影响。
+  没有独立 Scan 模式或独立 Preview 页面；普通操作者无需操作原始授权材料。
+- **成功结果：** 确认仅授权精确计划及所选就绪范围，受理后立即可跟踪。未选/未就绪项保留
+  独立准备状态与补正入口，不自动执行；准备本身不制造正式执行 Review/Conflict 待办。
+  正式整理中真实阻塞、逐项结果和恢复尝试独立持久，已成功文件不被其他项覆盖。
+- **恢复动作：** 恢复列表一行是一个任务在该类型下的范围，点击进入该任务该类型的文件处理
+  界面。识别、Metadata 候选/修正、分类、冲突和失败使用合适的原生表单；安全分析后在当前
+  界面显示新的摘要并明确继续，不跳转独立 Preview，不要求操作者管理内部 DryRun Task。
+  当前允许的任务内有界批量分析保留逐项结果，不新增跨任务批量执行。
+- **失败/补正：** 缺少权限/Worker/固定配置、来源变化、不完整发现、过期决定和不可用依赖
+  解释持久状态与可采取动作。保留输入和其他成功项；提交结果未知先核对持久状态，不猜测
+  最近任务或自动重发。未知真实效果只核查。处理后按实际问题更新相应类型列表，保留返回的
+  类型、筛选、分页、详情和原任务/续作历史。
+- **详情/控制：** 原生详情、操作记录和有界脱敏导出保留，Job/Task 只按真实关联去重；
+  暂停/取消区分已请求与生效，继续重验剩余范围和当前实际权限；必要摘要确认在当前界面完成。
+  页面/统计/刷新/导出/标签切换不创建工作、不调用 Provider、不变更媒体。
+- **退役：** 独立 Scan 的 Web/API/CLI 准入、独立执行/重试与专属代码完整退役，旧请求明确
+  指引到整理或历史查看。保留内部 Scanner/过滤/稳定性和旧证据；依赖稳定性历史的组织流程
+  内部完成观察，不要求用户先跑被删 Scan。通用 DryRun、Rules 测试和冻结自动化工作区不扩删。
+
+此处明确选入跨任务分类列表，取代此前对此类列表的延期；跨任务批量 mutation、任意历史
+Reprocess、历史清理、通用回滚、不确定效果重放及冻结 Slice43 的其余工作仍不在本 Slice。
 
 ### Migration coexistence and deferrals
 

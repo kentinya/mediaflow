@@ -2,11 +2,13 @@
 
 ```text
 Parent Slice: 45
-Next Action: USER DEFINES THE NEW SLICE; A COMPLETES AND CHECKPOINTS ITS CONTRACT
+Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK
 ```
 
-Slice45 is PLANNED with content pending at the user's request. Do not create an implementation Task
-or start development before A activates a complete committed Contract.
+Slice45's complete ACTIVE Contract defines the nine-page task center, inline plan-summary
+confirmation, recovery-by-type journey and standalone Scan retirement. After its activation
+checkpoint, B may plan the first coherent Task inside that Contract. Developer work requires
+that active Task; this notice authorizes no executable change and creates no Task plan.
 
 Suspended Task43.3 and the preceding B review are preserved exactly at
 `c539429c2c3aaeaab4842b87d3c858e77106fed1:TASK.md` on `frozen/slice-43-2026-10-15`.
