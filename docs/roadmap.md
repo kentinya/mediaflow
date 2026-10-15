@@ -28,19 +28,29 @@ only in [the development workflow](development-workflow.md).
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
-| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
+| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; remove scan/plan Automation modes without conversion or compatible execution | PLANNED | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
+| 45 — Scope Pending | Reserved at user request; development goal, scope and acceptance pending | PLANNED | Accepted Slice44 baseline; explicit user priority change before Slice43 closure |
 
 ## Current boundary
 
-Slice 44 is PASS / CLOSED under [SLICE.md](../SLICE.md). There is no active implementation Task;
-A selects the next large Slice in a separate action. The accepted boundary retains the original
-Base, all safety invariants and the explicit exceptional-discovery recovery deferrals.
+Slice45 is **PLANNED — scope pending**, with no active implementation Task. The isolated
+`slice/45-scope-pending` branch starts from accepted Slice44 closure
+`a72252091d5d46edf3e2114b994036ae21b08e2e`, without suspended Automation implementation.
+The user will supply the new content; A must define and commit a complete ACTIVE Contract before
+B plans a Task. No concrete new outcomes, surfaces or acceptance are invented in this reservation.
 
-Slice 43 is PLANNED / USER FROZEN on `frozen/slice-43-2026-10-07`. Its original scope, Base,
-Task review and unresolved blockers remain recoverable in Git; resumption requires explicit A
-activation. The `slice/44-page-improvements` branch starts from accepted Slice 42 without the
-unaccepted Slice 43 implementation. Retired Slice 34–36 boundaries remain historical only.
+Slice43 is **PLANNED — Development Hold: FROZEN BY USER (2026-10-15)**. Its original
+business boundary remains unchanged and unaccepted. The user authorized A to reserve an unspecified
+Slice45 before Slice43 closure. Preserve the exact Contract, Task43.3 plan and Task43.2 B decision
+at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on `frozen/slice-43-2026-10-15`; the frozen Contract is `ed974e0df8b263f631bfe48b524da461013d8780` on that branch.
+No B Task planning or implementation is authorized while frozen. Slice45 uses an isolated
+branch from accepted Slice44, without inheriting suspended Automation code.
+
+Slice 44 remains PASS / CLOSED, with its accepted six-outcome boundary and exceptional-discovery
+recovery deferrals retained. Its complete Contract/reviews remain reachable at its closure checkpoint.
+The preservation branch `frozen/slice-43-2026-10-07` remains unchanged. Retired Slice 34–36 boundaries
+remain historical only.
 
 [Release](release.md) owns release-line facts, [Progress](progress.md) owns closure Base/Head,
 dates, delivered outcomes and deferrals, and [Architecture](architecture.md) and

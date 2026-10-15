@@ -8,14 +8,22 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 44 — **Existing V2 Pages Functional Improvements** — is **PASS / CLOSED** after A's complete
-Base..Implementation Head review. All six Required Outcomes and nine Required Surfaces are accepted
-under the user-approved discovery recovery rescope. [`TASK.md`](../TASK.md) has no active
-implementation; A selects the next large Slice only in a separate action. Closure is repository-
-local; no push or release is claimed. The working branch `slice/44-page-improvements` starts from
-accepted Slice 42 and excludes unaccepted Slice 43 implementation. Slice 43 remains user-frozen on
-`frozen/slice-43-2026-10-07`, with original Base, Task review and unresolved blockers retained.
-Suspension is not closure; Slice 42 and all earlier closure-ledger entries remain unchanged.
+Slice45 — **Scope Pending** — is **PLANNED** on `slice/45-scope-pending` from accepted Slice44
+closure `a72252091d5d46edf3e2114b994036ae21b08e2e`. No development content or implementation Task
+is authorized. Root SLICE.md is a reservation pending user direction, not a delivered capability.
+Stable product amendments and TARGET documentation are retained without carrying suspended code.
+
+Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
+**Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
+Contract, Task43.3 plan and Task43.2 B decision are retained at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on
+`frozen/slice-43-2026-10-15`; the suspended Contract is checkpointed at `ed974e0df8b263f631bfe48b524da461013d8780`. Original Slice Base
+and all unfinished commitments remain intact. The user authorized A to reserve an unspecified
+Slice45 from the accepted Slice44 baseline; there is no active implementation Task.
+This scheduling exception changes no accepted closure entry below.
+
+Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
+Its closure-ledger entry and all earlier accepted entries below are unchanged. The frozen Slice 43
+branch and exact review snapshots remain reachable as historical evidence.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
