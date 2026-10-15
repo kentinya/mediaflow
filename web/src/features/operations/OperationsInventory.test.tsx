@@ -56,6 +56,8 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     total_items: 4,
     completed_items: 1,
     failed_items: 0,
+    processed_items: 2,
+    current_stage: "processing",
     pause_requested: false,
     attention: false,
     problem_types: [],
@@ -303,6 +305,101 @@ describe("Operations run inventory landing", () => {
     ).toBe(true);
   });
 
+  it("shows stage, result, and recovery guidance in their matching views", async () => {
+    const user = userEvent.setup();
+    stubInventoryJourney(
+      pageDocument({
+        items: [
+          runDocument(),
+          runDocument({
+            run_id: "task-ended",
+            task_id: "task-ended",
+            source_scope: "Movies/Completed",
+            status: "completed",
+            processed_items: 4,
+            completed_items: 4,
+            updated_at: "2026-08-22T12:08:00+00:00",
+            current_stage: null,
+          }),
+          runDocument({
+            run_id: "task-metadata",
+            task_id: "task-metadata",
+            source_scope: "Movies/Metadata",
+            status: "partial_success",
+            attention: true,
+            problem_types: ["metadata"],
+            problem_file_counts: {
+              recognition: 0,
+              metadata: 1,
+              classification: 0,
+              conflict: 0,
+              failure: 0,
+            },
+            current_stage: null,
+            processed_items: null,
+          }),
+        ],
+        total: 3,
+        status_counts: { running: 1, completed: 1, partial_success: 1 },
+        summary: summaryDocument({
+          total: 3,
+          running: 1,
+          ended: 2,
+          attention: 1,
+        }),
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    const views = await screen.findByRole("navigation", {
+      name: "任务中心视图",
+    });
+    expect(
+      await screen.findByRole("columnheader", { name: "当前阶段" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "处理进度" }),
+    ).toBeVisible();
+    expect(screen.getByText("分析媒体")).toBeVisible();
+    expect(screen.getAllByText("2 / 4 项")).toHaveLength(1);
+
+    await user.click(within(views).getByRole("button", { name: "进行中" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "当前阶段" }),
+    ).toBeVisible();
+    expect(screen.getByText("分析媒体")).toBeVisible();
+    expect(screen.getAllByText("2 / 4 项")).toHaveLength(1);
+
+    await user.click(within(views).getByRole("button", { name: "已结束" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "结果摘要" }),
+    ).toBeVisible();
+    expect(screen.getByText(/已处理 4 \/ 4 项；失败 0 项/)).toBeVisible();
+
+    await user.click(within(views).getByRole("button", { name: "元数据恢复" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "问题说明" }),
+    ).toBeVisible();
+    const table = screen.getByRole("table");
+    const metadataRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Metadata"));
+    expect(metadataRow).toBeDefined();
+    if (metadataRow === undefined) {
+      throw new Error("metadata recovery row was not rendered");
+    }
+    expect(
+      within(metadataRow).getByText(
+        "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
+      ),
+    ).toBeVisible();
+    expect(within(metadataRow).getByText("1 个文件")).toBeVisible();
+    expect(
+      within(metadataRow).getByRole("button", { name: "查看问题文件" }),
+    ).toBeVisible();
+  });
+
   it("submits server filters, applies card filters and resets to the same population", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
@@ -540,6 +637,7 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-101",
           task_id: "task-101",
+          source_scope: "Movies/Second page",
           status: "completed",
         }),
       ],
@@ -575,11 +673,13 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
-    expect(await screen.findByText("task-001")).toBeVisible();
+    expect((await screen.findAllByText("Movies")).length).toBeGreaterThan(0);
     const forward = screen.getByRole("button", { name: "下一页" });
     expect(forward).toBeEnabled();
     await user.click(forward);
-    expect(await screen.findByText("task-101")).toBeVisible();
+    expect(
+      (await screen.findAllByText("Movies/Second page")).length,
+    ).toBeGreaterThan(0);
     expect(requested.some((url) => url.includes("cursor=next-cursor"))).toBe(
       true,
     );
@@ -642,6 +742,7 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-002",
           task_id: "task-002",
+          source_scope: "Movies/Needs review",
           status: "failed",
           attention: true,
           problem_types: ["failure"],
@@ -718,7 +819,9 @@ describe("Operations run inventory landing", () => {
     await waitFor(() =>
       expect(router.history.location.search).not.toContain("view=attention"),
     );
-    expect(await screen.findByText("task-002")).toBeVisible();
+    expect(
+      (await screen.findAllByText("Movies/Needs review")).length,
+    ).toBeGreaterThan(0);
   });
 
   it("opens the exact Task/type problem file list from a recovery row", async () => {
@@ -729,6 +832,7 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-002",
           task_id: "task-002",
+          source_scope: "Movies/Failure",
           status: "failed",
           attention: true,
           problem_types: ["failure"],
@@ -870,7 +974,7 @@ describe("Operations run inventory landing", () => {
     const table = await screen.findByRole("table");
     const recoveryRow = within(table)
       .getAllByRole("row")
-      .find((row) => row.textContent?.includes("task-002"));
+      .find((row) => row.textContent?.includes("Movies/Failure"));
     expect(recoveryRow).toBeDefined();
     if (recoveryRow === undefined) {
       throw new Error("recovery row was not rendered");
@@ -878,7 +982,7 @@ describe("Operations run inventory landing", () => {
     expect(within(recoveryRow).getByText("1 个文件")).toBeVisible();
     expect(within(recoveryRow).queryByText("21 个文件")).toBeNull();
     await user.click(
-      within(recoveryRow).getByRole("button", { name: "处理失败" }),
+      within(recoveryRow).getByRole("button", { name: "查看失败文件" }),
     );
     await waitFor(() =>
       expect(router.history.location.search).toContain("problemRun=task-002"),
@@ -954,7 +1058,13 @@ describe("Operations run inventory landing", () => {
     stubInventoryJourney(
       pageDocument({
         items: [
-          runDocument({ total_items: 0, completed_items: 0, failed_items: 1 }),
+          runDocument({
+            total_items: 0,
+            completed_items: 0,
+            processed_items: null,
+            current_stage: null,
+            failed_items: 1,
+          }),
         ],
         status_counts: { completed: 1 },
         attention_count: 0,
@@ -966,7 +1076,7 @@ describe("Operations run inventory landing", () => {
     renderApp("/ui-v2/operations");
 
     expect(await screen.findByRole("table")).toBeVisible();
-    expect(screen.getByText("task-001")).toBeVisible();
+    expect(screen.getAllByText("Movies").length).toBeGreaterThan(0);
     // Legal independent scan errors never read as a malformed document and
     // never read as an empty inventory.
     expect(

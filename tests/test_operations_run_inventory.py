@@ -189,6 +189,73 @@ class _InventoryApiTestCase(unittest.TestCase):
 class RunInventoryTestCase(_InventoryApiTestCase):
     # -- AC-T1: one real population -------------------------------------
 
+    def test_running_row_has_bounded_stage_and_live_item_progress(self) -> None:
+        from dataclasses import replace
+
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        self.repository.create_task(
+            task(
+                "stage-task",
+                command="scan",
+                status=PersistentTaskStatus.RUNNING,
+                rank=1,
+            )
+        )
+        self.repository.upsert_item(
+            replace(
+                _inventory_item("stage-task", "finished-item", "source"),
+                status=TaskItemStatus.DRY_RUN,
+                stage="completed",
+            )
+        )
+        self.repository.upsert_item(_inventory_item("stage-task", "active-item", "source"))
+
+        overview = self.repository.operations_run("stage-task")
+        self.assertIsNotNone(overview)
+        assert overview is not None
+        self.assertEqual(1, overview.processed_items)
+        self.assertEqual("organizing", overview.current_stage)
+
+        status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(200, status)
+        row = next(value for value in page["items"] if value["run_id"] == "stage-task")
+        self.assertEqual(1, row["processed_items"])
+        self.assertEqual("organizing", row["current_stage"])
+
+    def test_progress_is_unavailable_when_item_count_exceeds_task_total(self) -> None:
+        from dataclasses import replace
+
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        self.repository.create_task(
+            replace(
+                task("stale-progress", status=PersistentTaskStatus.RUNNING),
+                total_items=0,
+                completed_items=0,
+                failed_items=0,
+            )
+        )
+        self.repository.upsert_item(
+            replace(
+                _inventory_item("stale-progress", "finished-item", "source"),
+                status=TaskItemStatus.DRY_RUN,
+                stage="completed",
+            )
+        )
+
+        overview = self.repository.operations_run("stale-progress")
+        self.assertIsNotNone(overview)
+        assert overview is not None
+        self.assertEqual(0, overview.total_items)
+        self.assertIsNone(overview.processed_items)
+
+        status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(200, status)
+        row = next(value for value in page["items"] if value["run_id"] == "stale-progress")
+        self.assertEqual(0, row["total_items"])
+        self.assertIsNone(row["processed_items"])
+
     def test_job_task_linkage_counts_once_and_survives_the_link(self) -> None:
         self.repository.create_task(task("linked-task", command="scan", rank=1))
         self.repository.create_job(job("linked-job", rank=0, task_id="linked-task"))

@@ -612,7 +612,7 @@ test("a refreshed discovery page reconnects to the same durable discovery with i
   // principal; a fresh full load would re-enter through the entry page.
   await page
     .getByRole("navigation", { name: "Primary" })
-    .getByRole("link", { name: "Operations" })
+    .getByRole("link", { name: "任务中心" })
     .click();
   await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
   await expect(

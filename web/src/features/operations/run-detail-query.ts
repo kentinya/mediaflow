@@ -52,8 +52,14 @@ export function recoveryBatchQueryCacheKey(context: {
   ] as const;
 }
 
-function detailRefetchInterval(active: boolean): number | false {
-  return active ? RUN_REFETCH_INTERVAL : false;
+function detailRefetchInterval(
+  read: OperationsRead<unknown> | undefined,
+  active: boolean,
+  readFailed = false,
+): number | false {
+  return active && !readFailed && read?.ok === true
+    ? RUN_REFETCH_INTERVAL
+    : false;
 }
 
 export interface RunDetailQueryContext {
@@ -88,7 +94,12 @@ export function runItemsQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    refetchInterval: detailRefetchInterval(context.active),
+    refetchInterval: (query) =>
+      detailRefetchInterval(
+        query.state.data,
+        context.active,
+        query.state.status === "error",
+      ),
     refetchIntervalInBackground: false,
   });
 }
@@ -119,7 +130,12 @@ export function runProblemItemsQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    refetchInterval: detailRefetchInterval(context.active),
+    refetchInterval: (query) =>
+      detailRefetchInterval(
+        query.state.data,
+        context.active,
+        query.state.status === "error",
+      ),
     refetchIntervalInBackground: false,
   });
 }
@@ -150,7 +166,12 @@ export function runRecordsQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    refetchInterval: detailRefetchInterval(context.active),
+    refetchInterval: (query) =>
+      detailRefetchInterval(
+        query.state.data,
+        context.active,
+        query.state.status === "error",
+      ),
     refetchIntervalInBackground: false,
   });
 }
@@ -169,7 +190,12 @@ export function runItemEvidenceQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    refetchInterval: detailRefetchInterval(context.active),
+    refetchInterval: (query) =>
+      detailRefetchInterval(
+        query.state.data,
+        context.active,
+        query.state.status === "error",
+      ),
     refetchIntervalInBackground: false,
   });
 }
@@ -191,7 +217,12 @@ export function taskItemRecoveryQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 0,
-    refetchInterval: detailRefetchInterval(context.active),
+    refetchInterval: (query) =>
+      detailRefetchInterval(
+        query.state.data,
+        context.active,
+        query.state.status === "error",
+      ),
     refetchIntervalInBackground: false,
   });
 }
@@ -217,15 +248,12 @@ export function recoveryBatchQueryOptions(
     staleTime: 0,
     refetchInterval: (query) => {
       const data = query.state.data;
-      if (
-        data?.ok === true &&
-        ["completed", "partial", "failed", "cancelled"].includes(
-          data.model.status,
-        )
-      ) {
-        return false;
-      }
-      return RUN_REFETCH_INTERVAL;
+      if (query.state.status === "error" || data?.ok !== true) return false;
+      return ["completed", "partial", "failed", "cancelled"].includes(
+        data.model.status,
+      )
+        ? false
+        : RUN_REFETCH_INTERVAL;
     },
     refetchIntervalInBackground: false,
   });

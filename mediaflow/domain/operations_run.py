@@ -335,6 +335,10 @@ class OperationsRunOverview:
     total_items: int | None = None
     completed_items: int | None = None
     failed_items: int | None = None
+    #: Live read-only progress over the exact TaskItem population. The stage
+    #: is a small public bucket, never an arbitrary internal stage string.
+    processed_items: int | None = None
+    current_stage: str | None = None
     pause_requested: bool = False
     #: The current, real operator-attention facet. It is derived from durable
     #: evidence (an unresolved decision/repair, safe continuation step or

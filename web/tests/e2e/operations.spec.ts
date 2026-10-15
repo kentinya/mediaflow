@@ -23,7 +23,7 @@ async function connect(page: Page, token: string = VIEWER_TOKEN) {
 }
 
 async function openOperations(page: Page) {
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
 }
 
@@ -428,7 +428,7 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   ).toBeVisible();
 
   // The shared shell keeps the Operations workspace reachable from any page.
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await page.getByRole("link", { name: "任务列表", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);

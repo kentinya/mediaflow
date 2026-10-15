@@ -30,7 +30,7 @@ test("a Unicode principal can admit and reconcile a batch after reload", async (
   await expect(
     page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await page
     .getByRole("row")
     .filter({ hasText: seeded.runId })

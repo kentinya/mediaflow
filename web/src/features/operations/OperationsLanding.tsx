@@ -42,6 +42,7 @@ import {
   RUN_PROBLEM_LABELS,
   RUN_PROBLEM_TYPES,
   RUN_STATUSES,
+  RUN_CURRENT_STAGE_LABELS,
   RUN_STATUS_LABELS,
   RUN_TRIGGER_LABELS,
   RUN_VIEWS,
@@ -113,6 +114,26 @@ interface ProblemPageState {
   readonly cursor: string | null;
   readonly direction: "forward" | "backward";
 }
+
+const RUN_VIEW_DESCRIPTIONS: Readonly<Record<RunView, string>> = {
+  all: "查看授权范围内的任务与 Job、实际阶段和已处理进度；业务名称和范围来自受理时保存的记录。",
+  running: "查看当前阶段和已处理进度；未知阶段或计数会明确显示不可用。",
+  attention: "查看仍待跟进的决定、修复或后续步骤，并进入对应文件证据。",
+  ended: "核对每项运行的结果摘要、失败数量和结束状态。",
+  recognition: "识别尚未确定时，核对候选或识别规则，再打开对应文件记录。",
+  metadata: "媒体身份仍待确认或补正；核对标题、年份和候选后查看文件记录。",
+  classification: "目标媒体库或相对路径尚未确定；检查分类策略和来源范围。",
+  conflict: "目标位置存在冲突；查看冲突文件和已配置的处理策略。",
+  failure: "处理失败或结果仍需调查；先查看文件证据和明确的安全下一步。",
+};
+
+const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
+  recognition: "识别仍有待核对项；打开文件记录查看候选与识别依据。",
+  metadata: "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
+  classification: "目标媒体库或路径仍未确定；打开文件记录查看分类状态。",
+  conflict: "目标位置有冲突待处理；打开文件记录核对冲突和策略。",
+  failure: "存在失败或不确定结果；打开文件记录查看证据与下一步。",
+};
 
 const STATUS_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
 const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
@@ -308,13 +329,6 @@ function commandLabelOf(run: RunSummary): string {
   // An unknown legacy command stays honest: show the recorded identity
   // bounded, never a guessed business meaning.
   return run.command ?? "未知操作";
-}
-
-function runIdentityOf(run: RunSummary): string {
-  // The run identity is the admission identity for a Job-backed run (so an
-  // admission keeps its visible identity after acquiring a Task) and the Task
-  // identity for a standalone Task.
-  return run.runId;
 }
 
 function detailLinkOf(run: RunSummary): string | null {
@@ -1021,22 +1035,30 @@ function ViewNavigation({
   readonly onSelectView: (next: RunView) => void;
 }) {
   return (
-    <nav
-      className="mf-run-tabs mf-view-tabs"
-      aria-label="任务中心视图"
-      style={{ overflowX: "auto" }}
-    >
-      {RUN_VIEWS.map((candidate) => (
-        <button
-          key={candidate}
-          type="button"
-          aria-current={view === candidate ? "page" : undefined}
-          onClick={() => onSelectView(candidate)}
-        >
-          {RUN_VIEW_LABELS[candidate]}
-        </button>
-      ))}
-    </nav>
+    <section className="mf-run-view-context" aria-label="当前任务视图">
+      <div>
+        <h3>{RUN_VIEW_LABELS[view]}</h3>
+        <p>{RUN_VIEW_DESCRIPTIONS[view]}</p>
+      </div>
+      <nav className="mf-run-tabs mf-view-tabs" aria-label="任务中心视图">
+        {RUN_VIEWS.map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            aria-current={view === candidate ? "page" : undefined}
+            onFocus={(event) =>
+              event.currentTarget.scrollIntoView?.({
+                block: "nearest",
+                inline: "nearest",
+              })
+            }
+            onClick={() => onSelectView(candidate)}
+          >
+            {RUN_VIEW_LABELS[candidate]}
+          </button>
+        ))}
+      </nav>
+    </section>
   );
 }
 
@@ -1060,6 +1082,10 @@ function RunTable({
   readonly onBackward: () => void;
 }) {
   const recovery = isRecoveryView(view);
+  const running = view === "running";
+  const showProgress = view === "all" || running;
+  const attention = view === "attention";
+  const ended = view === "ended";
   return (
     <>
       <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
@@ -1070,11 +1096,15 @@ function RunTable({
               <th>业务名称</th>
               <th>操作类型</th>
               <th>范围</th>
-              <th>触发方式</th>
+              {showProgress && <th>当前阶段</th>}
+              {showProgress && <th>处理进度</th>}
+              {attention && <th>当前问题</th>}
+              {ended && <th>结果摘要</th>}
+              {recovery && <th>问题说明</th>}
               <th>状态</th>
-              <th>创建时间</th>
+              <th>{ended || recovery ? "更新时间" : "触发方式 / 创建时间"}</th>
               {recovery && <th>涉及文件</th>}
-              {recovery && <th>操作</th>}
+              {(recovery || attention) && <th>定位</th>}
             </tr>
           </thead>
           <tbody>
@@ -1096,12 +1126,7 @@ function RunTable({
                     >
                       {run.sourceScope ?? commandLabelOf(run)}
                     </button>
-                    <span className="mf-run-kind">
-                      {commandLabelOf(run)} ·{" "}
-                      <span className="mf-run-identity">
-                        {runIdentityOf(run)}
-                      </span>
-                    </span>
+                    <span className="mf-run-kind">{commandLabelOf(run)}</span>
                     {detail === null && (
                       <span className="mf-run-kind">（无原生详情）</span>
                     )}
@@ -1119,7 +1144,37 @@ function RunTable({
                     )}
                   </td>
                   <td>{run.sourceScope ?? "不可用"}</td>
-                  <td>{RUN_TRIGGER_LABELS[run.trigger]}</td>
+                  {showProgress && (
+                    <td>
+                      {run.currentStage === null
+                        ? "不可用"
+                        : RUN_CURRENT_STAGE_LABELS[run.currentStage]}
+                    </td>
+                  )}
+                  {showProgress && (
+                    <td>
+                      {run.processedItems === null || run.totalItems === null
+                        ? "不可用"
+                        : `${run.processedItems} / ${run.totalItems} 项`}
+                    </td>
+                  )}
+                  {attention && (
+                    <td>
+                      {run.problemTypes.length > 0
+                        ? run.problemTypes
+                            .map((type) => RUN_PROBLEM_LABELS[type])
+                            .join("、")
+                        : "待检查后续步骤"}
+                    </td>
+                  )}
+                  {ended && (
+                    <td>
+                      已处理 {run.processedItems ?? "不可用"} /{" "}
+                      {run.totalItems ?? "不可用"} 项；失败{" "}
+                      {run.failedItems ?? "不可用"} 项
+                    </td>
+                  )}
+                  {recovery && <td>{RECOVERY_VIEW_EXPLANATIONS[view]}</td>}
                   <td>
                     <span
                       className={run.attention ? "mf-run-attention" : undefined}
@@ -1128,27 +1183,35 @@ function RunTable({
                     </span>
                     {run.pauseRequested && "（已请求暂停）"}
                     {run.status === "unknown" && "（证据不足）"}
-                    {run.problemTypes.length > 0 && (
-                      <span className="mf-run-kind">
-                        {" "}
-                        {run.problemTypes
-                          .map((problem) => RUN_PROBLEM_LABELS[problem])
-                          .join("、")}
-                      </span>
-                    )}
+                    {!running &&
+                      !attention &&
+                      !ended &&
+                      !recovery &&
+                      run.problemTypes.length > 0 && (
+                        <span className="mf-run-kind">
+                          {" "}
+                          {run.problemTypes
+                            .map((problem) => RUN_PROBLEM_LABELS[problem])
+                            .join("、")}
+                        </span>
+                      )}
                   </td>
-                  <td>{formatDate(run.createdAt)}</td>
+                  <td>
+                    {ended || recovery
+                      ? formatDate(run.updatedAt)
+                      : `${RUN_TRIGGER_LABELS[run.trigger]} · ${formatDate(run.createdAt)}`}
+                  </td>
                   {recovery && (
                     <td>{run.problemFileCounts?.[view] ?? "不可用"} 个文件</td>
                   )}
-                  {recovery && (
+                  {(recovery || attention) && (
                     <td>
                       <button
                         type="button"
                         className="mf-button mf-button-secondary"
                         onClick={() => onOpenProblem(run.runId)}
                       >
-                        {view === "failure" ? "处理失败" : "处理问题"}
+                        {view === "failure" ? "查看失败文件" : "查看问题文件"}
                       </button>
                     </td>
                   )}

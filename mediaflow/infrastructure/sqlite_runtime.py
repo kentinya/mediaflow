@@ -5521,11 +5521,49 @@ class SQLiteTaskRepository:
         # technical failure. Its pending safe-continuation step remains in
         # the generic attention view until a later durable outcome replaces
         # that state. This keeps it discoverable without inventing a failure.
+        completed_manual_follow_up = (
+            "EXISTS (SELECT 1 FROM manual_recovery_links recovery_links "
+            "JOIN recovery_continuations resolved_continuations "
+            "ON resolved_continuations.source_task_id = recovery_links.source_task_id "
+            "AND resolved_continuations.source_item_id = recovery_links.source_item_id "
+            "AND resolved_continuations.new_task_id = continuation_items.task_id "
+            "JOIN recovery_continuations linked_analysis "
+            "ON linked_analysis.continuation_id = recovery_links.analysis_continuation_id "
+            "AND linked_analysis.new_task_id = recovery_links.analysis_task_id "
+            "AND linked_analysis.source_task_id = resolved_continuations.source_task_id "
+            "AND linked_analysis.source_item_id = resolved_continuations.source_item_id "
+            "JOIN task_results analysis_results "
+            "ON analysis_results.result_id = recovery_links.analysis_result_id "
+            "AND analysis_results.task_id = recovery_links.analysis_task_id "
+            "AND analysis_results.result_id = linked_analysis.new_result_id "
+            "JOIN manual_preview_items preview_items "
+            "ON preview_items.preview_id = recovery_links.preview_id "
+            "AND preview_items.source_fingerprint = analysis_results.source_fingerprint "
+            "AND json_extract(preview_items.source_json, '$.occurrenceId') "
+            "= analysis_results.source_occurrence_id "
+            "JOIN manual_execution_items execution_items "
+            "ON execution_items.execution_id = recovery_links.execution_id "
+            "AND execution_items.preview_id = recovery_links.preview_id "
+            "AND execution_items.preview_item_id = preview_items.preview_item_id "
+            "AND execution_items.item_id = preview_items.item_id "
+            "JOIN manual_executions executions "
+            "ON executions.execution_id = recovery_links.execution_id "
+            "AND executions.task_id = execution_items.task_id "
+            "WHERE recovery_links.status = 'consumed' "
+            "AND recovery_links.execution_id IS NOT NULL "
+            "AND executions.status = 'completed' "
+            "AND execution_items.status = 'success' "
+            "AND execution_items.result_id IS NOT NULL "
+            "AND execution_items.effect_certainty = 'verified_complete' "
+            "AND execution_items.uncertain_effects = '[]' "
+            "AND recovery_links.source_task_id = resolved_continuations.source_task_id)"
+        )
         safe_continuation = (
             "EXISTS (SELECT 1 FROM task_items continuation_items "
             f"WHERE continuation_items.task_id = {task_identity} "
             "AND continuation_items.status = 'pending' "
-            "AND (continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
+            "AND ((continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
+            f"AND NOT {completed_manual_follow_up}) "
             "OR (continuation_items.stage = 'task_retry_requested' AND NOT EXISTS ("
             "SELECT 1 FROM manual_recovery_links recovery_links WHERE "
             "recovery_links.source_item_id = continuation_items.item_id "
@@ -5568,6 +5606,42 @@ class SQLiteTaskRepository:
                    END AS library_kind,
                    task_status.total_items, task_status.completed_items,
                    task_status.failed_items, task_status.pause_requested,
+                   CASE WHEN task_status.task_id IS NULL OR task_status.total_items IS NULL
+                        THEN NULL ELSE (
+                       SELECT CASE
+                           WHEN COUNT(*) <= task_status.total_items THEN COUNT(*)
+                           ELSE NULL END
+                       FROM task_items progress_items
+                       WHERE progress_items.task_id = {task_identity}
+                       AND progress_items.status IN (
+                           'dry_run', 'success', 'partial', 'failed', 'skipped',
+                           'cancelled', 'ignored'
+                       )
+                   ) END AS processed_items,
+                   (SELECT CASE
+                       WHEN COUNT(DISTINCT CASE
+                           WHEN current_items.stage IN (
+                               'scanning', 'manual_scan_discovery', 'discovery'
+                           ) THEN 'scanning'
+                           WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
+                               THEN 'organizing'
+                           WHEN current_items.stage = 'pipeline' THEN 'processing'
+                           ELSE 'unknown'
+                       END) = 1 THEN MAX(CASE
+                           WHEN current_items.stage IN (
+                               'scanning', 'manual_scan_discovery', 'discovery'
+                           ) THEN 'scanning'
+                           WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
+                               THEN 'organizing'
+                           WHEN current_items.stage = 'pipeline' THEN 'processing'
+                           ELSE 'unknown'
+                       END)
+                       WHEN COUNT(*) > 1 THEN 'multiple'
+                       ELSE NULL END
+                    FROM task_items current_items
+                    WHERE current_items.task_id = {task_identity}
+                    AND current_items.status = 'processing'
+                   ) AS current_stage,
                    task_status.configuration_snapshot_id,
                    -- The bounded historical scope: prefer the business
                    -- identity the admitting producer recorded inside the
@@ -6462,21 +6536,54 @@ class SQLiteTaskRepository:
                     f"newer_requests.request_id > {alias}.request_id)))"
                 )
 
+            # A failed analysis continuation may have moved the actual
+            # operator decision to its linked TaskItem. Keep the source item
+            # out of Failure when that exact child currently carries a real
+            # review, conflict, or technical blocker; the child Task owns the
+            # current problem and its file list. A continuation that failed
+            # before producing a child blocker remains a source failure.
+            child_blocker = (
+                "EXISTS (SELECT 1 FROM task_items child_items "
+                "WHERE child_items.task_id = {continuation}.new_task_id AND ("
+                "child_items.status IN ('waiting_recognition', 'waiting_metadata', "
+                "'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm') "
+                "OR (child_items.status = 'pending' AND EXISTS ("
+                "SELECT 1 FROM recognition_reviews child_reviews "
+                "WHERE child_reviews.item_id = child_items.item_id "
+                "AND child_reviews.status = 'pending')) "
+                "OR (child_items.status = 'pending' AND EXISTS ("
+                "SELECT 1 FROM conflict_confirmations child_conflicts "
+                "WHERE child_conflicts.item_id = child_items.item_id "
+                "AND child_conflicts.status = 'pending'))))"
+            )
+            failed_request = (
+                "EXISTS (SELECT 1 FROM recovery_requests failed_requests "
+                "WHERE failed_requests.item_id = i.item_id "
+                "AND failed_requests.status = 'failed' "
+                f"AND {latest_request('failed_requests')} "
+                "AND NOT EXISTS (SELECT 1 FROM recovery_continuations linked_continuations "
+                "WHERE linked_continuations.request_id = failed_requests.request_id "
+                "AND linked_continuations.source_item_id = i.item_id "
+                "AND linked_continuations.status = 'failed' "
+                "AND linked_continuations.new_task_id IS NOT NULL AND "
+                f"{child_blocker.format(continuation='linked_continuations')}))"
+            )
+            failed_continuation = (
+                "EXISTS (SELECT 1 FROM recovery_continuations failed_continuations "
+                "JOIN recovery_requests continuation_requests "
+                "ON continuation_requests.request_id = failed_continuations.request_id "
+                "WHERE failed_continuations.source_item_id = i.item_id "
+                "AND failed_continuations.status = 'failed' "
+                f"AND {latest_request('continuation_requests')} AND NOT "
+                f"{child_blocker.format(continuation='failed_continuations')})"
+            )
             return (
                 "((i.status IN ('failed', 'partial')"
                 " AND i.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
                 " 'metadata_resolved', 'metadata_correction_resolved',"
                 " 'classification_resolved', 'task_retry_requested'))"
                 " OR (i.status = 'pending' AND i.stage = 'task_retry_requested' AND ("
-                "EXISTS (SELECT 1 FROM recovery_requests failed_requests "
-                "WHERE failed_requests.item_id = i.item_id AND failed_requests.status = 'failed' "
-                f"AND {latest_request('failed_requests')}) "
-                "OR EXISTS (SELECT 1 FROM recovery_continuations failed_continuations "
-                "JOIN recovery_requests continuation_requests "
-                "ON continuation_requests.request_id = failed_continuations.request_id "
-                "WHERE failed_continuations.source_item_id = i.item_id "
-                "AND failed_continuations.status = 'failed' "
-                f"AND {latest_request('continuation_requests')}))))",
+                f"{failed_request} OR {failed_continuation})))",
                 (),
             )
         raise ValueError("run problem item type is invalid")
@@ -6845,6 +6952,8 @@ class SQLiteTaskRepository:
             total_items=total_items,
             completed_items=(None if run_kind == "discovery" else row["completed_items"]),
             failed_items=(None if run_kind == "discovery" else row["failed_items"]),
+            processed_items=(None if run_kind == "discovery" else row["processed_items"]),
+            current_stage=(str(row["current_stage"]) if row["current_stage"] is not None else None),
             pause_requested=bool(row["pause_requested"]),
             attention=bool(row["derived_attention"]),
             problem_types=problem_types,

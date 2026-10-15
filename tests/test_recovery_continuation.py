@@ -2150,6 +2150,10 @@ class RecoveryContinuationTests(unittest.TestCase):
                 review = repository.get_metadata_review_for_item(linked.item_id)
                 assert review is not None
                 self.assertEqual(MetadataReviewStatus.PENDING, review.status)
+                failure_window = repository.operations_runs_window(view="failure")
+                metadata_window = repository.operations_runs_window(view="metadata")
+                self.assertNotIn(run.task_id, {row.task_id for row in failure_window.page})
+                self.assertIn(analysis.task_id, {row.task_id for row in metadata_window.page})
 
             # Persistence-only decision saved on the linked analysis item.
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -2190,6 +2194,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                 run,
                 expected_destination=results[-1].destination_path,
             )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                attention_window = repository.operations_runs_window(view="attention")
+                self.assertEqual(0, attention_window.total)
 
     def test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item(self):
         with tempfile.TemporaryDirectory() as directory:

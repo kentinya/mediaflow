@@ -55,7 +55,7 @@ test("capture the nine task-center views and the problem-file states", async ({
   expect(paged.itemCount).toBe(21);
   await connect(page);
   await page.setViewportSize({ width: 1536, height: 1024 });
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   const views = page.getByRole("navigation", { name: "任务中心视图" });
   await expect(views).toBeVisible();
@@ -78,8 +78,10 @@ test("capture the nine task-center views and the problem-file states", async ({
   // The exact Task/type problem-file list (one recovery row's own action),
   // including its actual next page rather than a synthetic short fixture.
   await views.getByRole("button", { name: "失败恢复", exact: true }).click();
-  const row = page.getByRole("row").filter({ hasText: paged.taskId });
-  await row.getByRole("button", { name: "处理失败" }).click();
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/PagedFailures" });
+  await row.getByRole("button", { name: "查看失败文件" }).click();
   const problemPanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(problemPanel).toBeVisible();
   await expect(problemPanel.getByText(/匹配 21 个文件/)).toBeVisible();
@@ -102,6 +104,23 @@ test("capture the nine task-center views and the problem-file states", async ({
     .click();
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(views).toBeVisible();
+  const narrowNavigation = await views.evaluate((navigation) => ({
+    rowTops: Array.from(navigation.querySelectorAll("button"), (button) =>
+      Math.round(button.getBoundingClientRect().top),
+    ),
+    scrollWidth: navigation.scrollWidth,
+    clientWidth: navigation.clientWidth,
+  }));
+  expect(new Set(narrowNavigation.rowTops).size).toBe(1);
+  expect(narrowNavigation.scrollWidth).toBeGreaterThan(
+    narrowNavigation.clientWidth,
+  );
+  const lastView = views.getByRole("button").last();
+  await lastView.focus();
+  await expect(lastView).toBeFocused();
+  expect(
+    await views.evaluate((navigation) => navigation.scrollLeft),
+  ).toBeGreaterThan(0);
   await page.waitForTimeout(250);
   await page.screenshot({
     path: `${OUTPUT}/task-center-narrow.png`,
@@ -113,8 +132,8 @@ test("capture the nine task-center views and the problem-file states", async ({
   await views.getByRole("button", { name: "失败恢复", exact: true }).click();
   await page
     .getByRole("row")
-    .filter({ hasText: paged.taskId })
-    .getByRole("button", { name: "处理失败" })
+    .filter({ hasText: "TaskCenter/PagedFailures" })
+    .getByRole("button", { name: "查看失败文件" })
     .click();
   await page
     .getByRole("region", { name: "问题文件处理" })

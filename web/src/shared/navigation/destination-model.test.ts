@@ -14,7 +14,7 @@ describe("destination model", () => {
     expect(destinations.map((item) => item.label)).toEqual([
       "Overview",
       "Library",
-      "Operations",
+      "任务中心",
       "Review & Recovery",
       "Configuration",
       "Organizing Rules",

@@ -65,6 +65,26 @@ export const RUN_STATUSES = [
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
+/** Small public buckets for the current processing stage. */
+export const RUN_CURRENT_STAGES = [
+  "scanning",
+  "processing",
+  "organizing",
+  "multiple",
+  "unknown",
+] as const;
+export type RunCurrentStage = (typeof RUN_CURRENT_STAGES)[number];
+
+export const RUN_CURRENT_STAGE_LABELS: Readonly<
+  Record<RunCurrentStage, string>
+> = {
+  scanning: "扫描文件",
+  processing: "分析媒体",
+  organizing: "执行整理",
+  multiple: "多个阶段并行",
+  unknown: "阶段不可用",
+};
+
 /** Statuses that durably end a run's processing. */
 export const TERMINAL_RUN_STATUSES: readonly RunStatus[] = [
   "completed",
@@ -206,6 +226,10 @@ export interface RunSummary {
   readonly totalItems: number | null;
   readonly completedItems: number | null;
   readonly failedItems: number | null;
+  /** Distinct terminal TaskItems observed in the same bounded read. */
+  readonly processedItems: number | null;
+  /** Allowlisted current stage bucket; null means the backend has none. */
+  readonly currentStage: RunCurrentStage | null;
   readonly pauseRequested: boolean;
   readonly attention: boolean;
   /** The current, real recovery problem types this Task has outstanding. */
@@ -509,7 +533,22 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const totalItems = optionalCount(source, "total_items");
   const completedItems = optionalCount(source, "completed_items");
   const failedItems = optionalCount(source, "failed_items");
-  const reportedProgress = completedItems !== null || failedItems !== null;
+  const processedItems = optionalCount(source, "processed_items");
+  let currentStage: RunCurrentStage | null;
+  try {
+    currentStage =
+      source["current_stage"] === null || source["current_stage"] === undefined
+        ? null
+        : normalizeEnum(
+            source["current_stage"],
+            "run.current_stage",
+            RUN_CURRENT_STAGES,
+          );
+  } catch {
+    return fail();
+  }
+  const reportedProgress =
+    completedItems !== null || failedItems !== null || processedItems !== null;
   // R1: progress that cannot name its own population is contradictory, not
   // rounded — a completed/failed count always requires the item total.
   if (reportedProgress && totalItems === null) {
@@ -521,6 +560,13 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     totalItems !== null &&
     completedItems !== null &&
     completedItems > totalItems
+  ) {
+    fail();
+  }
+  if (
+    totalItems !== null &&
+    processedItems !== null &&
+    processedItems > totalItems
   ) {
     fail();
   }
@@ -569,6 +615,8 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     totalItems,
     completedItems,
     failedItems,
+    processedItems,
+    currentStage,
     pauseRequested: flag(source, "pause_requested"),
     attention,
     problemTypes,

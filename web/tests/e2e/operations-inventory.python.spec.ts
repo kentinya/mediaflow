@@ -78,7 +78,7 @@ function recordApiCalls(
 }
 
 async function openInventory(page: Page): Promise<void> {
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
@@ -207,7 +207,7 @@ test("a real Worker claim links the pending Job without changing the count", asy
   // processing state; opening it links to the exact Task detail route.
   const linkedRow = page
     .getByRole("row")
-    .filter({ hasText: linked.jobId as string });
+    .filter({ hasText: "Movies/Harness/Linked" });
   await expect(linkedRow).toHaveCount(1);
   await expect(linkedRow).toContainText("进行中");
   await linkedRow.getByRole("button").first().click();
@@ -636,7 +636,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // the single durable item/result written by the actual Worker execution.
   await page.getByRole("button", { name: "Refresh" }).first().click();
   await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
-  const row = page.getByRole("row").filter({ hasText: run.runId });
+  const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -1013,7 +1013,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await page.getByLabel("操作类型").fill("harness-standalone-organize");
   await expect(page).toHaveURL(/command=harness-standalone-organize/);
   await expectRunTotal(page, 1);
-  const row = page.getByRole("row").filter({ hasText: run.runId });
+  const row = page.getByRole("row").filter({ hasText: run.sourcePath });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -1162,7 +1162,7 @@ test("the default unfiltered task-center origin selects its admitted run through
   await connect(page, ADMIN_TOKEN);
 
   // The default entry: the sidebar link, no filters, no selected run.
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
@@ -1350,12 +1350,12 @@ test("a paused run continues only its remaining scope through the real Worker", 
   // harness database is shared by the sequential tests above, so the exact
   // total is not asserted here: this journey addresses its own run by identity.
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(
-    page.getByRole("row").filter({ hasText: sourceTaskId }),
-  ).toHaveCount(1);
+  await expect(page.getByRole("row").filter({ hasText: "已暂停" })).toHaveCount(
+    1,
+  );
 
   // Select exactly the paused fixture run by its own identity.
-  const pausedRow = page.getByRole("row").filter({ hasText: sourceTaskId });
+  const pausedRow = page.getByRole("row").filter({ hasText: "已暂停" });
   await expect(pausedRow).toHaveCount(1);
   await pausedRow.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -1436,14 +1436,17 @@ test("a paused run continues only its remaining scope through the real Worker", 
   const restarted = await request.post(`${BASE}/__harness__/restart`);
   expect(restarted.ok()).toBeTruthy();
   await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expect(page.getByRole("row").filter({ hasText: "已暂停" })).toHaveCount(
+    1,
+  );
+  // The continuation is its own visible run. Its durable Job/Task identities
+  // remain available to support reads while the row is selected by its
+  // operator-visible completed Scan state.
   await expect(
-    page.getByRole("row").filter({ hasText: sourceTaskId }),
-  ).toHaveCount(1);
-  // The continuation is its own visible run. A Job-backed run keeps its
-  // admission identity, so it is addressed by the continuation Job ID while its
-  // durable Task identity stays available for the evidence reads below.
-  await expect(
-    page.getByRole("row").filter({ hasText: continuationJobId }),
+    page
+      .getByRole("row")
+      .filter({ hasText: "扫描" })
+      .filter({ hasText: "已完成" }),
   ).toHaveCount(1);
   const afterRestart = await (
     await request.get(`${BASE}/__harness__/continuation-state`)
@@ -1481,7 +1484,7 @@ test("a mutation-authorized paused run without live authority is refused nativel
   // admit it, so this journey connects the principal that holds it.
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const row = page.getByRole("row").filter({ hasText: taskId });
+  const row = page.getByRole("row").filter({ hasText: "Authority" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -1559,7 +1562,9 @@ test("native task-item recognition recovery reaches a separately authorized link
   const api = recordApiCalls(page);
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  const sourceRun = page
+    .getByRole("row")
+    .filter({ hasText: "Recovery.2005.mkv" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -1757,7 +1762,7 @@ test("explicit disconnect clears a lost-response batch before another principal 
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   const selector = page.getByLabel(
@@ -1863,7 +1868,7 @@ test("a batch hint survives same-principal reload and is removed after a differe
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   await page
@@ -1964,7 +1969,7 @@ test("a rejected principal can return safely, then a different confirmed princip
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   await page
@@ -2079,7 +2084,7 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  const sourceRun = page.getByRole("row").filter({ hasText: "Batch" });
   await expect(sourceRun).toHaveCount(1);
   await sourceRun.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
@@ -2385,16 +2390,16 @@ test("the nine views and the exact Task/type problem file list work natively", a
   await expect(page).toHaveURL(/view=recognition/);
   const recognitionRow = page
     .getByRole("row")
-    .filter({ hasText: seeded.mixedTaskId });
+    .filter({ hasText: "TaskCenter/Mixed" });
   await expect(recognitionRow).toHaveCount(1);
-  await expect(recognitionRow).toContainText("识别问题");
+  await expect(recognitionRow).toContainText("识别仍有待核对项");
   // The summary counts the complete authorized population, and the two
   // recognition files of the one mixed Task are reported separately.
   await expect(page.getByText("待处理任务").first()).toBeVisible();
   await expect(page.getByText("涉及文件").first()).toBeVisible();
 
   // The row's own action opens the exact Task/type file list, server-filtered.
-  await recognitionRow.getByRole("button", { name: "处理问题" }).click();
+  await recognitionRow.getByRole("button", { name: "查看问题文件" }).click();
   await expect(page).toHaveURL(/problemRun=/);
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel).toBeVisible();
@@ -2428,12 +2433,12 @@ test("the nine views and the exact Task/type problem file list work natively", a
   await views.getByRole("button", { name: "分类恢复", exact: true }).click();
   await expect(page).toHaveURL(/view=classification/);
   await expect(
-    page.getByRole("row").filter({ hasText: seeded.classificationTaskId }),
+    page.getByRole("row").filter({ hasText: "TaskCenter/Classified" }),
   ).toHaveCount(1);
   await views.getByRole("button", { name: "元数据恢复", exact: true }).click();
   await expect(page).toHaveURL(/view=metadata/);
   await expect(
-    page.getByRole("row").filter({ hasText: seeded.metadataTaskId }),
+    page.getByRole("row").filter({ hasText: "TaskCenter/Metadata" }),
   ).toHaveCount(1);
 
   // The failure view includes the mixed Task (its unresolved failure file),
@@ -2442,10 +2447,10 @@ test("the nine views and the exact Task/type problem file list work natively", a
   await expect(page).toHaveURL(/view=failure/);
   const mixedFailureRow = page
     .getByRole("row")
-    .filter({ hasText: seeded.mixedTaskId });
+    .filter({ hasText: "TaskCenter/Mixed" });
   await expect(mixedFailureRow).toHaveCount(1);
   await expect(mixedFailureRow).toContainText("2 个文件");
-  await mixedFailureRow.getByRole("button", { name: "处理失败" }).click();
+  await mixedFailureRow.getByRole("button", { name: "查看失败文件" }).click();
   const failurePanel = page.getByRole("region", { name: "问题文件处理" });
   await expect(failurePanel.getByText(/匹配 2 个文件/)).toBeVisible();
   await expect(
@@ -2463,7 +2468,7 @@ test("the nine views and the exact Task/type problem file list work natively", a
   await views.getByRole("button", { name: "冲突处理", exact: true }).click();
   const conflictRow = page
     .getByRole("row")
-    .filter({ hasText: seeded.mixedTaskId });
+    .filter({ hasText: "TaskCenter/Mixed" });
   await expect(conflictRow).toHaveCount(1);
   await expect(conflictRow).toContainText("1 个文件");
   await expect(page.getByText("待处理任务").first()).toBeVisible();
@@ -2496,9 +2501,11 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
     .toBe("TaskCenter/PagedFailures");
   await expectRunTotal(page, 1);
   await page.getByRole("button", { name: "失败恢复", exact: true }).click();
-  const row = page.getByRole("row").filter({ hasText: seeded.taskId });
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/PagedFailures" });
   await expect(row).toContainText("21 个文件");
-  await row.getByRole("button", { name: "处理失败" }).click();
+  await row.getByRole("button", { name: "查看失败文件" }).click();
 
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel.getByText(/匹配 21 个文件/)).toBeVisible();
@@ -2544,9 +2551,10 @@ test("the nine views survive authentication continuation and a real restart", as
   page,
   request,
 }) => {
-  const seeded = (await (
-    await request.post(`${BASE}/__harness__/seed-task-center-problems`)
-  ).json()) as { readonly mixedTaskId: string };
+  const seeded = await request.post(
+    `${BASE}/__harness__/seed-task-center-problems`,
+  );
+  expect(seeded.ok()).toBeTruthy();
 
   await connect(page);
   await openInventory(page);
@@ -2554,8 +2562,8 @@ test("the nine views survive authentication continuation and a real restart", as
   await expect(page).toHaveURL(/view=failure/);
   await page
     .getByRole("row")
-    .filter({ hasText: seeded.mixedTaskId })
-    .getByRole("button", { name: "处理失败" })
+    .filter({ hasText: "TaskCenter/Mixed" })
+    .getByRole("button", { name: "查看失败文件" })
     .click();
   await expect(page).toHaveURL(/problemRun=/);
 
@@ -2584,4 +2592,92 @@ test("the nine views survive authentication continuation and a real restart", as
   const panel = page.getByRole("region", { name: "问题文件处理" });
   await expect(panel).toBeVisible();
   await expect(panel.getByText(/匹配 2 个文件/)).toBeVisible();
+});
+
+test("a visible terminal inventory discovers new work and shows live progress", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-inventory-poll-population`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runningTaskId: string;
+    readonly terminalFailures: readonly { readonly taskId: string }[];
+  };
+  expect(seeded.terminalFailures).toHaveLength(3);
+
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+
+  // The real repository row has one processed DryRun item and one item in
+  // the organizing stage. Inventory renders those bounded facts directly.
+  await page.getByRole("button", { name: "进行中", exact: true }).click();
+  await page
+    .getByRole("searchbox", { name: "搜索", exact: true })
+    .fill("Movies/Inventory Live Running");
+  await page
+    .locator(".mf-run-filter-bar")
+    .getByRole("button", { name: "搜索", exact: true })
+    .click();
+  await expect(page).toHaveURL(/view=running/);
+  const runningRow = page
+    .getByRole("table")
+    .getByRole("row")
+    .filter({ hasText: "Movies/Inventory Live Running" });
+  await expect(runningRow).toHaveCount(1);
+  await expect(runningRow.getByRole("cell").nth(3)).toHaveText("执行整理");
+  await expect(runningRow.getByRole("cell").nth(4)).toHaveText("1 / 2 项");
+
+  // Keep the watched population narrow and terminal: exactly the three
+  // completed-failure rows seeded through the production coordinator.
+  await page.getByRole("button", { name: "全部任务", exact: true }).click();
+  await page
+    .getByRole("searchbox", { name: "搜索", exact: true })
+    .fill("Movies/Inventory Poll");
+  await page
+    .locator(".mf-run-filter-bar")
+    .getByRole("button", { name: "搜索", exact: true })
+    .click();
+  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).toHaveURL(/q=Movies%2FInventory\+Poll/);
+  await expectRunTotal(page, 3);
+  await expect(
+    page.getByRole("table").getByRole("row").filter({ hasText: "失败" }),
+  ).toHaveCount(3);
+
+  const inventoryReads = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path === "/api/v1/operations/runs" &&
+        entry.search.includes("status=failed") &&
+        new URLSearchParams(entry.search).get("q") === "Movies/Inventory Poll",
+    ).length;
+  const readsBeforeAppend = inventoryReads();
+  expect(readsBeforeAppend).toBeGreaterThan(0);
+
+  // This separate harness action persists another real terminal Task while
+  // the browser remains on the same page. The product performs only bounded
+  // GET reads; it discovers the changed total without a user refresh.
+  const appended = await request.post(
+    `${BASE}/__harness__/append-inventory-poll-failure`,
+  );
+  expect(appended.ok()).toBeTruthy();
+  const appendedRun = (await appended.json()) as { readonly taskId: string };
+  expect(appendedRun.taskId).toBeTruthy();
+  await expectRunTotal(page, 4);
+  await expect(
+    page
+      .getByRole("table")
+      .getByRole("row")
+      .filter({ hasText: "Movies/Inventory Poll 04" }),
+  ).toHaveCount(1);
+  expect(inventoryReads()).toBeGreaterThan(readsBeforeAppend);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).toHaveURL(/q=Movies%2FInventory\+Poll/);
+  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });

@@ -41,11 +41,11 @@ const destinationData = [
   },
   {
     id: "operations",
-    label: "Operations",
+    label: "任务中心",
     path: "/operations",
-    title: "Operations | MediaFlow",
+    title: "任务中心 | MediaFlow",
     availability: "implemented" as const,
-    description: "Tasks, Jobs and Worker workspace for daily operations.",
+    description: "查看任务、运行、恢复状态和 Worker 工作情况。",
   },
   {
     id: "review",
@@ -445,8 +445,8 @@ export const shellDestinations: readonly ShellDestination[] = [
   },
   {
     id: "operations",
-    label: "操作与任务",
-    ariaLabel: "Operations",
+    label: "任务中心",
+    ariaLabel: "任务中心",
     path: "/operations",
     icon: "operations",
     isActive: (pathname) =>

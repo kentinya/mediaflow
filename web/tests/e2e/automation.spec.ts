@@ -45,7 +45,7 @@ async function connectOn(
 }
 
 async function openAutomation(page: Page) {
-  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
   await page
     .getByRole("link", { name: "Automation", exact: true })

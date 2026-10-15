@@ -14682,6 +14682,8 @@ class MediaFlowApi:
             "total_items": overview.total_items,
             "completed_items": overview.completed_items,
             "failed_items": overview.failed_items,
+            "processed_items": overview.processed_items,
+            "current_stage": overview.current_stage,
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
             "problem_types": list(overview.problem_types),

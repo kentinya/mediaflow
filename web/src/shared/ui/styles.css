@@ -4195,6 +4195,27 @@ button.mf-grid-button {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.mf-run-view-context {
+  display: grid;
+  gap: 8px;
+}
+.mf-run-view-context h3,
+.mf-run-view-context p {
+  margin: 0;
+}
+.mf-run-view-context p {
+  color: var(--muted);
+}
+.mf-run-tabs.mf-view-tabs {
+  max-width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.mf-run-tabs.mf-view-tabs > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .mf-run-attention {
   font-weight: 600;
 }

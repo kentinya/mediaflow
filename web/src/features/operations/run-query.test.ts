@@ -151,18 +151,19 @@ describe("run refetch interval", () => {
     expect(runRefetchInterval(undefined)).toBe(false);
     expect(runRefetchInterval(FAILED_READ)).toBe(false);
     expect(runRefetchInterval(FAILED_OVERVIEW_READ)).toBe(false);
+    expect(runRefetchInterval(overviewRead("running"), true)).toBe(false);
   });
 
-  it("polls an inventory page while any listed run is non-terminal", () => {
+  it("keeps a successful visible inventory current after terminal rows", () => {
     expect(runRefetchInterval(inventoryRead(["running", "completed"]))).toBe(
       5_000,
     );
     expect(runRefetchInterval(inventoryRead(["pending"]))).toBe(5_000);
-    expect(runRefetchInterval(inventoryRead(["completed"]))).toBe(false);
+    expect(runRefetchInterval(inventoryRead(["completed"]))).toBe(5_000);
     expect(
       runRefetchInterval(inventoryRead(["completed", "cancelled", "failed"])),
-    ).toBe(false);
-    expect(runRefetchInterval(inventoryRead([]))).toBe(false);
+    ).toBe(5_000);
+    expect(runRefetchInterval(inventoryRead([]))).toBe(5_000);
   });
 
   it("polls the selected overview only while its own state is active", () => {
@@ -186,5 +187,20 @@ describe("run refetch interval", () => {
     // The same shared policy drives both options objects.
     expect(inventory.refetchInterval).toBeTypeOf("function");
     expect(overview.refetchInterval).toBeTypeOf("function");
+    const inventoryPoll = inventory.refetchInterval as (
+      query: unknown,
+    ) => number | false;
+    const overviewPoll = overview.refetchInterval as (
+      query: unknown,
+    ) => number | false;
+    const staleSuccessfulRead = {
+      state: { data: inventoryRead(["completed"]), status: "error" },
+    };
+    expect(inventoryPoll(staleSuccessfulRead)).toBe(false);
+    expect(
+      overviewPoll({
+        state: { data: overviewRead("running"), status: "error" },
+      }),
+    ).toBe(false);
   });
 });

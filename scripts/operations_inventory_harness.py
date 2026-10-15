@@ -39,6 +39,11 @@ infrastructure, not product endpoints, and never touch product documents):
   OrganizerExecutor`` assembly (the supported `organize --execute` shape, with
   no Manual preview/plan linkage), over temporary Local Storage and a local
   synthetic MetadataProvider;
+- ``POST /__harness__/seed-inventory-poll-population`` creates one active
+  mixed-progress Task and three terminal failures through real Task
+  coordinator/repository paths;
+- ``POST /__harness__/append-inventory-poll-failure`` appends a terminal Task
+  so the browser can prove that a visible terminal-only inventory refreshes;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
   to durable state.
@@ -512,6 +517,7 @@ class AppState:
         self._lock = threading.Lock()
         self._manual_lock = threading.Lock()
         self._pipeline_lock = threading.Lock()
+        self._inventory_poll_lock = threading.Lock()
         self.repository = repository
         self.api = api
         self.managed = managed
@@ -524,6 +530,7 @@ class AppState:
         self.recovery_batch_run: dict[str, object] | None = None
         self.task_center_problems: dict[str, object] | None = None
         self.task_center_problem_page: dict[str, object] | None = None
+        self.inventory_poll_population: dict[str, object] | None = None
 
     @property
     def database(self) -> Path:
@@ -639,6 +646,154 @@ def seed(
     #    row written through its producer's own repository write path.
     seed_run_detail_population(repository, failed_task, now)
     return repository, api
+
+
+def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
+    """Create durable progress and terminal rows for the live inventory proof."""
+
+    with state._inventory_poll_lock:
+        if state.inventory_poll_population is not None:
+            return dict(state.inventory_poll_population)
+        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+        now = datetime.now(UTC)
+        running = coordinator.create(
+            "scan",
+            execute_authorized=False,
+            scope_path="Movies/Inventory Live Running",
+        )
+        state.repository.update_task(
+            dataclasses.replace(
+                running,
+                status=PersistentTaskStatus.RUNNING,
+                started_at=now,
+                updated_at=now,
+                total_items=2,
+                completed_items=1,
+                failed_items=0,
+            )
+        )
+        for item_id, status, stage, filename in (
+            (
+                "inventory-live-processed",
+                TaskItemStatus.DRY_RUN,
+                "completed",
+                "Processed.mkv",
+            ),
+            (
+                "inventory-live-current",
+                TaskItemStatus.PROCESSING,
+                "organizing",
+                "Current.mkv",
+            ),
+        ):
+            state.repository.upsert_item(
+                PersistentTaskItem(
+                    item_id=item_id,
+                    task_id=running.task_id,
+                    storage_id="harness-inventory-storage",
+                    resource_library_id="harness-inventory-library",
+                    source_path=f"Inventory Live/{filename}",
+                    source_display=filename,
+                    status=status,
+                    stage=stage,
+                    attempts=1,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+        terminal: list[dict[str, str]] = []
+        for index in range(1, 4):
+            task = coordinator.create(
+                "scan",
+                execute_authorized=False,
+                scope_path=f"Movies/Inventory Poll {index:02}",
+            )
+            failed_at = now + timedelta(milliseconds=index)
+            state.repository.update_task(
+                dataclasses.replace(
+                    task,
+                    status=PersistentTaskStatus.FAILED,
+                    updated_at=failed_at,
+                    completed_at=failed_at,
+                    total_items=1,
+                    completed_items=0,
+                    failed_items=1,
+                    error="synthetic inventory polling fixture",
+                )
+            )
+            state.repository.upsert_item(
+                PersistentTaskItem(
+                    item_id=f"inventory-poll-failure-{index:02}",
+                    task_id=task.task_id,
+                    storage_id="harness-inventory-storage",
+                    resource_library_id="harness-inventory-library",
+                    source_path=f"Inventory Poll/{index:02}.mkv",
+                    source_display=f"{index:02}.mkv",
+                    status=TaskItemStatus.FAILED,
+                    stage="failed",
+                    attempts=1,
+                    created_at=failed_at,
+                    updated_at=failed_at,
+                    error="synthetic inventory polling fixture",
+                )
+            )
+            terminal.append({"taskId": task.task_id, "scope": task.scope_path or ""})
+        state.inventory_poll_population = {
+            "runningTaskId": running.task_id,
+            "terminalFailures": terminal,
+            "appendedFailure": None,
+        }
+        return dict(state.inventory_poll_population)
+
+
+def append_inventory_poll_failure(state: AppState) -> dict[str, object]:
+    """Append one terminal failure through the supported Task producer."""
+
+    with state._inventory_poll_lock:
+        population = state.inventory_poll_population
+        if population is None:
+            raise RuntimeError("inventory poll population has not been seeded")
+        existing = population.get("appendedFailure")
+        if isinstance(existing, dict):
+            return dict(existing)
+        task = PersistentTaskCoordinator(state.repository, state.repository).create(
+            "scan",
+            execute_authorized=False,
+            scope_path="Movies/Inventory Poll 04",
+        )
+        failed_at = datetime.now(UTC)
+        state.repository.update_task(
+            dataclasses.replace(
+                task,
+                status=PersistentTaskStatus.FAILED,
+                updated_at=failed_at,
+                completed_at=failed_at,
+                total_items=1,
+                completed_items=0,
+                failed_items=1,
+                error="synthetic inventory polling fixture",
+            )
+        )
+        state.repository.upsert_item(
+            PersistentTaskItem(
+                item_id="inventory-poll-failure-04",
+                task_id=task.task_id,
+                storage_id="harness-inventory-storage",
+                resource_library_id="harness-inventory-library",
+                source_path="Inventory Poll/04.mkv",
+                source_display="04.mkv",
+                status=TaskItemStatus.FAILED,
+                stage="failed",
+                attempts=1,
+                created_at=failed_at,
+                updated_at=failed_at,
+                error="synthetic inventory polling fixture",
+            )
+        )
+        result = {"taskId": task.task_id, "scope": task.scope_path or ""}
+        population["appendedFailure"] = result
+        return dict(result)
 
 
 #: One durable primary item of the rich run-detail population.  The six rows
@@ -2475,6 +2630,10 @@ def application(environ, start_response):
             document = manual_file_state(STATE, filename=requested_file)
         elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
             document = run_standalone_pipeline_once(STATE)
+        elif path == "/__harness__/seed-inventory-poll-population" and method == "POST":
+            document = seed_inventory_poll_population(STATE)
+        elif path == "/__harness__/append-inventory-poll-failure" and method == "POST":
+            document = append_inventory_poll_failure(STATE)
         elif path == "/__harness__/seed-continuation" and method == "POST":
             document = seed_continuation_journey(STATE)
         elif path == "/__harness__/run-continuation-worker" and method == "POST":
