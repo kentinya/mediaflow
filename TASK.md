@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.1
 Parent Slice: 45
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER IMPLEMENTS TASK 45.1
+Next Action: B REVIEWS TASK 45.1
 ```
 
 ## Goal
@@ -204,6 +204,11 @@ UX-001–005/007/010、REQ-TASK-*、REQ-RECOVERY-002/006、REQ-RESULT-*、REQ-SA
   无 schema 变化则报告实际 diff，不虚构 migration PASS。
 - 本 Task 不改安装/容器/Worker 装配，不重复 Docker 全矩阵；若实际触及该边界，先交 B 调整
   Required Tests，增加 installed wheel/Docker 相关生产产物证明，不得自行免除 Slice-final gates。
+- B 于本轮 review 补正原计划漏列的仓库既有 release-security 门禁：
+  `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task45.1-security`。
+  `tests/test_release_security.py` 要求每个 active Task 记录该命令；这不是新增产品范围或要求
+  Docker 全矩阵。实际执行结果、Docker 不可用时脚本的 SKIP 和适用缺口均须如实留证；
+  不修改/删除既有 policy test。Task ID/Base/Goal/Scope/AC/Difficulty/T4 均不变。
 - `git diff --check`，检查完整 diff、manifest、private/frozen scopes 与全部预存脏文件保留。
 
 ### B independent verification
@@ -237,99 +242,173 @@ logs/traces/screenshots，记录完整 SHA/dirty manifest、命令/cwd、runtime
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 9aee56976ab6dbdd7cba219c790ef099815c4201
+Implementation checkpoint SHA: a032a245346c34605b8d90c79c51cdba44f73c13
 Task Base: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914
 ```
 
 ### Changed Files
 
-Backend: `mediaflow/domain/operations_run.py`, `mediaflow/infrastructure/sqlite_runtime.py`,
-`mediaflow/interfaces/pagination.py`, `mediaflow/interfaces/service_api.py`.
-Harness/tests: `scripts/operations_inventory_harness.py`, `tests/test_operations_run_inventory.py`,
-`tests/test_operations_task_center.py` (new).
-Web: `web/src/entities/operations/run.ts`, `run-detail.ts`, `run.test.ts`,
-`web/src/features/operations/OperationsLanding.tsx`, `ProblemFilePanel.tsx` (new),
-`run-detail-query.ts`, `OperationsInventory.test.tsx`, `run-query.test.ts`,
-`web/src/shared/api/api-client.ts`, `web/src/shared/navigation/destination-model.ts`,
-`operations-return.ts`, `web/src/shared/ui/styles.css`,
-`web/tests/e2e/operations-inventory.python.spec.ts`, `operations.spec.ts`,
-`operations-task-center-visual.python.spec.ts` (new), `web/tests/fake-server.mjs`,
-`web/playwright.config.ts`.
+Backend: mediaflow/domain/operations_run.py, mediaflow/infrastructure/sqlite_runtime.py,
+mediaflow/interfaces/service_api.py.
+Harness/tests: scripts/operations_inventory_harness.py, tests/test_operations_task_center.py,
+tests/test_recovery_continuation.py.
+Web contract/API/navigation: web/src/entities/operations/run.ts, run.test.ts,
+web/src/shared/api/api-client.ts, operations-api.test.ts, web/src/shared/navigation/
+destination-model.ts, destination-model.test.ts, operations-return.ts,
+operations-return.test.ts.
+Web surfaces/tests: web/src/features/operations/OperationsLanding.tsx, ProblemFilePanel.tsx,
+OperationsInventory.test.tsx, web/playwright.config.ts,
+web/tests/e2e/library-files.spec.ts, manual-operations.spec.ts, manual-organize.spec.ts,
+operations-inventory.python.spec.ts, operations-task-center-visual.python.spec.ts,
+operations.spec.ts.
 
 ### Implemented
 
-- **RO-1 / AC-1/AC-2**：九个同级视图（`全部任务/进行中/需要处理/已结束/识别恢复/元数据恢复/
-  分类恢复/冲突处理/失败恢复`）由同一横向导航行驱动，各自独立可深链；后端提供
-  `view`/`problem`/`source` 查询与 cursor scope；新增 complete-authorized-population
-  `summary`（任务总数/进行中/需要处理/已结束 + 各类型任务数与 distinct 文件数 + 来源选项）。
-  任务数与文件数分开；重叠视角不要求相加等于总数。
-- **当前问题语义**：`attention` 从“状态集合”改为基于耐久 review/item/continuation 证据的真实
-  当前问题推导；普通排队/运行/完成不再自动报警；已解决 review 停止占用，新阻塞转入自身类型。
-  `OperationsRunOverview.problem_types` 与 SQL 列、API、前端严格校验全部对齐。
-- **RO-3 列表与定位 / AC-3/AC-4**：五类恢复视图在完整总体按 Task 聚合，一行一个任务，仅计
-  本类型受影响文件；行内动作进入 `GET /api/v1/operations/runs/{id}/problem-items?problem=`
-  的服务器筛选/分页 Task/type 文件清单；`ProblemFilePanel` 展示逐项原因、阶段、来源/目标、
-  效果确定性、允许动作与下一步，返回保留 view/filter/cursor；无直接执行权限。
-- **RO-4/RO-6 保留**：既有详情、records、脱敏导出、生命周期控制、Task/Job 深链、Files/Organize
-  返回上下文不回归；读取/刷新/导航/导出无工作准入、无 Provider、无 Storage mutation。
-- 零 schema 变更；复用既有持久表与关联。
+- AC-1/AC-2, RO-1 query: the nine peer views support source, status, operation type, text, and
+  time filters; links and return paths retain the active view and pagination context. The page,
+  summary, and authorized source options use the same SQLite read snapshot and query scope.
+  Job-to-Task associations are deduplicated, and per-type file counts use the actual associations
+  and row-level problem items.
+- AC-3, current problems: real pending decisions and recovery work remain visible, resolved blockers
+  clear, and new blockers appear under their current type. Zero-effect and unknown-effect outcomes
+  remain distinct. Work awaiting continuation is not presented as a technical failure.
+- AC-4, file location: each problem view opens the correct Task/type file list with cursor
+  pagination, evidence and recovery-chain detail, bounded explanations, and a safe next step.
+  Returning preserves the view and filters. Unknown categories and internal failure enums are not
+  rendered.
+- AC-6, permissions and safety: source scopes use shared validation; reads and refreshes do not
+  admit work, call a Provider, or mutate Storage. Existing details, records, redacted export,
+  controls, and Files/Organize return paths remain available.
+- No schema, migration, or dependency changes; existing Task, Job, item, and recovery records are
+  reused.
 
 ### Tests and Results / evidence index
 
-完整证据索引：`.git/validation-evidence/base-failure-check/`（含 Base 复现与分类）。
-证据目录另见 `.git/validation-evidence/`。
+The durable index, raw logs, Task Base comparisons, build hashes, and screenshots are at
+.git/validation-evidence/a032a245346c34605b8d90c79c51cdba44f73c13/task45.1-t4-fix2-20261015/INDEX.md.
+The implementation checkpoint is a032a245346c34605b8d90c79c51cdba44f73c13. The isolated Python
+suite used the active B Task text containing the added release-security command; after this report
+was updated, the Task document policy test was rerun on the final report text.
 
-在最终候选 `9aee56976ab6dbdd7cba219c790ef099815c4201` 上执行：
-
-- `.venv/bin/python -m unittest tests.test_operations_task_center`：13 passed。
-- `.venv/bin/python -m unittest tests.test_operations_run_inventory`：41 passed。
-- `.venv/bin/python -m unittest tests.test_operations_run_inventory tests.test_processing_checkpoint
-  tests.test_operations_run_detail tests.test_operations_workspace tests.test_operations_task_center
-  tests.test_recovery_continuation tests.test_recovery_batch tests.test_scope_continuation`：
-  258 passed。
-- `.venv/bin/python -m unittest discover -s tests`：2446 tests，`failures=3, errors=2, skipped=7`；
-  全部 5 项均为既有/环境问题（见 Risks）。
-- `scripts/check_governance.py` PASS；`ruff format --check .`、`ruff check .`、
-  `compileall -q mediaflow tests scripts`、`pip check`、`git diff --check` 全通过。
-- `mediaflow --config config/strategy.example.json config validate` 与
-  `config/mediaflow.phase13.2.example.json config validate` exit 0；
-  `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配（exit 1）。
-- `web/`：`npm run typecheck`、`npm run lint`、`npm run format:check`、`npm run build` 通过；
-  `npm run test -- run`：1107 passed / 1 failed（既有 Storage 失败）；
-  `npm run test:e2e`（fake）：239 passed / 4 failed（既有/不稳定，Base 可复现）。
-- `web/` real-Python：`operations-inventory.python.spec.ts` 23 passed；
-  `operations-principal-identity.python.spec.ts` 1 passed；
-  `operations-task-center-visual.python.spec.ts` 1 passed，产出 9 张视图 + 问题文件 + 窄屏截图
-  于 `web/test-results/task-center-visual/`，已人工检查层级/完整列表/无默认详情/焦点/无遮挡。
+- Python unittest discover -s tests: 2451 tests, failures=1, errors=2, skipped=7. The two errors
+  are macOS temporary-path ENAMETOOLONG cases; the single failure compares /var/folders with the
+  resolved /private/var/folders path. All three exact cases were independently reproduced at the
+  Task Base. The isolated Scan CLI test passed. The first main-workspace run also hit a runtime
+  database schema mismatch from the pre-existing .mediaflow/mediaflow.sqlite3; its mtime predates
+  this run and that database was not read or changed.
+- Root gates: governance, Ruff format/lint, compileall, pip check, both example config validations,
+  diff check, and the no-FFmpeg/FFprobe scan passed.
+- Web typecheck, lint, and format check passed. Production build passed; aggregate build-manifest
+  SHA256 is cbab9c8f8523402f453213c6a933a9a08d1075210ca4a51d6c71d5202b865c8d.
+- Full Web unit suite: 1108 passed and 2 failed. Both failures are in unchanged
+  StorageManagementPage.test.tsx and were independently reproduced at Task Base.
+- Full fake E2E: 240 passed and 3 failed. The old Scan pagination, narrow MediaLibrary row-menu,
+  and Rules Add-form failures were independently reproduced at Task Base. Three later cases in the
+  serial Scan group did not run after its first failure; the three cases were rerun separately and
+  passed. The final suite used one worker because the fake API has process-global mutable fixtures.
+- Real-Python/SQLite E2E: operations inventory 24 passed, principal identity 1 passed, production
+  visual 1 passed, and Task Center keyboard journey 1 passed. Coverage includes mixed problems,
+  pagination across 21 problem files, linked counts, source filters, recovery restart, and failed
+  reads. The Docker release-security smoke passed; image ID is
+  sha256:177ee4caa19a161e87b2fc4a7dbe51a7091d91213b82938d73e573eab84169a9.
+- Production screenshots: nine views, problem files, narrow screen, reconnect, and read failure,
+  13 images total. Wide images are 1536x1024; narrow is 380x720. I inspected every image. Hashes
+  are in the evidence directory.
 
 ### Decisions
 
-- 保留 `attention` 字段名以最小化跨层改动，但把语义改为真实当前问题；`problem_types` 与
-  `attention` 必须一致（后端、前端严格校验双向 fail-closed）。
-- 未新增 schema：问题证据全部从既有 `task_items`/review/confirmation 关联派生。
-- 恢复文件清单新增独立 `run_problem_items` cursor kind；问题谓词与列表视图共用同一 SQL 语义。
+- Keep the stable API fields and return the list and summary from one query window so they share
+  one snapshot and filter scope.
+- Derive current problem and recovery evidence from existing durable records; no schema was added.
+- Run the complete fake browser suite with one worker because its process-global fixtures are
+  mutable; the interrupted serial cases were run separately.
 
 ### Remaining In-Slice Work
 
-RO-2 创建同页摘要与确认、RO-3 新恢复处理/摘要确认、RO-4 继续时同页重新授权、RO-5 独立 Scan
-完整退役仍待后续 Task；本 Task 不宣称这些结果完成。
+RO-2 same-page creation/confirmation, RO-3 new recovery handling and summary confirmation, RO-4
+same-page reauthorization on continuation, RO-5 retirement of Scan from all entry points, and
+Slice-level final verification remain. This Task does not claim all Slice Required Outcomes.
 
 ### Risks / Deviations
 
-- 全量 Python 的 5 项失败、Web 单测 1 项失败、fake e2e 4 项失败均非本 Task 引入，已在 Task
-  Base 独立复现并留证；`test_release_security` 的 Docker gate 与 B 的 Task 计划冲突，交 B 判断。
-- 本 Task 不改安装/容器/Worker 装配，未执行 Docker 全矩阵（与 Task Required Tests 一致）。
+- The two Python path-length errors and one path-normalization failure, two Web unit failures, and
+  three fake E2E failures reproduced at Task Base; logs are in the evidence index. The main-workspace
+  Scan CLI failure did not reproduce in isolation. The existing runtime database timestamp predates
+  this run, and the database was left untouched.
+- Vite reports a 1.23 MB main JavaScript chunk above its 500 kB warning threshold; the Task Base
+  build reports the same bundle size.
+- Only the Task-required release-security smoke ran, not the Docker matrix. No schema changed, so
+  no migration run or migration PASS is claimed.
 
 ## B Review Result
 
 ```text
-Reviewed: NOT REVIEWED
-Decision: PENDING
-Slice Required Outcomes all satisfied: NO — no Slice45 implementation yet
-Next: DEVELOPER IMPLEMENTS TASK 45.1
+Reviewed: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914..9aee56976ab6dbdd7cba219c790ef099815c4201
+Report Head: 0b4d8be4ee7c980cc39a51c5779bee8cb1f3154f (TASK.md only successor)
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-本次仅为 B 规划，不是 Developer checkpoint PASS、A Final Review 或 Slice 关闭。
+### 本轮 Task 阻塞项（P1）
+
+1. **来源筛选未完成（AC-1/2）。** 新九页没有来源筛选控件，也没有把 source 放入查询/URL
+   返回链。API 虽解析 source，却未传给 `operations_runs_window`；实际有 alpha/beta 两个
+   scope 时，`source=alpha` 仍返回 total=2。summary 发出的合法 `Movies/alpha` source 选项
+   又被 command-token 正则拒绝为 400。完成同一来源语义的 Web/API/分页/返回及校验，不能
+   仅把来源选项列在未消费的 summary 中。
+2. **类型文件计数错误（AC-2/3/4）。** `_run_summary_files_locked` 使用 `task_id IN
+   (SELECT anchor_id ...)`，Job 关联 Task 后 anchor 是 Job ID；真实一项 linked run 有
+   2 个识别文件，summary 却为 0。`RunTable` 每行又直接渲染全总体
+   `page.summary.problemFiles[view]`：两任务分别有 2/1 个问题文件，行内均显示 3；独立原生
+   浏览器中两个各 1 文件的失败任务均显示 2。按真实关联计算逐任务/类型 distinct 文件数，
+   再计算适用查询范围的总体；行内和文件清单必须一致，附件计数仍保持原 AC 语义。
+3. **列表与新增统计不在一致读口径（AC-2）。** API 先完成 window 的读事务，再独立调用
+   `operations_run_summary()`。B 在两者之间用第二 SQLite 连接准入一个任务，得到同一
+   unfiltered 响应 `total=1` / `summary.total=2`。summary 也没有消费当前筛选。把本次
+   响应的页面、类型/文件数及所声明统计范围绑定同一数据库快照和实际查询条件；若保留另有
+   意义的全局统计，明确其范围，不能拿它代替筛选范围或行内计数。
+4. **问题文件定位不能完成（AC-4/5）。** `ProblemFilePanel` 固定 `cursor:null`，无分页控件
+   或 URL 状态；实际 21 项时 API 提供 next_cursor，Web 只能查看前 20。卡片也没有完成步骤、
+   附件/恢复链证据或进入精确已有 evidence/recovery 的动作，只输出 raw `investigate` 等标识；
+   原生浏览器此 panel 的按钮仅有“返回任务列表”。补全有界分页/深链/重连和准确逐项证据/
+   安全下一步，链接既有原生能力；不要求提前实现后续 Task 的新摘要执行协议。未知效果仅核查。
+5. **已解决决定被伪装成失败（AC-3）。** SQL 将任何 pending 的 `*_resolved` 都放进 failure；
+   真实 `RecognitionReviewService.resolve` 后，没有技术失败的项直接进入失败恢复。
+   新测试 `test_resolved_problem_leaves_the_list_and_a_new_blocker_transfers` 甚至固定该错误预期。
+   保留待继续的人工作业，但按当前真实问题/允许动作分类，不把安全分析待继续伪造为失败。
+   同时基于真实 continuation/manual recovery 关联验证受理、分析、再次失败、新阻塞与实际
+   完成后列表变化；不能仅复制原 item status/stage 谓词并永久保留旧失败。
+6. **T4 证据与完成声明不可验收（AC-7）。** 报告所指 `.git/validation-evidence/base-failure-check/`
+   仅含三份 Markdown 结论，无当前候选完整运行索引/原始日志、SHA/dirty-input 对应、build
+   digest、完整失败/重跑；Python 失败数在报告与该目录文字间亦不一致。报告所指
+   `web/test-results/task-center-visual/` 当前不存在，现存 test-results 为后续 fake suite 产物。
+   B 不据这些文字接受“全部 Base 可复现”或九图验收。修正候选按完整 T4 计划保存耐久证据，
+   有实测 Base 原始证明才归类既有问题；隔离测试运行的私有/旧 schema DB 干扰，不删除用户数据。
+   本轮实看 production-build 宽/窄截图也未接受参考结构：页面仍是旧“操作与任务”的密集
+   表格，业务名称以操作名+UUID 为主，缺来源与本类型问题筛选等必需构成。按九图/AC-1
+   完整实现结构、信息层级及自然业务说明，再保存九页/关键错误/重连截图供复审；不要求像素一致。
+
+### 本轮独立验证与停止范围
+
+- 治理检查通过；`9aee569..0b4d8be` 仅改 `TASK.md`，用于确认本轮实际 executable candidate。
+  必读产品/流程/架构文档与上轮已读版本无变化，本轮重读 AGENTS、Slice、Task 和 B 经验并核对
+  当前 Contract；未改 A-owned 文档、生产代码或用户脏文件。
+- `.venv/bin/python -m unittest tests.test_operations_task_center tests.test_operations_run_inventory`：
+  54 tests / 2.989s / OK；这些通过不能排除上面的独立反例。
+- B probe 在临时 SQLite/真实 WSGI/review 服务及双连接 interleaving 中复现上述来源、关联
+  计数、一致性、误分类及 21 项分页问题；原生 Chromium 使用新 production build、真实
+  Python harness/SQLite，确认行内错误数字、缺来源控件、只有返回按钮、宽/窄实际布局。
+  该浏览器旅程的产品 API 请求全部为 GET，未发现该旅程准入工作或媒体 mutation。
+- 证据：`.git/validation-evidence/9aee56976ab6dbdd7cba219c790ef099815c4201/b-review-20261015/INDEX.md`，
+  含可重跑 probe、结果、原始日志、浏览器 trace、实际截图与候选/产物身份。
+- 因已证明 P1，按 workflow 提前拒绝；未重跑全量 Python/Web/fake/real-Python suites、Docker，
+  未进行剩余九页完整视觉验收，也未认可 Developer 的全量证据复用。修正后仍须完整 checkpoint
+  gates，不能用本轮 focused pass 替代。
+- Slice 复核：RO-1 尚有以上缺口；RO-2、RO-3 完整恢复、RO-4 同页继续授权、RO-5 及 RO-6
+  最终验证仍未满足。继续同 Task 修正，不创建下一 Task，不提交 Closure Packet。
+
+本次仅为 B Task review，不是 A Final Review 或 Slice 关闭。
 冻结 Task43.3/先前 B 决定仍保存在 `c539429c2c3aaeaab4842b87d3c858e77106fed1:TASK.md`，
 冻结 Contract 为 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md`，位于
 `frozen/slice-43-2026-10-15`，本 Task 不恢复或关闭 Slice43。
