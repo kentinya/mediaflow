@@ -95,13 +95,35 @@ test("capture the nine task-center views and the problem-file states", async ({
     path: `${OUTPUT}/task-center-problem-files.png`,
     fullPage: false,
   });
+  await problemPanel.getByRole("button", { name: "返回任务列表" }).click();
+
+  // The overlapping 需要处理 view offers an explicit per-type locate action
+  // for a Task with several current problems, and it opens the exact
+  // Task/type file list rather than a dead URL-only change.
+  await views.getByRole("button", { name: "需要处理", exact: true }).click();
+  await expect(page).toHaveURL(/view=attention/);
+  const attentionRow = page
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/Mixed" });
+  await expect(attentionRow).toHaveCount(1);
+  await attentionRow
+    .getByRole("button", { name: "识别问题", exact: true })
+    .click();
+  await expect(page).toHaveURL(/problemType=recognition/);
+  const attentionPanel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(
+    attentionPanel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
+  ).toBeVisible();
+  await expect(attentionPanel.getByText(/匹配 2 个文件/)).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/task-center-attention-problem-files.png`,
+    fullPage: false,
+  });
+  await attentionPanel.getByRole("button", { name: "返回任务列表" }).click();
 
   // The narrow viewport keeps all nine tabs discoverable in a scrollable row.
   await page.setViewportSize({ width: 380, height: 720 });
-  await page
-    .getByRole("region", { name: "问题文件处理" })
-    .getByRole("button", { name: "返回任务列表" })
-    .click();
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(views).toBeVisible();
   const narrowNavigation = await views.evaluate((navigation) => ({
