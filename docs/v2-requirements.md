@@ -105,6 +105,16 @@ historical semantics and all `V2-AUTH-*` / `V2-SAFE-*` requirements remain uncha
 | V2-OPS-011 | Standalone Scan is completely retired as a product while shared internal discovery and stability remain. | Remove its Web/API/CLI admission, standalone executable/retry/continuation paths and exclusively used orchestration; no hidden diagnostic alias or compatible executor. Preserve history and safely stop unsupported old standalone work without changing media or relabelling it as organization. Existing organization/Automation dependencies complete observations internally and never instruct users to invoke retired Scan; shared Scanner/filtering/stability and generic DryRun/Rules tests remain. Definition-bound Automation mode retirement remains owned by its separate frozen Contract. |
 | V2-OPS-012 | Recovery lists lead to native task/type-scoped file processing with integrated analysis, plan summary and explicit continuation. | Recognition, Metadata candidate/correction, Classification, conflict and failure use current legal backend choices/checkpoints and appropriate correctable forms. Save/analysis does not mutate media or confer execution authority; fresh mutation is confirmed against the in-context exact summary without a separate Preview route or operator-managed DryRun task. Pending lists/counts follow durable per-item resolution while retaining history, return context and successful siblings. Uncertain effects stay investigation-only; existing bounded within-Task analysis recovery preserves independent outcomes, with no new cross-Task bulk mutation. |
 
+For V2-OPS-012, the failure journey must expose the failed stage, source/target, completed steps,
+effect certainty and permitted action per file/attachment. Repair dependencies or save a legal
+decision, explicitly re-analyze the allowed scope, handle any new blocker, then review the in-context
+summary and confirm the eligible selected subset. Admission/running is not resolution; membership
+follows current durable problems, recovery attempts retain independent history, and a repeated
+failure explains its new cause and next step. Dependency repair never silently repins old work to
+new Active; unavailable pinned context refuses continuation with guidance. Unknown confirmation
+responses reconcile the exact durable request; uncertain effects have evidence/investigation only,
+and preparation-only unready items are not fabricated execution failures.
+
 ## Automation workspace requirements — TARGET (Slice 43)
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
