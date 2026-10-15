@@ -513,22 +513,30 @@ test("inventory count card applies its server filter and the run overview opens 
     exact: true,
   });
   await expect(pressed).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("row", { name: /job-001/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+  ).toHaveCount(0);
 
   // Switching back to 全部任务 restores the full population.
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(page).not.toHaveURL(/view=/);
-  await expect(page.getByRole("row", { name: /job-001/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+  ).toBeVisible();
 
   // The status filter applies to the same server-side population.
   await page.getByLabel("状态", { exact: true }).selectOption("failed");
   await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
-  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
-  await expect(page.getByRole("row", { name: /job-001/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+  ).toHaveCount(0);
 
   // Selecting a run opens the bounded overview with durable facts only.
   await page
-    .getByRole("row", { name: /job-005/ })
+    .getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -543,12 +551,14 @@ test("inventory count card applies its server filter and the run overview opens 
   await detail.getByRole("button", { name: "关闭详情" }).click();
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
   await expect(page).toHaveURL(/status=failed/);
-  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
 
   // Selecting pushes a history entry: browser Back returns to the list
   // entry with its filter intact instead of leaving the route.
   await page
-    .getByRole("row", { name: /job-005/ })
+    .getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -558,7 +568,9 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page).toHaveURL(/status=failed/);
   await expect(page).not.toHaveURL(/run=/);
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
-  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
 });
 
 test("the selected run detail is a right column on desktop and a full overlay when narrow", async ({
@@ -624,7 +636,9 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   await expect(detail).toBeVisible();
   await expect(detail.getByText(/失败/).first()).toBeVisible();
   // A failed read never means zero runs: the filtered table still shows data.
-  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ }),
+  ).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
 });
@@ -636,7 +650,7 @@ test("the selected run detail shows truthful progress and its accounting basis",
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /job-001/ })
+    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -673,7 +687,7 @@ test("item and record filters page on the server and survive a reload", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /job-001/ })
+    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -736,7 +750,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /job-001/ })
+    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -777,7 +791,7 @@ test("the native action downloads the eligible linked Task's result package", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /job-001/ })
+    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -812,7 +826,7 @@ test("a pre-Task admission states queue truth and refuses an empty download", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /job-002/ })
+    .getByRole("row", { name: /扫描.*自动化.*2026-08-22 12:15:00/ })
     .getByRole("button")
     .first()
     .click();
