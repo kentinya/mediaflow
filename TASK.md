@@ -16,7 +16,7 @@ Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Latest Reviewed Checkpoint: f0c1934c81c65dea173a2e72c9b7607e7ff94ea4
+Latest Reviewed Checkpoint: 35629c53e80b5aa43e8574ab3bd8d99b53022954
 Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
 ```
 
@@ -1898,4 +1898,300 @@ Gates: full Python 2603 OK (skipped=11); focused 180 OK (skipped=2); Python qual
 Unavailable: Docker smokes (no daemon); reference PNG checksums (untracked artifacts absent).
 Pre-existing (reproduced at Task Base, not self-waived): web-unit StorageManagementPage copy test;
        Node e2e keyboard/input-sensitive specs; direct-files real-Python keyboard cases.
+```
+
+
+## B Candidate Review Result — 2026-10-15
+
+```text
+Task ID: 43.2
+Parent Slice: 43
+Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
+Reviewed Checkpoint: 35629c53e80b5aa43e8574ab3bd8d99b53022954
+Reviewed Range: Task Base..Reviewed Checkpoint; correction focus f0c1934..Reviewed Checkpoint
+Report-only successor: 400a9ff163d46c5c7dc5587d000fd1c17b12028c
+Decision: FIX REQUIRED
+Difficulty / Test Level: High / T4 — unchanged
+All Slice Required Outcomes / Surfaces satisfied: NO
+Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
+Independent Evidence: .git/validation-evidence/35629c53e80b5aa43e8574ab3bd8d99b53022954/b-review-20261015/INDEX.md
+```
+
+Governance passed against committed `HEAD:SLICE.md`; the working Contract matches that authority.
+The starting worktree was clean on local `main`. `35629c5..400a9ff` changes only `TASK.md`, so the
+review runs use the submitted executable content. B preserves Task ID/Base/Goal/Scope/acceptance,
+the assigned T4 plan, prior reports and rejected history. Only this Task record and ignored review
+evidence are changed. No implementation, Contract amendment, Roadmap/Progress update or A final
+review is performed.
+
+### Established corrections
+
+The same-version manual Preview alias now completes instead of returning an internal error.
+Same-request concurrent analysis creation, direct/alias and cross-family write conflicts, and
+concurrent discovery winner aliases have regression coverage in the independently passing affected
+suite. Native unknown-response admission stays retained and blocked until reconciliation or explicit
+resolution; a delayed principal read blocks new admission. The real-browser suite also completes
+fixed-mode publication, exact definition Preview/grant/scheduled execution, disabled-definition
+Run once without a file picker, exact manual Preview/execution and mixed-item recovery.
+These improvements do not establish complete concurrent equivalent-analysis admission.
+
+MAC-PATH-1 keeps exact canonical destination equality and passes independently on this macOS host.
+MAC-PATH-2 retains the original real-filesystem cases, probes the exact fixture, skips only on
+`ENAMETOOLONG`, and adds exact >1024-character paths through actual application/API/SQLite with
+provider-neutral Storage. The independent run passes both in-memory cases; the two Local fixture
+cases explicitly skip on this host. The fake is not evidence of Local support. Required actual
+Linux real-filesystem evidence is still missing; that acceptance is not marked complete.
+
+### Current product blocker — correct the same Task
+
+| ID / Severity | Reproduced behavior and unmet acceptance | Required correction |
+|---|---|---|
+| **B43.2-20261015-1 / P1** | Two different client request IDs concurrently request the **same exact open definition Preview**, or the **same manual intent/version/pin**. A barrier only between the real open-work lookup and create makes both observe absence. Both authenticated API requests return **202**, create **two durable analysis rows**, reconcile to different identities and remain different after reopening SQLite. Running the actual analysis Worker twice completes both and publishes **two different exact Previews**. Source/target mutation lists remain empty. `create_preview_analysis` fences request-ID reuse but does not atomically resolve equivalent open context; `_find_open` and create remain separate. Sequential alias tests and the same-ID race test do not cover this two-tab branch. AC-T4 and the Task's existing concurrent/duplicate analysis recovery acceptance remain unmet (RO-3/RO-4/RO-7). | Resolve equivalent open context and the accepted request association at the durable concurrency boundary for both definition and manual analysis. Equivalent concurrent admissions must reuse one analysis with unambiguous readback for each accepted request, or explicitly refuse the competing request with safe recovery; never accept two analyses for the same open context. Keep corrected manual versions, changed pins/definitions and deliberate new analysis after terminal completion distinct. Preserve original-request readback, controls, pins and execution non-replay. |
+
+This retains the original atomic-admission/reconciliation problem inside the existing journey.
+The Contract is sufficient; no A rescope, new queue, generic recovery framework or new Task is needed.
+First reproduce with **distinct IDs**, then verify both entrance paths with independent repository
+connections, request readback and reopen; inspect actual row/Preview counts and Worker processing,
+not only response status. Retain same-ID, corrected-version, alias/direct writer, changed-context and
+unknown-response regressions. These cases refine the existing Required Tests, not the Task scope.
+The corrected executable candidate still requires the complete assigned T4 checkpoint gates.
+
+### B recommended correction design — 2026-10-15
+
+Make exact-analysis admission one repository transaction: resolve request identity, resolve reusable
+open context, create if absent, and associate the accepted request before committing. Reuse the
+existing SQLite `BEGIN IMMEDIATE` boundary; keep pin resolution/RBAC in the application and all
+Storage/Provider calls outside this short transaction. Both definition and manual entrances must
+receive the canonical record returned by this operation. An application open-work read can be a
+hint, but cannot independently decide acceptance or bypass the transactional decision.
+
+Within the transaction:
+
+1. Check the principal/request identity across direct records and aliases. A proved unchanged
+   original request reads back its original record even after completion; incompatible reuse or
+   ambiguous evidence refuses without rewriting the association.
+2. For a new request, match the complete reusable context: actor, analysis kind and immutable
+   snapshot ID/digest, plus definition ID/fingerprint or manual intent ID/version. Retain the
+   existing reusable-status semantics. Changed versions/pins remain distinct work.
+3. If exactly one reusable analysis exists, persist this request's alias to it and return it.
+   Otherwise create the analysis carrying the request identity and return that new record. The
+   context check, creation and alias write commit together. Extract transaction-local helpers as
+   needed; do not call a helper that opens/commits a nested transaction.
+4. Multiple historical open matches return a bounded conflict with existing inspection/control
+   recovery; retain their original records/request mappings. Do not silently choose one, merge
+   history, delete records or replay effects. A new request after terminal completion may create
+   a fresh analysis; the old request still reads the original.
+
+No additional operator confirmation is needed: both tabs navigate to the same analysis on accepted
+equivalent requests. Existing unknown-response/principal retention and Worker claims/control/
+publication fences stay authoritative. This design is expected to use the existing schema; an
+index/migration is not required merely to compensate for a split application read/create.
+
+Verify simultaneous distinct-ID definition/manual requests through separate SQLite connections,
+both durable readbacks after reopen, and exactly one Worker analysis/Preview. Keep changed
+intent-version/pin, same-ID retry, changed-context refusal, terminal fresh-analysis, historical
+duplicate and rollback-before-alias-commit cases explicit. Then complete the unchanged T4 plan.
+This is a design handoff for the existing blocker, not implementation or acceptance.
+
+### Verification performed and evidence limits
+
+- Independent Python affected suite: **264 tests, OK (skipped=2), 14.633s**, exit 0. Covers Preview
+  analysis, Automation Run once application/API, strategy CLI, discovery and V2 manual organize.
+  Both skips are the proved Local long-path fixture limit; in-memory successors run.
+- Independent Web routers: **2 files / 36 tests passed**, 3.82s, exit 0. Production build passes.
+- Independent assigned real-Python Automation browser invocation: **18 passed**, 23.6s, exit 0,
+  one Chromium worker and isolated output directory. Opened actual wide analysis and execution
+  screenshots. The execution image depicts admitted/waiting state, not completion; the browser
+  assertions separately verify Worker outcomes and recovery. Missing originals prevent reference
+  comparison, so no reference-alignment acceptance is claimed.
+- Retained standalone API/application/SQLite/Worker probe and exact repeat: both definition and
+  manual entrances return **202/202**, persist two analyses, read back **200/200** as different
+  records, reopen unchanged, and complete to two Preview IDs with **zero Storage mutations**.
+  The barrier controls scheduling only; it does not replace persistence or admission behavior.
+- Inspected the current Developer index and raw full-Python, quality, browser, wheel and schema
+  rehearsal logs. Raw full-Python ends **2603 tests, OK (skipped=11), 232.463s**. Raw Web unit
+  ends **1 failed / 1167 passed**; Node E2E ends **4 failed / 239 passed**. Base-failure files
+  contain excerpts/summaries, not complete repeat logs with verifiable checkout/build identity.
+  They are useful leads but do not independently prove every reported Base repetition or root cause;
+  no unrelated Storage/Rules refactor or test weakening is authorized by this review.
+- The Developer index still identifies `CANDIDATE_SHA`, with no exact dirty-input-to-checkpoint
+  mapping or complete command/artifact identity. Dependency hashes match this checkout, but that
+  alone does not identify the tested source. The wheel manifest names revision `HEAD`; its wheel
+  digest file names a temporary wheel no longer available. Prior round-3/Docker artifacts named
+  in the Task reports are absent here. Do not reuse their PASS claims across changed executable
+  candidates without readable matching evidence. Correct the next index/report factually,
+  preserving prior reports and first failures; satisfy AC-T8 before requesting PASS.
+- Docker is unavailable on this host; both Automation reference PNGs are absent, and actual Linux
+  long-path runs are not supplied. These remain explicit validation gaps, not passed gates or
+  authorization to replace originals/relax acceptance. Supply matching required evidence in a
+  capable environment. The current missing reference files are not evidence that B deleted them.
+- Governance and whitespace pass; `config/alist.json` remains ignored/untracked/unstaged.
+  Under workflow section 6, a proved P1 permits early rejection. B did not repeat full Python/Web,
+  all remaining independent boundary probes, inventory/Unicode suites, wheel/schema/Docker gates or
+  Slice-final validation. This rejecting review does not waive the complete corrected-candidate plan.
+  All new artifacts are host-local and retained through A's eventual review.
+
+### Slice reassessment and handoff
+
+**All Required Outcomes / Surfaces satisfied: NO.** Task 43.1 remains B PASS. Task 43.2 has useful
+fixed-mode, durable-analysis, authority and recovery corrections but is FIX REQUIRED for the
+concurrent open-analysis boundary and unestablished complete checkpoint evidence. RO-1 still has
+an explicitly truncated card list without the required complete workspace/query/metrics journey;
+consolidated RO-5 history remains unfinished. RO-6 remains incomplete: `ResidentLoop` stores and
+sleeps on its startup poll value, while settings evidence does not prove adoption by live resident
+consumers. Corresponding Web/API/query/settings/resident surfaces therefore remain unfinished.
+
+Continue **the same Task 43.2**. No Task 43.3 or Closure Packet is created. After a future Task PASS,
+B must recheck every Required Outcome/Surface before choosing the next coherent unit or Slice-final
+handoff. A retains original Base..Implementation Head review and Slice closure authority.
+Reusable lesson candidate for eventual closure: request-ID uniqueness and equivalent-open-work
+uniqueness are separate admission obligations; test simultaneous distinct request IDs through every
+real entrance and inspect durable work plus resulting Previews. No experience-document edit is made.
+
+## Developer Fix-Round Completion Report — 2026-10-15 (round 5)
+
+### Scope and delivery
+
+Implemented the correction for the current B Candidate Review blocker
+(`B43.2-20261015-1`) inside the unchanged Task 43.2 contract. The coherent
+implementation checkpoint is `727317168cc62f859f19db1b54b8175cb08449de`, a direct
+descendant of Task Base `9d4eec52b5196cb323171454c48c055b41256ebc`. Task Base, Goal,
+Scope, acceptance, Required Tests and the High/T4 assignment are unchanged;
+`SLICE.md`, Roadmap, Progress, stable requirements and the four untracked user PNGs are
+untouched. `config/alist.json` remains ignored/untracked/unstaged. Prior reports above
+are preserved verbatim; this report is appended in the worktree and is not part of the
+implementation checkpoint.
+
+### Changed Files
+
+Implementation checkpoint `727317168cc62f859f19db1b54b8175cb08449de` — 3 Task-owned
+files, no documentation, Slice or configuration change:
+
+- `mediaflow/infrastructure/sqlite_runtime.py` — new `admit_preview_analysis`
+  (one `BEGIN IMMEDIATE` transaction resolving request identity, reusable open
+  context and create/alias), extracted `_insert_preview_analysis_locked`,
+  `_resolve_request_identity_locked`, `_open_analysis_ids_locked`,
+  `_insert_request_binding_locked`, the module-level `_same_analysis_context`; the
+  `create_preview_analysis` writer delegates to it; the now-dead
+  `find_open_preview_analysis` reader was removed; `bind_admission_request` now
+  shares `_resolve_request_identity_locked`.
+- `mediaflow/application/preview_analysis.py` — `admit_definition`/`admit_manual`
+  build the candidate and delegate to the atomic `_admit` (repository
+  `admit_preview_analysis`, with the bounded conflict fallback for repository
+  doubles); the split `_find_open` read and `_bind_request` alias writer were removed.
+- `tests/test_preview_analysis.py` — four failing-first regressions (distinct-ID
+  concurrent definition/manual reuse on one connection, and the same across separate
+  SQLite connections with reopen and a single Worker Preview); the existing
+  same-ID race and alias/direct race tests now synchronize at the atomic admission
+  seam.
+
+### Implemented
+
+- **One durable truth per open context.** The reproduced failure was a barrier
+  between the application's real open-work read and its create: two *different*
+  request identities for the same exact open definition pin (or manual intent/version)
+  both observed "no open work" and each created a durable analysis, then completed two
+  Previews. Admission now decides inside one `BEGIN IMMEDIATE`: an existing request
+  identity is resolved to its one record (unchanged context reads it back, changed
+  context refuses, ambiguous evidence refuses); otherwise exactly one reusable open
+  analysis for the complete admitted binding (actor, kind, snapshot pin, definition
+  id/fingerprint or intent id/version) is reused with this request's alias written to
+  it; otherwise the candidate row is inserted. Both definition and manual entrances
+  receive the canonical record the transaction returns.
+- **Every accepted request stays reconcilable.** A request that converges on existing
+  open work is durably bound in the same transaction, so its own lookup is never a
+  bounded absence; a request whose identity already names different work is refused
+  rather than accepted twice.
+- **No operator confirmation change.** Two equivalent tabs now both navigate to the
+  same analysis; corrected intent versions, changed pins/definitions and deliberate
+  new analysis after terminal completion remain distinct work.
+
+### Tests and Results
+
+Tested candidate `727317168cc62f859f19db1b54b8175cb08449de`. Evidence index:
+`.git/validation-evidence/task43.2-r5-20261015/EVIDENCE-INDEX.md`, with every raw log
+beside it.
+
+| Gate | Result |
+|---|---|
+| **Full Python (T4)** | **PASS — 2607 tests, OK (skipped=11), 229.474s** |
+| Python format / lint / compileall / pip check | PASS — 378 files formatted, lint clean |
+| CLI validate ×2 | PASS — both exit 0 |
+| Web typecheck / lint / format:check / build | PASS |
+| Web unit | FAIL — 1 **pre-existing** failure (`StorageManagementPage` copy test) |
+| Node e2e | FAIL — 3 **pre-existing** failures (keyboard/input-sensitive specs) |
+| **Assigned automation browser** | **PASS — 18 passed** |
+| Inventory browser | PASS — 21 passed |
+| Unicode-principal browser | PASS — 1 passed |
+| Direct-files browser | 1 failed / 9 passed — **pre-existing** headless-macOS keyboard (not an assigned gate) |
+| Migration/preflight units | PASS — 10 tests |
+| Schema rehearsal — Slice Base 44→48 | PASS — 138 preserved-row assertions, 0 failed |
+| Schema rehearsal — Task Base 45→48 | PASS — 151 preserved-row assertions, 0 failed |
+| Wheel manifest (clean `git archive 7273171`) | PASS — `ok: true`, 172/172, no differences |
+| Wheel smoke | PASS — schema 48, migration NO |
+| Governance / whitespace / no-ffmpeg | PASS |
+| Reference PNG checksums | **UNAVAILABLE** — the two untracked user PNGs are absent from this clone |
+| Docker security / upgrade smokes | **UNAVAILABLE** — `docker` is not installed on this host |
+
+**Failing-first proof.** In an isolated `git worktree` of the pre-fix source
+`35629c53e80b5aa43e8574ab3bd8d99b53022954` the four new regressions fail
+(`AssertionError: 1 != 2`, and the atomic seam absent), and the
+`probe-same-connection.py` reproduction shows **2 durable rows** pre-fix versus **1** on
+the candidate (`prefix-probe-same-connection.log` / `final-probe-same-connection.log`).
+The separate-connection probe confirms 1 row and both request IDs reconciling, with
+zero Storage mutation.
+
+### Decisions
+
+* **Enforce the whole decision at the durable boundary, not the application read.** The
+  reproduced race is between two real reads and two real creates, so only one
+  transaction can decide reuse versus creation; the application open-work read was
+  removed rather than left as a redundant second source of truth.
+* **Compare the complete admitted binding.** Reuse matches actor, kind, immutable
+  snapshot pin and the definition id/fingerprint or intent id/version, so a corrected
+  version or republished definition is never silently answered by earlier work.
+* **Refuse ambiguity rather than guess.** Multiple durable matches, or disagreement
+  between the binding table and a record's own column, raise a bounded conflict instead
+  of selecting a row.
+* **Keep `create_preview_analysis` as a delegating writer.** Repository doubles and
+  any caller that already built a candidate keep working through the same atomic rule,
+  and the older conflict reconciliation remains a bounded fallback.
+* **Developer experience check applied.** The reproduced behaviors were run and retained
+  *before* fixing; the corrected candidate's complete assigned gates ran on the exact
+  frozen commit; every claim cites a raw log beside the index; no prior evidence was
+  overwritten.
+
+### Remaining In-Slice Work
+
+None for this Task. The `B43.2-20261015-1` blocker is corrected and verified. B decides
+whether the Task passes and whether the Slice's Required Outcomes are satisfied; RO-1
+inventory/statistics, consolidated RO-5 records and RO-6 resident settings adoption
+remain the later coherent work areas identified by B.
+
+### Risks / Deviations
+
+* **Pre-existing, reproduced-at-Base failures handed to B (not self-waived):** the Web
+  unit `StorageManagementPage` copy test and the three Node e2e keyboard/input-sensitive
+  specs. Raw Base reproductions are retained beside the index.
+* **Docker smokes and reference-PNG checksums UNAVAILABLE** on this host (no daemon;
+  untracked artifacts absent from the clone). Disclosed, not waived.
+* All evidence is host-local and not claimed remotely reachable.
+* No unresolved product defect is known in the delivered scope.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Tested candidate / Head SHA: 727317168cc62f859f19db1b54b8175cb08449de
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Slice Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Schema: 48 (unchanged; admission-semantics round)
+Evidence: .git/validation-evidence/task43.2-r5-20261015/EVIDENCE-INDEX.md
+Gates: full Python 2607 OK (skipped=11); Python quality/CLI clean; web typecheck/lint/
+       format/build PASS; automation browser 18, inventory 21, unicode 1 PASS;
+       migration 10; schema rehearsals 44->48 (138 ok) and 45->48 (151 ok), 0 failed;
+       wheel manifest 172/172 ok + smoke schema 48; governance/whitespace/no-ffmpeg PASS.
+Unavailable: Docker smokes (no daemon); reference PNG checksums (untracked artifacts absent).
+Pre-existing (reproduced at Task Base, not self-waived): web-unit StorageManagementPage copy
+       test; Node e2e keyboard/input-sensitive specs; direct-files real-Python keyboard case.
 ```
