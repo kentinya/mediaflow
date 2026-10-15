@@ -16,8 +16,8 @@ Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Latest Reviewed Checkpoint: 35629c53e80b5aa43e8574ab3bd8d99b53022954
-Next Action: DEVELOPER CORRECTS THE SAME TASK 43.2
+Latest Reviewed Checkpoint: 727317168cc62f859f19db1b54b8175cb08449de
+Next Action: DEVELOPER COMPLETES MATCHING T4 VALIDATION FOR THE SAME TASK 43.2
 ```
 
 ## Goal
@@ -2194,4 +2194,247 @@ Gates: full Python 2607 OK (skipped=11); Python quality/CLI clean; web typecheck
 Unavailable: Docker smokes (no daemon); reference PNG checksums (untracked artifacts absent).
 Pre-existing (reproduced at Task Base, not self-waived): web-unit StorageManagementPage copy
        test; Node e2e keyboard/input-sensitive specs; direct-files real-Python keyboard case.
+```
+
+## B Candidate Review Result — 2026-10-15 (atomic admission candidate)
+
+```text
+Task ID: 43.2
+Parent Slice: 43
+Task Base: 9d4eec52b5196cb323171454c48c055b41256ebc
+Reviewed Checkpoint: 727317168cc62f859f19db1b54b8175cb08449de
+Reviewed Range: Task Base..Reviewed Checkpoint; latest correction 35629c5..7273171
+Report-only successor: 67c2beced0d148b3fc9ca9e0fc04b0f7d0a8c413
+Decision: FIX REQUIRED — required validation remains incomplete
+Current reproduced product blocker B43.2-20261015-1: CORRECTED
+Difficulty / Test Level: High / T4 — unchanged
+All Slice Required Outcomes / Surfaces satisfied: NO
+Next Action: DEVELOPER COMPLETES MATCHING T4 VALIDATION FOR THE SAME TASK 43.2
+Independent Evidence: .git/validation-evidence/727317168cc62f859f19db1b54b8175cb08449de/b-review-20261015/INDEX.md
+```
+
+Governance passed before review. Starting worktree was clean on `main`; worktree/Git/index are
+writable. The committed Slice Contract and all mandatory product/workflow/role documents are
+unchanged from the preceding review in this conversation; their authority and required reading
+remain applicable. The implementation correction changes only the application service, SQLite
+repository and Preview-analysis tests; the report successor changes only `TASK.md`. B changes only
+this Task record and ignored evidence, preserving Task ID/Base/Goal/Scope/acceptance/T4 assignment,
+prior reports, Slice authority and accepted history.
+
+### Product correction established
+
+**B43.2-20261015-1 is corrected.** Both definition and manual admission now delegate the complete
+request/context/create/alias decision to one `BEGIN IMMEDIATE` transaction. All durable analysis
+creation delegates to that rule. Matching includes principal, kind, immutable snapshot and the
+applicable definition/fingerprint or manual intent/version. Existing states/schema/queue remain;
+Storage/Provider work stays outside the short write transaction.
+
+Independent authenticated API probes return **202/202 to one shared analysis** for distinct request
+IDs on both entrances. Both request lookups return **200 to that same record**, a reopened repository
+reads the same associations, and the Worker completes **one Preview**; its second poll finds no
+second work. The independent affected suite includes both distinct-ID scenarios through separate
+SQLite connections. No Storage mutation was recorded.
+
+Additional independent transaction probes establish: an exception after alias insertion rolls back
+that alias and leaves the original analysis intact; retry can then reuse it. An original request
+continues to read its completed analysis while a fresh request creates new work. Seeded historical
+open duplicates refuse with bounded **409 `preview_analysis_conflict`** and preserve all rows.
+No additional production correction is requested on the basis of these passing probes.
+
+### Verification actually performed
+
+- Affected Python: **88 tests, OK, no skips, 5.868s**, exit 0. Includes new multi-connection
+  convergence, corrected versions/pins, request conflicts, durable lookup, controls and ownership.
+- Independent API/Worker and transaction-edge programs: exit 0; results and runnable programs
+  retained beside the evidence index, with zero recorded source/target mutations.
+- Production Web build: exit 0. Assigned real-Python Automation lifecycle/Run-once browser suite:
+  **18 passed, 22.7s**, exit 0, one Chromium worker, no retries, isolated output directory. It
+  verifies actual disabled Run once, exact Preview/execution, scheduled grant/Worker outcome,
+  principal/unknown-response handling and mixed-item recovery. This is fresh candidate evidence.
+- Changed Python files pass format/lint. Governance and whitespace pass. Private configuration
+  remains ignored/untracked/unstaged; no A-owned document or product source is edited by B.
+- Inspected the new Developer index and raw gate logs: full Python **2607 tests, skipped=11,
+  229.474s**; Web unit **1 failed / 1167 passed**; Node E2E **3 failed / 240 passed**; Automation
+  **18**, inventory **21**, Unicode **1**; migration **10**; schema44/45 rehearsals **138/151**
+  successful preserved-row assertions; clean wheel manifest **172/172**, full candidate revision.
+  These are actual recorded results, not a blanket PASS for the whole plan.
+
+### Remaining validation blocker — AC-T8 / MAC-PATH-2
+
+The corrected code no longer has the reproduced product blocker. **Task PASS is still withheld
+because the unchanged required candidate validation is incomplete:**
+
+1. Docker release-security and genuine Base upgrade/recovery smokes are unavailable here. Earlier
+   candidates' Docker PASS claims cannot substitute for matching evidence for this corrected
+   executable candidate. Retain this as unavailable until the required runs occur in a capable
+   environment; no source refactor is implied.
+2. Both original Automation reference PNGs remain absent. Their required checksum/preservation
+   verification is unavailable, not PASS. Do not replace or approximate the user originals.
+3. MAC-PATH-2 still lacks actual Linux successful execution of the retained Local long-path cases.
+   The reported macOS skips and passing provider-neutral cases establish only their stated scope.
+4. Web unit/Node gates are red. New original Task-Base logs support the Storage-copy unit failure
+   and two Node failures (keyboard and Rules Add form). The Scan-detail Node failure did **not**
+   reproduce in this round's isolated Base run; the candidate's isolated spec passes. Do not label
+   all three as proved pre-existing from unchanged spec files alone. Complete the assigned gate or
+   provide matching Base/candidate/build evidence sufficient for B's explicit non-blocking
+   assessment. This does not authorize unrelated Storage/Rules refactoring or weaker tests.
+
+The index now names the full candidate and retains useful raw artifacts. Correct its remaining
+runtime/identity facts in the next evidence handoff: it says Playwright **1.64.1**, while the current
+installed package is **1.63.0** with the same committed lock hash. Several commands remain abbreviated;
+record exact commands, dependency/configuration/build digests and source/content mapping for evidence
+reuse under workflow section 6. These are factual evidence corrections, not additional product Tasks.
+
+B did not rerun full Python/Web, all remaining boundary probes, inventory/Unicode, wheel/schema or
+Docker gates; reference comparison and Linux acceptance remain unavailable. No full T4 acceptance or
+failure waiver is claimed. Preserve the corrected candidate if only collecting evidence; further
+executable changes require the applicable fresh complete gates. The pending work is validation in
+this same Task, not an instruction to keep modifying passing production behavior.
+
+### Slice reassessment and handoff
+
+**All Required Outcomes / Surfaces satisfied: NO.** Task 43.1 remains B PASS. Task 43.2's reproduced
+atomic-admission defect is corrected, but its checkpoint acceptance remains incomplete as above.
+Actual remaining Slice work still includes RO-1 complete inventory/full-population calendar metrics,
+consolidated RO-5 records and RO-6 actual resident settings adoption/readback; the truncated list
+and startup-captured `ResidentLoop` polling are unchanged. Corresponding Web/API/query/settings/
+resident surfaces remain unfinished. RO-2/RO-3/RO-4 and local RO-5/RO-7 implementation improvements
+are preserved; no Slice-final acceptance is inferred.
+
+No next Task or Closure Packet is created while this Task lacks PASS. Once its validation is
+accepted, B must reassess all Required Outcomes and plan the next coherent journey or stop for
+Slice-final handoff. A retains Contract changes, final original Base..Head review and closure.
+Reusable lesson candidate remains the existing request-identity versus open-context distinction;
+no new role-document entry or development diary is added.
+
+## Developer T4 Validation Completion Report — 2026-10-15 (round 6)
+
+### Scope and delivery
+
+Completed the outstanding T4 validation for the **unchanged** reviewed candidate
+`727317168cc62f859f19db1b54b8175cb08449de`; this round changed no executable source,
+test, harness, dependency or configuration. `git diff 7273171..HEAD` over
+`mediaflow tests scripts web/src web/tests web/package.json web/package-lock.json` is
+empty, so the runtime gates below are matching evidence for that exact checkpoint. Task
+Base, Goal, Scope, acceptance, Required Tests and High/T4 are unchanged. `SLICE.md`,
+Roadmap, Progress, stable requirements and the four untracked user PNGs are untouched;
+`config/alist.json` remains ignored/untracked/unstaged.
+
+Three of the four prior B validation blockers are now closed with fresh matching
+evidence; the fourth (reference-PNG checksums) is confirmed genuinely unavailable.
+
+### Changed Files
+
+No Task-owned source file changed. This round added only ignored evidence under
+`.git/validation-evidence/task43.2-r6-20261015/` and this `TASK.md` report. A host
+tooling change (installing colima/docker/buildx, see Decisions) is not a repository
+change.
+
+### Implemented — blocker by blocker
+
+- **Docker release-security smoke (was UNAVAILABLE): now PASS.** No container runtime
+  existed; colima/docker/buildx were installed and a Linux aarch64 Docker server started.
+  `scripts/docker_release_security_smoke_test.py` builds the exact clean-checkout image,
+  injects canaries, starts the four-service stack and exits 0
+  ("Release-security smoke acceptance passed.").
+- **Docker genuine Base upgrade/recovery smoke (was UNAVAILABLE): now PASS.** Built a real
+  immutable Base `360e59e0…` schema-38 image and upgraded the Compose project to the
+  candidate; exit 0 ("Docker upgrade/recovery smoke acceptance passed.").
+- **MAC-PATH-2 Linux real-filesystem long path (was unavailable on macOS): now PASS.** In
+  the candidate Linux image the two named real-filesystem cases run and pass with **zero
+  skips** (Linux creates the 1225-char fixture); the affected modules pass 180/180 on Linux.
+- **Reference PNG checksums: still UNAVAILABLE.** The two user originals are absent from
+  the host, filesystem, Trash, local snapshots and every Git object (name search,
+  digest search and full PNG-blob scan). No approximation substituted; reported, not waived.
+
+### Tests and Results
+
+Candidate `727317168cc62f859f19db1b54b8175cb08449de`. Evidence index
+`.git/validation-evidence/task43.2-r6-20261015/EVIDENCE-INDEX.md` (+ `METADATA.json`),
+raw logs beside it.
+
+| Gate | Result |
+|---|---|
+| **Full Python (T4)** | **PASS — 2607 tests, OK (skipped=9), 264.430s** |
+| Focused correction set | PASS — 88 tests, OK, 5.773s |
+| Python format / lint / compileall / pip check | PASS |
+| CLI validate ×2 | PASS — both exit 0 |
+| Web typecheck / lint / format:check / build | PASS |
+| Web unit | FAIL — 1 **pre-existing** (`StorageManagementPage` copy test) |
+| Node e2e | FAIL — 4 **pre-existing** failures (reproduced at Task Base) |
+| **Assigned automation browser** | **PASS — 18 passed, 24.2s** |
+| Inventory browser | PASS — 21 passed |
+| Unicode-principal browser | PASS — 1 passed |
+| **Docker release-security smoke** | **PASS — exit 0** |
+| **Docker Base upgrade/recovery smoke** | **PASS — exit 0** (Base `360e59e0…` schema 38) |
+| **Linux real-fs long-path cases** | **PASS — 2 OK, 0 skips** |
+| Linux focused modules | PASS — 180 OK |
+| Migration units | PASS — 10 tests |
+| Schema rehearsal 44→48 / 45→48 | PASS — ok=true, 138 / 151 preserved assertions, 0 failed |
+| Wheel manifest (clean `git archive 7273171`) | PASS — ok=true, 172/172, byte-equality proven |
+| Wheel smoke | PASS — schema 48, migration NO |
+| Governance / whitespace / no-ffmpeg | PASS |
+| Reference PNG checksums | **UNAVAILABLE** — originals absent |
+
+**Pre-existing failures, reproduced at Task Base `9d4eec52` (not self-waived).** In an
+isolated worktree with the committed base `web/dist` built and byte-identical lockfile:
+Task-Base web unit = 1 failed / 1138 passed; candidate = 1 failed / 1167 passed (test file
+byte-identical, candidate is Python-only, both revisions fail 5/5 in isolation). Task-Base
+Node e2e = 4 failed / 239 passed / 3 did not run — **identical** failure set to the
+candidate (Scan paging, narrow-viewport Shift+F10 menu, Operations keyboard, Rules Add
+form), all four spec files byte-identical. This round's stable set is 4 (r5 reported 3);
+the signature is identical at base and candidate, i.e. headless-keyboard/load sensitivity,
+not a candidate regression.
+
+### Decisions
+
+* **Provision a real container runtime instead of re-declaring the gate unavailable.** The
+  environment had `brew` and network; installing colima/docker/buildx and starting a Linux
+  VM closed both Docker gates and the Linux long-path requirement with matching evidence.
+  This is a host/tooling change, disclosed here and in the index, not a repository change.
+* **Use a workspace-local `TMPDIR` for the Docker smokes** (`.dsh-docker-tmp`, already
+  git-ignored) so the virtiofs-mounted VM sees the build/upgrade contexts.
+* **Prove pre-existing failures at Task Base rather than asserting them.** A base worktree
+  with the base `web/dist` reproduced the identical Node e2e set and the web-unit failure;
+  the first cold isolated base web-unit pass was recorded and superseded by 5/5 steady-state
+  failures on both revisions, so the finding is honest rather than convenient.
+* **Do not fabricate the reference PNGs.** Exhaustive name/digest/blob searches found no
+  copy; the gate stays UNAVAILABLE with the search method documented.
+* **No production patch.** The remaining unavailable gate is an environment artifact, not a
+  code defect; per B's instruction no passing production behavior was modified.
+
+### Remaining In-Slice Work
+
+None for this Task. B decides Task PASS and the Slice Required-Outcome reassessment. RO-1
+inventory/statistics, consolidated RO-5 records and RO-6 resident settings adoption remain
+the later coherent work areas identified by B.
+
+### Risks / Deviations
+
+* Reference-PNG checksum verification is UNAVAILABLE on this host and cannot be produced
+  without the user-supplied originals; disclosed, not waived.
+* Docker validation is Linux **aarch64**; it does not cover x86_64-specific behavior.
+* Web unit / Node e2e required gates remain red with pre-existing failures reproduced at
+  Task Base; B owns the explicit non-blocking assessment.
+* All evidence is host-local and not claimed remotely reachable.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Tested candidate / Head SHA: 727317168cc62f859f19db1b54b8175cb08449de
+Base SHA: 9d4eec52b5196cb323171454c48c055b41256ebc
+Slice Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Schema: 48 (unchanged; validation-only round)
+Evidence: .git/validation-evidence/task43.2-r6-20261015/EVIDENCE-INDEX.md
+Gates: full Python 2607 OK (skipped=9); focused 88; Python quality/CLI clean; web
+       typecheck/lint/format/build PASS; automation 18, inventory 21, unicode 1 PASS;
+       Docker release-security PASS; Docker Base-upgrade/recovery PASS; Linux real-fs
+       long-path 2 OK/0 skips and focused 180 OK; migration 10; schema 44->48 (138) and
+       45->48 (151) 0 failed; clean wheel 172/172 ok + smoke schema 48; governance/
+       whitespace/no-ffmpeg PASS.
+Unavailable: reference PNG checksums (originals absent from host and all Git objects).
+Pre-existing (reproduced at Task Base, not self-waived): web-unit StorageManagementPage copy
+       test; Node e2e 4 failures (Scan paging, medialib narrow menu, Operations keyboard,
+       Rules Add form) — identical set at base and candidate.
 ```
