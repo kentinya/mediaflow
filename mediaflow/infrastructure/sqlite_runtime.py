@@ -5607,10 +5607,17 @@ class SQLiteTaskRepository:
                    task_status.total_items, task_status.completed_items,
                    task_status.failed_items, task_status.pause_requested,
                    CASE WHEN task_status.task_id IS NULL OR task_status.total_items IS NULL
+                        THEN NULL
+                        -- The declared admission total must bound the WHOLE
+                        -- durable TaskItem population, not only its terminal
+                        -- subset: a waiting/pending/processing item beyond the
+                        -- declared total is an inconsistent snapshot, so no
+                        -- processed ratio is published at all.
+                        WHEN (SELECT COUNT(*) FROM task_items population_items
+                              WHERE population_items.task_id = {task_identity})
+                             > task_status.total_items
                         THEN NULL ELSE (
-                       SELECT CASE
-                           WHEN COUNT(*) <= task_status.total_items THEN COUNT(*)
-                           ELSE NULL END
+                       SELECT COUNT(*)
                        FROM task_items progress_items
                        WHERE progress_items.task_id = {task_identity}
                        AND progress_items.status IN (
@@ -6542,11 +6549,21 @@ class SQLiteTaskRepository:
             # review, conflict, or technical blocker; the child Task owns the
             # current problem and its file list. A continuation that failed
             # before producing a child blocker remains a source failure.
+            # A saved decision leaves the child item ``pending`` with a
+            # ``*_resolved`` stage while it waits for the next admission. That
+            # exact linked child still owns the current problem, so the source
+            # keeps its generic safe-continuation attention instead of being
+            # reclassified as a technical failure. Only a genuinely new
+            # failure/unknown effect (no child blocker and no saved decision)
+            # restores the source failure.
             child_blocker = (
                 "EXISTS (SELECT 1 FROM task_items child_items "
                 "WHERE child_items.task_id = {continuation}.new_task_id AND ("
                 "child_items.status IN ('waiting_recognition', 'waiting_metadata', "
                 "'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm') "
+                "OR (child_items.status = 'pending' AND child_items.stage IN ("
+                "'conflict_resolved', 'recognition_resolved', 'metadata_resolved', "
+                "'metadata_correction_resolved', 'classification_resolved')) "
                 "OR (child_items.status = 'pending' AND EXISTS ("
                 "SELECT 1 FROM recognition_reviews child_reviews "
                 "WHERE child_reviews.item_id = child_items.item_id "

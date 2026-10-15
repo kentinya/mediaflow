@@ -256,6 +256,78 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(0, row["total_items"])
         self.assertIsNone(row["processed_items"])
 
+    def test_progress_is_unavailable_when_only_non_terminal_items_exceed_total(self) -> None:
+        # A waiting/processing item beyond the declared admission total is an
+        # inconsistent snapshot even when no item is terminal yet: the
+        # terminal-only guard would have accepted a contradictory 0 / 0.
+        from dataclasses import replace
+
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        self.repository.create_task(
+            replace(
+                task("waiting-over-total", status=PersistentTaskStatus.RUNNING),
+                total_items=0,
+                completed_items=0,
+                failed_items=0,
+            )
+        )
+        self.repository.upsert_item(
+            replace(
+                _inventory_item("waiting-over-total", "waiting-item", "source"),
+                status=TaskItemStatus.WAITING_METADATA,
+                stage="waiting_metadata",
+            )
+        )
+
+        overview = self.repository.operations_run("waiting-over-total")
+        self.assertIsNotNone(overview)
+        assert overview is not None
+        self.assertEqual(0, overview.total_items)
+        self.assertIsNone(overview.processed_items)
+
+        status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(200, status)
+        row = next(value for value in page["items"] if value["run_id"] == "waiting-over-total")
+        self.assertEqual(0, row["total_items"])
+        self.assertIsNone(row["processed_items"])
+
+    def test_progress_is_published_when_the_whole_population_fits_the_total(self) -> None:
+        # The consistency guard must not hide an honest, consistent progress
+        # pair: one terminal item plus one waiting item inside a total of 3.
+        from dataclasses import replace
+
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        self.repository.create_task(
+            replace(
+                task("consistent-progress", status=PersistentTaskStatus.RUNNING),
+                total_items=3,
+                completed_items=1,
+                failed_items=0,
+            )
+        )
+        self.repository.upsert_item(
+            replace(
+                _inventory_item("consistent-progress", "finished-item", "source"),
+                status=TaskItemStatus.DRY_RUN,
+                stage="completed",
+            )
+        )
+        self.repository.upsert_item(
+            replace(
+                _inventory_item("consistent-progress", "waiting-item", "source"),
+                status=TaskItemStatus.WAITING_METADATA,
+                stage="waiting_metadata",
+            )
+        )
+
+        overview = self.repository.operations_run("consistent-progress")
+        self.assertIsNotNone(overview)
+        assert overview is not None
+        self.assertEqual(1, overview.processed_items)
+        self.assertEqual(3, overview.total_items)
+
     def test_job_task_linkage_counts_once_and_survives_the_link(self) -> None:
         self.repository.create_task(task("linked-task", command="scan", rank=1))
         self.repository.create_job(job("linked-job", rank=0, task_id="linked-task"))

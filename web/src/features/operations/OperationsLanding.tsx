@@ -268,6 +268,21 @@ function readProblem(search: Record<string, unknown>): RunProblemType | null {
     : null;
 }
 
+/**
+ * The chosen problem-file type of an explicit problem location. A recovery
+ * view owns its own problem type; a lifecycle view (notably the overlapping
+ * attention view) needs the operator's explicit type because one Task may
+ * carry several at once. An out-of-contract value reads as no choice.
+ */
+function readProblemType(
+  search: Record<string, unknown>,
+): RunProblemType | null {
+  const value = readSafeSearchValue(search, "problemType");
+  return (RUN_PROBLEM_TYPES as readonly string[]).includes(value)
+    ? (value as RunProblemType)
+    : null;
+}
+
 function filtersToSearch(
   filters: RunListFilters,
 ): Record<string, RunSearchValue> {
@@ -360,7 +375,15 @@ export function OperationsLanding() {
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
   const problemRunId = readSafeSearchValue(searchParams, "problemRun");
+  const chosenProblemType = readProblemType(searchParams);
   const problemPage = readProblemPageState(searchParams);
+  // A recovery view owns its problem type. The overlapping attention view has
+  // no single type: it uses the operator's explicit choice, so a Task that
+  // carries several current problems never guesses one and never leaves the
+  // locate action dead.
+  const problemFileType: RunProblemType | null = isRecoveryView(view)
+    ? view
+    : chosenProblemType;
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -472,10 +495,17 @@ export function OperationsLanding() {
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
   };
 
-  /** Open the exact Task/type problem file list of one recovery row. */
-  const openProblemRun = (runId: string) => {
+  /**
+   * Open the exact Task/type problem file list of one recovery or attention
+   * row. A recovery view already names its own type; an attention row passes
+   * the operator's explicit choice so a multi-type Task never guesses one.
+   */
+  const openProblemRun = (runId: string, type: RunProblemType | null) => {
     const search = listSearch();
     search["problemRun"] = runId;
+    if (type !== null) {
+      search["problemType"] = type;
+    }
     void navigate({ to: "/operations", search, replace: false });
   };
 
@@ -489,6 +519,9 @@ export function OperationsLanding() {
   ) => {
     const search = listSearch();
     search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      search["problemType"] = chosenProblemType;
+    }
     search["problemCursor"] = nextCursor;
     search["problemDir"] = nextDirection;
     void navigate({ to: "/operations", search, replace: true });
@@ -497,6 +530,9 @@ export function OperationsLanding() {
   const openProblemItemEvidence = (taskId: string, itemId: string) => {
     const returnSearch = listSearch();
     returnSearch["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      returnSearch["problemType"] = chosenProblemType;
+    }
     if (problemPage.cursor !== null) {
       returnSearch["problemCursor"] = problemPage.cursor;
       returnSearch["problemDir"] = problemPage.direction;
@@ -885,11 +921,11 @@ export function OperationsLanding() {
                   onSelectRun={selectRun}
                 />
               )}
-              {problemRunId !== "" && isRecoveryView(view) && (
+              {problemRunId !== "" && problemFileType !== null && (
                 <ProblemFilePanel
-                  key={`${problemRunId}:${view}`}
+                  key={`${problemRunId}:${problemFileType}`}
                   runId={problemRunId}
-                  problem={view}
+                  problem={problemFileType}
                   cursor={problemPage.cursor}
                   onPage={turnProblemPage}
                   onOpenEvidence={openProblemItemEvidence}
@@ -1077,7 +1113,7 @@ function RunTable({
   readonly direction: "forward" | "backward";
   readonly view: RunView;
   readonly onSelect: (runId: string) => void;
-  readonly onOpenProblem: (runId: string) => void;
+  readonly onOpenProblem: (runId: string, type: RunProblemType | null) => void;
   readonly onForward: () => void;
   readonly onBackward: () => void;
 }) {
@@ -1204,15 +1240,57 @@ function RunTable({
                   {recovery && (
                     <td>{run.problemFileCounts?.[view] ?? "不可用"} 个文件</td>
                   )}
-                  {(recovery || attention) && (
+                  {recovery && (
                     <td>
                       <button
                         type="button"
                         className="mf-button mf-button-secondary"
-                        onClick={() => onOpenProblem(run.runId)}
+                        onClick={() => onOpenProblem(run.runId, null)}
                       >
                         {view === "failure" ? "查看失败文件" : "查看问题文件"}
                       </button>
+                    </td>
+                  )}
+                  {attention && (
+                    <td>
+                      {run.problemTypes.length === 0 ? (
+                        // A safe continuation step is not one of the five
+                        // technical types, so it opens the run's own evidence
+                        // and next-step surface instead of a problem file list.
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() => onSelect(run.runId)}
+                        >
+                          查看详情与下一步
+                        </button>
+                      ) : run.problemTypes.length === 1 ? (
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() =>
+                            onOpenProblem(run.runId, run.problemTypes[0])
+                          }
+                        >
+                          查看问题文件
+                        </button>
+                      ) : (
+                        // A Task with several current problems offers each
+                        // exact Task/type list: the operator chooses rather
+                        // than the UI guessing one type.
+                        <div className="mf-problem-type-choices">
+                          {run.problemTypes.map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              className="mf-button mf-button-secondary"
+                              onClick={() => onOpenProblem(run.runId, type)}
+                            >
+                              {RUN_PROBLEM_LABELS[type]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </td>
                   )}
                 </tr>

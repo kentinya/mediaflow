@@ -245,6 +245,19 @@ describe("destination model", () => {
       ).toBe(
         "status=failed&run=job-001&attention=true&cursor=abc123-DEF_0&dir=backward",
       );
+      // The chosen attention-row problem-file type survives a reconnect so
+      // the exact Task/type list reopens instead of a dead or guessed view.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "view=attention&problemRun=task-2&problemType=metadata&problemCursor=page-2&problemDir=forward",
+        ),
+      ).toBe(
+        "problemRun=task-2&problemType=metadata&view=attention&problemCursor=page-2&problemDir=forward",
+      );
+      expect(
+        allowlistedDestinationSearch("/operations", "problemType=teleported"),
+      ).toBeNull();
       expect(
         allowlistedDestinationSearch(
           "/operations",

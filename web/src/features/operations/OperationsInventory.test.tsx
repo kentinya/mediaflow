@@ -1053,6 +1053,176 @@ describe("Operations run inventory landing", () => {
     });
   });
 
+  it("opens an exact Task/type file list from a 需要处理 row without a dead action", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    const attentionPage = pageDocument({
+      items: [
+        runDocument({
+          run_id: "task-mixed",
+          task_id: "task-mixed",
+          source_scope: "Movies/Mixed",
+          status: "partial_success",
+          attention: true,
+          problem_types: ["metadata", "failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 1,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+        }),
+        runDocument({
+          run_id: "task-continue",
+          task_id: "task-continue",
+          source_scope: "Movies/Continue",
+          status: "waiting",
+          attention: true,
+          problem_types: [],
+        }),
+      ],
+      status_counts: { partial_success: 1, waiting: 1 },
+      attention_count: 2,
+      total: 2,
+      view: "attention",
+      summary: summaryDocument({
+        total: 2,
+        running: 2,
+        attention: 2,
+        ended: 0,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+      }),
+    });
+    const problemItems = {
+      run_id: "task-mixed",
+      task_id: "task-mixed",
+      problem: "metadata",
+      limit: 20,
+      items: [
+        {
+          item_id: "item-meta",
+          task_id: "task-mixed",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "Movies/meta.mkv",
+          status: "waiting_metadata_correction",
+          stage: "waiting_metadata_correction",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          failure: null,
+          checkpoint: null,
+        },
+      ],
+      total: 2,
+      matching_total: 1,
+      dispositions: {
+        pending: 1,
+        active: 0,
+        waiting: 1,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes("/problem-items")) {
+        return jsonResponse({ ...problemItems, problem: "metadata" });
+      }
+      if (url.startsWith("/api/v1/operations/runs")) {
+        return jsonResponse(attentionPage);
+      }
+      if (url === "/api/v1/workers/readiness") {
+        return jsonResponse(readinessPayload());
+      }
+      if (url === "/api/v1/management/readiness") {
+        return jsonResponse(managementReadinessPayload());
+      }
+      if (url.startsWith("/api/v1/operations/manual-actions")) {
+        return jsonResponse(manualActionsPayload());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?view=attention");
+
+    const table = await screen.findByRole("table");
+    const mixedRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Mixed"));
+    expect(mixedRow).toBeDefined();
+    if (mixedRow === undefined) {
+      throw new Error("attention row was not rendered");
+    }
+    // A Task with several current problems offers each exact type; no guess.
+    await user.click(
+      within(mixedRow).getByRole("button", { name: "元数据问题" }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("problemRun=task-mixed"),
+    );
+    expect(router.history.location.search).toContain("problemType=metadata");
+    const panel = await screen.findByRole("region", { name: "问题文件处理" });
+    expect(within(panel).getByText(/元数据问题 — 文件清单/)).toBeVisible();
+    expect(
+      (await within(panel).findAllByText(/Movies\/meta\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    expect(
+      requested.some(
+        (url) =>
+          url.includes("problem-items") && url.includes("problem=metadata"),
+      ),
+    ).toBe(true);
+
+    // A pure safe-continuation row opens its own evidence/next-step surface
+    // instead of a fabricated problem-file list.
+    await user.click(
+      within(panel).getByRole("button", { name: "返回任务列表" }),
+    );
+    const continueRow = within(await screen.findByRole("table"))
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Continue"));
+    expect(continueRow).toBeDefined();
+    if (continueRow === undefined) {
+      throw new Error("continuation row was not rendered");
+    }
+    await user.click(
+      within(continueRow).getByRole("button", {
+        name: "查看详情与下一步",
+      }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("run=task-continue"),
+    );
+    expect(requested.some((url) => url.includes("/problem-items"))).toBe(true);
+  });
+
   it("renders an honest scan-error run instead of rejecting the page", async () => {
     const requested: string[] = [];
     stubInventoryJourney(

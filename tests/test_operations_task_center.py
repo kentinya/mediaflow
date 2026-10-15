@@ -476,6 +476,40 @@ class TaskCenterViewTests(_TaskCenterTestCase):
                 self.assertEqual(400, code)
                 self.assertEqual("invalid_request", body["error"]["code"])
 
+    def test_attention_row_exposes_each_current_problem_type_for_location(self) -> None:
+        # The overlapping attention view must let the operator open the exact
+        # Task/type file list for every current problem, not a dead action.
+        mixed = self._task("organize")
+        self._metadata_correction_problem(mixed.task_id, "meta-item")
+        self._failure_problem(mixed.task_id, "failure-item")
+        page = self._page("view=attention")
+        self.assertEqual(1, page["total"])
+        row = page["items"][0]
+        self.assertEqual({"metadata", "failure"}, set(row["problem_types"]))
+        # Each type has its own reachable server-filtered file list.
+        for problem in ("metadata", "failure"):
+            code, files = request(
+                self.api,
+                "GET",
+                f"/api/v1/operations/runs/{mixed.task_id}/problem-items",
+                query=f"problem={problem}",
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(problem, files["problem"])
+            self.assertEqual(1, files["matching_total"])
+
+    def test_attention_row_with_only_a_safe_continuation_has_no_problem_type(self) -> None:
+        # A saved decision waits for continuation with no technical type; the
+        # row must stay in attention without inventing one of the five types.
+        task = self._task("organize")
+        review_id = self._metadata_review_problem(task.task_id, "meta-item")
+        MetadataReviewService(self.repository).resolve(review_id, 1, actor="operator")
+        page = self._page("view=attention")
+        self.assertEqual(1, page["total"])
+        row = page["items"][0]
+        self.assertEqual([], list(row["problem_types"]))
+        self.assertTrue(row["attention"])
+
     def test_reads_are_side_effect_free(self) -> None:
         task = self._task("organize")
         self._recognition_problem(task.task_id, "recog-item")

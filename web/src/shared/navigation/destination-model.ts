@@ -821,6 +821,14 @@ export function allowlistedDestinationSearch(
     // a reconnect so the exact Task/type file list reopens.  The view and
     // problem tokens are closed grammars, never arbitrary state.
     setSafe(allowed, "problemRun", current.get("problemRun"));
+    // The chosen file-list type of an attention row is a closed grammar too,
+    // so a reconnect reopens exactly the Task/type list the operator chose.
+    setFilterToken(
+      allowed,
+      "problemType",
+      current.get("problemType"),
+      RUN_PROBLEM_TOKEN,
+    );
     setFilterToken(allowed, "view", current.get("view"), RUN_VIEW_TOKEN);
     setFilterToken(
       allowed,

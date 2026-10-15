@@ -2162,6 +2162,20 @@ class RecoveryContinuationTests(unittest.TestCase):
                 assert resolved is not None
                 self.assertEqual(MetadataReviewStatus.RESOLVED, resolved.status)
                 self.assertEqual("42", resolved.selected_provider_id)
+                # Immediately after saving the decision the child item waits
+                # for the next admission. No new technical failure happened,
+                # so the original source must NOT reappear under Failure while
+                # its own generic safe-continuation attention stays.
+                resolved_item = repository.get_item(linked.item_id)
+                assert resolved_item is not None
+                self.assertEqual(TaskItemStatus.PENDING, resolved_item.status)
+                self.assertEqual("metadata_resolved", resolved_item.stage)
+                saved_failure = repository.operations_runs_window(view="failure")
+                saved_metadata = repository.operations_runs_window(view="metadata")
+                self.assertNotIn(run.task_id, {row.task_id for row in saved_failure.page})
+                self.assertNotIn(analysis.task_id, {row.task_id for row in saved_metadata.page})
+                saved_attention = repository.operations_runs_window(view="attention")
+                self.assertIn(run.task_id, {row.task_id for row in saved_attention.page})
 
             services = self._manual_services(environment, provider)
             with SQLiteTaskRepository(environment["database"]) as repository:

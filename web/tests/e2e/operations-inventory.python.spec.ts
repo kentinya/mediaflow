@@ -2480,6 +2480,33 @@ test("the nine views and the exact Task/type problem file list work natively", a
   const attentionRows = page.getByRole("row").filter({ hasText: "待处理" });
   await expect(attentionRows).toHaveCount(0);
 
+  // A Task with several current problems offers each exact Task/type list on
+  // the attention row; the locate action is never a dead URL-only change.
+  const mixedAttentionRow = page
+    .getByRole("row")
+    .filter({ hasText: "TaskCenter/Mixed" });
+  await expect(mixedAttentionRow).toHaveCount(1);
+  await mixedAttentionRow
+    .getByRole("button", { name: "识别问题", exact: true })
+    .click();
+  await expect(page).toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/problemType=recognition/);
+  const attentionPanel = page.getByRole("region", { name: "问题文件处理" });
+  await expect(
+    attentionPanel.getByRole("heading", { name: /识别问题 — 文件清单/ }),
+  ).toBeVisible();
+  await expect(attentionPanel.getByText(/匹配 2 个文件/)).toBeVisible();
+  expect(
+    api.some(
+      (entry) =>
+        entry.path.endsWith("/problem-items") &&
+        entry.search.includes("problem=recognition"),
+    ),
+  ).toBe(true);
+  await attentionPanel.getByRole("button", { name: "返回任务列表" }).click();
+  await expect(page).not.toHaveURL(/problemRun=/);
+  await expect(page).toHaveURL(/view=attention/);
+
   // Every product read stayed a GET.
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });

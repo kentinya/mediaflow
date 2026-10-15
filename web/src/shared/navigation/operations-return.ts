@@ -30,6 +30,7 @@ const LIST_KEYS = new Set([
   "view",
   "problem",
   "problemRun",
+  "problemType",
   "problemCursor",
   "problemDir",
   "cursor",
@@ -205,6 +206,7 @@ export function parseOperationsReturnContext(
         if (VIEW_TOKEN.test(value)) put(key, value);
         break;
       case "problem":
+      case "problemType":
         if (PROBLEM_TOKEN.test(value)) put(key, value);
         break;
       default:

@@ -73,7 +73,7 @@ describe("operations return context", () => {
     const parsed = parseOperationsReturnContext(
       "status=waiting_confirm&command=manual_organize_execute&q=%E7%9F%A9%E9%98%B5" +
         "&from=2026-01-01&to=2026-02-01T10:00:00Z&source=Movies%2F%E7%94%B5%E5%BD%B1&attention=true" +
-        "&view=failure&problemRun=task-9&problemCursor=p2&problemDir=forward" +
+        "&view=failure&problemRun=task-9&problemType=metadata&problemCursor=p2&problemDir=forward" +
         "&cursor=abc123&dir=backward&run=run-1&tab=items&istat=success" +
         "&rkind=result&item=item-1&icur=x&rcur=y&idir=forward&rdir=bogus",
     );
@@ -85,6 +85,7 @@ describe("operations return context", () => {
     expect(parsed["source"]).toBe("Movies/电影");
     expect(parsed["view"]).toBe("failure");
     expect(parsed["problemRun"]).toBe("task-9");
+    expect(parsed["problemType"]).toBe("metadata");
     expect(parsed["problemCursor"]).toBe("p2");
     expect(parsed["problemDir"]).toBe("forward");
     expect(parsed["cursor"]).toBe("abc123");
@@ -133,6 +134,7 @@ describe("operations return context", () => {
       q: "long title",
       source: "Movies/alpha",
       problemRun: "task-9",
+      problemType: "metadata",
       problemCursor: "page-2",
       problemDir: "backward",
       run: "selected-1",
@@ -141,7 +143,7 @@ describe("operations return context", () => {
       [OPERATIONS_RETURN_KEY]: "q=never-nested",
     });
     expect(context).toBe(
-      "status=failed&attention=true&q=long+title&source=Movies%2Falpha&problemRun=task-9&problemCursor=page-2&problemDir=backward&run=selected-1&cursor=abc&dir=forward",
+      "status=failed&attention=true&q=long+title&source=Movies%2Falpha&problemRun=task-9&problemType=metadata&problemCursor=page-2&problemDir=backward&run=selected-1&cursor=abc&dir=forward",
     );
     expect(
       readOperationsReturnContext({ [OPERATIONS_RETURN_KEY]: context }),
@@ -152,6 +154,7 @@ describe("operations return context", () => {
     expect(roundTrip["q"]).toBe("long title");
     expect(roundTrip["source"]).toBe("Movies/alpha");
     expect(roundTrip["problemRun"]).toBe("task-9");
+    expect(roundTrip["problemType"]).toBe("metadata");
     expect(roundTrip["problemCursor"]).toBe("page-2");
     expect(roundTrip[OPERATIONS_RETURN_KEY]).toBeUndefined();
   });
