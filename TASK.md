@@ -242,103 +242,51 @@ logs/traces/screenshots，记录完整 SHA/dirty manifest、命令/cwd、runtime
 
 ```text
 Status: READY FOR B REVIEW
-Implementation checkpoint SHA: a032a245346c34605b8d90c79c51cdba44f73c13
+Implementation checkpoint SHA: 227b549efea35b47740c33fd49ec011fa36801f2
 Task Base: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914
 ```
 
 ### Changed Files
 
-Backend: mediaflow/domain/operations_run.py, mediaflow/infrastructure/sqlite_runtime.py,
-mediaflow/interfaces/service_api.py.
-Harness/tests: scripts/operations_inventory_harness.py, tests/test_operations_task_center.py,
-tests/test_recovery_continuation.py.
-Web contract/API/navigation: web/src/entities/operations/run.ts, run.test.ts,
-web/src/shared/api/api-client.ts, operations-api.test.ts, web/src/shared/navigation/
-destination-model.ts, destination-model.test.ts, operations-return.ts,
-operations-return.test.ts.
-Web surfaces/tests: web/src/features/operations/OperationsLanding.tsx, ProblemFilePanel.tsx,
-OperationsInventory.test.tsx, web/playwright.config.ts,
-web/tests/e2e/library-files.spec.ts, manual-operations.spec.ts, manual-organize.spec.ts,
-operations-inventory.python.spec.ts, operations-task-center-visual.python.spec.ts,
-operations.spec.ts.
+Backend/current-problem projection: `mediaflow/domain/operations_run.py`, `mediaflow/interfaces/service_api.py`, `mediaflow/infrastructure/sqlite_runtime.py`. Harness and regression coverage: `scripts/operations_inventory_harness.py`, `tests/test_operations_run_inventory.py`, `tests/test_recovery_continuation.py`. Web contract/query/presentation: `web/src/entities/operations/run.ts`, `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/run-query.ts`, `web/src/features/operations/run-detail-query.ts`, their affected tests, navigation/auth tests, and scoped `web/src/shared/ui/styles.css`. Browser regressions: the affected existing E2E selectors and the Task Center inventory, principal-identity and visual specs.
 
 ### Implemented
 
-- AC-1/AC-2, RO-1 query: the nine peer views support source, status, operation type, text, and
-  time filters; links and return paths retain the active view and pagination context. The page,
-  summary, and authorized source options use the same SQLite read snapshot and query scope.
-  Job-to-Task associations are deduplicated, and per-type file counts use the actual associations
-  and row-level problem items.
-- AC-3, current problems: real pending decisions and recovery work remain visible, resolved blockers
-  clear, and new blockers appear under their current type. Zero-effect and unknown-effect outcomes
-  remain distinct. Work awaiting continuation is not presented as a technical failure.
-- AC-4, file location: each problem view opens the correct Task/type file list with cursor
-  pagination, evidence and recovery-chain detail, bounded explanations, and a safe next step.
-  Returning preserves the view and filters. Unknown categories and internal failure enums are not
-  rendered.
-- AC-6, permissions and safety: source scopes use shared validation; reads and refreshes do not
-  admit work, call a Provider, or mutate Storage. Existing details, records, redacted export,
-  controls, and Files/Organize return paths remain available.
-- No schema, migration, or dependency changes; existing Task, Job, item, and recovery records are
-  reused.
+- AC-3: current attention follows durable recovery linkage and verified execution evidence. A continuation that meets a new review blocker appears under that current problem instead of also manufacturing a technical failure. A saved decision or successful analysis remains a safe next step until the linked manual execution is actually successful. Historical decisions/results and successful sibling items remain intact; unknown effects stay investigation-only.
+- AC-1/3: successful visible inventory reads poll every five seconds even when the visible page contains only terminal rows; hidden-page polling stops. Visible problem-detail evidence also refreshes. Read errors expose a manual refresh action; writes are not automatically retried.
+- AC-1/4/5: the nine Task Center views show view-specific descriptions and useful columns, current stage/progress where known, ended-result summaries, current problem type/file count and exact problem-file location. Inconsistent stored totals produce an unknown progress value instead of a contradictory ratio. The shared entry is named “任务中心”; view tabs remain one horizontally scrollable row on narrow screens and keyboard focus scrolls into view.
+- AC-6: query/refresh and problem evidence remain read-only, bounded and authorized. No new execution capability or Storage mutation was added.
+- No database schema, migration, dependency or runtime-configuration changes.
 
-### Tests and Results / evidence index
+### Tests and Results / Evidence Index
 
-The durable index, raw logs, Task Base comparisons, build hashes, and screenshots are at
-.git/validation-evidence/a032a245346c34605b8d90c79c51cdba44f73c13/task45.1-t4-fix2-20261015/INDEX.md.
-The implementation checkpoint is a032a245346c34605b8d90c79c51cdba44f73c13. The isolated Python
-suite used the active B Task text containing the added release-security command; after this report
-was updated, the Task document policy test was rerun on the final report text.
+Durable index and raw logs: `.git/validation-evidence/227b549efea35b47740c33fd49ec011fa36801f2/developer-final-t4-20261015/INDEX.md`; screenshots and SHA256 manifests are beside it. The executable source and production build identity are pinned to the implementation checkpoint above.
 
-- Python unittest discover -s tests: 2451 tests, failures=1, errors=2, skipped=7. The two errors
-  are macOS temporary-path ENAMETOOLONG cases; the single failure compares /var/folders with the
-  resolved /private/var/folders path. All three exact cases were independently reproduced at the
-  Task Base. The isolated Scan CLI test passed. The first main-workspace run also hit a runtime
-  database schema mismatch from the pre-existing .mediaflow/mediaflow.sqlite3; its mtime predates
-  this run and that database was not read or changed.
-- Root gates: governance, Ruff format/lint, compileall, pip check, both example config validations,
-  diff check, and the no-FFmpeg/FFprobe scan passed.
-- Web typecheck, lint, and format check passed. Production build passed; aggregate build-manifest
-  SHA256 is cbab9c8f8523402f453213c6a933a9a08d1075210ca4a51d6c71d5202b865c8d.
-- Full Web unit suite: 1108 passed and 2 failed. Both failures are in unchanged
-  StorageManagementPage.test.tsx and were independently reproduced at Task Base.
-- Full fake E2E: 240 passed and 3 failed. The old Scan pagination, narrow MediaLibrary row-menu,
-  and Rules Add-form failures were independently reproduced at Task Base. Three later cases in the
-  serial Scan group did not run after its first failure; the three cases were rerun separately and
-  passed. The final suite used one worker because the fake API has process-global mutable fixtures.
-- Real-Python/SQLite E2E: operations inventory 24 passed, principal identity 1 passed, production
-  visual 1 passed, and Task Center keyboard journey 1 passed. Coverage includes mixed problems,
-  pagination across 21 problem files, linked counts, source filters, recovery restart, and failed
-  reads. The Docker release-security smoke passed; image ID is
-  sha256:177ee4caa19a161e87b2fc4a7dbe51a7091d91213b82938d73e573eab84169a9.
-- Production screenshots: nine views, problem files, narrow screen, reconnect, and read failure,
-  13 images total. Wide images are 1536x1024; narrow is 380x720. I inspected every image. Hashes
-  are in the evidence directory.
+- Governance, Ruff format/lint, compileall, pip check, both example config validations, and the no-FFmpeg/FFprobe scan: PASS.
+- Full Python unittest discovery: **2,453 tests, 1 failure, 2 errors, 7 skipped**. The two `ENAMETOOLONG` fixture errors and `/var/folders` versus resolved `/private/var/folders` dry-run assertion reproduce in the clean Task Base worktree; the Base and candidate logs are indexed. The isolated Scan CLI check passes. Its earlier main-workspace run was affected by the pre-existing `.mediaflow/mediaflow.sqlite3` runtime DB; that file was left unchanged by this work.
+- Web typecheck, lint, format check and production build: PASS. Vite emitted a >500 kB main-chunk warning. Full Vitest: **1,111 passed, 2 failed** in unchanged `StorageManagementPage.test.tsx`; both exact test failures reproduce on Task Base and remain reported as FAIL.
+- Full fake Playwright E2E: **240 passed, 3 failed, 3 did not run** after the first failure stopped the serial Scan group. Scan detail pagination and Rules Add-form legend failures reproduce on Task Base. The narrow MediaLibrary row-menu failure is unstable at Base (pass in one Base parallel run, fail when isolated) and fails in this candidate run. This gate is incomplete, not PASS. All 28 `operations.spec.ts` cases pass in the full run.
+- Real-Python/SQLite inventory Playwright: **25 passed**; Unicode-principal continuation: **1 passed**; production Task Center visual spec: **1 passed**. The inventory run covers real API/SQLite/Worker recovery, safe reads, linked run refresh/progress, the nine views, source and cursor context, 21-file problem pagination, evidence and return navigation.
+- Required Docker release-security smoke: **PASS** on the exact candidate image (`sha256:22c5131a3cb97611818656e8c2336b1803ba51f23363323fcf233b3653669f2a`). The default macOS temp path is not shared with this Colima VM; after verifying an existing `/Users` evidence path as the usable temp/mount location, the complete smoke and its fail-closed host-root probe passed with `TMPDIR` set to that path. The initial failure, path diagnosis, final raw output and no-leftover-container check are in the evidence index.
+- I visually inspected all 13 production screenshots: nine 1536×1024 views, problem-file evidence, 380×720 narrow view after keyboard navigation, reconnect and read-failure states. The wide views show the expected per-view hierarchy/content; the narrow capture shows the one-row horizontally scrolled tabs; failure state provides a refresh recovery. Image dimensions and individual SHA256 values are retained.
+- `git diff --check`: PASS. No migration was run because the diff contains no schema changes.
 
 ### Decisions
 
-- Keep the stable API fields and return the list and summary from one query window so they share
-  one snapshot and filter scope.
-- Derive current problem and recovery evidence from existing durable records; no schema was added.
-- Run the complete fake browser suite with one worker because its process-global fixtures are
-  mutable; the interrupted serial cases were run separately.
+- Resolve old attention only from exact persisted continuation/manual-execution relations and successful execution evidence; retain unresolved decisions and analysis-complete work as current safe-next-step attention.
+- Use visible successful GET polling for inventory and opened problem evidence, so terminal rows and cross-page changes remain observable without admitting work.
+- Keep progress unknown when persisted item count contradicts the task total; do not infer a total or completed count.
+- Use only a Task Center-scoped nowrap/overflow style for the view tabs.
 
 ### Remaining In-Slice Work
 
-RO-2 same-page creation/confirmation, RO-3 new recovery handling and summary confirmation, RO-4
-same-page reauthorization on continuation, RO-5 retirement of Scan from all entry points, and
-Slice-level final verification remain. This Task does not claim all Slice Required Outcomes.
+RO-2 same-page creation/confirmation, RO-3 new recovery handling and summary confirmation, RO-4 same-page reauthorization on continuation, RO-5 retirement of Scan from all entry points, and Slice-level final verification remain outside this Task. This report does not claim all Slice Required Outcomes or Task PASS.
 
 ### Risks / Deviations
 
-- The two Python path-length errors and one path-normalization failure, two Web unit failures, and
-  three fake E2E failures reproduced at Task Base; logs are in the evidence index. The main-workspace
-  Scan CLI failure did not reproduce in isolation. The existing runtime database timestamp predates
-  this run, and the database was left untouched.
-- Vite reports a 1.23 MB main JavaScript chunk above its 500 kB warning threshold; the Task Base
-  build reports the same bundle size.
-- Only the Task-required release-security smoke ran, not the Docker matrix. No schema changed, so
-  no migration run or migration PASS is claimed.
+The full Python, Vitest and fake E2E suites are not green; the precise failures, Base reproductions and the unstable narrow MediaLibrary case are recorded above and in the evidence index for B's independent decision. The production bundle retains Vite's >500 kB warning. Docker required an explicit shared temporary directory because the host's default temp directory is not shared with Colima; the official smoke itself completed and passed in that supported environment. No code/test/harness/config/artifact input changed after the verified source checkpoint. The report-only successor and its document checks are recorded in the evidence index after commit.
+
+User-preserved dirty screenshots/`.DS_Store` files, the deleted pre-existing screenshot, `output/imagegen/slice45-task-center-v1.zip`, B's active Task review edits, and ignored `config/alist.json` were not staged or removed. `config/alist.json` was not read. This is Developer handoff for B review only; no PASS, Slice review or closure is declared.
 
 ## B Review Result
 
