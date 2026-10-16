@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.2
 Parent Slice: 45
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER IMPLEMENTS TASK 45.2
+Next Action: DEVELOPER CORRECTS TASK 45.2
 ```
 
 ## Goal
@@ -247,48 +247,40 @@ B 核对 Task Base..Head、原始日志和身份，独立在 production build/�
 Task ID: 45.2
 Status: READY FOR B REVIEW
 Task Base: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743
-Implementation Head: 25fbe95794deefd5cd828938785c05bd8e20fcc8
+Implementation Head: ae861d5a1fc43bb59cce65541fc9865f3231aa1a
 ```
 
-### Delivered (RO-2 + the shared RO-6 orchestration it needs)
+### Delivered (RO-2 correction after B FIX REQUIRED)
 
-一个显式准备申请（`autoPrepare`）在同一条持久发现记录上完成：有界发现 → 内部冻结已审阅来源 →
-常驻 Worker 运行完整生产分析 → 链接同一页面上的精确零变更计划摘要。
+在同一 Task45.2 内修正 B 三项 P1；保留原 Goal/Scope/AC 与 T4，复用既有 discovery 队列、
+常驻 Worker、Preview 权威与执行边界，未新增第二套队列/恢复引擎，schema 仍为 45。
 
-- **Domain** `mediaflow/domain/media_discovery.py`：新增 `auto_prepare`、`preview_id`、
-  `analyzing` 可领取阶段与 `prepared`；`ANALYZING` 不是执行态，也不授予权限。
-- **Persistence** `mediaflow/infrastructure/sqlite_runtime.py`：增量 `auto_prepare` /
-  `preview_id` 列，claim/heartbeat/release 查询纳入 `analyzing`，并允许终态记录释放自身
-  claim，使已链接分析可重新运行；schema 标记保持 45，升级为增量。
-- **Application** `mediaflow/application/media_discovery.py`：Worker 走完有界发现后复用现有
-  原子 linkage 内部冻结来源，进入 `analyzing`，再通过现有 `ManualOrganizePreviewService`
-  链接精确 Preview；`request_analysis` 只记录一次带版本的重新分析请求。预算/安全截断永不冻结。
-- **API/Worker 装配** `mediaflow/interfaces/service_api.py`、`mediaflow/final_cli.py`：API 与
-  常驻 Worker 使用同一 Preview 权威；discovery 文档发布 `autoPrepare`/`prepared`/`previewId`
-  与 `prepare` 动作，`POST .../discoveries/{id}/analyze` 记录重新分析。
-- **Web** `OrganizeCreationPage.tsx`（新增）、`organize-summary.tsx`（新增，复用给既有 Preview
-  页面）：单项/多项/文件夹/混合选择进入同一创建工作区，显示持久进度、findings、同页精确摘要、
-  行内识别类型修正、破坏性影响确认与“确认整理 N 项”；有界轮询；未知响应只核对不自动重发。
-  `StorageFilesPage` 所有选择都进入该工作区；独立 discovery/intent/preview 路由保留给恢复。
-- **Navigation** `destination-model.ts`：工作区 URL 通过认证延续携带精确 `discoveryId`。
-- **Tests/harness**：新增 `tests/test_organize_preparation.py`（6 个真实 SQLite/Local Storage/
-  合成 Provider 用例）、`OrganizeCreationPage.test.tsx`（3 个契约 fixture 用例）、harness
-  `run-discovery-worker` 路由、fake E2E 与真实 Python/Docker 旅程按新流程更新。
+- **Blocker 1 — 未选兄弟项不再被已执行项阻塞。** `media_discovery.py` 的分析只复核没有
+  持久执行受理的 intent 项（`list_manual_execution_item_ids_for_intent` 读取
+  `manual_execution_items` 权威），单项来源失效变为有界的逐项 finding 而非整轮失败
+  （`tolerate_unready_sources`）。`OrganizeCreationPage.tsx` 从确认集合排除已受理项，将其显示为
+  “已受理执行”，其余就绪项保持可确认、可补正；已受理项不重复执行。
+- **Blocker 2 — 同页重新检查与身份补正完整可用。** `MediaDiscoveryService.analysis_availability`
+  成为 API 公告与 `request_analysis` 共用的唯一判定，已完成的摘要始终显示后端真正接受的
+  “重新检查并更新摘要”。intent 文档发布每项的 `allowedMetadataIdentities`（有界、来源接地），
+  普通操作者可在本页完成类型与身份补正，不再依赖旧 intent 编辑页。
+- **Blocker 3 — 摘要按真实计划解释影响。** `_bounded_destructive_implications` 按实际操作说明
+  保源/移除语义（MOVE 成功后来源不再保留原文件；COPY/LINK 保留来源），覆盖与来源清理分别绑定；
+  `organize-summary.tsx` 展示真实来源范围、目标媒体库、策略、识别/身份理由与逐附件来源→目标。
 
 ### Evidence
 
-候选 `25fbe95794deefd5cd828938785c05bd8e20fcc8`；完整索引与原始日志：
-`.git/validation-evidence/25fbe95794deefd5cd828938785c05bd8e20fcc8/developer-t4/INDEX.md`。
+候选 `ae861d5a1fc43bb59cce65541fc9865f3231aa1a`；完整索引与原始日志：
+`.git/validation-evidence/ae861d5a1fc43bb59cce65541fc9865f3231aa1a/developer-t4-fix/INDEX.md`。
 
-- 隔离 checkout 全量 Python：**2467 tests OK / 7 skipped / 179.3s**。
-- Web：typecheck/lint/format/build PASS；Vitest **1118 passed / 76 files**；fake E2E **246 passed**；
-  真实 Python inventory **25 passed**；Unicode principal **1 passed**；visual capture **2 passed**
-  （含新建摘要 1536×1024 与窄屏截图，已人工查看）。
-- Wheel：从干净源码构建并 smoke PASS，且实际加载新增 preparation consumer。
-- Docker：creation proof **9 个截图/断言 PASS**（3 次 admission、恰好 1 次 analyze/1 次 Choice/
-  1 次 Execute，预算与安全深度拒绝冻结，真实 Worker 完成主文件与 Trailer 并在重预览时
-  `source_missing` 拒绝重放），release-security smoke PASS。
-- 治理、ruff、compileall、pip check、两份示例配置、无 FFmpeg/FFprobe 匹配均 PASS。
+- 隔离 checkout 全量 Python：**2470 tests OK / 7 skipped / 195.9s**。
+- 聚焦：discovery **141 OK**，execution **158 OK**。
+- Web：typecheck/lint/format/build PASS；Vitest **1120 passed**；真实 Python inventory **26 passed**
+  （含新增“已执行项不阻塞未选兄弟项”旅程）；Unicode principal **1 passed**；visual capture
+  **2 passed**，已人工查看新建摘要整页截图。
+- Wheel：构建并 smoke PASS，实际加载 preparation consumer。
+- Docker：creation proof **9 个断言 PASS**（candidateSha ae861d5），release-security smoke PASS。
+- 治理、ruff、compileall、pip check、两份示例配置、无 FFmpeg/FFprobe 均 PASS。
 
 ### Pre-existing failure (not waived)
 
@@ -298,28 +290,145 @@ Implementation Head: 25fbe95794deefd5cd828938785c05bd8e20fcc8
 
 ### Risks / notes for B
 
-- 准备界面的识别类型修正要求该来源存在持久 source-linked Result/evidence（与既有
-  MetadataPolicy 规则一致）；离线栈无外网 Provider，Docker 证明通过生产持久写入路径先行固定
-  已审阅身份。有真实 Provider 的部署不需要这一步。
+- 身份补正选项来自持久 source-linked Result/evidence 与该来源已链接 Preview 的计划身份；离线栈
+  无外网 Provider，Docker 证明通过生产持久写入路径先行固定已审阅身份。有真实 Provider 的部署
+  不需要这一步。
 - 主工作区保留全部预存脏文件；`config/alist.json` 未被读取、暂存或输出。
-- 架构事实：复用既有 discovery 队列/Worker/Preview，未新增第二套队列或恢复引擎；schema 45 不变。
+- 架构事实：复用既有 discovery 队列/Worker/Preview/执行边界，未新增第二套队列或恢复引擎；
+  schema 45 不变。
 
 Reusable lesson candidates (for A's closure reconciliation):
 
-1. **将“准备”建成一个可持久推进的阶段而不是一次性长请求。** 问题：完整分析若在 HTTP 请求内完成，
-   刷新/断线即丢失进度。做法：在既有持久记录上增加 `analyzing` 阶段并由常驻 Worker 推进，浏览器只
-   读持久状态。适用：任何“分析→呈现→确认”的 Web 旅程。
-2. **同一组件的两种呈现必须共用同一渲染实现。** 问题：工作区与独立页面各写一份摘要渲染，容易
-   在修正后分叉。做法：抽出 `organize-summary.tsx` 供两处复用。适用：并行保留的新旧入口。
-3. **离线证明里的“已审阅身份”要走生产持久路径。** 问题：无外网 Provider 时，界面修正无法解析
-   身份而静默变成 blocked。做法：用与独立编辑器相同的 source-linked Result 权威先行固定身份。
-   适用：任何离线但仍要走真实校验的验收。
+1. **验证独立子集状态必须跨越一次真实执行。** 只检查准备完成或摘要存在不能证明端到端可用；
+   应在真实 MOVE 后再补正未选项并重新分析，核对已完成项不重放、未选项不被阻塞。
+2. **公告动作与真实准入必须共用同一判定函数。** 将“是否可重新分析”抽成单一谓词供 API 投影与
+   应用准入共用，可避免“已完成的摘要不提供重新检查”这类投影/准入分叉。
+3. **破坏性说明必须从真实计划操作推导。** 仅凭 overwrite/cleanup 标志推断“保留来源”会在 MOVE
+   计划上给出与真实结果矛盾的承诺；说明应直接绑定 reviewed operation 语义。
 
 ## B Review Result
 
 ```text
-Reviewed: NOT REVIEWED
-Decision: PENDING
+Reviewed Range: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743..25fbe95794deefd5cd828938785c05bd8e20fcc8
+Report Head: 69f5a89df813e1de2ac56b3fefd20e3cd5b2acbe
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: DEVELOPER IMPLEMENTS TASK 45.2
+Next: DEVELOPER CORRECTS TASK 45.2
 ```
+
+### Review authority and independent evidence
+
+治理 PASS；工作树与已提交 Slice45 ACTIVE Contract 一致，Task 合法，无需交 A 改范围。
+`25fbe95..69f5a89` 只改 TASK.md；B 使用的 production JS/CSS SHA256 与 Developer 索引相同。
+完整 diff 为 28 个文件；未改 Slice、Roadmap、Progress、稳定需求或冻结 Automation 范围。
+本轮只更新 B-owned TASK.md，不改产品代码，不创建下一 Task，不提交 Closure Packet。
+
+B 的耐久复现、原始读回、production-build 桌面/窄屏截图及 trace：
+`.git/validation-evidence/25fbe95794deefd5cd828938785c05bd8e20fcc8/b-review-20261016/INDEX.md`。
+仅本地可达，未推送。
+
+### Task blockers — all P1
+
+1. **精确子集执行后，未选兄弟项不能从原准备继续。** 对真实 Python API/SQLite/Local Storage/
+   Worker，从任务中心进入 Files，选 Three 与 Four，得到两个真正可执行方案；只确认 Three，
+   Worker 成功移动且仅生成该项结果，Four 保留原文件且未执行。重新打开同一准备后，
+   `executionHistorySafe` 把整个摘要禁用；补正 Four 为 C 后，`_analyze` 调用
+   `create(intent_id, None, ...)` 又把已成功移动的 Three 纳入，完整准备变为
+   `failed / source_missing / previewId=null`。Four 的合法补正与后续摘要因此被兄弟项阻塞。
+   位置：`OrganizeCreationPage.tsx:451`、`media_discovery.py:1740` 和
+   `ManualOrganizePreviewService.create` 的全意图来源预检。
+   **修正结果：** 在现有权威下区分已受理/已完成、未选和未就绪范围，原准备可读取并补正、
+   分析和明确确认剩余合法项；完成/忽略/不确定项不重新纳入。保留每次实际执行与精确选择的
+   持久关系、历史和去重，不能仅删除前端禁用或从 Files 新建一次来替代本验收。
+   对应 AC-3/4/5，RO-2 的独立准备状态与补正承诺。
+
+2. **同页更新摘要和必要补正没有完整可用入口。** 完成的准备在后端仍允许显式
+   `request_analysis`，但 `_discovery_document.actions.prepare` 用 `not terminal` 将其公告为
+   false；创建页又仅在 `previewId === null` 分支渲染重新分析按钮。已有摘要的来源/计划过期、
+   修好依赖后，普通用户只能刷新旧摘要，或借改变识别类型触发分析，不能直接在本页重新检查。
+   页面补正只提供识别类型 select，没有当前允许的身份/候选等补正，仍提供旧 intent 编辑页
+   链接；不能把旧 intent→独立 Preview 当作创建的必要补正路径。
+   位置：`service_api.py:12579`、`OrganizeCreationPage.tsx:874`、`:1000`、`:1151`。
+   **修正结果：** 后端公告与实际合法动作一致，已有摘要/失败与来源变化有同页、明确、零变更的
+   更新/重新准备动作；在准备界面完成已有允许的类型/身份补正与配置修复指引。来源实质变化需
+   明确新摘要/新意图，保留原 pin 与输入；读/刷新不能自动发命令，不能注入任意身份或目标。
+   对应 AC-3/5，Implementation Scope §2/3；不要求实现下一 Task 的五类正式执行恢复页。
+
+3. **确认前摘要错误描述 Move 的实际效果，且缺少约定的计划解释。** 两个实际 MOVE 方案均显示
+   “此方案不会替换或删除文件，整理后会保留来源媒体。”；B 随后确认其中一项，真实 Worker
+   移动后来源已不存在。`destructiveStatement` 只看 overwrite/cleanup 标志，忽略操作语义。
+   此外，本页未呈现权威 selection.scopes，摘要来源为“—”，`ItemFindings` 没有策略/识别与身份
+   原因、目标 MediaLibrary，附件仅列类型/语言而无其来源→目标/实际影响；这些是 Task 要求的
+   审阅信息，不是视觉 polish。
+   位置：`organize-summary.tsx:60`、`:76`、`:85`，`OrganizeCreationPage.tsx:946`。
+   **修正结果：** 基于真实 plan 显示各操作的保源/移除语义与附件影响，覆盖和来源清理分别绑定
+   实际选择；呈现持久来源/完整性与所需的逐项策略、身份、目标库/路径解释。复用已有投影，
+   必要时有界扩展，不能只换一句文案而继续遗漏实际计划。
+   对应 AC-1/3/4，REQ-ORG-004、UX-005 与 RO-2 的精确摘要。
+
+### 简版修复方案 — Developer 执行指导
+
+继续同一 Task45.2，保留 Base、High / T4、范围和 AC。建议按以下顺序完成一个连贯修正；
+以下是实现方向，不新增队列、恢复引擎或正式执行恢复范围。
+
+1. **先修剩余范围的后端权威，再接页面。** 复用 intent→Preview→execution 的持久关联及
+   execution 的精确 selected item IDs，计算本准备中“从未受理、仍可准备”的项。
+   不按文件是否存在猜执行结果，不只看当前 Preview 或截断的最近执行列表。
+   已受理项显示其已有进度/结果，失败沿用既有执行恢复，未知效果只核查；都不重新进入创建。
+   `_analyze` 将明确的剩余 item IDs 交给现有 Preview 服务，替换全意图 `None` 选择；
+   保留未就绪项及其原因，单项失效不得抹掉其他项的补正与可读状态。
+   API 公告逐项 eligibility/合法动作，前端据此替换“有任一执行历史就整页禁用”的判断。
+   新摘要后清除旧选择及覆盖/清理确认；继续复用既有原子 admission、锁、去重和 Worker。
+   仅改前端按钮或跳过 live source 校验不构成修复。
+
+2. **把重新检查与补正接完整。** 后端用与 `request_analysis` 相同的合法性判断公告动作，
+   避免以“准备 completed”直接禁止重新分析。页面在已有摘要和未就绪状态也显示明确的
+   “重新检查并更新摘要”，Refresh 仍只读取。复用已有合法选择/身份校验，在本页提供必要的
+   类型及身份补正；配置问题给出修复指引和返回后的明确重新检查，不依赖旧 intent→独立 Preview。
+   来源实质变化走显式重新准备和新的来源/意图证据，保留原记录与可验证原 pin，不修改旧来源
+   快照、不自动使用新 Active。未知保存/分析/确认响应先读取该次持久状态，不自动重发。
+
+3. **用实际计划解释影响。** 共享摘要分别显示操作语义：MOVE 成功后来源位置不再保留原文件；
+   COPY 保留来源并生成副本；HardLink/SoftLink 按实际链接语义说明。覆盖与来源目录清理另列，
+   不能从“未覆盖、未清理”推断“保留来源”。从持久 preparation.selection 与 plan/evidence
+   展示真实来源范围、完整性、目标 MediaLibrary/路径、策略与身份理由，以及附件来源→目标和
+   影响；已有字段优先复用，缺少时有界扩展 typed API。读摘要不触发 Provider 或媒体变更。
+
+4. **先用真实失败路径验收，再跑原 T4。** 修正 SyntheticMetadataProvider 的候选 fixture，
+   成功用例必须断言真实计划、可执行子集与目标；补正用例必须实际保存决定。
+   最小端到端验收为“两项就绪→只执行一项→刷新/重新认证→补正未选项→同页新摘要→确认剩余项”，
+   核对两次独立结果、附件和 mutation 次数，第一项不重放。再验证已有摘要的依赖修复/来源变化、
+   身份补正，以及 MOVE/COPY/LINK/覆盖/清理的说明与实际效果一致。并发/重复及未知响应沿用
+   精确受理核对；修正用例通过后，对新候选完成原 Required Tests 全部 T4 门禁并提交实际证据。
+
+### Verification result and required correction evidence
+
+- B 独立运行 `tests.test_media_discovery tests.test_manual_organize_intent
+  tests.test_manual_organize_preview tests.test_organize_preparation`：**138 tests OK / 8.191s**。
+  单跑新增模块 **6 tests OK**；上述通过不代表创建的全部行为通过。
+- `fixture-probe.py` 证明新增测试向 `SyntheticMetadataProvider` 传 dict 而非候选 tuple，
+  两个 Preview item 实际都是 `failed`，错误为 `'str' object has no attribute 'media_type'`，
+  但测试只检查阶段完成/链接，仍全部绿色。换成正确的本地合成候选后两个 item 才为 `previewed`。
+  名为 saved-correction 的测试也未实际保存 choice。修正这些 fixture/断言，使成功、真实补正及
+  后续可执行性被检验，不能靠已有测试数或人为预存身份绕过完整创建旅程。
+- B 原生复现 `browser-probe.mjs`：同一受测 production build、真实 Python API/SQLite/Worker、
+  临时 Local/合成 Provider；首次准备两项就绪，精确执行一项成功，随后复现 blocker 1。
+  已实看桌面和窄屏截图；记录的 Move 保源承诺与实际 Storage 结果矛盾，视觉验收不能记 PASS。
+- 已检查 Developer 全量 Python、真实 inventory/visual、Docker creation/security、wheel 的原始
+  日志与产物索引。现有用例没有证明本轮失败分支；visual 测试只截摘要并未确认，Docker 先行
+  写入 source-linked Result/choice 不能证明新来源身份补正可由普通 Web 用户完成。
+  主工作区 schema48、Task Base 对照失败与隔离候选通过保留为环境证据，不改用户库、不伪报绿。
+- 按 workflow 的早期已证实阻塞规则，本轮 **未重跑** 完整 Python/Web/Docker/wheel/迁移矩阵，
+  未签发 T4 或 Task PASS。修正后保留 ID/Base/Goal/Scope/AC 与原 T4 门禁，先运行失败旅程及
+  相关回归，再对新的 executable candidate 完成全部指定 checkpoint gates 和原始证据。
+  特别证明：两个以上就绪项只执行一项→刷新/重连→补正剩余项→新摘要→明确确认，已完成项
+  无重放；已有摘要的依赖修复/来源变化同页更新；真正的身份补正；MOVE/COPY/LINK/附件及独立
+  覆盖/清理影响。B 复查这些实际旅程后再判断 PASS。
+
+### Slice outcome reassessment
+
+RO-1 / S-1 延续 Task45.1 的 PASS；RO-2 / S-2 被上述问题阻塞。
+RO-3 / S-3/4 的专用处理/摘要、RO-4 继续的同页重新授权、RO-5 / S-7 的 Scan 完整退役，
+以及 RO-6 的完整编排验收和 Slice-final 均未完成。保留当前 Task 修正循环，不规划 Task45.3。
+候选可复用经验：验证独立子集状态要跨越一次真实执行后再处理剩余项；只检查准备完成或摘要
+存在不能证明端到端可用。留给 A 收尾筛选，不改经验文档或 CURRENT 声明。
