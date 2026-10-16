@@ -274,14 +274,57 @@ try {
   // The preparation workspace links the exact zero-mutation plan summary and
   // offers the linked intent for a legal correction; the browser then makes
   // exactly one explicit confirmation of its ready subset.  It never handles
-  // a token or digest.
+  // a token or digest.  This offline stack has no external Provider, so the
+  // reviewed metadata identity is first pinned through the production
+  // source-linked Result authority (the same durable evidence the standalone
+  // editor consumes); the browser's own correction then preserves it.
   const executionIntentId = mixedIntentId;
+  const readIntent = async () => {
+    const response = await fetch(
+      `${BASE}/api/v1/operations/organize/intents/${mixedIntentId}`,
+      { headers: { Authorization: 'Bearer ' + TOKEN } },
+    );
+    require_(response.status === 200, 'the linked intent could not be read');
+    return response.json();
+  };
+  const seedIntent = await readIntent();
+  const seedItem = seedIntent.items[0];
+  const seedResponse = await fetch(
+    `${BASE}/api/v1/operations/organize/intents/${mixedIntentId}/items/` +
+      `${seedItem.itemId}/choice`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + TOKEN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        expectedVersion: seedIntent.version,
+        expectedItemVersion: seedItem.version,
+        recognitionTypeId: 'C',
+        namingPolicyId: 'A',
+        classificationPolicyId: 'A',
+        organizePolicyId: 'A',
+        metadata: {
+          provider: 'tmdb',
+          providerId: '909',
+          mediaType: 'movie',
+          title: 'Execution',
+        },
+      }),
+    },
+  );
+  require_(
+    seedResponse.status === 200,
+    'the source-grounded reviewed identity could not be pinned',
+  );
+  // Re-enter the workspace so it reads the freshly pinned choice, then make
+  // the one explicit operator correction that re-runs the analysis.
+  await connect(page.url().slice(BASE.length));
   const recognition = page.locator('select[aria-label^="识别类型 "]');
   await recognition.first().waitFor();
-  await recognition.first().selectOption('A');
+  await recognition.first().selectOption('C');
   await page.getByText(/修正已持久保存/).waitFor();
-  // The resident Worker re-runs the complete analysis under the same pinned
-  // configuration and links a new exact plan summary on the same page.
   const reanalyzed = await settleDiscovery(mixedDiscoveryId);
   require_(
     Boolean(reanalyzed.previewId),
