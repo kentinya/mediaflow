@@ -3632,6 +3632,13 @@ export interface FilesOrganizeAdmissionOptions {
    * when the runtime has no cryptographic random source.
    */
   readonly requestId?: string;
+  /**
+   * Whether this admission is a full same-page preparation (RO-2): after the
+   * bounded walk the resident Worker freezes the reviewed sources and links
+   * one exact zero-mutation plan summary.  Omitted (false) keeps the explicit
+   * Finalize discovery contract.
+   */
+  readonly autoPrepare?: boolean;
 }
 
 export type FilesDiscoveryAdmissionResult =
@@ -3683,6 +3690,7 @@ export async function submitFilesDiscovery(
         },
         body: JSON.stringify({
           paths: [...options.paths],
+          ...(options.autoPrepare === true ? { autoPrepare: true } : {}),
           ...(options.requestId === undefined
             ? {}
             : { requestId: options.requestId }),
@@ -3955,6 +3963,70 @@ export type OrganizeDiscoveryFinalizeResult =
       readonly code: string;
       readonly nextAction: string | null;
     };
+
+export interface OrganizeDiscoveryAnalysisOptions {
+  readonly discoveryId: string;
+  readonly expectedVersion: number;
+}
+
+/**
+ * Re-enter the durable analysis stage of a full preparation after the operator
+ * saved a legal correction on its linked intent.
+ *
+ * This records one versioned request only: the resident Worker re-runs the
+ * complete zero-mutation analysis under the same pinned configuration and
+ * links a new exact Preview.  It grants no execution authority.
+ */
+export async function requestOrganizeDiscoveryAnalysis(
+  token: string | null,
+  options: OrganizeDiscoveryAnalysisOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryControlResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+        options.discoveryId,
+      )}/analyze`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    return discoveryErrorResult(response.status, payload);
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeDiscovery(payload) };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+}
 
 /**
  * Freeze the discovered source list and link the existing durable manual

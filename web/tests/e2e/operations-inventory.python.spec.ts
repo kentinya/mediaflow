@@ -817,7 +817,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // This entry has no source scope selected in Operations, so the operator
   // makes the meaningful ResourceLibrary choice here before opening Files.
   await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件并开始整理" }).click();
+  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
 
   // This file exists only in the harness's temporary live Local Storage. The
@@ -825,10 +825,51 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   // identifier is submitted as source authority.
   await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+  // Every selection now enters the one in-context preparation workspace: the
+  // resident Worker runs the bounded walk and the complete analysis, then the
+  // exact plan summary appears on the same page.
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  // Drive the real resident bounded-discovery Worker to completion: the walk
+  // freezes its reviewed sources and the complete analysis links the exact
+  // Preview.  The browser only polls the same durable state.
+  await expect(page).toHaveURL(/discoveryId=/);
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly status?: string;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
   const recognition = page.locator('select[aria-label^="识别类型 "]');
-  await recognition.selectOption("C");
-  await page.getByRole("button", { name: "保存选择" }).click();
+  await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
+  await recognition.first().selectOption("C");
+  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
 
   const beforePreview = await request.get(
     `${BASE}/__harness__/manual-file-state`,
@@ -837,9 +878,6 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     sourceExists: true,
     destinationTargets: [],
   });
-  await page.getByRole("button", { name: "生成精确预览" }).click();
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-  await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
   await expect(
     page.getByRole("heading", { name: /Three\.2003\.mkv 可执行/ }),
   ).toBeVisible();
@@ -863,7 +901,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
       await route.abort("connectionreset");
     },
   );
-  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(
     page.getByRole("heading", { name: "执行结果未知" }),
   ).toBeVisible();
@@ -875,7 +913,7 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
     );
   expect(exactExecutePosts()).toHaveLength(1);
   await expect(
-    page.getByRole("button", { name: "确认执行所选条目" }),
+    page.getByRole("button", { name: "确认整理 1 项" }),
   ).toBeDisabled();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
@@ -989,8 +1027,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus the two Manual runs from the previous tests.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+  // The seeded population plus the three Manual runs produced by the earlier
+  // new-task journey (one from the previous test and two from the corrected
+  // same-page preparation).
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1006,7 +1046,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(run.status).toBe("completed");
 
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
@@ -1167,7 +1207,7 @@ test("the default unfiltered task-center origin selects its admitted run through
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
 
   // The native entry carries the valid empty origin marker.
   await page.getByRole("link", { name: "新建整理任务" }).click();
@@ -1180,36 +1220,59 @@ test("the default unfiltered task-center origin selects its admitted run through
   // exactly before the operator continues past the scoped availability read.
   await request.post(`${BASE}/__harness__/register-manual-worker`);
   await page.getByRole("radio", { name: "source" }).check();
-  await page.getByRole("button", { name: "选择文件并开始整理" }).click();
+  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
   await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await expect(page).toHaveURL(/returnOps=/);
 
   // Select the live file from the actual ResourceLibrary listing.
   await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+  // The same-page preparation workspace keeps the preserved return origin.
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
   await expect(page).toHaveURL(/returnOps=/);
-  await page.locator('select[aria-label^="识别类型 "]').selectOption("C");
-  // The Preview pins the exact current intent version, so the journey must
-  // wait for the save's own durable refetch before requesting it; clicking
-  // against a not-yet-refetched intent would submit a stale version.
-  const refetchedIntent = page.waitForResponse(
-    (response) =>
-      response.request().method() === "GET" &&
-      /\/operations\/organize\/intents\/[^/]+$/.test(
-        new URL(response.url()).pathname,
-      ),
-  );
-  await page.getByRole("button", { name: "保存选择" }).click();
-  await expect(page.getByText(/选择已持久保存/)).toBeVisible();
-  expect((await refetchedIntent).ok()).toBeTruthy();
-  await page.getByRole("button", { name: "生成精确预览" }).click();
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-  await expect(page).toHaveURL(/returnOps=/);
+  await expect(page).toHaveURL(/discoveryId=/);
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
+  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await expect(recognition.first()).toBeVisible({ timeout: 15_000 });
+  // The correction re-enters the durable analysis stage; the resident Worker
+  // links the new exact plan summary under the same pinned configuration.
+  await recognition.first().selectOption("C");
+  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({
+    timeout: 30_000,
+  });
 
   // The explicit admission from the empty-origin journey also returns to the
   // default list view with the admitted run selected (AC-T3).
-  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
   await expect(
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();

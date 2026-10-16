@@ -939,12 +939,16 @@ export function allowlistedDestinationSearch(
   if (path === "/operations/organize/new") {
     // The manual Organize entry carries only its bounded scope parameters
     // plus the preserved task-center return context of the journey it starts.
+    // The in-context creation workspace (RO-2) additionally carries the exact
+    // admitted preparation identity so a refresh/reconnect continues the same
+    // durable record without admitting work.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setSafe(allowed, "scopeKind", current.get("scopeKind"));
     setSafe(allowed, "fileId", current.get("fileId"));
     setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    setJourneyOperationsContext(allowed, current);
+    setSafe(allowed, "discoveryId", current.get("discoveryId"));
+    setJourneyReturnContexts(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (

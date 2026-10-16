@@ -48,6 +48,14 @@ class DiscoveryStatus(StrEnum):
     RUNNING = "running"
     PAUSED = "paused"
     WAITING_STABILITY = "waiting_stability"
+    #: A bounded discovery that was admitted as a full *preparation* has
+    #: finished its zero-mutation walk and internally frozen its reviewed
+    #: source list into a durable manual intent.  It stays claimable so the
+    #: resident Worker can run the complete production analysis chain
+    #: (Recognition -> Metadata -> Naming -> Classification -> Plan) and link
+    #: the resulting exact Preview.  It is never an execution state: the
+    #: operator must still explicitly confirm the ready subset.
+    ANALYZING = "analyzing"
     COMPLETED = "completed"
     PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
@@ -70,6 +78,9 @@ CLAIMABLE_DISCOVERY_STATUSES = frozenset(
         # A completed walk that observed not-yet-proven stability stays
         # claimable so a later observation can prove the interval.
         DiscoveryStatus.WAITING_STABILITY,
+        # A preparation that finished its walk and froze its reviewed sources
+        # stays claimable until the Worker has linked the exact Preview.
+        DiscoveryStatus.ANALYZING,
     }
 )
 
@@ -669,6 +680,16 @@ class MediaDiscovery:
     #: traversal budget or starving other resident commands, while never
     #: fabricating the interval itself.
     next_observation_at: datetime | None = None
+    #: Whether this admission is a full *preparation*: after the bounded walk
+    #: completes, the resident Worker internally freezes the reviewed source
+    #: list and runs the complete production analysis chain, then links the
+    #: exact Preview.  ``False`` keeps the original explicit-Finalize discovery
+    #: contract unchanged.  A preparation still grants no execution authority.
+    auto_prepare: bool = False
+    #: The exact Preview linked by a completed preparation analysis, or ``None``
+    #: while the walk/analysis is still pending.  It is read-only evidence: the
+    #: operator must explicitly confirm the ready subset before any mutation.
+    preview_id: str | None = None
     #: The client-generated identity of the exact admission request that
     #: created this record, or ``None`` for a record admitted without one.
     #: The backend resolves the immutable Active pin *at admission time*, so a
@@ -703,6 +724,10 @@ class MediaDiscovery:
             raise ValueError("discovery timestamps must include timezone")
         if self.next_observation_at is not None and self.next_observation_at.tzinfo is None:
             raise ValueError("discovery observation deadline must include timezone")
+        if self.preview_id is not None and (
+            not isinstance(self.preview_id, str) or not _SAFE_ID.fullmatch(self.preview_id)
+        ):
+            raise ValueError("discovery linked Preview identity is invalid")
         if len(self.sources) > self.budgets.max_primary_sources:
             raise ValueError("discovery source list exceeds its admitted bound")
 
@@ -713,6 +738,12 @@ class MediaDiscovery:
     @property
     def frozen(self) -> bool:
         return self.frozen_at is not None and bool(self.sources)
+
+    @property
+    def prepared(self) -> bool:
+        """Whether the preparation already linked its exact read-only Preview."""
+
+        return self.preview_id is not None
 
     def document(self, *, include_sources: bool = True) -> dict[str, object]:
         value: dict[str, object] = {
@@ -740,6 +771,8 @@ class MediaDiscovery:
                 if self.next_observation_at is not None
                 else None
             ),
+            "autoPrepare": self.auto_prepare,
+            "previewId": self.preview_id,
         }
         if include_sources:
             value["sources"] = [dict(item) for item in self.sources]
@@ -787,6 +820,8 @@ class MediaDiscovery:
                 if isinstance(next_observation, str)
                 else None
             ),
+            bool(value.get("autoPrepare", False)),
+            str(value["previewId"]) if isinstance(value.get("previewId"), str) else None,
             (
                 str(value["admissionRequestId"])
                 if isinstance(value.get("admissionRequestId"), str)

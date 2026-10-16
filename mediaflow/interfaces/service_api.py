@@ -451,6 +451,7 @@ class MediaFlowApi:
                 repository,
                 self._manual_intents,
                 configuration_service=configuration_service,
+                preview_service=self._manual_previews,
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
                 ),
@@ -2621,6 +2622,38 @@ class MediaFlowApi:
                 return self._discovery_step_error(start_response, error)
             return self._response(
                 start_response, 201, self._discovery_document(value, principal, binding)
+            )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            and parts[6] == "analyze"
+            and method == "POST"
+        ):
+            # Re-enter the durable analysis stage after an operator correction
+            # on the linked intent.  This records one versioned request only;
+            # the resident Worker re-runs the complete zero-mutation analysis
+            # under the same pinned configuration and links a new exact
+            # Preview.  It grants no execution authority.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "operations organize discovery analysis")
+            service = getattr(self, "_media_discovery", None)
+            if service is None:
+                return self._discovery_unavailable(start_response)
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError(
+                    "operations organize discovery analysis requires only expectedVersion"
+                )
+            try:
+                value = service.request_analysis(
+                    parts[5],
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            return self._response(
+                start_response, 200, self._discovery_document(value, principal, binding)
             )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -6161,16 +6194,22 @@ class MediaFlowApi:
             if not isinstance(document, dict) or set(document) not in (
                 {"paths"},
                 {"paths", "requestId"},
+                {"paths", "autoPrepare"},
+                {"paths", "requestId", "autoPrepare"},
             ):
                 raise ValueError("Files discovery admission accepts only bounded relative paths")
             if not isinstance(document["paths"], list):
                 raise ValueError("Files discovery admission paths must be an array")
+            auto_prepare = document.get("autoPrepare", False)
+            if not isinstance(auto_prepare, bool):
+                raise ValueError("Files discovery autoPrepare flag must be boolean")
             try:
                 discovery = discovery_service.admit(
                     resource_library_id=parts[3],
                     relative_paths=document["paths"],
                     actor=principal.principal_id,
                     admission_request_id=document.get("requestId"),
+                    auto_prepare=auto_prepare,
                 )
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
@@ -12436,6 +12475,9 @@ class MediaFlowApi:
             # its request actually became.  It is the client's own value and
             # reveals nothing about the server, the pin or the Storage path.
             "admissionRequestId": discovery.admission_request_id,
+            "autoPrepare": discovery.auto_prepare,
+            "prepared": discovery.prepared,
+            "previewId": discovery.preview_id,
             "intentId": discovery.intent_id,
             "frozen": frozen,
             "frozenAt": (
@@ -12529,6 +12571,28 @@ class MediaFlowApi:
                         "discovery_budget_limited" if material_refusal is not None else None
                     ),
                 },
+                "prepare": {
+                    # A full preparation that already linked its read-only plan
+                    # summary can re-run the analysis after an operator
+                    # correction on its linked intent.  It never grants
+                    # execution authority.
+                    "available": can_manage
+                    and discovery.auto_prepare
+                    and discovery.intent_id is not None
+                    and not terminal
+                    and not discovery.pause_requested
+                    and not discovery.cancel_requested,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                    "durableOutcome": (
+                        "the resident Worker re-runs the complete zero-mutation analysis "
+                        "under the same pinned configuration and links a new exact Preview"
+                    ),
+                },
             },
             "nextAction": next_action,
             "failure": discovery.error,
@@ -12589,6 +12653,21 @@ class MediaFlowApi:
 
     @staticmethod
     def _discovery_next_action(discovery, *, terminal: bool, frozen: bool, worker_ready: bool):
+        if discovery.auto_prepare:
+            if discovery.preview_id is not None:
+                return (
+                    "open the linked exact plan summary, review it and explicitly confirm the "
+                    "ready subset to organize"
+                )
+            if discovery.status is DiscoveryStatus.ANALYZING:
+                if not worker_ready:
+                    return "start or repair the resident Processing Worker so the analysis can run"
+                return "the resident Processing Worker is running the complete analysis"
+            if discovery.terminal and discovery_material_refusal(discovery.progress) is not None:
+                return (
+                    "the selected scope exceeded a discovery budget; narrow the scope and start "
+                    "a new preparation instead of freezing this incomplete subset"
+                )
         if frozen:
             return "open the linked manual intent to review choices and create an exact Preview"
         if discovery.status is DiscoveryStatus.CANCELLED:

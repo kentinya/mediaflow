@@ -10587,7 +10587,8 @@ class SQLiteTaskRepository:
         "budgets_json, progress_json, sources_json, intent_id, frozen_at, "
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "pause_requested, cancel_requested, error, created_at, updated_at, "
-        "next_observation_at, admission_signature, admission_request_id"
+        "next_observation_at, admission_signature, admission_request_id, "
+        "auto_prepare, preview_id"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -10635,7 +10636,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?)",
+                    "?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -10662,6 +10663,7 @@ class SQLiteTaskRepository:
         snapshot_id: str,
         snapshot_digest: str,
         scope_signature: str,
+        auto_prepare: bool | None = None,
     ) -> MediaDiscovery | None:
         """One already durable *open* discovery for this exact admission.
 
@@ -10683,6 +10685,7 @@ class SQLiteTaskRepository:
                 "snapshotId": snapshot_id,
                 "snapshotDigest": snapshot_digest,
                 "scope": scope_signature,
+                "autoPrepare": bool(auto_prepare),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -10814,7 +10817,7 @@ class SQLiteTaskRepository:
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                 "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
                 "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
-                "next_observation_at=? "
+                "next_observation_at=?, preview_id=? "
                 "WHERE discovery_id=? AND version=?",
                 (
                     discovery.status.value,
@@ -10834,6 +10837,7 @@ class SQLiteTaskRepository:
                         if discovery.next_observation_at is not None
                         else None
                     ),
+                    discovery.preview_id,
                     discovery.discovery_id,
                     expected_version,
                 ),
@@ -10916,7 +10920,7 @@ class SQLiteTaskRepository:
         expires_at = now + timedelta(seconds=float(lease_seconds))
         with self._lock, self._connection:
             row = self._connection.execute(
-                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?) "
+                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
                 # A waiting discovery is claimable only once a later observation
                 # could actually change its stability verdict.  Reclaiming it
@@ -10930,6 +10934,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                     now.isoformat(),
                     now.isoformat(),
                 ),
@@ -10939,7 +10944,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
                 "claim_expires_at=?, attempts=attempts+1, updated_at=? "
-                "WHERE discovery_id=? AND status IN (?, ?, ?) "
+                "WHERE discovery_id=? AND status IN (?, ?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
                 "AND (next_observation_at IS NULL OR next_observation_at <= ?)",
                 (
@@ -10951,6 +10956,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                     now.isoformat(),
                     now.isoformat(),
                 ),
@@ -10994,7 +11000,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_expires_at=?, updated_at=? "
-                "WHERE discovery_id=? AND claim_token=? AND status IN (?, ?, ?)",
+                "WHERE discovery_id=? AND claim_token=? AND status IN (?, ?, ?, ?)",
                 (
                     expires_at.isoformat(),
                     now.isoformat(),
@@ -11003,12 +11009,20 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                 ),
             )
             return cursor.rowcount == 1
 
     def release_media_discovery_claim(self, discovery_id: str, claim_token: str) -> bool:
-        """Drop one *unstarted* claim so another Worker may pick the record up."""
+        """Drop one *unstarted* claim so another Worker may pick the record up.
+
+        A terminal record is included deliberately: a preparation that linked
+        its exact Preview in the same pass publishes a terminal status and must
+        still drop its own claim, otherwise a later re-analysis request would
+        find the record unclaimable until the lease expired.  A terminal record
+        is never selected by the claim query, so this can never hand out work.
+        """
 
         if not isinstance(claim_token, str) or not claim_token.strip():
             raise ValueError("media discovery claim token is invalid")
@@ -11016,13 +11030,16 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_worker_id=NULL, claim_token=NULL, "
                 "claim_expires_at=NULL WHERE discovery_id=? AND claim_token=? "
-                "AND status IN (?, ?, ?)",
+                "AND status IN (?, ?, ?, ?, ?, ?)",
                 (
                     discovery_id,
                     claim_token,
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
                 ),
             )
             return cursor.rowcount == 1
@@ -11117,7 +11134,7 @@ class SQLiteTaskRepository:
         columns = (
             "status=?, version=?, budgets_json=?, progress_json=?, sources_json=?, "
             "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?, "
-            "next_observation_at=?"
+            "next_observation_at=?, preview_id=?"
         )
         parameters: list[object] = [
             discovery.status.value,
@@ -11135,6 +11152,7 @@ class SQLiteTaskRepository:
                 if discovery.next_observation_at is not None
                 else None
             ),
+            discovery.preview_id,
         ]
         if claim_token is None:
             columns += ", pause_requested=?, cancel_requested=?"
@@ -11313,6 +11331,8 @@ class SQLiteTaskRepository:
             ),
             self._admission_signature(discovery),
             discovery.admission_request_id,
+            1 if discovery.auto_prepare else 0,
+            discovery.preview_id,
         )
 
     @staticmethod
@@ -11324,7 +11344,8 @@ class SQLiteTaskRepository:
         admission is reconciled however long ago it was created and however many
         unrelated discoveries were admitted since.  It contains no secret and no
         physical Storage path: the actor, the enabled library/Storage binding,
-        the immutable configuration pin and the exact canonical scope.
+        the immutable configuration pin, the exact canonical scope and whether
+        the admission is a full preparation.
         """
 
         return json.dumps(
@@ -11335,6 +11356,7 @@ class SQLiteTaskRepository:
                 "snapshotId": discovery.snapshot_id,
                 "snapshotDigest": discovery.snapshot_digest,
                 "scope": discovery_scope_signature(discovery.progress.scope_entries),
+                "autoPrepare": discovery.auto_prepare,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -11377,6 +11399,8 @@ class SQLiteTaskRepository:
                     "updatedAt": row["updated_at"],
                     "nextObservationAt": row["next_observation_at"],
                     "admissionRequestId": row["admission_request_id"],
+                    "autoPrepare": bool(row["auto_prepare"]),
+                    "previewId": row["preview_id"],
                 }
             )
         except Exception as error:
@@ -13761,7 +13785,8 @@ class SQLiteTaskRepository:
                     error TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     next_observation_at TEXT,
-                    admission_signature TEXT, admission_request_id TEXT
+                    admission_signature TEXT, admission_request_id TEXT,
+                    auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -14341,6 +14366,18 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN admission_request_id TEXT"
                 )
+            if "auto_prepare" not in discovery_columns:
+                # Additive: a prior-schema discovery keeps the original explicit
+                # Finalize contract and is never retroactively turned into a
+                # preparation.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN auto_prepare INTEGER NOT NULL "
+                    "DEFAULT 0"
+                )
+            if "preview_id" not in discovery_columns:
+                # Additive: a prior-schema discovery simply has no linked
+                # Preview and stays fully readable.
+                self._connection.execute("ALTER TABLE media_discoveries ADD COLUMN preview_id TEXT")
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
                 "ON media_discoveries(actor, admission_request_id)"

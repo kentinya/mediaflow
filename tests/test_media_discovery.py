@@ -352,6 +352,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 intents,
                 configuration=runtime,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
+                preview_service=previews,
                 storages=dict(storages),
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),

@@ -496,7 +496,7 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      request.url().includes("/files/organize")
+      request.url().includes("/files/discoveries")
     ) {
       admissionBodies.push(request.postData() ?? "");
     }
@@ -513,11 +513,13 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "整理" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
+    /\/ui-v2\/operations\/organize\/new\?discoveryId=organize-discovery-e2e-001/,
   );
-  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "生成精确预览" }),
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
   ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');

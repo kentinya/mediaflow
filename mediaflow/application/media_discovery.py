@@ -133,6 +133,7 @@ class MediaDiscoveryService:
         intent_service,
         *,
         configuration_service=None,
+        preview_service=None,
         runtime_resolver: Callable[..., object] | None = None,
         configuration: object | None = None,
         storages: Mapping[str, Storage] | None = None,
@@ -150,6 +151,7 @@ class MediaDiscoveryService:
             raise ValueError("discovery worker lease must be between 1 second and 1 day")
         self._repository = repository
         self._intent_service = intent_service
+        self._preview_service = preview_service
         self._configuration_service = configuration_service or getattr(
             intent_service, "_configuration_service", None
         )
@@ -181,6 +183,7 @@ class MediaDiscoveryService:
         relative_paths: Sequence[str] | None,
         actor: str,
         admission_request_id: str | None = None,
+        auto_prepare: bool = False,
     ) -> MediaDiscovery:
         """Validate the whole submitted scope and durably admit one discovery.
 
@@ -198,6 +201,12 @@ class MediaDiscoveryService:
         """
 
         actor = self._actor(actor)
+        if not isinstance(auto_prepare, bool):
+            raise DiscoveryError(
+                "the preparation flag is invalid",
+                code="invalid_request",
+                next_action="refresh the creation workspace and start the preparation again",
+            )
         admission_request_id = self._admission_request_id(admission_request_id)
         if not self._valid_scope_id(resource_library_id):
             raise DiscoveryError(
@@ -235,6 +244,7 @@ class MediaDiscoveryService:
                 admission_request_id,
                 resource_library_id=resource_library_id,
                 submitted_paths=submitted_paths,
+                auto_prepare=auto_prepare,
             )
             if requested is not None:
                 return requested
@@ -271,6 +281,7 @@ class MediaDiscoveryService:
             snapshot_digest,
             resource_library_id,
             library.storage_id,
+            auto_prepare=auto_prepare,
         )
         if reconciliation is not None:
             return reconciliation
@@ -319,6 +330,7 @@ class MediaDiscoveryService:
             False,
             None,
             admission_request_id=admission_request_id,
+            auto_prepare=auto_prepare,
         )
         creator = getattr(self._repository, "create_media_discovery", None)
         if not callable(creator):
@@ -337,6 +349,7 @@ class MediaDiscoveryService:
                     admission_request_id,
                     resource_library_id=resource_library_id,
                     submitted_paths=submitted_paths,
+                    auto_prepare=auto_prepare,
                 )
                 if requested is not None:
                     return requested
@@ -347,6 +360,7 @@ class MediaDiscoveryService:
                 snapshot_digest,
                 resource_library_id,
                 library.storage_id,
+                auto_prepare=auto_prepare,
             )
             if winner is not None:
                 return winner
@@ -359,6 +373,7 @@ class MediaDiscoveryService:
         *,
         resource_library_id: str,
         submitted_paths: tuple[str, ...],
+        auto_prepare: bool = False,
     ) -> MediaDiscovery | None:
         """The durable admission this exact client request identity created.
 
@@ -406,6 +421,17 @@ class MediaDiscoveryService:
                 ),
                 details={"requestIdReuse": True},
             )
+        if requested.auto_prepare != auto_prepare:
+            raise DiscoveryError(
+                "this discovery request ID is already bound to a different creation mode",
+                code="admission_request_conflict",
+                status=409,
+                next_action=(
+                    "keep this request ID for its original creation mode, or start this "
+                    "selection with a new request ID"
+                ),
+                details={"requestIdReuse": True},
+            )
         return requested
 
     def _reconcile_admission(
@@ -416,6 +442,8 @@ class MediaDiscoveryService:
         snapshot_digest: str,
         resource_library_id: str,
         storage_id: str,
+        *,
+        auto_prepare: bool = False,
     ) -> MediaDiscovery | None:
         """Find one already durable open discovery for this exact admission.
 
@@ -444,6 +472,7 @@ class MediaDiscoveryService:
                 snapshot_id=snapshot_id,
                 snapshot_digest=snapshot_digest,
                 scope_signature=signature,
+                auto_prepare=auto_prepare,
             )
         if not callable(lister):
             return None
@@ -451,6 +480,8 @@ class MediaDiscoveryService:
         # falls back to the bounded recent window with the same exact match.
         for candidate in lister(actor=actor, limit=50):
             if candidate.terminal or candidate.frozen:
+                continue
+            if candidate.auto_prepare != auto_prepare:
                 continue
             if (
                 candidate.resource_library_id != resource_library_id
@@ -516,6 +547,79 @@ class MediaDiscoveryService:
         return self._request_control(
             discovery_id, actor=actor, expected_version=expected_version, pause=False
         )
+
+    def request_analysis(
+        self, discovery_id: str, *, actor: str, expected_version: int
+    ) -> MediaDiscovery:
+        """Re-enter the durable analysis stage after an operator correction.
+
+        A preparation that already linked a read-only plan summary can be
+        re-analyzed once the operator has saved a legal correction (for example
+        a RecognitionType choice) on its linked intent.  This records one
+        versioned request only: the resident Worker re-runs the complete
+        production analysis chain under the same pinned configuration and links
+        the new exact Preview.  It grants no execution authority and never
+        creates a second queue.
+        """
+
+        actor = self._actor(actor)
+        discovery = self._require_version(discovery_id, expected_version)
+        if not discovery.auto_prepare:
+            raise DiscoveryError(
+                "only a full preparation can be re-analyzed",
+                code="discovery_not_preparation",
+                status=409,
+                next_action="open the discovery and use its own reviewed finalize action",
+            )
+        if discovery.intent_id is None:
+            raise DiscoveryError(
+                "this preparation has no frozen source list to analyze yet",
+                code="discovery_not_frozen",
+                status=409,
+                next_action="wait for the bounded discovery to finish, then request the analysis",
+            )
+        if discovery.status is DiscoveryStatus.ANALYZING:
+            # A repeated request converges on the work already queued: the
+            # Worker re-runs the analysis under the same immutable intent.
+            return discovery
+        if discovery.status in {DiscoveryStatus.FAILED, DiscoveryStatus.CANCELLED}:
+            raise DiscoveryError(
+                "a failed or cancelled preparation cannot be re-analyzed",
+                code="discovery_already_finished",
+                status=409,
+                next_action="start a new preparation if the same scope is still wanted",
+            )
+        if discovery.pause_requested or discovery.cancel_requested:
+            raise DiscoveryError(
+                "this preparation has a pending control request; settle it first",
+                code="discovery_control_pending",
+                status=409,
+                next_action=(
+                    "refresh the preparation until its control is acknowledged, then request "
+                    "the analysis again"
+                ),
+            )
+        now = self._clock()
+        updated = replace(
+            discovery,
+            status=DiscoveryStatus.ANALYZING,
+            version=discovery.version + 1,
+            # The earlier plan summary is historical once a new analysis is
+            # requested: clearing the link keeps the workspace from presenting
+            # a superseded plan as the current one.
+            preview_id=None,
+            updated_at=now,
+            error=None,
+            progress=replace(
+                discovery.progress,
+                phase="analyzing",
+                message=(
+                    "the resident Worker is re-running the complete zero-mutation analysis "
+                    "under the same pinned configuration"
+                ),
+            ),
+        )
+        return self._persist(updated, expected_version=discovery.version)
 
     def resume(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
         """Clear an *acknowledged* cooperative pause so the Worker continues.
@@ -703,6 +807,13 @@ class MediaDiscoveryService:
             return self._cancel(discovery, claim_token)
         if discovery.pause_requested:
             return self._publish_paused(discovery, claim_token)
+        if discovery.auto_prepare and discovery.status is DiscoveryStatus.ANALYZING:
+            # The bounded walk already froze its reviewed sources into a
+            # durable intent.  The Worker now runs the complete production
+            # analysis chain through the existing zero-mutation Preview
+            # authority and links the exact read-only plan summary.  No
+            # execution authority is created.
+            return self._analyze(discovery, claim_token)
         try:
             runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
             library = self._runtime_library(runtime, discovery.resource_library_id)
@@ -1544,7 +1655,130 @@ class MediaDiscoveryService:
         # mutation and every publication is a version CAS fenced by this exact
         # claim, so a yielded claim can never duplicate a finding or a source.
         self._release_claim(persisted.discovery_id, claim_token)
+        if (
+            discovery.auto_prepare
+            and persisted.status in {DiscoveryStatus.COMPLETED, DiscoveryStatus.PARTIAL_SUCCESS}
+            and persisted.sources
+            and discovery_material_refusal(persisted.progress) is None
+        ):
+            # A full preparation freezes its reviewed sources internally and
+            # moves into the analysis stage.  A budget/safety-refused walk is
+            # deliberately not frozen: its recorded sources are a truncated
+            # prefix, so the operator must narrow the scope instead.
+            return self._begin_preparation_analysis(persisted)
         return persisted
+
+    def _begin_preparation_analysis(self, discovery: MediaDiscovery) -> MediaDiscovery:
+        """Freeze a completed preparation's sources and enter analysis.
+
+        This reuses the exact same durable linkage (one discovery, one linked
+        intent) as the explicit Finalize path, then advances the record to the
+        ``analyzing`` stage.  A repository that cannot offer the atomic linkage
+        fails the preparation closed instead of leaving an orphan intent.
+        """
+
+        try:
+            frozen = self._finalize(discovery, None)
+        except DiscoveryError as error:
+            return self._fail(discovery, None, error.code)
+        except Exception as error:  # noqa: BLE001 - a Worker must not crash the loop
+            return self._fail(discovery, None, type(error).__name__)
+        if frozen.intent_id is None or not frozen.frozen:
+            # ``_finalize`` recorded a bounded failure; leave that truthful
+            # outcome instead of inventing an analysis stage.
+            return frozen
+        now = self._clock()
+        analyzing = replace(
+            frozen,
+            status=DiscoveryStatus.ANALYZING,
+            version=frozen.version + 1,
+            updated_at=now,
+            error=None,
+            progress=replace(
+                frozen.progress,
+                phase="analyzing",
+                message=(
+                    "the reviewed source list is frozen; the resident Worker is running the "
+                    "complete zero-mutation analysis to build the plan summary"
+                ),
+            ),
+        )
+        try:
+            return self._persist(analyzing, expected_version=frozen.version)
+        except DiscoveryError:
+            # The linkage is already durable; a refused stage publication is
+            # not a preparation failure, so re-read the truthful record.
+            return self._read(discovery.discovery_id) or frozen
+
+    def _analyze(self, discovery: MediaDiscovery, claim_token: str) -> MediaDiscovery:
+        """Run the complete production analysis for a frozen preparation.
+
+        The analysis is the existing zero-mutation Preview authority: it uses
+        the same RecognitionTypePolicy, Metadata Provider, Naming,
+        Classification and plan calculation as the ordinary journey.  The
+        resulting exact Preview is linked as read-only evidence; it grants no
+        execution authority and mutates nothing.
+        """
+
+        service = self._preview_service
+        creator = getattr(service, "create", None)
+        if service is None or not callable(creator):
+            return self._fail(discovery, claim_token, "preview_unavailable")
+        if discovery.intent_id is None:
+            return self._fail(discovery, claim_token, "intent_unavailable")
+        try:
+            intent = self._intent_service.get(discovery.intent_id)
+        except Exception:  # noqa: BLE001 - a missing intent is a truthful failure
+            return self._fail(discovery, claim_token, "intent_unavailable")
+        try:
+            preview = creator(
+                discovery.intent_id,
+                None,
+                expected_version=intent.version,
+                actor=discovery.actor,
+            )
+        except Exception as error:  # noqa: BLE001 - report one bounded failure
+            code = getattr(error, "code", None)
+            return self._fail(
+                discovery,
+                claim_token,
+                code if isinstance(code, str) and code else "preview_unavailable",
+            )
+        preview_id = getattr(preview, "preview_id", None)
+        if not isinstance(preview_id, str) or not preview_id:
+            return self._fail(discovery, claim_token, "preview_unavailable")
+        now = self._clock()
+        complete = (
+            discovery.progress.incomplete_reason is DiscoveryIncompleteReason.NONE
+            and discovery_material_refusal(discovery.progress) is None
+        )
+        updated = replace(
+            discovery,
+            status=(DiscoveryStatus.COMPLETED if complete else DiscoveryStatus.PARTIAL_SUCCESS),
+            version=discovery.version + 1,
+            preview_id=preview_id,
+            updated_at=now,
+            error=None,
+            progress=replace(
+                discovery.progress,
+                phase="prepared",
+                message=(
+                    "the exact zero-mutation plan summary is ready; review it and explicitly "
+                    "confirm the ready subset to organize"
+                ),
+            ),
+        )
+        persisted = self._persist(
+            updated, expected_version=discovery.version, claim_token=claim_token
+        )
+        self._release_claim(persisted.discovery_id, claim_token)
+        return persisted
+
+    def preparation_preview_id(self, discovery_id: str) -> str | None:
+        """The exact read-only Preview linked by a completed preparation, if any."""
+
+        discovery = self._read(discovery_id)
+        return discovery.preview_id if discovery is not None else None
 
     def _release_claim(self, discovery_id: str, claim_token: str) -> None:
         releaser = getattr(self._repository, "release_media_discovery_claim", None)

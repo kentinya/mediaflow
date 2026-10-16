@@ -3372,6 +3372,8 @@ function organizeDiscoveryDocument(discovery) {
   const directory = discovery.paths.some((path) => !path.includes("."));
   const completed = discovery.frozen;
   const limited = discovery.limited === true;
+  const autoPrepare = discovery.autoPrepare === true;
+  const prepared = autoPrepare && discovery.previewId != null;
   return {
     actions: {
       cancel: {
@@ -3401,6 +3403,21 @@ function organizeDiscoveryDocument(discovery) {
         sideEffects: "none",
         refusal: null,
       },
+      prepare: {
+        available:
+          autoPrepare &&
+          discovery.intentId != null &&
+          !limited &&
+          discovery.status !== "cancelled" &&
+          discovery.status !== "failed",
+        durableOutcome:
+          "the resident Worker re-runs the complete zero-mutation analysis under the same pinned configuration and links a new exact Preview",
+        method: "POST",
+        path: `/api/v1/operations/organize/discoveries/${ORGANIZE_DISCOVERY_ID}/analyze`,
+        requiresVersion: true,
+        sideEffects: "none",
+        refusal: null,
+      },
       resume: {
         available: discovery.status === "paused",
         method: "POST",
@@ -3420,11 +3437,16 @@ function organizeDiscoveryDocument(discovery) {
     frozenAt: discovery.frozen ? MANUAL_RECORDED_AT : null,
     intentId: discovery.intentId,
     journey: "discovery",
-    nextAction: discovery.frozen
-      ? "open the linked manual intent to review choices and create an exact Preview"
-      : discovery.limited === true
-        ? "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset"
-        : "the resident Processing Worker continues this bounded discovery",
+    autoPrepare,
+    prepared,
+    previewId: discovery.previewId ?? null,
+    nextAction: prepared
+      ? "open the linked exact plan summary, review it and explicitly confirm the ready subset to organize"
+      : discovery.frozen
+        ? "open the linked manual intent to review choices and create an exact Preview"
+        : discovery.limited === true
+          ? "the selected scope exceeded a discovery budget; narrow the scope and start a new bounded discovery instead of freezing this incomplete subset"
+          : "the resident Processing Worker continues this bounded discovery",
     nextObservationAt: null,
     pauseRequested: discovery.status === "paused",
     primarySourceCount: discovery.paths.length,
@@ -3453,6 +3475,8 @@ function organizeDiscoveryDocument(discovery) {
       incomplete: discovery.limited === true,
       incompleteReason:
         discovery.limited === true ? "safety_depth_limit" : null,
+      refusalReasons: discovery.limited === true ? ["safety_depth_limit"] : [],
+      materialRefusal: discovery.limited === true ? "safety_depth_limit" : null,
       message: discovery.frozen
         ? "the discovered source list is frozen; a separate exact Preview and a confirmed execution are still required"
         : discovery.limited === true
@@ -8727,6 +8751,7 @@ const server = createServer(async (req, res) => {
     const paths = Array.isArray(parsed.document.paths)
       ? parsed.document.paths
       : null;
+    const autoPrepare = parsed.document.autoPrepare === true;
     if (!paths || paths.length === 0) {
       sendJson(res, 400, {
         error: {
@@ -8745,6 +8770,21 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/resource-libraries/:id/files/discoveries",
     });
     const state = resourceLibraryState(session);
+    if (state.filesOrganizeFailure === "source_missing") {
+      sendJson(res, 404, {
+        error: {
+          code: "source_missing",
+          message: "selected source file no longer exists",
+          details: {
+            durableState: "rejected_without_mutation",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "refresh Files and request a fresh preparation",
+          },
+        },
+      });
+      return;
+    }
     // Actor/scope/pin reconciliation (mirrors the real backend): an
     // identical open discovery for the same library and deduplicated scope
     // reconciles to the same durable record instead of admitting a
@@ -8753,6 +8793,7 @@ const server = createServer(async (req, res) => {
     if (
       state.discovery &&
       state.discovery.libraryId === libraryId &&
+      state.discovery.autoPrepare === autoPrepare &&
       !state.discovery.frozen &&
       state.discovery.status !== "cancelled" &&
       state.discovery.status !== "failed" &&
@@ -8765,6 +8806,7 @@ const server = createServer(async (req, res) => {
       discoveryId: ORGANIZE_DISCOVERY_ID,
       libraryId,
       paths: [...paths],
+      autoPrepare,
       // The fake Worker completes the bounded walk immediately, exactly like
       // the real metadata-only stage; the operator still has to finalize.
       // A session-level `discoveryLimit` fixture presents the honest
@@ -8774,7 +8816,16 @@ const server = createServer(async (req, res) => {
       version: 1,
       frozen: false,
       intentId: null,
+      previewId: null,
     };
+    if (autoPrepare && state.discovery.limited !== true) {
+      // A full preparation freezes its reviewed sources and links the exact
+      // plan summary as one durable outcome; the resident Worker would do
+      // this after the bounded walk, and the fake completes it inline.
+      state.discovery.frozen = true;
+      state.discovery.intentId = ORGANIZE_INTENT_ID;
+      state.discovery.previewId = ORGANIZE_PREVIEW_ID;
+    }
     sendJson(res, 202, organizeDiscoveryDocument(state.discovery));
     return;
   }
@@ -8827,7 +8878,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const discoveryControlMatch = url.pathname.match(
-    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(pause|resume|cancel|finalize)$/,
+    /^\/api\/v1\/operations\/organize\/discoveries\/([^/]+)\/(pause|resume|cancel|finalize|analyze)$/,
   );
   if (discoveryControlMatch && req.method === "POST") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -8875,6 +8926,15 @@ const server = createServer(async (req, res) => {
     if (action === "pause") state.discovery.status = "paused";
     if (action === "cancel") state.discovery.status = "cancelled";
     if (action === "resume") state.discovery.status = "running";
+    if (action === "analyze") {
+      // A re-analysis clears the earlier linked plan summary and links the
+      // ordinary exact Preview under the same pinned configuration.  No
+      // execution authority is created.
+      state.discovery.previewId = ORGANIZE_PREVIEW_ID;
+      state.discovery.status = "completed";
+      sendJson(res, 200, organizeDiscoveryDocument(state.discovery));
+      return;
+    }
     if (action === "finalize") {
       // Mirrors the real backend: a budget/safety-limited discovery carries a
       // truncated prefix that can never be frozen into an executable list.

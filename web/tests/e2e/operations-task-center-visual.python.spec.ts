@@ -19,6 +19,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
 const TOKEN = "harness-viewer-token";
+const ADMIN_TOKEN = "harness-admin-token";
 const BASE = "http://127.0.0.1:4183";
 const OUTPUT = "test-results/task-center-visual";
 
@@ -200,4 +201,69 @@ test("capture the nine task-center views and the problem-file states", async ({
     fullPage: false,
   });
   await page.unroute("**/api/v1/operations/runs*");
+});
+
+test("capture the in-context creation summary and confirmation journey", async ({
+  page,
+  request,
+}) => {
+  // RO-2 visual acceptance: the operator selects a live source in Files,
+  // prepares it, reviews the exact plan summary and confirms the ready subset
+  // on the same page.  The resident Worker performs the bounded walk and the
+  // complete analysis; the screenshots show the real durable state.
+  mkdirSync(OUTPUT, { recursive: true });
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.goto("/ui-v2/");
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Dashboard", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await page.getByRole("link", { name: "任务中心", exact: true }).click();
+  await page.getByRole("link", { name: "新建整理任务" }).click();
+  await page.getByRole("radio", { name: "source" }).check();
+  // The Worker heartbeat window is bounded, so the real Worker is registered
+  // exactly before the scoped availability read resolves.
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  const chooseFiles = page.getByRole("button", { name: "选择文件或文件夹" });
+  await expect(chooseFiles).toBeVisible({ timeout: 15_000 });
+  await chooseFiles.click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page).toHaveURL(/discoveryId=/);
+  // Drive the real resident bounded-discovery Worker: the walk freezes the
+  // reviewed sources and the analysis links the exact Preview.
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  // The linked plan summary really published: the prepared item and its
+  // destructive-impact statement are visible before the capture.
+  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.waitForTimeout(250);
+  await page.screenshot({
+    path: `${OUTPUT}/organize-creation-summary.png`,
+    fullPage: false,
+  });
+  const confirmation = page.getByRole("button", { name: /确认整理 \d+ 项/ });
+  await expect(confirmation).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.setViewportSize({ width: 380, height: 720 });
+  await page.screenshot({
+    path: `${OUTPUT}/organize-creation-summary-narrow.png`,
+    fullPage: false,
+  });
 });

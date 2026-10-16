@@ -4657,8 +4657,21 @@ def _media_discovery_worker_context(configuration, configured_path: str | None, 
             task_repository=repository,
         )
         intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        previews = ManualOrganizePreviewService(
+            repository,
+            intents,
+            catalog,
+            file_index=file_index,
+            configuration_service=configuration_service,
+            metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
+                metadata_provider_registry_from_environment
+            ),
+        )
         discovery = MediaDiscoveryService(
-            repository, intents, configuration_service=configuration_service
+            repository,
+            intents,
+            configuration_service=configuration_service,
+            preview_service=previews,
         )
         yield MediaDiscoveryWorker(discovery)
 

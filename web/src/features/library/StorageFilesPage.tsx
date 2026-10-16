@@ -64,7 +64,6 @@ import {
   editResourceLibrary,
   submitDirectFileCommand,
   submitFilesDiscovery,
-  submitFilesOrganizeIntent,
   submitTransfer,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
@@ -391,39 +390,6 @@ function discoveryAdmissionFailureMessage(code: string): string {
       return "暂时无法确认发现申请结果;正在读取同一申请的持久状态,不会重复创建。";
     default:
       return "无法开始整理发现，请刷新后重试。";
-  }
-}
-
-function organizeAdmissionFailureMessage(code: string): string {
-  switch (code) {
-    case "source_missing":
-      return "所选文件已不存在，未创建整理意图；请刷新目录后重新选择。";
-    case "source_stale":
-    case "source_changed":
-      return "所选文件已发生变化，未创建整理意图；请刷新目录后重新选择。";
-    case "source_not_file":
-    case "source_symlink":
-      return "所选条目不是可整理的普通文件；目录用于浏览，符号链接不会被整理。";
-    case "source_unverified":
-      return "所选文件身份无法验证，未创建整理意图；请刷新目录后重试。";
-    case "invalid_path":
-    case "malformed_selection":
-      return "所选路径不是安全的资源库相对路径，未创建整理意图。";
-    case "duplicate_source":
-      return "所选文件包含重复条目，未创建整理意图；请去掉重复项后重试。";
-    case "selection_over_limit":
-      return "所选文件超过单次整理上限，未创建整理意图；请减少选择后重试。";
-    case "forbidden":
-    case "permission_denied":
-      return "当前身份没有整理权限，未创建整理意图。";
-    case "storage_unavailable":
-    case "transport_unavailable":
-    case "service_unavailable":
-      return "当前存储或整理服务暂不可用，未创建整理意图；请稍后重试。";
-    case "resource_library_not_found":
-      return "当前资源库在 Active 配置中不可用，未创建整理意图；请重新选择资源库。";
-    default:
-      return "无法创建整理意图，未做任何更改；请刷新目录后重试。";
   }
 }
 
@@ -2095,7 +2061,6 @@ export function StorageFilesPage() {
     mutationFn: async ({
       libraryId,
       paths,
-      discovery,
     }: {
       readonly libraryId: string;
       readonly paths: readonly string[];
@@ -2105,106 +2070,93 @@ export function StorageFilesPage() {
       if (paths.length === 0) {
         throw new Error("请选择至少一个可整理的文件夹或文件。");
       }
-      if (discovery === true) {
-        // A folder or mixed selection enters the bounded discovery stage: the
-        // backend admits one durable discovery and the resident Worker performs
-        // the metadata-only walk before the existing intent/Preview/execution.
-        //
-        // The caller generates its own identity for this exact request *before*
-        // submitting.  The backend resolves the immutable Active pin at
-        // admission time, so a pin this page rendered earlier cannot prove
-        // which admission the POST became: a successor activation legally
-        // admits the same relative scope under a new pin, and an equivalent
-        // older open admission can exist under the rendered pin.  The echoed
-        // request identity is the genuine proof a lost response reconciles
-        // against.
-        const requestId = newRequestId();
-        const admitted = await submitFilesDiscovery(token, {
-          resourceLibraryId: libraryId,
-          paths,
-          ...(requestId === null ? {} : { requestId }),
-        });
-        if (!admitted.ok) {
-          const message = discoveryAdmissionFailureMessage(admitted.code);
-          if (
-            admitted.status === 0 ||
-            admitted.status >= 500 ||
-            admitted.code === "malformed_response"
-          ) {
-            // The response was lost, but the admission may already be
-            // durable. Reconcile first: locate the durable record this exact
-            // request created instead of ever resubmitting a duplicate
-            // admission.  Without a client identity there is no proof at all,
-            // so the honest unresolved state stands rather than a guess.
-            const readback =
-              requestId === null ? null : await fetchOrganizeDiscoveries(token);
-            if (readback !== null && readback.ok) {
-              // Recover only with *proof of the original admission*: the
-              // backend echoed the identity this caller created for this exact
-              // request.  The rendered Storage/pin binding is deliberately not
-              // used as proof -- a successor activation legitimately re-admits
-              // the same relative scope under a different pin, so navigating
-              // there would present another live source context as the
-              // recovered request.  When that proof is absent the honest
-              // unresolved state stands and the operator inspects it natively
-              // in Operations.
-              const candidate = readback.items.find(
-                (item) =>
-                  item.admissionRequestId !== null &&
-                  item.admissionRequestId === requestId,
-              );
-              if (candidate !== undefined) {
-                setPreviewError(null);
-                return {
-                  kind: "discovery" as const,
-                  id: candidate.discoveryId,
-                };
-              }
-              // No durable record for this exact original admission: the honest
-              // unknown state stands and the operator decides, without a
-              // promise that no work exists and without a guessed navigation.
-              throw new Error(
-                "暂时无法确认发现申请结果,也未读到本次申请创建的持久记录;" +
-                  "请在任务中心查看未决的整理发现并自行处理,不会自动重复提交或进入其他来源。",
-              );
-            }
-            throw new Error(
-              "暂时无法确认发现申请结果,也无法读取发现记录;请稍后重试。不会自动重复提交。",
-            );
-          }
-          throw new Error(message);
-        }
-        return { kind: "discovery" as const, id: admitted.discoveryId };
-      }
-      const result = await submitFilesOrganizeIntent(token, {
+      // Single, multiple, folder and mixed selections all enter the one
+      // in-context creation workspace.  The backend admits one durable
+      // preparation, and the resident Worker performs the bounded
+      // metadata-only walk plus the complete analysis before linking the
+      // exact zero-mutation plan summary.  Nothing is executed here.
+      //
+      // The caller generates its own identity for this exact request *before*
+      // submitting.  The backend resolves the immutable Active pin at
+      // admission time, so a pin this page rendered earlier cannot prove
+      // which admission the POST became: a successor activation legally
+      // admits the same relative scope under a new pin, and an equivalent
+      // older open admission can exist under the rendered pin.  The echoed
+      // request identity is the genuine proof a lost response reconciles
+      // against.
+      const requestId = newRequestId();
+      const admitted = await submitFilesDiscovery(token, {
         resourceLibraryId: libraryId,
         paths,
+        autoPrepare: true,
+        ...(requestId === null ? {} : { requestId }),
       });
-      if (!result.ok) {
-        throw new Error(organizeAdmissionFailureMessage(result.code));
+      if (!admitted.ok) {
+        const message = discoveryAdmissionFailureMessage(admitted.code);
+        if (
+          admitted.status === 0 ||
+          admitted.status >= 500 ||
+          admitted.code === "malformed_response"
+        ) {
+          // The response was lost, but the admission may already be
+          // durable. Reconcile first: locate the durable record this exact
+          // request created instead of ever resubmitting a duplicate
+          // admission.  Without a client identity there is no proof at all,
+          // so the honest unresolved state stands rather than a guess.
+          const readback =
+            requestId === null ? null : await fetchOrganizeDiscoveries(token);
+          if (readback !== null && readback.ok) {
+            // Recover only with *proof of the original admission*: the
+            // backend echoed the identity this caller created for this exact
+            // request.  The rendered Storage/pin binding is deliberately not
+            // used as proof -- a successor activation legitimately re-admits
+            // the same relative scope under a different pin, so navigating
+            // there would present another live source context as the
+            // recovered request.  When that proof is absent the honest
+            // unresolved state stands and the operator inspects it natively
+            // in Operations.
+            const candidate = readback.items.find(
+              (item) =>
+                item.admissionRequestId !== null &&
+                item.admissionRequestId === requestId,
+            );
+            if (candidate !== undefined) {
+              setPreviewError(null);
+              return {
+                kind: "discovery" as const,
+                id: candidate.discoveryId,
+              };
+            }
+            // No durable record for this exact original admission: the honest
+            // unknown state stands and the operator decides, without a
+            // promise that no work exists and without a guessed navigation.
+            throw new Error(
+              "暂时无法确认准备申请结果,也未读到本次申请创建的持久记录;" +
+                "请在任务中心查看未决的准备记录并自行处理,不会自动重复提交或进入其他来源。",
+            );
+          }
+          throw new Error(
+            "暂时无法确认准备申请结果,也无法读取准备记录;请稍后重试。不会自动重复提交。",
+          );
+        }
+        throw new Error(message);
       }
-      return { kind: "intent" as const, id: result.intentId };
+      return { kind: "discovery" as const, id: admitted.discoveryId };
     },
     onSuccess: (admitted, variables) => {
       setPreviewError(null);
-      if (admitted.kind === "discovery") {
-        void navigate({
-          to: "/operations/organize/discovery/$discoveryId",
-          params: { discoveryId: admitted.id },
-          search: {
-            ...filesReturnSearch({
-              resourceLibraryId: variables.libraryId,
-              path: variables.returnPath,
-            }),
-            ...operationsReturnSearch(operationsReturn),
-          },
-        });
-        return;
-      }
+      // Every selection enters the one in-context preparation workspace; the
+      // exact plan summary and confirmation happen there, on the same page.
       void navigate({
-        to: "/operations/organize/intent/$intentId",
-        params: { intentId: admitted.id },
+        to: "/operations/organize/new",
         search: {
+          discoveryId: admitted.id,
+          ...(variables.libraryId === ""
+            ? {}
+            : { resourceLibraryId: variables.libraryId }),
+          ...(variables.returnPath === ""
+            ? {}
+            : { path: variables.returnPath }),
           ...filesReturnSearch({
             resourceLibraryId: variables.libraryId,
             path: variables.returnPath,
@@ -2217,7 +2169,7 @@ export function StorageFilesPage() {
       setPreviewError(
         error instanceof Error
           ? error.message
-          : "无法创建整理意图，请刷新后重试",
+          : "无法创建整理准备，请刷新后重试",
       );
     },
   });

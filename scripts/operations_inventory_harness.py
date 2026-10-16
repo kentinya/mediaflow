@@ -1163,12 +1163,46 @@ def register_manual_worker(state: AppState) -> dict[str, object]:
         "harness-manual-worker",
         "Harness Manual Organize Worker",
         10.0,
-        ("scan", "preview", "organize"),
+        ("scan", "preview", "organize", "media_discovery"),
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         runtime_schema_version=SCHEMA_VERSION,
     )
     return {"registered": True}
+
+
+def run_discovery_worker_once(state: AppState) -> dict[str, object]:
+    """Advance one admitted preparation through the real bounded-discovery Worker.
+
+    A full preparation first completes its zero-mutation walk, then internally
+    freezes the reviewed sources and runs the complete production analysis to
+    link the exact Preview.  Each call advances one bounded pass, so the browser
+    journey can observe the real durable stages.
+    """
+
+    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+
+    service = getattr(state.api, "_media_discovery", None)
+    if service is None:
+        return {"advanced": False, "reason": "no media discovery service"}
+    with state._manual_lock:
+        worker = MediaDiscoveryWorker(
+            service, worker_id="harness-discovery-worker", notice=lambda _line: None
+        )
+        advanced = worker.run_next()
+        if advanced is None:
+            return {"advanced": False, "reason": "no admitted discovery"}
+        durable = state.repository.get_media_discovery(advanced.discovery_id)
+        if durable is None:
+            raise RuntimeError("discovery Worker lost its durable record")
+        return {
+            "advanced": True,
+            "discoveryId": durable.discovery_id,
+            "status": durable.status.value,
+            "previewId": durable.preview_id,
+            "intentId": durable.intent_id,
+            "frozen": durable.frozen,
+        }
 
 
 def run_manual_worker_once(state: AppState) -> dict[str, object]:
@@ -2631,6 +2665,8 @@ def application(environ, start_response):
             document = register_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             document = run_manual_worker_once(STATE)
+        elif path == "/__harness__/run-discovery-worker" and method == "POST":
+            document = run_discovery_worker_once(STATE)
         elif path == "/__harness__/seed-task-center-problems" and method == "POST":
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":

@@ -106,14 +106,21 @@ const api = async (url) => {
 };
 
 const settleDiscovery = async (discoveryId) => {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     const document = await api(
       '/api/v1/operations/organize/discoveries/' + discoveryId,
     );
-    if (!['queued', 'running'].includes(document.status)) return document;
+    // A full preparation passes through the bounded walk, the internal
+    // freeze and the complete zero-mutation analysis before its exact plan
+    // summary is linked.  Only a linked preview (or a terminal refusal)
+    // settles this wait.
+    if (document.previewId) return document;
+    if (['failed', 'cancelled', 'partial_success'].includes(document.status)) {
+      return document;
+    }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error('the Docker Worker did not finish the mixed discovery');
+  throw new Error('the Docker Worker did not finish the preparation');
 };
 
 const browser = await chromium.launch();
@@ -151,18 +158,28 @@ try {
   );
   evidence.passes.push({ case: 'folder-selection', screenshot: await shoot('folder-selection') });
   await page.getByRole('button', { name: '批量整理' }).click();
-  await page.getByRole('heading', { name: '整理发现' }).waitFor();
-  await page.waitForTimeout(1500);
+  // The selection enters the one in-context preparation workspace; the
+  // resident Worker runs the bounded walk and the complete analysis.
+  await page.getByRole('heading', { name: '新建整理任务', exact: true }).waitFor();
+  const folderDiscoveryUrl = page.url();
+  const folderDiscoveryId = folderDiscoveryUrl.match(/discoveryId=([^&]+)/)?.[1];
+  require_(Boolean(folderDiscoveryId), 'folder preparation has no identity: ' + folderDiscoveryUrl);
+  const folderDiscovery = await settleDiscovery(folderDiscoveryId);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('heading', { name: '计划摘要', exact: true }).waitFor();
   const text = await page.getByRole('main').innerText();
   require_(
-    /已选范围/.test(text),
-    `the discovery page did not show the admitted scope: ${JSON.stringify(text)}`,
+    /已完整遍历所选范围/.test(text),
+    `the preparation did not show its completed scope: ${JSON.stringify(text.slice(0, 900))}`,
   );
   require_(
-    /不会移动、复制或删除任何文件/.test(text),
-    'the discovery page did not advertise zero mutation',
+    /准备阶段不会修改文件/.test(text),
+    'the preparation did not advertise zero mutation',
   );
-  evidence.passes.push({ case: 'folder-discovery', screenshot: await shoot('folder-discovery') });
+  evidence.passes.push({
+    case: 'folder-preparation',
+    screenshot: await shoot('folder-preparation'),
+  });
 
   await connect('/ui-v2/resourcelib/files');
   await page.getByRole('table').waitFor();
@@ -176,8 +193,8 @@ try {
     .check();
   evidence.passes.push({ case: 'mixed-selection', screenshot: await shoot('mixed-selection') });
   await page.getByRole('button', { name: '批量整理' }).click();
-  await page.getByRole('heading', { name: '整理发现' }).waitFor();
-  evidence.passes.push({ case: 'mixed-discovery', screenshot: await shoot('mixed-discovery') });
+  await page.getByRole('heading', { name: '新建整理任务', exact: true }).waitFor();
+  evidence.passes.push({ case: 'mixed-preparation', screenshot: await shoot('mixed-preparation') });
 
   // The native mixed leg selects a folder, its same-directory main video and
   // matching Trailer, then verifies one primary before Freeze.
@@ -202,123 +219,87 @@ try {
     screenshot: await shoot('same-directory-mixed-selection'),
   });
   await page.getByRole('button', { name: '批量整理' }).click();
-  await page.getByRole('heading', { name: '整理发现' }).waitFor();
+  await page.getByRole('heading', { name: '新建整理任务', exact: true }).waitFor();
   const mixedDiscoveryUrl = page.url();
   require_(
     /returnTo=files&returnResourceLibraryId=/.test(mixedDiscoveryUrl),
-    'mixed discovery lost its Files return context: ' + mixedDiscoveryUrl,
+    'mixed preparation lost its Files return context: ' + mixedDiscoveryUrl,
   );
-  const mixedDiscoveryId = mixedDiscoveryUrl.match(/\/discovery\/([^?]+)/)?.[1];
-  require_(Boolean(mixedDiscoveryId), 'mixed discovery has no identity: ' + mixedDiscoveryUrl);
+  const mixedDiscoveryId = mixedDiscoveryUrl.match(/discoveryId=([^&]+)/)?.[1];
+  require_(Boolean(mixedDiscoveryId), 'mixed preparation has no identity: ' + mixedDiscoveryUrl);
   const mixedDiscovery = await settleDiscovery(mixedDiscoveryId);
   require_(
     mixedDiscovery.status === 'completed',
-    'Docker mixed discovery did not complete: ' + JSON.stringify(mixedDiscovery),
+    'Docker mixed preparation did not complete: ' + JSON.stringify(mixedDiscovery),
   );
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '计划摘要', exact: true }).waitFor();
   const mixedText = await page.getByRole('main').innerText();
   require_(
-    /可整理来源\s*1/.test(mixedText) && mixedText.includes(SCOPE.executionMain),
-    'native mixed discovery did not show one main source: ' + mixedText.slice(0, 1200),
+    /可整理主文件\s*1/.test(mixedText) && mixedText.includes(SCOPE.executionMain),
+    'the same-page preparation did not show one main source: ' + mixedText.slice(0, 1200),
   );
   require_(
     mixedDiscovery.primarySourceCount === 1 &&
       JSON.stringify(mixedDiscovery.sources.map((source) => source.path)) ===
         JSON.stringify([SCOPE.executionMain]),
-    'mixed discovery did not preserve one primary: ' + JSON.stringify(mixedDiscovery),
+    'mixed preparation did not preserve one primary: ' + JSON.stringify(mixedDiscovery),
   );
   evidence.passes.push({
-    case: 'same-directory-mixed-discovery',
-    screenshot: await shoot('same-directory-mixed-discovery'),
+    case: 'same-directory-mixed-preparation',
+    screenshot: await shoot('same-directory-mixed-preparation'),
   });
-  await page.getByRole('button', { name: '冻结来源并继续整理', exact: true }).click();
-  await page.waitForURL(/\/operations\/organize\/intent\//);
-  const mixedIntentId = page.url().match(/\/intent\/([^?]+)/)?.[1];
-  require_(Boolean(mixedIntentId), 'mixed Freeze did not open an intent: ' + page.url());
+  const mixedIntentId = mixedDiscovery.intentId;
+  require_(
+    Boolean(mixedIntentId),
+    'mixed preparation linked no intent: ' + JSON.stringify(mixedDiscovery),
+  );
   const mixedIntent = await api('/api/v1/operations/organize/intents/' + mixedIntentId);
   require_(
     mixedIntent.items.length === 1 &&
       mixedIntent.items[0].source.path === SCOPE.executionMain,
-    'Freeze did not preserve one exact main source: ' + JSON.stringify(mixedIntent),
+    'the preparation did not preserve one exact main source: ' + JSON.stringify(mixedIntent),
   );
   require_(
     /returnTo=files&returnResourceLibraryId=/.test(page.url()),
-    'the mixed intent lost its Files return context: ' + page.url(),
+    'the mixed preparation workspace lost its Files return context: ' + page.url(),
   );
-  const mixedItem = mixedIntent.items[0];
-  const choiceResponse = await page.evaluate(async (payload) => {
-    const response = await fetch(payload.url, {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + payload.token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload.body),
-    });
-    return { status: response.status, document: await response.json() };
-  }, {
-    url: BASE + '/api/v1/operations/organize/intents/' + mixedIntentId +
-      '/items/' + mixedItem.itemId + '/choice',
-    token: TOKEN,
-    body: {
-      expectedVersion: mixedIntent.version,
-      expectedItemVersion: mixedItem.version,
-      recognitionTypeId: 'A',
-      metadata: {
-        provider: 'tmdb',
-        providerId: '909',
-        mediaType: 'movie',
-        title: 'Execution',
-      },
-    },
-  });
-  require_(
-    choiceResponse.status === 200,
-    'source-grounded offline Choice failed: ' + JSON.stringify(choiceResponse.document),
-  );
-  await connect(page.url().slice(BASE.length));
 
-  // -- native reviewed choices -> exact Preview -> confirmed Execute -------
-  // The harness admitted and froze one dedicated execution discovery and
-  // recorded the reviewed Choice (grounded in durable source-linked evidence).
-  // The browser drives the ordinary manual journey and makes exactly one
-  // explicit Execute confirmation; it never handles a token or digest.
+  // -- same-page reviewed choice -> exact plan summary -> confirmed Execute --
+  // The preparation workspace links the exact zero-mutation plan summary and
+  // offers the linked intent for a legal correction; the browser then makes
+  // exactly one explicit confirmation of its ready subset.  It never handles
+  // a token or digest.
   const executionIntentId = mixedIntentId;
-  await connect(`/ui-v2/operations/organize/intent/${executionIntentId}`);
-  await page.getByText('Execution.2004.mkv').first().waitFor();
+  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await recognition.first().waitFor();
+  await recognition.first().selectOption('A');
+  await page.getByText(/修正已持久保存/).waitFor();
+  // The resident Worker re-runs the complete analysis under the same pinned
+  // configuration and links a new exact plan summary on the same page.
+  await settleDiscovery(mixedDiscoveryId);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('heading', { name: '计划摘要', exact: true }).waitFor();
   const intentText = await page.getByRole('main').innerText();
   require_(
     /Execution\.2004\.mkv/.test(intentText),
-    `the intent did not show the reviewed source: ${
+    `the plan summary did not show the reviewed source: ${
       JSON.stringify({ url: page.url(), intentText: intentText.slice(0, 900) })
     }`,
   );
-  const previewButton = page.getByRole('button', { name: '生成精确预览' });
-  await previewButton.waitFor();
+  await page.waitForTimeout(500);
   evidence.passes.push({ case: 'intent-choice', screenshot: await shoot('intent-choice') });
-  const previewResponsePromise = page.waitForResponse((response) =>
-    response.request().method() === 'POST' && /\/previews?$/.test(response.url()),
-  );
-  await previewButton.click();
-  const previewResponse = await previewResponsePromise;
-  const previewDocument = await previewResponse.json();
-  require_(
-    previewResponse.status() === 201,
-    'exact Preview failed: ' + JSON.stringify(previewDocument),
-  );
-  await page.getByRole('heading', { name: '整理预览' }).waitFor();
-  const previewText = await page.getByRole('main').innerText();
-  require_(
-    /预览不会修改文件/.test(previewText),
-    'the exact Preview did not advertise zero mutation',
+  // A fresh exact Preview was linked by the analysis; read its durable
+  // document so the reviewed attachment plan is proved server-side.
+  const refreshedPreview = await api(
+    '/api/v1/operations/organize/previews/' + mixedDiscovery.previewId,
   );
   require_(
-    /Movies\/其他电影\/Execution \(2004\)/.test(previewText) &&
-      /\btrailer\b/i.test(previewText),
-    'the exact Preview did not show its main destination and Trailer attachment type',
+    /Movies\/其他电影\/Execution \(2004\)/.test(intentText) &&
+      /\btrailer\b/i.test(intentText),
+    'the plan summary did not show its main destination and Trailer attachment type',
   );
-  const previewItem = previewDocument.items?.[0];
+  const previewItem = refreshedPreview.items?.[0];
   require_(
     previewItem?.source?.path === SCOPE.executionMain &&
       JSON.stringify((previewItem.plan?.attachments ?? []).map((attachment) => [
@@ -328,21 +309,25 @@ try {
       ])) === JSON.stringify([
         ['trailer', 'media-target', SCOPE.executionTrailerTarget.split('/').at(-1)],
       ]),
-    'exact Preview did not plan the selected Trailer target: ' + JSON.stringify(previewDocument),
+    'the exact plan did not plan the selected Trailer target: ' + JSON.stringify(refreshedPreview),
   );
   evidence.mixedAttachment = {
     discoveryId: mixedDiscoveryId,
     intentId: mixedIntentId,
-    choiceVersion: choiceResponse.document.version,
-    previewId: previewDocument.previewId,
+    previewId: mixedDiscovery.previewId,
     primarySourceCount: mixedDiscovery.primarySourceCount,
     sourcePaths: mixedDiscovery.sources.map((source) => source.path),
     attachmentSource: SCOPE.executionTrailer,
     returnContextPreserved: true,
   };
-  evidence.passes.push({ case: 'exact-preview', screenshot: await shoot('exact-preview') });
-  const executeButton = page.getByRole('button', { name: '确认执行所选条目' });
+  evidence.passes.push({ case: 'exact-summary', screenshot: await shoot('exact-summary') });
+  const executeButton = page.getByRole('button', { name: /确认整理 \d+ 项/ });
   await executeButton.waitFor();
+  const confirmText = await executeButton.innerText();
+  require_(
+    /确认整理\s*1\s*项/.test(confirmText),
+    'the confirmation did not name the exact ready subset: ' + confirmText,
+  );
   await executeButton.click();
   await page.getByRole('heading', { name: '整理执行情况' }).waitFor();
   const executionText = await page.getByRole('main').innerText();
@@ -398,8 +383,8 @@ try {
   evidence.discoveryAdmissions = evidence.mutatingRequests.filter((entry) =>
     entry.url.includes('/files/discoveries'),
   );
-  evidence.discoveryFinalizations = evidence.mutatingRequests.filter((entry) =>
-    /\/discoveries\/[^/]+\/finalize$/.test(entry.url),
+  evidence.analyses = evidence.mutatingRequests.filter((entry) =>
+    /\/discoveries\/[^/]+\/analyze$/.test(entry.url),
   );
   evidence.executionRequests = evidence.mutatingRequests.filter(
     (entry) => entry.url.includes('/previews') || entry.url.includes('/execute'),
@@ -413,24 +398,25 @@ try {
     'the mixed intent did not receive exactly one reviewed Choice: ' +
       JSON.stringify(evidence.reviewedChoices),
   );
+  // The ordinary confirmation is one Execute admission; its exact plan was
+  // linked by the durable preparation analysis, so no separate Preview request
+  // is made from the browser.
   require_(
-    evidence.executionRequests.length === 2 &&
-      evidence.executionRequests.filter((entry) =>
-        entry.url.includes(`/intents/${mixedIntentId}/previews`),
-      ).length === 1 &&
-      evidence.executionRequests.filter((entry) => entry.url.includes('/execute')).length === 1,
-    'the mixed journey did not issue exactly one Preview and one confirmed Execute: ' +
+    evidence.executionRequests.length === 1 &&
+      evidence.executionRequests[0].url.includes('/execute'),
+    'the mixed journey did not issue exactly one confirmed Execute: ' +
       JSON.stringify(evidence.executionRequests),
   );
   require_(
-    evidence.discoveryFinalizations.length === 1 &&
-      evidence.discoveryFinalizations[0].url.includes(`/discoveries/${mixedDiscoveryId}/finalize`),
-    'the mixed discovery did not issue exactly one Freeze: ' +
-      JSON.stringify(evidence.discoveryFinalizations),
+    evidence.analyses.length === 1 &&
+      evidence.analyses[0].url.includes(`/discoveries/${mixedDiscoveryId}/analyze`) &&
+      evidence.discoveryAdmissions.length >= 3,
+    'the mixed preparation did not issue exactly one re-analysis: ' +
+      JSON.stringify(evidence.analyses),
   );
   require_(
     evidence.discoveryAdmissions.length + evidence.reviewedChoices.length +
-      evidence.discoveryFinalizations.length + evidence.executionRequests.length ===
+      evidence.analyses.length + evidence.executionRequests.length ===
       evidence.mutatingRequests.length,
     `an unexpected non-read request was issued: ${JSON.stringify(evidence.mutatingRequests)}`,
   );
@@ -580,14 +566,28 @@ def api(base: str, token: str, method: str, path: str, document: dict | None = N
         return error.code, json.loads(error.read() or b"{}")
 
 
-def settle(base: str, token: str, discovery_id: str, *, attempts: int = 40) -> dict:
+def settle(base: str, token: str, discovery_id: str, *, attempts: int = 120) -> dict:
     """The production Worker polls on its own; wait for the durable outcome."""
 
     for _ in range(attempts):
         _, document = api(
             base, token, "GET", f"/api/v1/operations/organize/discoveries/{discovery_id}"
         )
-        if document["status"] not in {"queued", "running"}:
+        # A full preparation additionally links its exact zero-mutation plan
+        # summary; wait for that durable outcome rather than the walk alone.
+        if document.get("autoPrepare"):
+            if document.get("previewId") or document["status"] in {
+                "failed",
+                "cancelled",
+                "partial_success",
+            }:
+                return document
+        elif document["status"] not in {
+            "queued",
+            "running",
+            "analyzing",
+            "waiting_stability",
+        }:
             return document
         time.sleep(0.5)
     raise RuntimeError("the production Worker did not finish the bounded discovery in time")
@@ -1009,15 +1009,9 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             evidence = json.loads((ARTIFACT_ROOT / "evidence.json").read_text(encoding="utf-8"))
             mixed_attachment = evidence.get("mixedAttachment") or {}
             execution_intent_id = mixed_attachment.get("intentId")
-            chosen_version = mixed_attachment.get("choiceVersion")
             execution_discovery_id = mixed_attachment.get("discoveryId")
             preview_id = mixed_attachment.get("previewId")
-            if (
-                not execution_intent_id
-                or chosen_version is None
-                or not execution_discovery_id
-                or not preview_id
-            ):
+            if not execution_intent_id or not execution_discovery_id or not preview_id:
                 raise RuntimeError(
                     f"native mixed attachment evidence is incomplete: {mixed_attachment}"
                 )
@@ -1090,12 +1084,18 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
                 )
             # The completed effect is never replayed: a re-Preview of the same
             # executed intent is refused truthfully because the source moved.
+            _, current_intent = api(
+                base,
+                api_token,
+                "GET",
+                f"/api/v1/operations/organize/intents/{execution_intent_id}",
+            )
             status, replay = api(
                 base,
                 api_token,
                 "POST",
                 f"/api/v1/operations/organize/intents/{execution_intent_id}/previews",
-                {"expectedVersion": chosen_version},
+                {"expectedVersion": current_intent["version"]},
             )
             if replay.get("error", {}).get("code") != "source_missing":
                 raise RuntimeError(f"a re-Preview was not refused truthfully: {replay}")
