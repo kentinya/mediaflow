@@ -476,7 +476,10 @@ export function OrganizeCreationPage() {
   const selectionOverlapsAdmitted = (selected ?? []).some((itemId) =>
     admittedItemIds.has(itemId),
   );
-  const selectionKey = JSON.stringify(activeSelection);
+  const selectionKey = JSON.stringify({
+    previewId: preview?.previewId ?? null,
+    items: activeSelection,
+  });
   const confirmationIsBoundToSelection =
     confirmationSelectionKey === selectionKey;
   const effectiveAllowOverwrite =
@@ -524,6 +527,22 @@ export function OrganizeCreationPage() {
     }, 1_500);
     return () => window.clearTimeout(timer);
   }, [preparation, preparationQuery]);
+
+  // A new analysis produces a new exact summary.  The earlier selection and
+  // any overwrite/source-cleanup authorization belong to the superseded plan
+  // and must not silently carry into the new one.  Adjusting state during
+  // render (the documented React pattern) is what makes the reset immediate.
+  const [summaryKey, setSummaryKey] = useState<string | null>(null);
+  const currentSummaryKey = preview?.previewId ?? null;
+  if (currentSummaryKey !== summaryKey) {
+    setSummaryKey(currentSummaryKey);
+    if (summaryKey !== null) {
+      setSelected(null);
+      setAllowOverwrite(false);
+      setAllowSourceCleanup(false);
+      setConfirmationSelectionKey(null);
+    }
+  }
 
   const startWith = (libraryId: string) => {
     void navigate({
@@ -1240,13 +1259,24 @@ export function OrganizeCreationPage() {
                                         {value.title ?? value.providerId}
                                         {value.year !== null
                                           ? ` (${value.year})`
-                                          : ""}
+                                          : ""}{" "}
+                                        · {value.provider}/{value.providerId}
                                       </option>
                                     ),
                                   )}
                                 </select>
+                                <span className="mf-dashboard-meta">
+                                  这些身份来自本来源已持久保存的元数据候选，选择后会按原固定配置重新分析并生成新摘要。
+                                </span>
                               </label>
                             )}
+                            {item.allowedMetadataIdentities.length === 0 &&
+                              item.choice.metadata === null && (
+                                <p className="mf-dashboard-meta" role="status">
+                                  本来源当前没有已固定或候选的元数据身份；请修正识别类型或稍后重新分析，
+                                  准备不会创建正式执行待办。
+                                </p>
+                              )}
                           </div>
                         );
                       })}

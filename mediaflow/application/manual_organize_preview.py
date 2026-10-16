@@ -2323,9 +2323,10 @@ class ManualOrganizePreviewService:
             return _PreviewOutcome(
                 ManualPreviewItemStatus.BLOCKED,
                 plan=self._partial_plan(strategy, item, type_policy),
-                error="metadata identity is not ready for exact planning",
+                error="metadata identity needs an explicit candidate selection",
                 next_action=(
-                    "open or resolve the linked Metadata review, then explicitly rerun Preview"
+                    "choose one of this source's grounded metadata candidates on this page, "
+                    "then rerun the analysis"
                 ),
             )
         if strategy.naming is None:

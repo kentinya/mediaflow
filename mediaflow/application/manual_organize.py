@@ -1504,17 +1504,41 @@ class ManualOrganizeIntentService:
                 ):
                     continue
                 plan = getattr(item, "plan", None)
-                identity = plan.get("mediaIdentity") if isinstance(plan, dict) else None
-                if not isinstance(identity, dict):
+                if not isinstance(plan, dict):
                     continue
-                self._append_metadata_authority(
-                    authorities,
-                    identity.get("provider"),
-                    identity.get("providerId"),
-                    identity.get("mediaType") or fallback_media_type,
-                    identity.get("title"),
-                    identity.get("year"),
-                )
+                identity = plan.get("mediaIdentity")
+                if isinstance(identity, dict):
+                    self._append_metadata_authority(
+                        authorities,
+                        identity.get("provider"),
+                        identity.get("providerId"),
+                        identity.get("mediaType") or fallback_media_type,
+                        identity.get("title"),
+                        identity.get("year"),
+                    )
+                # The same zero-mutation analysis also persists the bounded
+                # provider candidates it actually resolved.  When automatic
+                # selection was withheld (ambiguous/need-confirm) there is no
+                # ``mediaIdentity``, yet those exact source-linked candidates
+                # are the only legal values an operator may choose on this
+                # page.  Publishing them here keeps the visible options and the
+                # save-time validation on one authority instead of leaving the
+                # source permanently unreadable as "no candidate".
+                analysis = plan.get("analysis")
+                metadata = analysis.get("metadata") if isinstance(analysis, dict) else None
+                match = metadata.get("match") if isinstance(metadata, dict) else None
+                candidates = match.get("candidates") if isinstance(match, dict) else None
+                for candidate in candidates if isinstance(candidates, (list, tuple)) else ():
+                    if not isinstance(candidate, Mapping):
+                        continue
+                    self._append_metadata_authority(
+                        authorities,
+                        candidate.get("provider"),
+                        candidate.get("providerId"),
+                        candidate.get("mediaType") or fallback_media_type,
+                        candidate.get("title"),
+                        candidate.get("year"),
+                    )
 
     @staticmethod
     def _append_metadata_authority(

@@ -149,7 +149,12 @@ class _PreparationFixture(unittest.TestCase):
         return document
 
     @contextmanager
-    def journey(self, *, budgets: DiscoveryBudgets | None = None):
+    def journey(
+        self,
+        *,
+        budgets: DiscoveryBudgets | None = None,
+        candidates: tuple[MediaCandidate, ...] | None = None,
+    ):
         document = self.document()
         source = _RecordingStorage("source", self.source_root)
         target = _RecordingStorage("target", self.target_root)
@@ -157,7 +162,9 @@ class _PreparationFixture(unittest.TestCase):
         providers = MetadataProviderRegistry(
             (
                 SyntheticMetadataProvider(
-                    (
+                    candidates
+                    if candidates is not None
+                    else (
                         MediaCandidate(
                             "tmdb",
                             "201",
@@ -660,6 +667,143 @@ class PreparationJourneyTests(_PreparationFixture):
             )
             self.assertEqual(200, status, saved)
             self.assertEqual([], value.source.mutations)
+
+    def test_new_source_ambiguous_candidates_are_selectable_and_executable(self) -> None:
+        """RO-2/AC-3/5: a brand-new ambiguous source can be corrected and executed.
+
+        A source with no prior Result/choice/review and two genuinely tied
+        provider candidates is prepared.  The preparation withholds automatic
+        selection, yet its own zero-mutation analysis grounded both candidates.
+        The same-page correction must expose exactly those candidates, accept a
+        legal choice, reject a cross-source one, produce a truly executable new
+        summary, and execute only the explicitly confirmed item — all with zero
+        mutation and zero formal recovery todos before confirmation.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        ambiguous = (
+            MediaCandidate(
+                "tmdb",
+                "201",
+                MediaType.MOVIE,
+                "One",
+                year=2001,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+            MediaCandidate(
+                "tmdb",
+                "999",
+                MediaType.MOVIE,
+                "One",
+                year=2001,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+        with self.journey(candidates=ambiguous) as value:
+            self.admit(value, ["Movies"])
+            settled = self.run_worker(value)
+            self.assertEqual("completed", settled["status"], settled)
+
+            # The preparation is a zero-mutation finding, not a durable failed
+            # execution item, and it links no formal recovery review.
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            item = preview.items[0]
+            self.assertEqual("blocked", item.status.value, item.error)
+            self.assertIsNone(item.plan.get("mediaIdentity"))
+            self.assertEqual("ambiguous", item.plan["analysis"]["metadata"]["match"]["status"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), tuple(value.repository.list_metadata_reviews(limit=100)))
+
+            status, intent_document = self.request(
+                value, f"/api/v1/operations/organize/intents/{settled['intentId']}"
+            )
+            self.assertEqual(200, status, intent_document)
+            intent_item = intent_document["items"][0]
+            identities = intent_item["allowedMetadataIdentities"]
+            self.assertEqual(
+                {"201", "999"},
+                {identity["providerId"] for identity in identities},
+                intent_item,
+            )
+
+            # The published item failure is truthful about the durable state.
+            status, preview_document = self.request(
+                value, f"/api/v1/operations/organize/previews/{settled['previewId']}"
+            )
+            self.assertEqual(200, status, preview_document)
+            published = preview_document["items"][0]
+            self.assertIn("preparation finding", published["failure"]["durableState"])
+            self.assertNotIn(
+                "TaskItem and Result are durable", published["failure"]["durableState"]
+            )
+            self.assertIn("candidate", published["nextAction"])
+
+            # A cross-source identity is still refused without mutation.
+            status, rejected = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{settled['intentId']}/items/"
+                f"{intent_item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent_document["version"],
+                    "expectedItemVersion": intent_item["version"],
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "777",
+                        "mediaType": "movie",
+                        "title": "Invented",
+                        "year": 2001,
+                    },
+                },
+            )
+            self.assertEqual(400, status, rejected)
+            self.assertEqual("metadata_unverified", rejected["error"]["code"])
+            self.assertEqual([], value.source.mutations)
+
+            # Choosing one of the grounded candidates is accepted and persists.
+            chosen = next(value for value in identities if value["providerId"] == "999")
+            status, saved = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{settled['intentId']}/items/"
+                f"{intent_item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent_document["version"],
+                    "expectedItemVersion": intent_item["version"],
+                    "metadata": {
+                        "provider": chosen["provider"],
+                        "providerId": chosen["providerId"],
+                        "mediaType": chosen["mediaType"],
+                        "title": chosen["title"],
+                        "year": chosen["year"],
+                    },
+                },
+            )
+            self.assertEqual(200, status, saved)
+            self.assertEqual([], value.source.mutations)
+            stored = value.repository.get_manual_intent(settled["intentId"])
+            self.assertEqual("999", stored.items[0].choice.metadata.provider_id)
+
+            # Re-analysis produces a genuinely executable summary.
+            status, accepted = self.analyze(value, settled["discoveryId"], settled["version"])
+            self.assertEqual(200, status, accepted)
+            reanalyzed = self.run_worker(value)
+            self.assertEqual("completed", reanalyzed["status"], reanalyzed)
+            refreshed = value.repository.get_manual_preview(reanalyzed["previewId"])
+            refreshed_item = refreshed.items[0]
+            self.assertEqual("previewed", refreshed_item.status.value, refreshed_item.error)
+            self.assertEqual("999", refreshed_item.plan["mediaIdentity"]["providerId"])
+            self.assertEqual([], value.source.mutations)
+
+            # Explicit confirmation executes exactly the chosen identity.
+            self.execute(value, reanalyzed, [refreshed_item.item_id])
+            completed = self.run_execution_worker(value)
+            self.assertEqual("completed", completed.status.value, completed)
+            self.assertEqual([("delete", "Movies/One.2001.mkv")], value.source.mutations)
+            self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
 
 
 if __name__ == "__main__":

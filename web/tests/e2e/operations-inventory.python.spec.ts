@@ -1124,6 +1124,118 @@ test("a selected execution never blocks the unselected sibling's correction and 
   ).toHaveLength(1);
 });
 
+test("a brand-new ambiguous source can be corrected and executed on the same page", async ({
+  page,
+  request,
+}) => {
+  // RO-2 P1 (B blocker 2): a brand-new source with no prior Result/choice/
+  // review and two genuinely tied provider candidates.  The preparation must
+  // ground both candidates for a same-page choice, reject an invented one,
+  // produce a truly executable new summary and execute only the confirmed item.
+  const api = recordApiCalls(page);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+
+  await page.getByRole("link", { name: "新建整理任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.getByRole("radio", { name: "source" }).check();
+  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page.getByRole("checkbox", { name: "选择 Eleventh.2011.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page).toHaveURL(/discoveryId=/);
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  // The ambiguous item is not executable and offers its real candidates.
+  await expect(page.getByText(/可确认 0 项/)).toBeVisible();
+  await expect(page.getByText("未就绪").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /确认整理/ })).toBeDisabled();
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Eleventh.2011.mkv`,
+      )
+    ).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  // Both grounded candidates are offered; an invented one is impossible here.
+  const identity = page.locator('select[aria-label^="元数据身份 "]').first();
+  await expect(identity).toBeVisible();
+  const optionValues = await identity
+    .locator("option")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value")));
+  expect(optionValues).toEqual(
+    expect.arrayContaining(["tmdb/111", "tmdb/911"]),
+  );
+
+  // Choose one grounded candidate; the same-page analysis produces a real
+  // executable summary.
+  await identity.selectOption("tmdb/911");
+  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(page.getByText(/可确认 1 项/)).toBeVisible({
+    timeout: 30_000,
+  });
+  // Nothing has mutated before the explicit confirmation.
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Eleventh.2011.mkv`,
+      )
+    ).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/run=/);
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBeTruthy();
+  expect(await worker.json()).toMatchObject({ completed: true, itemCount: 1 });
+  // Exactly the chosen identity's item executed; the source really moved.
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Eleventh.2011.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({
+    sourceExists: false,
+    destinationTargets: expect.arrayContaining([
+      expect.stringContaining("Eleventh"),
+    ]),
+  });
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    ),
+  ).toHaveLength(1);
+});
+
 test("a real standalone pipeline run keeps its durable steps through detail and restart", async ({
   page,
   request,
@@ -1137,10 +1249,10 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus the three Manual runs produced by the earlier
-  // new-task journeys (the reviewed-plan journey, the lost-admission journey
-  // and the sibling-independence journey).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
+  // The seeded population plus the four Manual runs produced by the earlier
+  // new-task journeys (the reviewed-plan journey, the lost-admission journey,
+  // the sibling-independence journey and the new-source ambiguity journey).
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 7);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1156,7 +1268,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(run.status).toBe("completed");
 
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
@@ -1317,7 +1429,7 @@ test("the default unfiltered task-center origin selects its admitted run through
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
 
   // The native entry carries the valid empty origin marker.
   await page.getByRole("link", { name: "新建整理任务" }).click();

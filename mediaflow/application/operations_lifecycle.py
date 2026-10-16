@@ -405,13 +405,23 @@ def summarize_effects(
 # --------------------------------------------------------------------------
 
 
-def bounded_failure_document(value: str | None) -> dict[str, object] | None:
+def bounded_failure_document(
+    value: str | None,
+    *,
+    durable_state: str | None = None,
+    next_action: str | None = None,
+) -> dict[str, object] | None:
     """Return bounded failure evidence and never echo a raw durable error.
 
     A durable error column may hold a legacy or externally written string, so it
     is only decoded when it is this backend's own bounded envelope.  Anything
     else is classified into the same closed set of operator-facing
     explanations; the raw value is never copied into a document, model or DOM.
+
+    ``durable_state`` and ``next_action`` let a caller that already knows the
+    exact durable context override the classified default.  A zero-mutation
+    preparation finding is not a failed execution TaskItem/Result, so it must
+    not claim to be one or point the operator at a review that does not exist.
     """
 
     if not value:
@@ -419,6 +429,10 @@ def bounded_failure_document(value: str | None) -> dict[str, object] | None:
     document = failure_document(value)
     if document is None:
         document = classify_failure(error=value).document()
+    if durable_state is not None:
+        document = {**document, "durableState": durable_state}
+    if next_action is not None:
+        document = {**document, "nextAction": next_action}
     return {
         key: _bounded_evidence_text(item) if isinstance(item, str) else item
         for key, item in document.items()
@@ -1551,7 +1565,12 @@ def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
         "truncated": bool(item.get("truncated")),
         "nextAction": _bounded_evidence_text(item.get("nextAction")),
         "failure": bounded_failure_document(
-            item.get("error") if isinstance(item.get("error"), str) else None
+            item.get("error") if isinstance(item.get("error"), str) else None,
+            durable_state=(
+                "this is a zero-mutation preparation finding; no execution TaskItem or "
+                "Result was created"
+            ),
+            next_action=_bounded_evidence_text(item.get("nextAction")),
         ),
         "sideEffects": "none",
         "zeroMutation": True,

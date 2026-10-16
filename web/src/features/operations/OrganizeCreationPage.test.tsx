@@ -393,6 +393,136 @@ describe("organize creation workspace", () => {
     await waitFor(() => expect(confirm).toBeEnabled());
   });
 
+  it("shows grounded metadata candidates and saves a same-page identity choice", async () => {
+    const user = userEvent.setup();
+    let choiceBody: Record<string, unknown> | null = null;
+    let analyzePosts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          value["executionCandidateItemIds"] = [];
+          const first = (value["items"] as Json[])[0]!;
+          first["status"] = "blocked";
+          first["executionState"] = "not_available_in_this_task";
+          first["failure"] = {
+            category: "metadata_failure",
+            durableState:
+              "this is a zero-mutation preparation finding; no execution TaskItem or Result was created",
+            message: "metadata failure: no durable media identity was selected",
+            nextAction:
+              "choose one of this source's grounded metadata candidates on this page, then rerun the analysis",
+            retrySafe: true,
+            sideEffects: "none",
+          };
+          first["nextAction"] =
+            "choose one of this source's grounded metadata candidates on this page, then rerun the analysis";
+          (value["selection"] as Json)["selectedItemIds"] = [];
+          (value["actions"] as Json)["execute"] = {
+            ...((value["actions"] as Json)["execute"] as Json),
+            available: false,
+            reason: "no Preview item is current, complete and executable",
+          };
+          return jsonResponse(value);
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/intents/intent-1/items/item-1/choice`
+        ) {
+          choiceBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          const value = clone("organizeIntentChoice");
+          value["intentId"] = "intent-1";
+          const actions = value["actions"] as Json;
+          (actions["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          (actions["preview"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/previews";
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+          const value = clone("organizeIntent");
+          value["intentId"] = "intent-1";
+          value["status"] = "open";
+          const actions = value["actions"] as Json;
+          (actions["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          (actions["preview"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/previews";
+          const item = (value["items"] as Json[])[0]!;
+          item["itemId"] = "item-1";
+          (item["source"] as Json)["path"] = "Movies/One.2001.mkv";
+          (item["source"] as Json)["filename"] = "One.2001.mkv";
+          item["allowedMetadataIdentities"] = [
+            {
+              mediaType: "movie",
+              provider: "tmdb",
+              providerId: "201",
+              title: "One",
+              year: 2001,
+            },
+            {
+              mediaType: "movie",
+              provider: "tmdb",
+              providerId: "999",
+              title: "One",
+              year: 2001,
+            },
+          ];
+          return jsonResponse(value);
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
+        ) {
+          analyzePosts += 1;
+          return jsonResponse(
+            discoveryDocument({ status: "analyzing", version: 6 }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    // The ambiguous candidates are explained on the same page.
+    await screen.findByText("未就绪");
+    // Both grounded candidates are offered as real, legal options.
+    const select = await screen.findByRole("combobox", {
+      name: "元数据身份 One.2001.mkv",
+    });
+    expect(
+      Array.from(select.querySelectorAll("option")).map((option) =>
+        option.getAttribute("value"),
+      ),
+    ).toContain("tmdb/999");
+    await user.selectOptions(select, "tmdb/999");
+    await waitFor(() => expect(choiceBody).not.toBeNull());
+    const body = choiceBody as unknown as Record<string, unknown>;
+    expect((body["metadata"] as Record<string, unknown>)["providerId"]).toBe(
+      "999",
+    );
+    // Saving a candidate re-enters the durable analysis on the same page.
+    await waitFor(() => expect(analyzePosts).toBe(1));
+  });
+
   it("treats an ambiguous Execute response as unknown and reconciles without replay", async () => {
     const user = userEvent.setup();
     let executePosts = 0;

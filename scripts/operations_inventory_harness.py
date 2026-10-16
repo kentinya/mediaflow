@@ -314,6 +314,11 @@ def build_managed_fixture(
     # MOVE of one can never consume the other journey's fixtures.
     (source_root / "Ninth.2009.mkv").write_bytes(b"sibling independence synthetic media")
     (source_root / "Tenth.2010.mkv").write_bytes(b"sibling independence synthetic media")
+    # The RO-2 new-source ambiguity proof's own source.  It has no prior
+    # Result/choice/review and exactly two tied provider candidates, so the
+    # preparation must withhold automatic selection and ground both candidates
+    # for a same-page choice.
+    (source_root / "Eleventh.2011.mkv").write_bytes(b"ambiguous identity synthetic media")
 
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
@@ -497,6 +502,28 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Tenth",
                         year=2010,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # The RO-2 new-source ambiguity proof's own tied candidates:
+                    # two equally-ranked identities for one brand-new source, so
+                    # the preparation must ground both and require an explicit
+                    # same-page choice before anything can execute.
+                    MediaCandidate(
+                        "tmdb",
+                        "111",
+                        MediaType.MOVIE,
+                        "Eleventh",
+                        year=2011,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "911",
+                        MediaType.MOVIE,
+                        "Eleventh",
+                        year=2011,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -1893,6 +1920,7 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
         "Four.2004.mkv",
         "Ninth.2009.mkv",
         "Tenth.2010.mkv",
+        "Eleventh.2011.mkv",
     )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")

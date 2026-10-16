@@ -115,6 +115,32 @@ export function ItemFindings({
           ? `（匹配：${item.mediaIdentity.matchedBy}）`
           : ""}
       </dd>
+      <dt>元数据候选</dt>
+      <dd>
+        {item.analysis?.metadata?.match == null ||
+        item.analysis.metadata.match.candidates.length === 0
+          ? "—"
+          : `${displayEnum(item.analysis.metadata.match.status ?? "")} · ${
+              item.analysis.metadata.match.reasons.length > 0
+                ? item.analysis.metadata.match.reasons.join("；")
+                : "未提供自动选择理由"
+            }`}
+        {item.analysis?.metadata?.match != null &&
+        item.analysis.metadata.match.candidates.length > 0 ? (
+          <ul className="mf-preview-attachments">
+            {item.analysis.metadata.match.candidates.map((candidate, index) => (
+              <li key={`candidate-${index}`}>
+                {candidate.title ?? candidate.providerId}
+                {candidate.year !== null ? ` (${candidate.year})` : ""} ·{" "}
+                {candidate.provider}/{candidate.providerId}
+                {candidate.exactTitle ? " · 标题精确" : ""}
+                {candidate.exactYear ? " · 年份精确" : ""}
+                {candidate.score !== null ? ` · 评分 ${candidate.score}` : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </dd>
       <dt>目标媒体库</dt>
       <dd>
         {safeValue(item.analysis?.classification?.mediaLibraryId ?? null)}
