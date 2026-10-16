@@ -242,40 +242,41 @@ logs/traces/screenshots，记录完整 SHA/dirty manifest、命令/cwd、runtime
 
 ```text
 Status: READY FOR B REVIEW
-Implementation checkpoint SHA: 7b7f833cd7b0640e7218b13e3d5a4a245628c9f9
+Implementation checkpoint SHA: 68b50e87dc4f2a825d6650d0f464126007e0522e
 Task Base: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914
-Correction of: 227b549efea35b47740c33fd49ec011fa36801f2 (B review 3 FIX REQUIRED)
+Correction of: 7b7f833cd7b0640e7218b13e3d5a4a245628c9f9 (B review 4 FIX REQUIRED)
 ```
 
 ### Changed Files
 
-This correction adds to the previous Task range: `mediaflow/infrastructure/sqlite_runtime.py`; `tests/test_operations_run_inventory.py`, `tests/test_operations_task_center.py`, `tests/test_recovery_continuation.py`; `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/OperationsInventory.test.tsx`; `web/src/shared/navigation/operations-return.ts`, `web/src/shared/navigation/operations-return.test.ts`, `web/src/shared/navigation/destination-model.ts`, `web/src/shared/navigation/destination-model.test.ts`; `web/src/shared/ui/styles.css`; `web/tests/e2e/operations-inventory.python.spec.ts`, `web/tests/e2e/operations-task-center-visual.python.spec.ts`. No schema, migration, dependency or runtime-configuration change.
+This correction adds to the previous Task range: `mediaflow/domain/operations_run.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`; `tests/test_operations_task_center.py`; `scripts/operations_inventory_harness.py`; `web/src/entities/operations/run.ts`, `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/OperationsInventory.test.tsx`; `web/src/shared/ui/styles.css`. No schema, migration, dependency or runtime-configuration change.
 
 ### Implemented
 
-- AC-4 (B P1-1): the overlapping `需要处理` row's locate action is no longer dead. A single-problem Task opens its exact Task/type file list; a multi-problem Task offers one explicit type action per current problem (the UI never guesses one type); a pure safe-continuation row opens the run's own evidence/next-step surface. The chosen type travels as the bounded `problemType` URL parameter and through the reconnect/return allowlists, so the exact Task/type list reopens after refresh or re-auth.
-- AC-3 (B P1-2): a saved decision's linked child item (`pending` with a `*_resolved` stage) still owns the current problem, so the original source keeps its generic safe-continuation attention instead of being reclassified as a technical failure before the next admission. A genuinely new failure/unknown effect still restores the source failure; the original result and successful sibling items are unchanged.
-- AC-2/5 (B P1-3): progress consistency now validates the whole durable TaskItem population against the declared admission total, not only the terminal subset. A waiting/pending/processing item beyond the total publishes an unknown ratio instead of a contradictory `0 / 0`; a consistent population still publishes its real ratio.
+- AC-2/3/5 (B P1-1 — run-level current problem): the authoritative read model now covers the durable run-level repair/verification work that exists before any Task is created. A Job whose `failure_category` and `failure_next_action` are durably recorded, and which never produced a Task, contributes `derived_attention = 1` with `attention_reason = "run_repair"`; it has no TaskItem, so it is deliberately **not** placed in any of the five file lists and publishes no fabricated file count. A plain queue admission (no structured fields), a generic exception failure (`failure_category IS NULL`) and a Job that later created a Task (owned by that Task's item evidence) are all excluded. The predicate reads only stable structured columns, never free-form error text, and the list, the summary cards and the native detail share the same one-snapshot judgement.
+- AC-1/4/5 (B P1-2 — nine-view body): the task center now renders the reference structure: a full-width four-card statistics row, an alert strip, and one bounded panel containing the nine sibling tabs on a single horizontal row, the filter bar and the list with row hierarchy and spacing. The `需要处理` row for a run-level repair offers a real `查看原因与修复指引` action that opens the run's existing Job detail (where the structured repair guidance lives), while a safe-continuation row still opens its own evidence/next-step surface; a Task/type problem still opens its exact server-filtered file list. All query, permission, URL/return and unknown-state behaviour is unchanged.
+- The run-level repair row and the new `attention_reason` / `attention_failure_category` / `attention_failure_next_action` fields are projected through the repository, the API document and the typed frontend model with fail-closed normalization (an unknown reason, a repair without its category/next action, or repair evidence on a non-repair row all reject the whole response).
 - No new execution capability, Provider call or Storage mutation; reads remain bounded, authorized and GET-only.
 
 ### Tests and Results / Evidence Index
 
-Durable index and raw logs: `.git/validation-evidence/7b7f833cd7b0640e7218b13e3d5a4a245628c9f9/developer-t4-fix/INDEX.md`; 14 production screenshots and their SHA256/dimension manifests are beside it. All executable evidence is pinned to the candidate SHA above.
+Durable index and raw logs: `.git/validation-evidence/68b50e87dc4f2a825d6650d0f464126007e0522e/developer-t4-fix5/INDEX.md`; the nine production screenshots, narrow and problem-file captures, `metrics.json` and `capture.cjs` are beside it. All executable evidence is pinned to the candidate SHA above.
 
-- Governance, Ruff format/lint, compileall, pip check, both example config validations and the no-FFmpeg/FFprobe scan: PASS.
-- Full Python regression in a clean candidate worktree (no stale runtime DB): **2457 tests, OK, 7 skipped**. The main working tree's pre-existing ignored `.mediaflow/mediaflow.sqlite3` (schema 48 > current 45) makes the isolated Scan CLI test fail there; that file was neither read as fixture nor modified.
-- Web typecheck, lint, format check and production build: PASS (Vite >500 kB chunk warning retained). Full Vitest: **1114 passed (75 files)** — previously-failing StorageManagementPage tests are green here. Full fake Playwright E2E: **246 passed**.
-- Real-Python/SQLite inventory: **25 passed** (includes the new attention locate and the existing nine views, paging, recovery and return journeys); Unicode-principal: **1 passed**; production Task Center visual: **1 passed**.
-- Required Docker release-security smoke: **PASS** on the exact candidate image (`sha256:3bcc2e3f76aa…`); `TMPDIR` set to an existing evidence path because Colima does not share the default macOS temp path; no leftover containers.
-- Focused correction evidence: the B recovery probe now reports `fail=0` immediately after the saved decision; the B progress probe now reports `total_items=0`, `processed_items=null` (unknown) instead of `0 / 0`.
-- Visual inspection: attention per-type locate buttons, the mounted attention problem-file list, honest unknown progress on 进行中, the nine views, the narrow one-row tab strip and the read-failure recovery banner.
-- `git diff --check`: PASS. No migration was run because the diff contains no schema changes.
+- Governance: PASS. Ruff format/lint, compileall, pip check, both example config validations and the no-FFmpeg/FFprobe scan: PASS.
+- Full Python regression: **2460 tests, 1 failure, 7 skipped**. The one failure (`test_scan_cli_needs_no_path_or_metadata_token`) is the documented pre-existing environment failure: the working tree's ignored `.mediaflow/mediaflow.sqlite3` is schema 48 while this version expects 45. Independently reproduced at Task Base `99cbf2fd` in a detached worktree with that ignored file copied in (`FAILED`, same assertion); the same Base without the file passes. That file was neither read as a fixture nor modified. All 272 focused/related Task tests pass (`tests.test_operations_task_center` now includes the new run-level repair regression).
+- Web typecheck, lint, format check and production build: PASS (Vite >500 kB chunk warning retained). Full Vitest: **1115 passed (75 files)**. Full fake Playwright E2E: **246 passed**.
+- Real-Python/SQLite inventory: **25 passed**; Unicode-principal: **1 passed**; production Task Center visual capture: **1 passed**.
+- Required Docker release-security smoke: **PASS** on the exact candidate image (`mediaflow:task45.1-security`, `sha256:c60c3bee1609…`); `TMPDIR` set to a Colima-shared evidence path because Colima does not share the host default `/tmp`; no leftover containers.
+- B's own probes rerun against this candidate: `pre-task-real-probe.py` now reports `attention total = 1` for all seven real pre-Task configuration failures (was 0); `pre-task-probe.py` reports the injected `configuration_snapshot_unavailable` run in `attention` with `problem_types = []` (was absent).
+- Focused regression: `tests.test_operations_task_center` adds `test_pre_task_repair_failure_is_attention_without_a_file_list`, `test_plain_queue_and_unstructured_failure_are_not_run_level_repair`, and `test_run_level_repair_evidence_never_leaks_into_a_linked_task`; `OperationsInventory.test.tsx` adds the run-level repair row/locate-action case.
+- Visual inspection at `1536×1024`: four cards each 273×92 spanning the panel width; nine tabs on one row (single `top`); data rows 68px with 36px filter controls; the run-level repair row and its `查看原因与修复指引` action; narrow 380px keeps the tabs in one scrollable row. Problem-file and failure views inspected. Not pixel-identical and no fixture counts are asserted.
+- `git diff --check`: PASS. No migration was run because the diff contains no schema change.
 
 ### Decisions
 
-- Route an attention row by its real current problem type(s); offer every type for a multi-problem Task and the run's own next-step surface when there is no technical type.
-- Suppress the original failure only through the exact linked child's saved-decision or blocker state; never infer it from names, paths or time.
-- Publish a processed ratio only when the whole item population fits the declared total; otherwise show unknown.
+- A pre-Task failure is a current problem only when it carries durable structured repair evidence; otherwise it is history, not a manual to-do. This mirrors the existing `blocked` vs `failed` occurrence classification without duplicating it.
+- Run-level repair work has no file members, so the row uses a general attention explanation and the existing Job detail rather than fabricating file counts or a five-type membership.
+- The nine-view body is implemented with the task center's own scoped styles reusing the shared shell/components; global styles were not changed and all query/permission/return behaviour is untouched.
 
 ### Remaining In-Slice Work
 
@@ -283,83 +284,126 @@ RO-2 same-page creation/confirmation, RO-3 new recovery handling and summary con
 
 ### Risks / Deviations
 
-The production bundle retains Vite's >500 kB chunk warning. Docker required an explicit shared temporary directory because Colima does not share the host default temp directory. User-preserved dirty screenshots/`.DS_Store` files, the deleted pre-existing screenshot, `output/imagegen/slice45-task-center-v1.zip`, B's active Task review edits and ignored `config/alist.json` were not staged or removed; `config/alist.json` was not read. This is Developer handoff for B review only; no PASS, Slice review or closure is declared.
+The production bundle retains Vite's >500 kB chunk warning. The main working tree's ignored schema-48 runtime DB causes one pre-existing full-suite failure (proven at Task Base). User-preserved dirty screenshots/`.DS_Store` files, the deleted pre-existing screenshot, `output/imagegen/slice45-task-center-v1.zip`, B's active Task review edits and ignored `config/alist.json` were not staged or removed; `config/alist.json` was not read. This is Developer handoff for B review only; no PASS, Slice review or closure is declared.
 
 ## B Review Result
 
 ```text
-Reviewed: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914..227b549efea35b47740c33fd49ec011fa36801f2
-Report Head: df93758b502350ebd5483d0db66d6f82014c1ceb (TASK.md only successor)
+Reviewed: 99cbf2fd9233cd01d9b6d9c8d29748a52bd7a914..7b7f833cd7b0640e7218b13e3d5a4a245628c9f9
+Report Head: b9f229b6f00f5b25a5bd2e4dc2856c70a571a493 (TASK.md only successor)
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-本轮审查实际修正及报告；此前决定与简化修复指引保留在 Git/耐久证据。
-Task ID/Base/Goal/Scope/AC/Difficulty/T4 不变，不创建下一 Task。
+B review 4，完成于 2026-10-16。Task ID/Base/Goal/Scope/AC/Difficulty/T4 不变。
+历史 B 决定保留在 Git 和原耐久证据；本轮不创建下一 Task。
 
-### 已确认修正
+### 上轮三个 P1 已修正
 
-- 真实完整元数据恢复旅程经明确确认并实际执行成功后，原项及旧分析项 attention 清零。
-- 分析遇到元数据待决定时，已不再同时把原项算技术失败；但保存决定后的中间状态仍有下述缺口。
-- 原生浏览器中，全为终态的失败列表在 6.1 秒内从 2 行更新为 3 行，GET 次数 9→10。
-- 380×720 下九标签的 top 均为 595px，scrollWidth=756、clientWidth=350；键盘聚焦末标签
-  后 scrollLeft=406，单行与横向滚动生效。共享入口/面包屑已为“任务中心”。
-- 五类恢复中的失败文件面板仍能正确打开；本轮新增阶段/进度/结果列已出现。
+- **需要处理定位：** 独立 Chromium 点击混合任务的“识别问题”，实际挂载准确 Task/type 文件
+  清单、发出 problem=recognition GET，显示 2 个文件；刷新并重新认证仍恢复同一 Task/type。
+  代码及组件测试还覆盖单类型与无技术类型的安全后续动作分支。
+- **保存决定的中间状态：** 独立完整元数据恢复 probe 在保存决定后、下一次准入前观察到
+  failure=0、metadata=0，通用待继续 attention 保留；实际明确执行成功后 attention=0。
+- **矛盾进度：** 原真实 WSGI probe 的实际 1 个 waiting item / 声明总量 0 现在返回
+  processed_items=null，页面显示不可用；未再发布 0/0 的已处理比例。
 
-### 本轮 Task 阻塞项（P1）及最小修正方向
+### 当前 Task 阻塞项（P1）
 
-1. **“需要处理”页新增文件定位按钮是死动作（AC-4）。**
-   `OperationsLanding.tsx:1207` 对 attention 行显示“查看问题文件”，但点击只设置 problemRun；
-   `:888` 仅在 `isRecoveryView(view)` 时渲染文件面板。真实 Chromium 点击混合问题任务后，
-   URL 为 `view=attention&problemRun=<task>`，问题文件面板数为 0，也没有 problem-items GET。
-   最小修正：依据后端当前类型进入准确 Task/type 清单，并保留 attention 返回上下文；多类型
-   提供清楚的类型选择，纯待继续项进入既有适用证据/下一步。不能随意猜一种类型、留下死按钮，
-   或让用户进入无筛选详情自行翻找。用实际点击及内容断言覆盖单类型、多类型和通用待继续项。
+1. **当前问题投影遗漏尚未生成 Task 的明确配置修复工作（RO-1；AC-2/3/5）。**
+   `_run_query_document` 的 attention_sql 只探测 TaskItem，整个 Job 分支没有消费持久
+   failure_category / failure_durable_state / failure_next_action 等 pre-Task 证据。
+   独立执行已有真实 `DefinitionScopedExecutionTests` 的 claim-boundary failure 旅程：
+   `snapshot_digest_mismatch`、`resource_library_missing` 等失败均由生产 Scheduler/handler/
+   Worker 写入，task_id=null 且有明确修复动作，但 all/ended 各 total=1、attention total=0。
+   另一个 AutomationWorker/SQLite/WSGI probe 同样复现固定配置不可用的修复项被遗漏。
+   普通排队无 attention 的修正有效；不能因此把无 TaskItem 的真实修复工作也一概排除。
 
-2. **保存元数据决定后，原项重回技术失败（AC-3）。**
-   完整真实恢复 probe 在 MetadataReviewService.resolve 后、下一次准入前读取：子项为
-   `pending / metadata_resolved`，metadata_tasks=0，但原项 failure_tasks 从 0 变回 1；
-   新分析受理后才重新为 0。这期间没有发生新的技术失败。
-   `sqlite_runtime.py:6545` 的 child_blocker 只在 waiting/未决 review 存在时排除旧失败，保存决定
-   后就又让旧 failed request/continuation 决定分类。
-   最小修正：将同一真实关联中“决定已保存、等待继续”的状态纳入当前问题判断，保留通用待继续
-   attention；以真实新失败/未知效果为准保留失败或核查。回归在保存后立即断言列表、计数和文件
-   成员，再走新准入/再次失败/最终成功；不能只断言等待时和下一次准入后的状态。
+   修正方向：在同一权威读模型中覆盖当前仍需人工修复/核查的 run-level 证据，并与历史已结束
+   问题区分；列表、统计和原生详情/下一步保持一致。无文件成员时不能编造文件数或硬塞进五类
+   文件恢复；使用适用的通用 attention 解释和既有诊断入口。不要重新将所有 failed/Pending
+   状态都视为待办，不新增自动重试、配置改绑或执行权限。以真实 pre-Task 失败、普通排队和
+   仅有历史终态的对照验证。这里要求修正任务中心投影，不实施冻结 Slice43 的配置/模式工作。
 
-3. **进度一致性只检查终态数量（AC-2/5）。**
-   `sqlite_runtime.py:5608` 只比较 terminal item 数与 task.total_items。已有 waiting/processing
-   项超过声明总量时，terminal count=0 仍通过检查。真实服务/WSGI probe：actual items=1、
-   metadata matching_total=1，但 total_items=0、processed_items=0；原生进行中页显示“0 / 0 项”。
-   最小修正：在同一快照核对完整 TaskItem 总体及总量是否已确定，再发布比例；矛盾或总量未确定
-   时显示未知。复用已有 progress/disposition 语义，保留历史，不从主文件/附件或失败步骤猜总量。
-   覆盖非终态项超出总量、正常已知进度及发现总量未知，而不只覆盖终态项超限。
+2. **九页主体仍未实现约定的参考结构与信息层级（RO-1；AC-1/7）。**
+   实看 production build 的九张独立截图，并对照九张参考：现状是旧页面上追加标签和列，
+   四个小统计块聚在内容左半边，提示为连续普通段落；导航/筛选/表格/分页没有形成参考中的
+   完整清单面板，筛选仍是浏览器默认控件，普通表格行紧贴、名称与类型挤在同一行。
+   1536×1024 原生测量中来源/状态控件高 19px，普通数据行高 22px；失败页的文件数、日期与
+   定位按钮在宽屏仍被挤成碎行。各恢复页同样复用这一紧凑表格。单行横向九标签已经修正，
+   但不足以满足本 Task 已承诺的参考结构、层级与视觉验收。
 
-### 独立验证与证据
+   修正方向：在任务中心限定范围内完成统计区、提示条、同级九导航、可用筛选栏和有行层级/
+   间距的清单及分页布局；保留真实数据、权限、查询/返回行为及未知状态。复用项目既有设计
+   组件/样式，避免全局样式回归。数值、样本、精确坐标和装饰图标不作为新增要求，亦不要求
+   像素一致。Developer 在提交前实际查看九页与窄屏截图；脚本只生成截图不能判定视觉通过。
+   本项只要求既定查询/定位旅程的页面实现，不提前引入后续创建/恢复摘要协议。
 
-- 治理 PASS；已提交 Slice/Roadmap ACTIVE、Contract 未变。重读 AGENTS、Slice、Task、B 经验，
-  核对 workflow；其余必读文档/页面规范已在本会话前轮读取，实际 diff 确认未变化。
-- `.venv/bin/python -m unittest tests.test_operations_task_center tests.test_operations_run_inventory tests.test_recovery_continuation`：
-  **90 tests / 7.404s / OK**，无 skip；原始 ResourceWarning 保留。没有改产品源码或测试。
-- `recovery_probe.py` 在原有完整 API/SQLite/Worker/临时 Local/fake Provider 旅程中增加只读观察，
-  复现保存决定后的误分类并确认实际执行后清零。`progress_probe.py` 经真实服务/WSGI 复现 0/0。
-- 独立 Chromium 使用与 Developer manifest 逐文件 SHA256 匹配的 production build 和真实 Python
-  harness/SQLite；复现 attention 死动作，确认轮询/单行标签/失败文件页，产品请求均为 GET。
-  已保存九页、点击后、文件面板及窄屏截图和 trace；实看 attention/failure/running/narrow，
-  因实证 P1 提前拒绝，未作完整九页视觉通过判定。
-- 耐久索引：`.git/validation-evidence/227b549efea35b47740c33fd49ec011fa36801f2/b-review3-20261015/INDEX.md`。
-  `METADATA.json` 保存 source/report、初始 dirty/dependency/build 身份；初始 B 文档改动亦已保留。
-- 查阅当前 Developer 索引和原始结果：Python 2453 tests/1 failure/2 errors/7 skipped，
-  Vitest 1111 pass/2 failures，fake E2E 240 pass/3 failures/3 未运行（另有补跑），Docker smoke
-  成功输出存在。本轮未把这些记录一概接受为 T4 PASS 或已证明全部 Base 等价。
-- 已有 P1，按 workflow 未重复剩余昂贵全量 Python/Web/fake/real-Python/Unicode/Docker 门禁；
-  修正 executable candidate 后仍须完整原定 T4 checkpoint plan，并保存精确耐久证据。
-  未改 A-owned 文档；预存用户脏文件及 ignored 私有配置保留，审查临时服务关闭。
+### 给 Developer 的简版修复方案
 
-Slice 复核：RO-1 与 RO-3 当前问题/定位仍不完整；RO-2、完整 RO-3、RO-4 同页继续授权、
-RO-5 退役及 RO-6 最终验证仍待完成。继续同一 Task45.1，不规划下一 Task、不提交 Closure Packet。
+继续 Task45.1，先修查询语义，再统一九页主体；沿用当前 Task Base、验收和 T4 计划。
 
-可复用经验候选：恢复查询应在保存决定后、下一次准入前验证中间状态；新行内动作必须检查点击
-后的实际目标内容，避免 URL 改变却未挂载目标。留待 Slice 收尾合并。
+**第一步：补齐“需要处理”的运行级问题。**
 
-本次是 B Task review，不是 A Final Review 或 Slice 关闭；冻结 Slice43 不恢复、不导入。
+- 从 `sqlite_runtime.py:_run_query_document` 入手，把已有文件项问题与 Job 的结构化修复/
+  核查证据统一纳入当前 attention 判断；使用稳定类别及耐久状态，不匹配错误文案。
+- 保留 Job/Task 的现有去重及同一读快照，让列表、计数和详情共用判断。明确区分普通排队、
+  当前需修复和纯历史失败；解除依据已有耐久处置/关联结果，不能猜测新 Active 已修好旧 pin。
+- 没有文件项的修复工作显示业务原因及“查看原因与修复指引”，进入该运行的既有诊断详情；
+  文件数显示尚未生成/不可用。不为它伪造文件恢复成员，也不新增重试或执行入口。
+- 先用审查证据中的 `pre-task-real-probe.py` 复现，再补正式回归：真实准入后、Task 创建前
+  失败仍可定位；普通排队不报警；历史失败与有处置证据的问题不会被一律当作未解决。
+
+**第二步：用一套任务中心布局完成九页。**
+
+- 在 `OperationsLanding.tsx` 和任务中心限定样式中复用现有设计组件，按参考组织：标题区 →
+  横向四卡统计 → 提示条 → 包含九标签、筛选、列表及分页的完整清单面板。
+- 桌面四卡铺满可用区域；统一筛选控件高度与间距；任务名称/辅助说明分层；表格增加行间距
+  与分隔。给日期、文件数和操作保留合理空间，长业务名称/路径按既有方式截断或展开。
+- 保留每个视图已有的真实列和动作；窄屏保持九标签单行可滚动，筛选可换行，表格有界滚动，
+  问题文件界面可正常阅读。所有数据、权限和 URL/返回逻辑继续由现有实现承担。
+- 先构建并实际打开“全部任务 / 需要处理 / 元数据恢复 / 失败恢复”检查布局，再逐页检查全部
+  九页及窄屏、键盘、重连；样本值和像素坐标不作为实现常量。
+
+**第三步：按原计划验证和交接。**
+
+先跑新增/受影响测试及真实浏览器关键路径，修完已知问题后，在最终候选完成原定 T4 gates。
+报告列出修复 SHA、两个阻塞项对应证据、九页与窄屏截图及原始日志；提交 `READY FOR B REVIEW`。
+不新建 Task，不改 Slice/冻结范围；上轮已确认修复的三个 P1 纳入回归。
+
+### 独立验证、证据与复用边界
+
+- 治理 PASS；已提交 Slice/Roadmap ACTIVE，工作树 Contract 与 HEAD 一致。读取治理、产品、
+  架构、当前 Slice/Task、页面规范与 B 经验；范围仍以已提交 Contract 为 authority。
+- 审查 Task Base..candidate 的完整 manifest、当前修正 diff、测试/平台门禁修正及报告。
+  `7b7f833..b9f229b` 仅 TASK.md；本轮没有产品源码、测试、依赖、schema 或 A-owned 文档修改。
+- `.venv/bin/python -m unittest tests.test_operations_task_center tests.test_operations_run_inventory tests.test_recovery_continuation tests.test_operations_workspace tests.test_operations_run_detail tests.test_scope_continuation tests.test_recovery_batch`：
+  **258 tests / 18.372s / OK**，无 skip；ResourceWarnings 保留原文。
+- 独立 recovery/progress probes、pre-Task Worker/WSGI probe，以及已有真实 claim-boundary
+  测试上的只读观察均完成；后者 7 个配置失败场景全部复现 attention 遗漏。
+- 独立 Chromium 使用 production build / 真实 Python harness / 临时 SQLite 和假 Provider：
+  验证混合 Task/type 定位、重连、未知效果仅核查、成功兄弟项保留、九页、轮询和窄屏。
+  终态失败页在 6.1 秒内 2→3 行，库存 GET 11→12；产品请求全部 GET。
+  九页默认无详情，窄屏九标签单行且键盘聚焦可横向滚动。这些通过事实不代表视觉验收 PASS。
+- 查阅 Developer 索引与原始日志，确认记录了 Python **2457 / OK / 7 skipped**、
+  Vitest **1114 passed / 75 files**、fake E2E **246 passed**、real-Python inventory **25 passed**、
+  Unicode **1 passed**、visual capture **1 passed** 及 Docker release-security smoke 成功输出。
+  Python 全量在干净候选 worktree 执行，用户预存 schema48 DB 保留；build 日志中的资产名与
+  B 实际使用的产物一致，B 另存当前 build/dependency SHA256。未将截图生成或报告文字当作
+  全部 AC 已满足的证明。
+- 因已实证 P1，本轮未独立重复昂贵全量 Python/Web/fake/real-Python/Unicode/Docker 门禁，
+  未给出全部 T4 门禁的无条件复用/PASS。修正 executable candidate 后仍完成原定 T4 gates，
+  保留候选身份、原始日志、截图/trace 与完整结果；文档 successor 按 workflow 证明输入不变。
+- 耐久索引：`.git/validation-evidence/7b7f833cd7b0640e7218b13e3d5a4a245628c9f9/b-review4-20261015/INDEX.md`。
+  目录命名是审查开始日期；交接完成日期见本节。证据仅本地可达，未推送。
+- 本轮仅更新 B-owned TASK.md 和 ignored 审查证据，保留所有预存用户脏文件与私有 ignored
+  配置；审查服务在交接前停止。没有 A Final Review、Slice 关闭或新实现授权。
+
+Slice 复核：RO-1 仍有当前问题遗漏与页面验收缺口；RO-2、完整 RO-3、RO-4 同页继续授权、
+RO-5 全入口 Scan 退役和 RO-6 Slice-final 验证仍未完成。继续同一 Task45.1 修正，不创建下一
+Task，不提交 Closure Packet，不改 Slice/Roadmap/稳定需求，不恢复冻结 Slice43。
+
+可复用经验候选：当前问题投影应同时检查 item-level 和 pre-Task/run-level 的耐久问题，避免
+只修正状态集合后漏掉整类准入失败；视觉验收必须看实际页面构成，截图生成成功不代表交付。
+留待 A 于 Slice 收尾合并。
