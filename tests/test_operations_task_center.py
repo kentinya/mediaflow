@@ -800,6 +800,38 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertEqual(2, self._page()["total"])
         self.assertEqual(1, self._page("view=ended")["total"])
 
+    def test_cancelled_job_with_evidence_is_not_run_level_repair(self) -> None:
+        # A definition-pinned cancellation also records bounded failure evidence
+        # (category/next action), but cancellation is the operator's own
+        # completed intent, not an outstanding repair to-do.
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+        )
+
+        self.repository.create_job(
+            AutomationJob(
+                "cancelled-with-evidence",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.CANCELLED,
+                NOW,
+                NOW,
+                completed_at=NOW,
+                cancellation_requested=True,
+                error="workflow cancelled",
+                failure_category="workflow_cancelled",
+                failure_durable_state="no Task was created and no media effect occurred",
+                failure_side_effects="none",
+                failure_retry_safe=True,
+                failure_next_action=("inspect the Automation definition and leave it enabled"),
+            )
+        )
+        page = self._page("view=attention")
+        self.assertEqual(0, page["total"])
+        self.assertEqual(0, page["summary"]["attention"])
+        self.assertEqual(1, self._page("view=ended")["total"])
+
     def test_run_level_repair_evidence_never_leaks_into_a_linked_task(self) -> None:
         # Once a Job has produced a Task, the Task's item/review evidence owns
         # the current problem; the Job's earlier structured failure must not be

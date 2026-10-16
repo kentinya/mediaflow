@@ -5587,9 +5587,13 @@ class SQLiteTaskRepository:
         # of them is misclassified as a manual to-do here.  The predicate reads
         # durable structured columns only; it never matches free-form error text
         # and never infers a repair from the current Active configuration.
+        # Only a genuine failure is a repair to-do.  A cancelled Job also
+        # records bounded cancellation evidence, but cancellation is the
+        # operator's own completed intent, never an outstanding problem.
         run_level_repair = (
             "runs.run_kind = 'job' "
             "AND runs.linked_task_id IS NULL "
+            "AND runs.job_status = 'failed' "
             "AND runs.anchor_failure_category IS NOT NULL "
             "AND runs.anchor_failure_category <> '' "
             "AND runs.anchor_failure_next_action IS NOT NULL "
