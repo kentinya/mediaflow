@@ -169,6 +169,15 @@ export function isRecoveryView(view: RunView): view is RunProblemType {
   return (RUN_PROBLEM_TYPES as readonly string[]).includes(view);
 }
 
+/**
+ * Why a run is in attention when it is not one of the five technical problem
+ * types. A pre-Task Job failure with durable repair evidence is a run-level
+ * problem with no item file list; every other attention run is explained by
+ * its item/review/continuation evidence.
+ */
+export const RUN_ATTENTION_REASONS = ["task_problem", "run_repair"] as const;
+export type RunAttentionReason = (typeof RUN_ATTENTION_REASONS)[number];
+
 /** Which kind of configured library owns the run's recorded scope. */
 export const RUN_LIBRARY_KINDS = ["resource", "media"] as const;
 export type RunLibraryKind = (typeof RUN_LIBRARY_KINDS)[number];
@@ -236,6 +245,15 @@ export interface RunSummary {
   readonly problemTypes: readonly RunProblemType[];
   /** Per-type distinct affected primary-file counts for this exact Task. */
   readonly problemFileCounts: Readonly<Record<RunProblemType, number>> | null;
+  /** Why this run is in attention when it is not one of the five technical
+   * types. `run_repair` marks a pre-Task Job failure that still carries a
+   * structured repair/next action; `task_problem` marks item/review evidence
+   * (including a pending safe-continuation step); `null` means the run is not
+   * in attention. */
+  readonly attentionReason: RunAttentionReason | null;
+  /** The run-level repair evidence of a pre-Task failure, or `null`. */
+  readonly attentionFailureCategory: string | null;
+  readonly attentionFailureNextAction: string | null;
   readonly configurationSnapshotId: string | null;
   readonly workerId: string | null;
   /** The selected-run detail progress projection. Present on the overview
@@ -587,6 +605,37 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   // step can need attention without belonging to a technical type.
   const problemTypes = normalizeProblemTypes(source["problem_types"]);
   if (!attention && problemTypes.length > 0) fail();
+  // The attention reason explains a run in attention that has no technical
+  // problem type. It is optional (older servers omit it) but, when present,
+  // must agree with the facet it describes.
+  const attentionReason = normalizeAttentionReason(source["attention_reason"]);
+  if (!attention && attentionReason !== null) fail();
+  if (attentionReason === "run_repair" && problemTypes.length > 0) {
+    // A run-level repair has no item file list; it can never claim one.
+    fail();
+  }
+  const attentionFailureCategory = optionalText(
+    source,
+    "attention_failure_category",
+  );
+  const attentionFailureNextAction = optionalText(
+    source,
+    "attention_failure_next_action",
+  );
+  if (attentionReason === "run_repair") {
+    if (
+      attentionFailureCategory === null ||
+      attentionFailureNextAction === null
+    ) {
+      fail();
+    }
+  } else if (
+    attentionFailureCategory !== null ||
+    attentionFailureNextAction !== null
+  ) {
+    // Run-level repair evidence only exists for a run-level repair.
+    fail();
+  }
   const problemFileCounts = normalizeOptionalProblemCounts(
     source["problem_file_counts"],
     "run.problem_file_counts",
@@ -621,6 +670,9 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     attention,
     problemTypes,
     problemFileCounts,
+    attentionReason,
+    attentionFailureCategory,
+    attentionFailureNextAction,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     workerId: optionalText(source, "worker_id"),
     progress:
@@ -660,6 +712,18 @@ function normalizeProblemTypes(value: unknown): readonly RunProblemType[] {
     seen.push(problem);
   }
   return seen;
+}
+
+/** Normalize the optional attention reason, failing closed on an unknown value. */
+function normalizeAttentionReason(value: unknown): RunAttentionReason | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  try {
+    return normalizeEnum(value, "attention_reason", RUN_ATTENTION_REASONS);
+  } catch {
+    return fail();
+  }
 }
 
 function normalizeRunContinuation(value: unknown): RunContinuation | null {

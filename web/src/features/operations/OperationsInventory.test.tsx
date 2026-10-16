@@ -68,6 +68,9 @@ function runDocument(overrides: Record<string, unknown> = {}) {
       conflict: 0,
       failure: 0,
     },
+    attention_reason: null,
+    attention_failure_category: null,
+    attention_failure_next_action: null,
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
@@ -1221,6 +1224,76 @@ describe("Operations run inventory landing", () => {
       expect(router.history.location.search).toContain("run=task-continue"),
     );
     expect(requested.some((url) => url.includes("/problem-items"))).toBe(true);
+  });
+
+  it("renders a run-level repair row with a reachable Job detail action", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubInventoryJourney(
+      pageDocument({
+        items: [
+          runDocument({
+            run_id: "pre-task-repair",
+            run_kind: "job",
+            job_id: "pre-task-repair",
+            task_id: null,
+            command: "preview",
+            command_label: "预览",
+            status: "failed",
+            source_scope: null,
+            total_items: null,
+            completed_items: null,
+            failed_items: null,
+            processed_items: null,
+            current_stage: null,
+            attention: true,
+            problem_types: [],
+            attention_reason: "run_repair",
+            attention_failure_category: "snapshot_digest_mismatch",
+            attention_failure_next_action:
+              "restore the exact saved published revision",
+          }),
+        ],
+        status_counts: { failed: 1 },
+        attention_count: 1,
+        total: 1,
+        view: "attention",
+        summary: summaryDocument({
+          total: 1,
+          running: 0,
+          attention: 1,
+          ended: 1,
+        }),
+      }),
+      requested,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?view=attention");
+
+    const table = await screen.findByRole("table");
+    const row = within(table)
+      .getAllByRole("row")
+      .find((candidate) =>
+        candidate.textContent?.includes("snapshot_digest_mismatch"),
+      );
+    expect(row).toBeDefined();
+    if (row === undefined) {
+      throw new Error("run-level repair row was not rendered");
+    }
+    // The row explains the run-level repair rather than claiming a file list.
+    expect(
+      within(row).getByText(/运行级修复：snapshot_digest_mismatch/),
+    ).toBeVisible();
+    const action = within(row).getByRole("link", {
+      name: "查看原因与修复指引",
+    });
+    expect(action).toBeVisible();
+    await user.click(action);
+    // The action reaches the existing Job detail, which carries the full
+    // structured repair guidance; it never opens a fabricated file list.
+    expect(
+      requested.some((url) => url.includes("/api/v1/operations/runs")),
+    ).toBe(true);
   });
 
   it("renders an honest scan-error run instead of rejecting the page", async () => {

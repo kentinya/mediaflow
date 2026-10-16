@@ -705,6 +705,140 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.assertIsNotNone(body["unavailable"])
         self.assertEqual(0, body["matching_total"])
 
+    def test_pre_task_repair_failure_is_attention_without_a_file_list(self) -> None:
+        # A Job that failed before any Task existed carries structured, durable
+        # repair evidence (a stable category plus an explicit next action).
+        # It is exactly the configuration/authority work an operator must still
+        # act on, so it belongs in the overlapping attention view even though it
+        # has no TaskItem and therefore no file list.
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+        )
+
+        self.repository.admit_job(
+            AutomationJob(
+                "pre-task-repair",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.PENDING,
+                NOW,
+                NOW,
+            ),
+            100,
+        )
+        finished = self.repository.update_job(
+            AutomationJob(
+                "pre-task-repair",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.FAILED,
+                NOW,
+                NOW,
+                completed_at=NOW,
+                failure_category="snapshot_digest_mismatch",
+                failure_durable_state="the saved revision digest no longer matches",
+                failure_side_effects="none",
+                failure_retry_safe=False,
+                failure_next_action="restore the exact saved published revision",
+            )
+        )
+        self.assertIsNone(finished)
+        stored = self.repository.get_job("pre-task-repair")
+        self.assertEqual(AutomationJobStatus.FAILED, stored.status)
+        page = self._page("view=attention")
+        self.assertEqual(1, page["total"])
+        row = page["items"][0]
+        self.assertTrue(row["attention"])
+        self.assertEqual([], list(row["problem_types"]))
+        self.assertEqual("run_repair", row["attention_reason"])
+        self.assertEqual("snapshot_digest_mismatch", row["attention_failure_category"])
+        self.assertEqual(
+            "restore the exact saved published revision",
+            row["attention_failure_next_action"],
+        )
+        # No fabricated file members: it never appears in a five-type list.
+        for problem in ("recognition", "metadata", "classification", "conflict", "failure"):
+            self.assertEqual(0, self._page(f"view={problem}")["total"])
+        # The summary card reflects the same run-level attention fact.
+        self.assertEqual(1, page["summary"]["attention"])
+
+    def test_plain_queue_and_unstructured_failure_are_not_run_level_repair(self) -> None:
+        # A plain queue admission carries no structured repair evidence, and a
+        # generic exception failure records no category/next action: neither is
+        # a manual to-do, so the attention facet must not invent one.
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+        )
+
+        self.repository.admit_job(
+            AutomationJob(
+                "queued-plain",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.PENDING,
+                NOW,
+                NOW,
+            ),
+            100,
+        )
+        self.repository.create_job(
+            AutomationJob(
+                "generic-failure",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.FAILED,
+                NOW,
+                NOW,
+                completed_at=NOW,
+                error="workflow failed (RuntimeError)",
+            )
+        )
+        page = self._page("view=attention")
+        self.assertEqual(0, page["total"])
+        self.assertEqual(0, page["summary"]["attention"])
+        # Both remain visible in the ordinary lifecycle views.
+        self.assertEqual(2, self._page()["total"])
+        self.assertEqual(1, self._page("view=ended")["total"])
+
+    def test_run_level_repair_evidence_never_leaks_into_a_linked_task(self) -> None:
+        # Once a Job has produced a Task, the Task's item/review evidence owns
+        # the current problem; the Job's earlier structured failure must not be
+        # re-published as a separate run-level repair.
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+        )
+
+        task = self._task("organize")
+        self.repository.create_job(
+            AutomationJob(
+                "linked-repair",
+                AutomationCommand.PREVIEW,
+                AutomationJobStatus.FAILED,
+                NOW,
+                NOW,
+                completed_at=NOW,
+                task_id=task.task_id,
+                failure_category="definition_scoped_workflow_failed",
+                failure_durable_state="linked Task failed before workflow completion",
+                failure_side_effects="none",
+                failure_retry_safe=True,
+                failure_next_action="inspect the linked Task and per-item state",
+            )
+        )
+        page = self._page("view=attention")
+        self.assertEqual(0, page["total"])
+        # The run is still visible in the ordinary inventory; it just carries no
+        # fabricated run-level repair and no attention.
+        all_page = self._page()
+        self.assertEqual(1, all_page["total"])
+        row = all_page["items"][0]
+        self.assertFalse(row["attention"])
+        self.assertIsNone(row["attention_reason"])
+        self.assertIsNone(row["attention_failure_category"])
+        self.assertIsNone(row["attention_failure_next_action"])
+
     def test_attention_view_never_fabricates_zero_for_an_unavailable_read(self) -> None:
         # A read against a runtime without the summary projection still
         # answers the list, but publishes an explicit unavailable summary.

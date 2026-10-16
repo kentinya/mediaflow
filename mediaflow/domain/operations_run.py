@@ -355,6 +355,19 @@ class OperationsRunOverview:
     #: Distinct affected primary files for each current problem type on this
     #: exact Task. Attachment steps remain grouped under their primary file.
     problem_file_counts: tuple[tuple[str, int], ...] = ()
+    #: Why this run is in attention when the reason is not one of the five
+    #: technical problem types.  ``"run_repair"`` marks a Job that failed
+    #: before any Task existed and still carries a structured repair/next
+    #: action; ``"task_problem"`` marks item/review evidence (including a
+    #: pending safe-continuation step).  ``None`` means the run is not in
+    #: attention at all.
+    attention_reason: str | None = None
+    #: Bounded, secret-free run-level repair evidence for a pre-Task failure:
+    #: the stable failure category and the explicit operator next action the
+    #: Job recorded at admission.  Both are ``None`` when the current problem
+    #: lives on a linked Task's items (or there is no current problem).
+    attention_failure_category: str | None = None
+    attention_failure_next_action: str | None = None
     configuration_snapshot_id: str | None = None
     worker_id: str | None = None
 

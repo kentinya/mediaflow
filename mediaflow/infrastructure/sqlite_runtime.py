@@ -5569,12 +5569,36 @@ class SQLiteTaskRepository:
             "recovery_links.source_item_id = continuation_items.item_id "
             "AND recovery_links.status = 'consumed'))))"
         )
-        attention_sql = (
-            "CASE WHEN EXISTS (SELECT 1 FROM task_items attention_items"
+        item_attention = (
+            "EXISTS (SELECT 1 FROM task_items attention_items"
             f" WHERE attention_items.task_id = {task_identity}"
             " AND attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
             " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm'))"
-            f" OR {actionable_failure} OR {safe_continuation} THEN 1 ELSE 0 END"
+            f" OR {actionable_failure} OR {safe_continuation}"
+        )
+        # A run-level current problem (RO-1): a Job that failed *before* any
+        # Task existed carries structured, durable repair/verification evidence
+        # (a stable failure category plus an explicit next action) and no
+        # linked Task.  It has no TaskItem to appear in the five file lists, but
+        # it is exactly the configuration/authority repair work an operator must
+        # still act on.  A plain queue admission carries none of these fields, a
+        # generic exception failure has no structured category, and a Job that
+        # later created a Task is owned by that Task's item evidence — so none
+        # of them is misclassified as a manual to-do here.  The predicate reads
+        # durable structured columns only; it never matches free-form error text
+        # and never infers a repair from the current Active configuration.
+        run_level_repair = (
+            "runs.run_kind = 'job' "
+            "AND runs.linked_task_id IS NULL "
+            "AND runs.anchor_failure_category IS NOT NULL "
+            "AND runs.anchor_failure_category <> '' "
+            "AND runs.anchor_failure_next_action IS NOT NULL "
+            "AND runs.anchor_failure_next_action <> ''"
+        )
+        attention_sql = f"CASE WHEN {item_attention} OR {run_level_repair} THEN 1 ELSE 0 END"
+        attention_reason_sql = (
+            f"CASE WHEN {item_attention} THEN 'task_problem' "
+            f"WHEN {run_level_repair} THEN 'run_repair' ELSE NULL END"
         )
         problem_sql = {
             problem: f"CASE WHEN {task_item_exists(problem)} THEN 1 ELSE 0 END"
@@ -5709,6 +5733,16 @@ class SQLiteTaskRepository:
                    -- review/checkpoint/continuation evidence the recovery
                    -- lists read.  A plain queue admission is not attention.
                    {attention_sql} AS derived_attention,
+                   {attention_reason_sql} AS attention_reason,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_category ELSE NULL END
+                       AS attention_failure_category,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_durable_state ELSE NULL END
+                       AS attention_failure_durable_state,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_next_action ELSE NULL END
+                       AS attention_failure_next_action,
                    -- Per-type problem evidence, each from a durable review,
                    -- item state or continuation.  A resolved review leaves
                    -- its item pending at a *_resolved stage, so it stops
@@ -5726,7 +5760,10 @@ class SQLiteTaskRepository:
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
-                       jobs.updated_at AS job_updated_at
+                       jobs.updated_at AS job_updated_at,
+                       jobs.failure_category AS anchor_failure_category,
+                       jobs.failure_durable_state AS anchor_failure_durable_state,
+                       jobs.failure_next_action AS anchor_failure_next_action
                 FROM ({self._RUN_QUERY_SELECT}) job_rows
                 LEFT JOIN automation_jobs jobs ON jobs.job_id = job_rows.anchor_id
                        AND job_rows.run_kind = 'job'
@@ -6975,6 +7012,17 @@ class SQLiteTaskRepository:
             attention=bool(row["derived_attention"]),
             problem_types=problem_types,
             problem_file_counts=problem_file_counts,
+            attention_reason=(str(row["attention_reason"]) if row["attention_reason"] else None),
+            attention_failure_category=(
+                str(row["attention_failure_category"])
+                if row["attention_failure_category"]
+                else None
+            ),
+            attention_failure_next_action=(
+                str(row["attention_failure_next_action"])
+                if row["attention_failure_next_action"]
+                else None
+            ),
             configuration_snapshot_id=(
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
             ),

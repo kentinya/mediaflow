@@ -619,7 +619,12 @@ export function OperationsLanding() {
   return (
     <div className="mf-dashboard mf-operations-inventory">
       <header className="mf-dashboard-head">
-        <h2>任务中心</h2>
+        <div>
+          <h2>任务中心</h2>
+          <p className="mf-dashboard-meta">
+            跟踪整理进度，集中处理问题，查看每个文件的结果。
+          </p>
+        </div>
         <RefreshControl onRefresh={refreshAll} refreshing={anyFetching} />
       </header>
       <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
@@ -628,153 +633,151 @@ export function OperationsLanding() {
             {page !== null && (
               <ViewSummary page={page} view={view} onSelectView={selectView} />
             )}
-            <ViewNavigation view={view} onSelectView={selectView} />
-            <div
-              className={
-                selectedId !== ""
-                  ? "mf-run-layout mf-run-has-detail"
-                  : "mf-run-layout"
-              }
-            >
-              <div className="mf-run-main">
-                <section
-                  className="mf-count-section mf-run-filters"
-                  aria-label="运行筛选"
-                >
-                  <form
-                    className="mf-run-filter-bar"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      applyFilters({ q: searchDraft.trim() });
-                    }}
+            <div className="mf-task-center-panel">
+              <ViewNavigation view={view} onSelectView={selectView} />
+              <div
+                className={
+                  selectedId !== ""
+                    ? "mf-run-layout mf-run-has-detail"
+                    : "mf-run-layout"
+                }
+              >
+                <div className="mf-run-main">
+                  <section
+                    className="mf-count-section mf-run-filters"
+                    aria-label="运行筛选"
                   >
-                    <label htmlFor="run-search">搜索</label>
-                    <input
-                      id="run-search"
-                      type="search"
-                      value={searchDraft}
-                      maxLength={128}
-                      placeholder="按业务名称或范围搜索"
-                      onChange={(event) => setSearchDraft(event.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      className="mf-button mf-button-secondary"
+                    <form
+                      className="mf-run-filter-bar"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        applyFilters({ q: searchDraft.trim() });
+                      }}
                     >
-                      搜索
-                    </button>
-                    <label htmlFor="run-source-filter">来源</label>
-                    <select
-                      id="run-source-filter"
-                      value={filters.source}
-                      onChange={(event) =>
-                        applyFilters({ source: event.target.value || "all" })
-                      }
-                    >
-                      <option value="all">全部来源</option>
-                      {page?.summary.sources.map((sourceOption) => (
-                        <option
-                          key={sourceOption.value}
-                          value={sourceOption.value}
+                      <div className="mf-run-search-field">
+                        <label
+                          htmlFor="run-search"
+                          className="mf-visually-hidden"
                         >
-                          {sourceOption.label}
-                        </option>
-                      ))}
-                      {filters.source !== "all" &&
-                        page?.summary.sources.every(
-                          (sourceOption) =>
-                            sourceOption.value !== filters.source,
-                        ) && (
-                          <option value={filters.source}>
-                            {filters.source}
-                          </option>
-                        )}
-                    </select>
-                    <label htmlFor="run-status-filter">状态</label>
-                    <select
-                      id="run-status-filter"
-                      value={filters.status}
-                      onChange={(event) =>
-                        applyFilters({ status: event.target.value })
-                      }
-                    >
-                      <option value="all">全部状态</option>
-                      {RUN_STATUSES.map((status) => (
-                        <option key={status} value={status}>
-                          {RUN_STATUS_LABELS[status]}
-                        </option>
-                      ))}
-                    </select>
-                    <label htmlFor="run-command-filter">操作类型</label>
-                    <input
-                      id="run-command-filter"
-                      type="text"
-                      value={filters.command === "all" ? "" : filters.command}
-                      maxLength={64}
-                      placeholder="如 scan、preview"
-                      onChange={(event) =>
-                        applyFilters({
-                          command:
-                            event.target.value === ""
-                              ? "all"
-                              : event.target.value,
-                        })
-                      }
-                    />
-                    <label htmlFor="run-from-filter">创建时间从</label>
-                    <input
-                      id="run-from-filter"
-                      type="date"
-                      value={filters.from.slice(0, 10)}
-                      onChange={(event) =>
-                        applyFilters({
-                          from:
-                            event.target.value === ""
-                              ? ""
-                              : `${event.target.value}T00:00:00Z`,
-                        })
-                      }
-                    />
-                    <label htmlFor="run-to-filter">至</label>
-                    <input
-                      id="run-to-filter"
-                      type="date"
-                      value={filters.to.slice(0, 10)}
-                      onChange={(event) =>
-                        applyFilters({
-                          to:
-                            event.target.value === ""
-                              ? ""
-                              : `${event.target.value}T23:59:59Z`,
-                        })
-                      }
-                    />
-                    {filtered && (
+                          搜索
+                        </label>
+                        <input
+                          id="run-search"
+                          type="search"
+                          value={searchDraft}
+                          maxLength={128}
+                          placeholder="搜索任务名称、文件或路径"
+                          onChange={(event) =>
+                            setSearchDraft(event.target.value)
+                          }
+                        />
+                      </div>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-source-filter">来源</label>
+                        <select
+                          id="run-source-filter"
+                          value={filters.source}
+                          onChange={(event) =>
+                            applyFilters({
+                              source: event.target.value || "all",
+                            })
+                          }
+                        >
+                          <option value="all">全部来源</option>
+                          {page?.summary.sources.map((sourceOption) => (
+                            <option
+                              key={sourceOption.value}
+                              value={sourceOption.value}
+                            >
+                              {sourceOption.label}
+                            </option>
+                          ))}
+                          {filters.source !== "all" &&
+                            page?.summary.sources.every(
+                              (sourceOption) =>
+                                sourceOption.value !== filters.source,
+                            ) && (
+                              <option value={filters.source}>
+                                {filters.source}
+                              </option>
+                            )}
+                        </select>
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-status-filter">状态</label>
+                        <select
+                          id="run-status-filter"
+                          value={filters.status}
+                          onChange={(event) =>
+                            applyFilters({ status: event.target.value })
+                          }
+                        >
+                          <option value="all">全部状态</option>
+                          {RUN_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {RUN_STATUS_LABELS[status]}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-command-filter">操作类型</label>
+                        <input
+                          id="run-command-filter"
+                          type="text"
+                          value={
+                            filters.command === "all" ? "" : filters.command
+                          }
+                          maxLength={64}
+                          placeholder="如 scan、preview"
+                          onChange={(event) =>
+                            applyFilters({
+                              command:
+                                event.target.value === ""
+                                  ? "all"
+                                  : event.target.value,
+                            })
+                          }
+                        />
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-from-filter">创建时间从</label>
+                        <input
+                          id="run-from-filter"
+                          type="date"
+                          value={filters.from.slice(0, 10)}
+                          onChange={(event) =>
+                            applyFilters({
+                              from:
+                                event.target.value === ""
+                                  ? ""
+                                  : `${event.target.value}T00:00:00Z`,
+                            })
+                          }
+                        />
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-to-filter">至</label>
+                        <input
+                          id="run-to-filter"
+                          type="date"
+                          value={filters.to.slice(0, 10)}
+                          onChange={(event) =>
+                            applyFilters({
+                              to:
+                                event.target.value === ""
+                                  ? ""
+                                  : `${event.target.value}T23:59:59Z`,
+                            })
+                          }
+                        />
+                      </span>
                       <button
-                        type="button"
+                        type="submit"
                         className="mf-button mf-button-secondary"
-                        onClick={resetFilters}
                       >
-                        重置筛选
+                        搜索
                       </button>
-                    )}
-                  </form>
-                </section>
-                {query.data === undefined ? (
-                  <StatusBanner variant="info" title="正在加载运行清单">
-                    <p>正在从 MediaFlow API 读取运行清单。</p>
-                  </StatusBanner>
-                ) : !query.data.ok ? (
-                  <StatusBanner
-                    variant="error"
-                    title={query.data.failure.title}
-                  >
-                    <p>{query.data.failure.nextAction}</p>
-                    <div className="mf-actions">
-                      <RefreshControl
-                        onRefresh={refresh}
-                        refreshing={isFetching}
-                      />
                       {filtered && (
                         <button
                           type="button"
@@ -784,154 +787,181 @@ export function OperationsLanding() {
                           重置筛选
                         </button>
                       )}
-                    </div>
-                  </StatusBanner>
-                ) : page === null ? null : page.items.length === 0 ? (
-                  <StatusBanner
-                    variant="info"
-                    title={filtered ? "没有匹配的运行" : "还没有运行记录"}
-                  >
-                    <p>
-                      {filtered
-                        ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
-                        : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
-                    </p>
-                    {filtered && (
+                    </form>
+                  </section>
+                  {query.data === undefined ? (
+                    <StatusBanner variant="info" title="正在加载运行清单">
+                      <p>正在从 MediaFlow API 读取运行清单。</p>
+                    </StatusBanner>
+                  ) : !query.data.ok ? (
+                    <StatusBanner
+                      variant="error"
+                      title={query.data.failure.title}
+                    >
+                      <p>{query.data.failure.nextAction}</p>
                       <div className="mf-actions">
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={resetFilters}
-                        >
-                          重置筛选
-                        </button>
+                        <RefreshControl
+                          onRefresh={refresh}
+                          refreshing={isFetching}
+                        />
+                        {filtered && (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            重置筛选
+                          </button>
+                        )}
                       </div>
-                    )}
-                  </StatusBanner>
-                ) : (
-                  <RunTable
-                    page={page}
-                    selectedId={selectedId}
-                    direction={direction}
-                    view={view}
-                    onSelect={selectRun}
-                    onOpenProblem={openProblemRun}
-                    onForward={() => {
-                      if (page.nextCursor) {
-                        turnPage(page.nextCursor, "forward");
-                      }
-                    }}
-                    onBackward={() => {
-                      if (page.previousCursor) {
-                        turnPage(page.previousCursor, "backward");
-                      }
-                    }}
-                  />
-                )}
-              </div>
-              {selectedId !== "" && (
-                <RunDetailPanel
-                  // A different selected run is a different control object:
-                  // remounting resets the pending/result/reconciliation state
-                  // so a lock or an accepted outcome can never carry over to
-                  // another run's controls.
-                  key={selectedId}
-                  query={overviewQuery}
-                  onClose={closeRun}
-                  detailState={detailState}
-                  onDetailStateChange={applyDetailState}
-                  onOpenPreview={(previewId) =>
-                    void navigate({
-                      to: "/operations/organize/preview/$previewId",
-                      params: { previewId },
-                      search: operationsReturnSearch(
-                        operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                      ),
-                    })
-                  }
-                  onOpenRecoveryPreview={(
-                    previewId,
-                    linkId,
-                    sourceTaskId,
-                    sourceItemId,
-                  ) =>
-                    void navigate({
-                      to: "/operations/organize/preview/$previewId",
-                      params: { previewId },
-                      search: {
-                        recoveryLinkId: linkId,
-                        recoveryTaskId: sourceTaskId,
-                        recoveryItemId: sourceItemId,
-                        ...operationsReturnSearch(
+                    </StatusBanner>
+                  ) : page === null ? null : page.items.length === 0 ? (
+                    <StatusBanner
+                      variant="info"
+                      title={filtered ? "没有匹配的运行" : "还没有运行记录"}
+                    >
+                      <p>
+                        {filtered
+                          ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
+                          : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
+                      </p>
+                      {filtered && (
+                        <div className="mf-actions">
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            重置筛选
+                          </button>
+                        </div>
+                      )}
+                    </StatusBanner>
+                  ) : (
+                    <RunTable
+                      page={page}
+                      selectedId={selectedId}
+                      direction={direction}
+                      view={view}
+                      onSelect={selectRun}
+                      onOpenProblem={openProblemRun}
+                      onForward={() => {
+                        if (page.nextCursor) {
+                          turnPage(page.nextCursor, "forward");
+                        }
+                      }}
+                      onBackward={() => {
+                        if (page.previousCursor) {
+                          turnPage(page.previousCursor, "backward");
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+                {selectedId !== "" && (
+                  <RunDetailPanel
+                    // A different selected run is a different control object:
+                    // remounting resets the pending/result/reconciliation state
+                    // so a lock or an accepted outcome can never carry over to
+                    // another run's controls.
+                    key={selectedId}
+                    query={overviewQuery}
+                    onClose={closeRun}
+                    detailState={detailState}
+                    onDetailStateChange={applyDetailState}
+                    onOpenPreview={(previewId) =>
+                      void navigate({
+                        to: "/operations/organize/preview/$previewId",
+                        params: { previewId },
+                        search: operationsReturnSearch(
                           operationsReturnContextFromSearch({
                             ...listSearch(selectedId),
                             ...runDetailStateSearch(detailState),
                           }),
                         ),
-                      },
-                    })
-                  }
-                  onOpenLinkedAnalysis={(taskId, itemId) =>
-                    void navigate({
-                      to: "/operations/tasks/$taskId",
-                      params: { taskId },
-                      search: {
-                        returnOps: operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                        ...runDetailStateSearch(
-                          readRunDetailState({ tab: "detail", item: itemId }),
+                      })
+                    }
+                    onOpenRecoveryPreview={(
+                      previewId,
+                      linkId,
+                      sourceTaskId,
+                      sourceItemId,
+                    ) =>
+                      void navigate({
+                        to: "/operations/organize/preview/$previewId",
+                        params: { previewId },
+                        search: {
+                          recoveryLinkId: linkId,
+                          recoveryTaskId: sourceTaskId,
+                          recoveryItemId: sourceItemId,
+                          ...operationsReturnSearch(
+                            operationsReturnContextFromSearch({
+                              ...listSearch(selectedId),
+                              ...runDetailStateSearch(detailState),
+                            }),
+                          ),
+                        },
+                      })
+                    }
+                    onOpenLinkedAnalysis={(taskId, itemId) =>
+                      void navigate({
+                        to: "/operations/tasks/$taskId",
+                        params: { taskId },
+                        search: {
+                          returnOps: operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(detailState),
+                          }),
+                          ...runDetailStateSearch(
+                            readRunDetailState({ tab: "detail", item: itemId }),
+                          ),
+                        },
+                      })
+                    }
+                    onOpenBatchLinkedAnalysis={(taskId, sourceItemId) => {
+                      const returnState = {
+                        ...detailState,
+                        tab: "detail" as const,
+                        evidenceItem: sourceItemId,
+                      };
+                      void navigate({
+                        to: "/operations/tasks/$taskId",
+                        params: { taskId },
+                        search: {
+                          returnOps: operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(returnState),
+                          }),
+                        },
+                      });
+                    }}
+                    onOpenRecoveryExecution={(executionId) =>
+                      void navigate({
+                        to: "/operations/organize/execution/$executionId",
+                        params: { executionId },
+                        search: operationsReturnSearch(
+                          operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(detailState),
+                          }),
                         ),
-                      },
-                    })
-                  }
-                  onOpenBatchLinkedAnalysis={(taskId, sourceItemId) => {
-                    const returnState = {
-                      ...detailState,
-                      tab: "detail" as const,
-                      evidenceItem: sourceItemId,
-                    };
-                    void navigate({
-                      to: "/operations/tasks/$taskId",
-                      params: { taskId },
-                      search: {
-                        returnOps: operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(returnState),
-                        }),
-                      },
-                    });
-                  }}
-                  onOpenRecoveryExecution={(executionId) =>
-                    void navigate({
-                      to: "/operations/organize/execution/$executionId",
-                      params: { executionId },
-                      search: operationsReturnSearch(
-                        operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                      ),
-                    })
-                  }
-                  onSelectRun={selectRun}
-                />
-              )}
-              {problemRunId !== "" && problemFileType !== null && (
-                <ProblemFilePanel
-                  key={`${problemRunId}:${problemFileType}`}
-                  runId={problemRunId}
-                  problem={problemFileType}
-                  cursor={problemPage.cursor}
-                  onPage={turnProblemPage}
-                  onOpenEvidence={openProblemItemEvidence}
-                  onClose={closeProblemRun}
-                />
-              )}
+                      })
+                    }
+                    onSelectRun={selectRun}
+                  />
+                )}
+                {problemRunId !== "" && problemFileType !== null && (
+                  <ProblemFilePanel
+                    key={`${problemRunId}:${problemFileType}`}
+                    runId={problemRunId}
+                    problem={problemFileType}
+                    cursor={problemPage.cursor}
+                    onPage={turnProblemPage}
+                    onOpenEvidence={openProblemItemEvidence}
+                    onClose={closeProblemRun}
+                  />
+                )}
+              </div>
             </div>
             <WorkerReadinessSection query={readinessQuery} />
             <DiscoveryReadbackSection query={discoveriesQuery} />
@@ -1026,7 +1056,10 @@ function ViewSummary({
         },
       ];
   return (
-    <section className="mf-count-section" aria-label="任务统计">
+    <section
+      className="mf-count-section mf-task-center-summary"
+      aria-label="任务统计"
+    >
       <ul className="mf-count-grid">
         {cards.map((card) => (
           <li className="mf-count-card" key={card.key}>
@@ -1043,10 +1076,12 @@ function ViewSummary({
         ))}
       </ul>
       {summary.attention !== null && summary.attention > 0 && (
-        <p className="mf-dashboard-meta">
-          {summary.attention}{" "}
-          个任务需要处理，可按恢复类型集中查看。同一任务可能涉及多种问题，
-          各类型计数会重叠。
+        <p className="mf-task-center-alert" role="status">
+          <span aria-hidden="true">⚠</span>
+          <span>
+            {summary.attention}{" "}
+            个任务需要处理，可按恢复类型集中查看。同一任务可能涉及多种问题。
+          </span>
         </p>
       )}
       <p className="mf-dashboard-meta">
@@ -1071,11 +1106,7 @@ function ViewNavigation({
   readonly onSelectView: (next: RunView) => void;
 }) {
   return (
-    <section className="mf-run-view-context" aria-label="当前任务视图">
-      <div>
-        <h3>{RUN_VIEW_LABELS[view]}</h3>
-        <p>{RUN_VIEW_DESCRIPTIONS[view]}</p>
-      </div>
+    <div className="mf-run-view-context" aria-label="当前任务视图">
       <nav className="mf-run-tabs mf-view-tabs" aria-label="任务中心视图">
         {RUN_VIEWS.map((candidate) => (
           <button
@@ -1094,7 +1125,11 @@ function ViewNavigation({
           </button>
         ))}
       </nav>
-    </section>
+      <div className="mf-run-view-heading">
+        <h3>{RUN_VIEW_LABELS[view]}</h3>
+        <p>{RUN_VIEW_DESCRIPTIONS[view]}</p>
+      </div>
+    </div>
   );
 }
 
@@ -1200,7 +1235,9 @@ function RunTable({
                         ? run.problemTypes
                             .map((type) => RUN_PROBLEM_LABELS[type])
                             .join("、")
-                        : "待检查后续步骤"}
+                        : run.attentionReason === "run_repair"
+                          ? `运行级修复${run.attentionFailureCategory ? `：${run.attentionFailureCategory}` : ""}`
+                          : "待检查后续步骤"}
                     </td>
                   )}
                   {ended && (
@@ -1211,7 +1248,7 @@ function RunTable({
                     </td>
                   )}
                   {recovery && <td>{RECOVERY_VIEW_EXPLANATIONS[view]}</td>}
-                  <td>
+                  <td className="mf-run-status-cell">
                     <span
                       className={run.attention ? "mf-run-attention" : undefined}
                     >
@@ -1232,7 +1269,7 @@ function RunTable({
                         </span>
                       )}
                   </td>
-                  <td>
+                  <td className="mf-run-time-cell">
                     {ended || recovery
                       ? formatDate(run.updatedAt)
                       : `${RUN_TRIGGER_LABELS[run.trigger]} · ${formatDate(run.createdAt)}`}
@@ -1255,15 +1292,29 @@ function RunTable({
                     <td>
                       {run.problemTypes.length === 0 ? (
                         // A safe continuation step is not one of the five
-                        // technical types, so it opens the run's own evidence
-                        // and next-step surface instead of a problem file list.
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={() => onSelect(run.runId)}
-                        >
-                          查看详情与下一步
-                        </button>
+                        // technical types, and a run-level repair has no item
+                        // file list at all. Neither is a dead action: the
+                        // former opens the run's own evidence/next-step
+                        // surface, the latter opens its existing Job detail
+                        // with the structured repair guidance.
+                        run.attentionReason === "run_repair" &&
+                        run.jobId !== null ? (
+                          <Link
+                            className="mf-button mf-button-secondary"
+                            to="/operations/jobs/$jobId"
+                            params={{ jobId: run.jobId }}
+                          >
+                            查看原因与修复指引
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={() => onSelect(run.runId)}
+                          >
+                            查看详情与下一步
+                          </button>
+                        )
                       ) : run.problemTypes.length === 1 ? (
                         <button
                           type="button"
@@ -1711,6 +1762,28 @@ function RunDetailFacts({
             ) : run.continuation.recoveryPreviewId === null ? (
               <p>{run.continuation.nextAction}</p>
             ) : null}
+          </dd>
+        </div>
+      )}
+      {run.attentionReason === "run_repair" && (
+        <div>
+          <dt>运行级修复</dt>
+          <dd>
+            <p>
+              该运行在任何处理任务创建前失败，保留了可执行的修复/核查证据；
+              它没有逐文件清单，也没有文件计数。
+            </p>
+            {run.attentionFailureCategory !== null && (
+              <p>原因类别：{run.attentionFailureCategory}</p>
+            )}
+            {run.attentionFailureNextAction !== null && (
+              <p>{run.attentionFailureNextAction}</p>
+            )}
+            {run.jobId !== null && (
+              <Link to="/operations/jobs/$jobId" params={{ jobId: run.jobId }}>
+                打开 Job 详情查看完整修复指引
+              </Link>
+            )}
           </dd>
         </div>
       )}

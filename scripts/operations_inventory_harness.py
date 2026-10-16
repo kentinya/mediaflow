@@ -2395,6 +2395,28 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
         ),
     )
 
+    # A Job that failed before any Task existed, carrying durable structured
+    # repair evidence and no linked Task. It is the run-level attention case
+    # with no file members: the 需要处理 view must locate it and its action must
+    # reach the existing Job detail, not a fabricated file list.
+    run_repair_now = datetime.now(UTC)
+    run_repair_job = AutomationJob(
+        "harness-run-repair",
+        AutomationCommand.PREVIEW,
+        AutomationJobStatus.FAILED,
+        run_repair_now,
+        run_repair_now,
+        completed_at=run_repair_now,
+        failure_category="snapshot_digest_mismatch",
+        failure_durable_state="the saved published revision digest no longer matches",
+        failure_side_effects="none",
+        failure_retry_safe=False,
+        failure_next_action=(
+            "restore the exact saved published revision, then emit a new occurrence"
+        ),
+    )
+    state.repository.create_job(run_repair_job)
+
     state.task_center_problems = {
         "mixedTaskId": mixed.task_id,
         "mixedRecognitionItemIds": [
@@ -2409,6 +2431,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
         "classificationItemId": f"{classified.task_id}-class",
         "metadataTaskId": metadata.task_id,
         "metadataItemId": f"{metadata.task_id}-metadata",
+        "runRepairJobId": run_repair_job.job_id,
     }
     return dict(state.task_center_problems)
 

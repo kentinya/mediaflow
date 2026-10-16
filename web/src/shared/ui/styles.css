@@ -4138,6 +4138,195 @@ button.mf-grid-button {
 }
 
 /* --- Unified Operations run inventory (Slice 42 RO-1/RO-2) --- */
+/* --- Slice 45 task center: summary, panel, tabs, filters and row hierarchy --- */
+.mf-operations-inventory {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 28px 32px 64px;
+}
+.mf-task-center-summary .mf-count-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.mf-task-center-summary .mf-count-card {
+  align-items: center;
+  justify-content: center;
+  min-height: 92px;
+  padding: 18px 16px;
+  gap: 6px;
+}
+.mf-task-center-summary .mf-card-button {
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+.mf-task-center-summary .mf-count-value {
+  font-size: 1.9rem;
+  line-height: 1.1;
+}
+.mf-task-center-summary .mf-count-label {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+.mf-task-center-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 12px 16px;
+  border: 1px solid #f2d08a;
+  border-radius: 8px;
+  background: #fdf6e6;
+  color: #8a5a06;
+}
+.mf-task-center-panel {
+  margin-top: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mf-task-center-panel .mf-run-view-context {
+  gap: 0;
+}
+.mf-task-center-panel .mf-run-view-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 20px 0;
+}
+.mf-task-center-panel .mf-run-view-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.mf-task-center-panel .mf-run-view-heading p {
+  margin: 0;
+  color: var(--muted);
+}
+.mf-task-center-panel .mf-run-tabs.mf-view-tabs {
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  gap: 4px;
+}
+.mf-task-center-panel .mf-run-tabs.mf-view-tabs > button {
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mf-task-center-panel .mf-run-tabs.mf-view-tabs > button:hover {
+  color: var(--ink);
+}
+.mf-task-center-panel .mf-run-tabs.mf-view-tabs > button[aria-current="page"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+  background: none;
+}
+.mf-task-center-panel .mf-run-layout,
+.mf-task-center-panel .mf-run-main {
+  padding: 0 20px 20px;
+}
+.mf-task-center-panel .mf-run-filters {
+  border: none;
+  padding: 16px 0;
+}
+.mf-operations-inventory .mf-run-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.mf-operations-inventory .mf-run-filter-bar label {
+  color: var(--muted);
+}
+.mf-operations-inventory .mf-run-filter-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mf-operations-inventory .mf-run-filter-field > label {
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.mf-operations-inventory .mf-run-search-field {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+.mf-operations-inventory .mf-run-search-field input {
+  width: 100%;
+  max-width: none;
+}
+.mf-operations-inventory .mf-run-filter-bar input,
+.mf-operations-inventory .mf-run-filter-bar select {
+  min-height: 36px;
+  max-width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  color: var(--ink);
+}
+.mf-operations-inventory .mf-run-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mf-operations-inventory .mf-run-table-wrap th {
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.mf-operations-inventory .mf-run-table-wrap td {
+  padding: 14px 10px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+.mf-operations-inventory .mf-run-table-wrap tbody tr:hover {
+  background: #f8fafd;
+}
+.mf-operations-inventory .mf-run-table-wrap .mf-run-select {
+  font-weight: 600;
+}
+.mf-operations-inventory .mf-run-table-wrap .mf-run-kind {
+  display: block;
+  margin-top: 2px;
+}
+.mf-operations-inventory .mf-run-table-wrap .mf-run-time-cell {
+  font-variant-numeric: tabular-nums;
+}
+.mf-operations-inventory .mf-run-table-wrap .mf-run-status-cell {
+  min-width: 72px;
+}
+@media (max-width: 760px) {
+  .mf-operations-inventory {
+    padding: 20px 16px 48px;
+  }
+  .mf-task-center-summary .mf-count-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mf-operations-inventory .mf-run-filter-field {
+    flex: 1 1 140px;
+  }
+  .mf-operations-inventory .mf-run-filter-bar input,
+  .mf-operations-inventory .mf-run-filter-bar select {
+    max-width: none;
+    width: 100%;
+  }
+  .mf-task-center-panel .mf-run-tabs.mf-view-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+}
 .mf-operations-inventory .mf-run-filter-bar {
   display: flex;
   flex-wrap: wrap;
