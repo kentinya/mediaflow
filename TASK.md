@@ -243,8 +243,77 @@ B 核对 Task Base..Head、原始日志和身份，独立在 production build/�
 
 ## Developer Completion Report
 
-Not started. 报告实际变更、命令/结果、候选 SHA、证据索引、剩余 Slice 结果、风险与必要架构
-影响；不宣布 Task PASS 或 Slice 完成。复用经验候选至多 1–3 条，供 A 收尾合并。
+```text
+Task ID: 45.2
+Status: READY FOR B REVIEW
+Task Base: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743
+Implementation Head: 25fbe95794deefd5cd828938785c05bd8e20fcc8
+```
+
+### Delivered (RO-2 + the shared RO-6 orchestration it needs)
+
+一个显式准备申请（`autoPrepare`）在同一条持久发现记录上完成：有界发现 → 内部冻结已审阅来源 →
+常驻 Worker 运行完整生产分析 → 链接同一页面上的精确零变更计划摘要。
+
+- **Domain** `mediaflow/domain/media_discovery.py`：新增 `auto_prepare`、`preview_id`、
+  `analyzing` 可领取阶段与 `prepared`；`ANALYZING` 不是执行态，也不授予权限。
+- **Persistence** `mediaflow/infrastructure/sqlite_runtime.py`：增量 `auto_prepare` /
+  `preview_id` 列，claim/heartbeat/release 查询纳入 `analyzing`，并允许终态记录释放自身
+  claim，使已链接分析可重新运行；schema 标记保持 45，升级为增量。
+- **Application** `mediaflow/application/media_discovery.py`：Worker 走完有界发现后复用现有
+  原子 linkage 内部冻结来源，进入 `analyzing`，再通过现有 `ManualOrganizePreviewService`
+  链接精确 Preview；`request_analysis` 只记录一次带版本的重新分析请求。预算/安全截断永不冻结。
+- **API/Worker 装配** `mediaflow/interfaces/service_api.py`、`mediaflow/final_cli.py`：API 与
+  常驻 Worker 使用同一 Preview 权威；discovery 文档发布 `autoPrepare`/`prepared`/`previewId`
+  与 `prepare` 动作，`POST .../discoveries/{id}/analyze` 记录重新分析。
+- **Web** `OrganizeCreationPage.tsx`（新增）、`organize-summary.tsx`（新增，复用给既有 Preview
+  页面）：单项/多项/文件夹/混合选择进入同一创建工作区，显示持久进度、findings、同页精确摘要、
+  行内识别类型修正、破坏性影响确认与“确认整理 N 项”；有界轮询；未知响应只核对不自动重发。
+  `StorageFilesPage` 所有选择都进入该工作区；独立 discovery/intent/preview 路由保留给恢复。
+- **Navigation** `destination-model.ts`：工作区 URL 通过认证延续携带精确 `discoveryId`。
+- **Tests/harness**：新增 `tests/test_organize_preparation.py`（6 个真实 SQLite/Local Storage/
+  合成 Provider 用例）、`OrganizeCreationPage.test.tsx`（3 个契约 fixture 用例）、harness
+  `run-discovery-worker` 路由、fake E2E 与真实 Python/Docker 旅程按新流程更新。
+
+### Evidence
+
+候选 `25fbe95794deefd5cd828938785c05bd8e20fcc8`；完整索引与原始日志：
+`.git/validation-evidence/25fbe95794deefd5cd828938785c05bd8e20fcc8/developer-t4/INDEX.md`。
+
+- 隔离 checkout 全量 Python：**2467 tests OK / 7 skipped / 179.3s**。
+- Web：typecheck/lint/format/build PASS；Vitest **1118 passed / 76 files**；fake E2E **246 passed**；
+  真实 Python inventory **25 passed**；Unicode principal **1 passed**；visual capture **2 passed**
+  （含新建摘要 1536×1024 与窄屏截图，已人工查看）。
+- Wheel：从干净源码构建并 smoke PASS，且实际加载新增 preparation consumer。
+- Docker：creation proof **9 个截图/断言 PASS**（3 次 admission、恰好 1 次 analyze/1 次 Choice/
+  1 次 Execute，预算与安全深度拒绝冻结，真实 Worker 完成主文件与 Trailer 并在重预览时
+  `source_missing` 拒绝重放），release-security smoke PASS。
+- 治理、ruff、compileall、pip check、两份示例配置、无 FFmpeg/FFprobe 匹配均 PASS。
+
+### Pre-existing failure (not waived)
+
+主工作区忽略文件 `.mediaflow/mediaflow.sqlite3` 为 schema 48、本版本期望 45，仅导致
+`test_scan_cli_needs_no_path_or_metadata_token` 失败；已在 Task Base `1fbb709` 用相同输入复现
+（相同断言），隔离候选全量通过。证据 `preexisting-base-repro.log`，交 B 判断。
+
+### Risks / notes for B
+
+- 准备界面的识别类型修正要求该来源存在持久 source-linked Result/evidence（与既有
+  MetadataPolicy 规则一致）；离线栈无外网 Provider，Docker 证明通过生产持久写入路径先行固定
+  已审阅身份。有真实 Provider 的部署不需要这一步。
+- 主工作区保留全部预存脏文件；`config/alist.json` 未被读取、暂存或输出。
+- 架构事实：复用既有 discovery 队列/Worker/Preview，未新增第二套队列或恢复引擎；schema 45 不变。
+
+Reusable lesson candidates (for A's closure reconciliation):
+
+1. **将“准备”建成一个可持久推进的阶段而不是一次性长请求。** 问题：完整分析若在 HTTP 请求内完成，
+   刷新/断线即丢失进度。做法：在既有持久记录上增加 `analyzing` 阶段并由常驻 Worker 推进，浏览器只
+   读持久状态。适用：任何“分析→呈现→确认”的 Web 旅程。
+2. **同一组件的两种呈现必须共用同一渲染实现。** 问题：工作区与独立页面各写一份摘要渲染，容易
+   在修正后分叉。做法：抽出 `organize-summary.tsx` 供两处复用。适用：并行保留的新旧入口。
+3. **离线证明里的“已审阅身份”要走生产持久路径。** 问题：无外网 Provider 时，界面修正无法解析
+   身份而静默变成 blocked。做法：用与独立编辑器相同的 source-linked Result 权威先行固定身份。
+   适用：任何离线但仍要走真实校验的验收。
 
 ## B Review Result
 
