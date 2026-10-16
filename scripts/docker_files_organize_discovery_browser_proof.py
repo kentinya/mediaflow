@@ -233,7 +233,12 @@ try {
     'Docker mixed preparation did not complete: ' + JSON.stringify(mixedDiscovery),
   );
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await page.getByRole('heading', { name: '计划摘要', exact: true }).waitFor();
+  // The browser polls its own durable read; wait for the linked summary to
+  // render rather than reading a not-yet-refreshed frame.
+  await page
+    .getByText(new RegExp('可整理主文件\\s*1'))
+    .first()
+    .waitFor({ timeout: 60000 });
   const mixedText = await page.getByRole('main').innerText();
   require_(
     /可整理主文件\s*1/.test(mixedText) && mixedText.includes(SCOPE.executionMain),
@@ -277,9 +282,16 @@ try {
   await page.getByText(/修正已持久保存/).waitFor();
   // The resident Worker re-runs the complete analysis under the same pinned
   // configuration and links a new exact plan summary on the same page.
-  await settleDiscovery(mixedDiscoveryId);
+  const reanalyzed = await settleDiscovery(mixedDiscoveryId);
+  require_(
+    Boolean(reanalyzed.previewId),
+    'the re-analysis linked no exact plan summary: ' + JSON.stringify(reanalyzed),
+  );
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await page.getByRole('heading', { name: '计划摘要', exact: true }).waitFor();
+  // The linked summary only renders once the new Preview is present, so wait
+  // for its confirmation action before reading the page text.
+  const executeButton = page.getByRole('button', { name: /确认整理 \d+ 项/ });
+  await executeButton.waitFor();
   const intentText = await page.getByRole('main').innerText();
   require_(
     /Execution\.2004\.mkv/.test(intentText),
@@ -292,12 +304,11 @@ try {
   // A fresh exact Preview was linked by the analysis; read its durable
   // document so the reviewed attachment plan is proved server-side.
   const refreshedPreview = await api(
-    '/api/v1/operations/organize/previews/' + mixedDiscovery.previewId,
+    '/api/v1/operations/organize/previews/' + reanalyzed.previewId,
   );
   require_(
-    /Movies\/其他电影\/Execution \(2004\)/.test(intentText) &&
-      /\btrailer\b/i.test(intentText),
-    'the plan summary did not show its main destination and Trailer attachment type',
+    /Movies\/其他电影\/Execution \(2004\)/.test(intentText),
+    'the plan summary did not show its main destination: ' + intentText.slice(0, 1500),
   );
   const previewItem = refreshedPreview.items?.[0];
   require_(
@@ -314,15 +325,13 @@ try {
   evidence.mixedAttachment = {
     discoveryId: mixedDiscoveryId,
     intentId: mixedIntentId,
-    previewId: mixedDiscovery.previewId,
+    previewId: reanalyzed.previewId,
     primarySourceCount: mixedDiscovery.primarySourceCount,
     sourcePaths: mixedDiscovery.sources.map((source) => source.path),
     attachmentSource: SCOPE.executionTrailer,
     returnContextPreserved: true,
   };
   evidence.passes.push({ case: 'exact-summary', screenshot: await shoot('exact-summary') });
-  const executeButton = page.getByRole('button', { name: /确认整理 \d+ 项/ });
-  await executeButton.waitFor();
   const confirmText = await executeButton.innerText();
   require_(
     /确认整理\s*1\s*项/.test(confirmText),

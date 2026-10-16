@@ -27,7 +27,10 @@ import {
   requestOrganizeDiscoveryAnalysis,
   updateOrganizeChoice,
 } from "../../shared/api/api-client";
-import type { OrganizePreviewModel } from "../../entities/operations/organize";
+import type {
+  OrganizeIntentItemModel,
+  OrganizePreviewModel,
+} from "../../entities/operations/organize";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -196,6 +199,7 @@ export function OrganizeCreationPage() {
       readonly namingPolicyId: string;
       readonly classificationPolicyId: string;
       readonly organizePolicyId: string;
+      readonly metadata: OrganizeIntentItemModel["choice"]["metadata"];
     }) => {
       if (preparation === undefined) throw new Error("准备状态尚未就绪。");
       const saved = await updateOrganizeChoice(token, {
@@ -207,6 +211,17 @@ export function OrganizeCreationPage() {
         namingPolicyId: options.namingPolicyId,
         classificationPolicyId: options.classificationPolicyId,
         organizePolicyId: options.organizePolicyId,
+        ...(options.metadata === null
+          ? {}
+          : {
+              metadata: {
+                provider: options.metadata.provider,
+                providerId: options.metadata.providerId,
+                mediaType: options.metadata.mediaType,
+                title: options.metadata.title,
+                year: options.metadata.year,
+              },
+            }),
       });
       if (!saved.ok) throw new Error(saved.code);
       const reanalyzed = await requestOrganizeDiscoveryAnalysis(token, {
@@ -1043,6 +1058,7 @@ export function OrganizeCreationPage() {
                                   classificationPolicyId:
                                     next.classificationPolicyId,
                                   organizePolicyId: next.organizePolicyId,
+                                  metadata: item.choice.metadata,
                                 });
                               }}
                             >

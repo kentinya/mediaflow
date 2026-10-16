@@ -2627,6 +2627,18 @@ export interface UpdateOrganizeChoiceOptions {
   readonly namingPolicyId?: string;
   readonly classificationPolicyId?: string;
   readonly organizePolicyId?: string;
+  /**
+   * The pinned metadata identity already carried by the intent item.  The
+   * backend validates it against durable source-linked evidence; it is not a
+   * free-form provider payload.
+   */
+  readonly metadata?: {
+    readonly provider: string | null;
+    readonly providerId: string | null;
+    readonly mediaType: string | null;
+    readonly title: string | null;
+    readonly year: number | null;
+  };
 }
 
 export async function updateOrganizeChoice(
@@ -2654,6 +2666,15 @@ export async function updateOrganizeChoice(
     if (value !== undefined) {
       body[field] = value;
     }
+  }
+  if (options.metadata !== undefined) {
+    body["metadata"] = {
+      provider: options.metadata.provider,
+      providerId: options.metadata.providerId,
+      mediaType: options.metadata.mediaType,
+      title: options.metadata.title,
+      year: options.metadata.year,
+    };
   }
   return submitOrganizeMutation(
     token,
