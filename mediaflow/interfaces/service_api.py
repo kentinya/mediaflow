@@ -12428,6 +12428,11 @@ class MediaFlowApi:
         next_action = self._discovery_next_action(
             discovery, terminal=terminal, frozen=frozen, worker_ready=worker["ready"]
         )
+        analysis_available, analysis_refusal, analysis_next_action, analysis_pending = (
+            self._media_discovery.analysis_availability(discovery)
+            if self._media_discovery is not None
+            else (False, "discovery_not_preparation", None, False)
+        )
         document: dict[str, object] = {
             "journey": "discovery",
             "discoveryId": discovery.discovery_id,
@@ -12574,14 +12579,11 @@ class MediaFlowApi:
                 "prepare": {
                     # A full preparation that already linked its read-only plan
                     # summary can re-run the analysis after an operator
-                    # correction on its linked intent.  It never grants
-                    # execution authority.
-                    "available": can_manage
-                    and discovery.auto_prepare
-                    and discovery.intent_id is not None
-                    and not terminal
-                    and not discovery.pause_requested
-                    and not discovery.cancel_requested,
+                    # correction on its linked intent.  Availability is the
+                    # exact same predicate ``request_analysis`` enforces, so an
+                    # advertised action can never disagree with the real
+                    # admission.  It never grants execution authority.
+                    "available": can_manage and analysis_available,
                     "method": "POST",
                     "path": (
                         f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze"
@@ -12592,6 +12594,9 @@ class MediaFlowApi:
                         "the resident Worker re-runs the complete zero-mutation analysis "
                         "under the same pinned configuration and links a new exact Preview"
                     ),
+                    "reason": analysis_refusal,
+                    "nextAction": analysis_next_action,
+                    "pendingReason": ("discovery_analysis_pending" if analysis_pending else None),
                 },
             },
             "nextAction": next_action,
@@ -12786,6 +12791,11 @@ class MediaFlowApi:
         ready_items = [item for item in items if item.get("status") == "ready"]
         manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         execute_permitted = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
+        # The bounded, source-grounded identity options per item.  These are
+        # exactly the authorities a save re-validates against, so an ordinary
+        # operator can make a legal identity correction without inventing a
+        # provider payload or falling back to the standalone intent editor.
+        self._attach_allowed_metadata_identities(document, items, intent)
         choice_reason = self._organize_unavailable_reason(
             manage_permitted,
             ApiPermission.MANAGE_MANUAL_ORGANIZE,
@@ -13030,6 +13040,46 @@ class MediaFlowApi:
             },
         }
         return document
+
+    def _attach_allowed_metadata_identities(self, document, items, intent) -> None:
+        """Publish each intent item's bounded source-grounded identity options.
+
+        The values are read from the same durable authority the choice save
+        validates against, so the page can offer a real, legal identity
+        correction without exposing a provider payload or widening the choice.
+        A read never creates work and never calls a Provider.
+        """
+
+        service = self._manual_intents
+        lister = getattr(service, "allowed_metadata_identities", None)
+        if service is None or not callable(lister):
+            return
+        raw_items = document.get("items")
+        if not isinstance(raw_items, list):
+            return
+        by_id = {item.item_id: item for item in intent.items}
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("itemId")
+            model = by_id.get(item_id)
+            if model is None:
+                continue
+            try:
+                identities = lister(model, intent)
+            except Exception:  # noqa: BLE001 - a read must not fail the document
+                identities = ()
+            item["allowedMetadataIdentities"] = [
+                {
+                    "provider": value.get("provider"),
+                    "providerId": value.get("providerId"),
+                    "mediaType": value.get("mediaType"),
+                    "title": value.get("title"),
+                    "year": value.get("year"),
+                }
+                for value in identities
+                if isinstance(value, dict)
+            ]
 
     def _organize_unavailable_reason(
         self, permitted: bool, permission: ApiPermission, message: str

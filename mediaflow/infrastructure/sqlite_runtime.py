@@ -9566,6 +9566,44 @@ class SQLiteTaskRepository:
             ).fetchall()
             return tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
 
+    def list_manual_previews_by_source(
+        self, storage_id: str, path: str, *, limit: int = 10
+    ) -> tuple[ManualOrganizePreview, ...]:
+        """Every exact Preview whose reviewed scope contains this exact source.
+
+        Used only to ground a same-page identity correction in durable,
+        source-linked evidence.  It reads the persisted Preview plan identity
+        for the exact Storage source and never mutates or re-runs analysis.
+        """
+
+        if not isinstance(storage_id, str) or not storage_id.strip():
+            raise ValueError("manual Preview source Storage ID is required")
+        if not isinstance(path, str) or not path.strip() or "\x00" in path:
+            raise ValueError("manual Preview source path is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("manual Preview source limit must be between 1 and 100")
+        # ``source_json`` is canonical JSON; the exact source match is verified
+        # in Python after a bounded candidate read, so a path that merely
+        # contains the requested text can never be mistaken for the exact one.
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT p.preview_id FROM manual_previews p "
+                "JOIN manual_preview_items i ON i.preview_id=p.preview_id "
+                "WHERE i.source_json LIKE ? "
+                "ORDER BY p.created_at DESC, p.preview_id DESC LIMIT ?",
+                (f"%{path}%", limit),
+            ).fetchall()
+            previews = tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
+        return tuple(
+            preview
+            for preview in previews
+            if any(
+                getattr(item.source, "storage_id", None) == storage_id
+                and getattr(item.source, "path", None) == path
+                for item in preview.items
+            )
+        )
+
     def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None:
         values = self.list_manual_previews(intent_id, limit=1)
         return values[0] if values else None
@@ -10002,6 +10040,26 @@ class SQLiteTaskRepository:
         self._validate_manual_discovery_limit(limit, "manual execution")
         self._validate_manual_discovery_id(task_id, "Task ID")
         return self._list_manual_executions_by_column("task_id", task_id, limit)
+
+    def list_manual_execution_item_ids_for_intent(self, intent_id: str) -> tuple[str, ...]:
+        """Every intent item ID any durable manual execution already admitted.
+
+        This is the durable authority for the RO-2 promise that an already
+        admitted item never re-enters a *new* preparation.  The union spans
+        every execution of the intent, including superseded ones, so a finished,
+        failed or still-queued execution all keep their reviewed item out of a
+        fresh creation scope without guessing from a truncated recent list or
+        from whether the source file still exists.
+        """
+
+        self._validate_manual_discovery_id(intent_id, "manual intent ID")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT item_id FROM manual_execution_items WHERE intent_id=? "
+                "ORDER BY item_id",
+                (intent_id,),
+            ).fetchall()
+        return tuple(row["item_id"] for row in rows)
 
     def list_manual_executions_for_task_item(
         self, task_id: str, task_item_id: str, *, limit: int = 100

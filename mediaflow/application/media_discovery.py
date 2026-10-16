@@ -564,41 +564,18 @@ class MediaDiscoveryService:
 
         actor = self._actor(actor)
         discovery = self._require_version(discovery_id, expected_version)
-        if not discovery.auto_prepare:
+        available, code, next_action, pending = self.analysis_availability(discovery)
+        if not available and not pending:
             raise DiscoveryError(
-                "only a full preparation can be re-analyzed",
-                code="discovery_not_preparation",
+                next_action or "this preparation cannot be re-analyzed in its current state",
+                code=code or "discovery_not_preparation",
                 status=409,
-                next_action="open the discovery and use its own reviewed finalize action",
+                next_action=next_action or "start a new preparation if the same scope is wanted",
             )
-        if discovery.intent_id is None:
-            raise DiscoveryError(
-                "this preparation has no frozen source list to analyze yet",
-                code="discovery_not_frozen",
-                status=409,
-                next_action="wait for the bounded discovery to finish, then request the analysis",
-            )
-        if discovery.status is DiscoveryStatus.ANALYZING:
-            # A repeated request converges on the work already queued: the
+        if pending:
+            # A repeated request converges on the analysis already queued: the
             # Worker re-runs the analysis under the same immutable intent.
             return discovery
-        if discovery.status in {DiscoveryStatus.FAILED, DiscoveryStatus.CANCELLED}:
-            raise DiscoveryError(
-                "a failed or cancelled preparation cannot be re-analyzed",
-                code="discovery_already_finished",
-                status=409,
-                next_action="start a new preparation if the same scope is still wanted",
-            )
-        if discovery.pause_requested or discovery.cancel_requested:
-            raise DiscoveryError(
-                "this preparation has a pending control request; settle it first",
-                code="discovery_control_pending",
-                status=409,
-                next_action=(
-                    "refresh the preparation until its control is acknowledged, then request "
-                    "the analysis again"
-                ),
-            )
         now = self._clock()
         updated = replace(
             discovery,
@@ -620,6 +597,51 @@ class MediaDiscoveryService:
             ),
         )
         return self._persist(updated, expected_version=discovery.version)
+
+    def analysis_availability(
+        self, discovery: MediaDiscovery
+    ) -> tuple[bool, str | None, str | None, bool]:
+        """Whether one preparation may re-run its zero-mutation analysis.
+
+        This is the single predicate the API publishes and ``request_analysis``
+        enforces, so an advertised action can never disagree with the real
+        admission.  Returns ``(available, refusal_code, next_action, pending)``.
+        ``pending`` marks a request that is already queued and simply converges
+        on the same work rather than being refused.
+        """
+
+        if not discovery.auto_prepare:
+            return (
+                False,
+                "discovery_not_preparation",
+                "open the discovery and use its own reviewed finalize action",
+                False,
+            )
+        if discovery.intent_id is None:
+            return (
+                False,
+                "discovery_not_frozen",
+                "wait for the bounded discovery to finish, then request the analysis",
+                False,
+            )
+        if discovery.status in {DiscoveryStatus.FAILED, DiscoveryStatus.CANCELLED}:
+            return (
+                False,
+                "discovery_already_finished",
+                "start a new preparation if the same scope is still wanted",
+                False,
+            )
+        if discovery.pause_requested or discovery.cancel_requested:
+            return (
+                False,
+                "discovery_control_pending",
+                "refresh the preparation until its control is acknowledged, then request the "
+                "analysis again",
+                False,
+            )
+        if discovery.status is DiscoveryStatus.ANALYZING:
+            return (False, None, None, True)
+        return (True, None, None, False)
 
     def resume(self, discovery_id: str, *, actor: str, expected_version: int) -> MediaDiscovery:
         """Clear an *acknowledged* cooperative pause so the Worker continues.
@@ -1730,12 +1752,41 @@ class MediaDiscoveryService:
             intent = self._intent_service.get(discovery.intent_id)
         except Exception:  # noqa: BLE001 - a missing intent is a truthful failure
             return self._fail(discovery, claim_token, "intent_unavailable")
+        remaining = self._remaining_intent_item_ids(intent)
+        if not remaining:
+            # Every item of this preparation has already been admitted to an
+            # execution.  Re-running the analysis would only re-review work the
+            # operator already confirmed, so the preparation settles truthfully
+            # at "nothing left to prepare" instead of re-creating a summary.
+            now = self._clock()
+            settled = replace(
+                discovery,
+                status=DiscoveryStatus.COMPLETED,
+                version=discovery.version + 1,
+                preview_id=None,
+                updated_at=now,
+                error=None,
+                progress=replace(
+                    discovery.progress,
+                    phase="prepared",
+                    message=(
+                        "every source of this preparation has already been admitted to an "
+                        "execution; there is no remaining scope to prepare"
+                    ),
+                ),
+            )
+            persisted = self._persist(
+                settled, expected_version=discovery.version, claim_token=claim_token
+            )
+            self._release_claim(persisted.discovery_id, claim_token)
+            return persisted
         try:
             preview = creator(
                 discovery.intent_id,
-                None,
+                list(remaining),
                 expected_version=intent.version,
                 actor=discovery.actor,
+                tolerate_unready_sources=True,
             )
         except Exception as error:  # noqa: BLE001 - report one bounded failure
             code = getattr(error, "code", None)
@@ -1773,6 +1824,26 @@ class MediaDiscoveryService:
         )
         self._release_claim(persisted.discovery_id, claim_token)
         return persisted
+
+    def _remaining_intent_item_ids(self, intent) -> tuple[str, ...]:
+        """The intent items a fresh preparation analysis may still review.
+
+        An item that any durable execution of this intent already admitted is
+        permanently excluded: a completed, failed, ignored or uncertain sibling
+        must never be folded back into a new plan summary.  The set comes from
+        the persisted ``manual_execution_items`` authority, not from whether a
+        source file still exists or from a truncated recent-execution list, so
+        the decision is exact and durable across restarts.
+        """
+
+        reader = getattr(self._repository, "list_manual_execution_item_ids_for_intent", None)
+        admitted: frozenset[str] = frozenset()
+        if callable(reader):
+            try:
+                admitted = frozenset(reader(intent.intent_id))
+            except Exception:  # noqa: BLE001 - a missing reader keeps every item eligible
+                admitted = frozenset()
+        return tuple(item.item_id for item in intent.items if item.item_id not in admitted)
 
     def preparation_preview_id(self, discovery_id: str) -> str | None:
         """The exact read-only Preview linked by a completed preparation, if any."""

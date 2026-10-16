@@ -138,6 +138,8 @@ function action() {
     sideEffects: "none",
     refusal: null,
     pendingReason: null,
+    reason: null,
+    nextAction: null,
   };
 }
 
@@ -264,6 +266,131 @@ describe("organize creation workspace", () => {
     await screen.findByRole("heading", { name: "新建整理任务" });
     await screen.findByText(/不能冻结为可执行清单/);
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+  });
+
+  it("offers a same-page re-check whenever the backend advertises it", async () => {
+    const user = userEvent.setup();
+    let analyzePosts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              actions: {
+                pause: action(),
+                resume: action(),
+                cancel: action(),
+                finalize: action(),
+                prepare: {
+                  ...action(),
+                  available: true,
+                  method: "POST",
+                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
+                },
+              },
+            }),
+          );
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          return jsonResponse(previewDocument());
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
+        ) {
+          analyzePosts += 1;
+          return jsonResponse(
+            discoveryDocument({
+              status: "analyzing",
+              previewId: null,
+              prepared: false,
+            }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    const recheck = await screen.findByRole("button", {
+      name: "重新检查并更新摘要",
+    });
+    await user.click(recheck);
+    await waitFor(() => expect(analyzePosts).toBe(1));
+  });
+
+  it("keeps the unselected sibling confirmable after a selected item was admitted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          const first = (value["items"] as Json[])[0]!;
+          const second = JSON.parse(JSON.stringify(first)) as Json;
+          second["itemId"] = "item-2";
+          second["previewItemId"] = "pitem-2";
+          second["position"] = 1;
+          (second["source"] as Json)["filename"] = "Two.2002.mkv";
+          (second["source"] as Json)["path"] = "Movies/Two.2002.mkv";
+          value["items"] = [first, second];
+          value["executionCandidateItemIds"] = ["item-1", "item-2"];
+          (value["selection"] as Json)["selectedItemIds"] = [
+            "item-1",
+            "item-2",
+          ];
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          // item-1 was already admitted to one durable execution.
+          const value = clone("organizeExecutionList");
+          const first = (value["items"] as Json[])[0]!;
+          first["previewId"] = PREVIEW_ID;
+          first["intentId"] = "intent-1";
+          first["executionId"] = "exec-1";
+          first["taskId"] = "task-1";
+          const actions = first["actions"] as Json;
+          (actions["detail"] as Json)["path"] =
+            "/api/v1/operations/organize/executions/exec-1";
+          (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
+          first["selectedItemIds"] = ["item-1"];
+          first["unselectedItemIds"] = ["item-2"];
+          first["selectedItemCount"] = 1;
+          first["unselectedItemCount"] = 1;
+          return jsonResponse(value);
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    // The admitted item is shown as already accepted and cannot be re-selected.
+    await screen.findByText("已受理执行，不再纳入本次创建");
+    expect(
+      screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
+    ).toBeDisabled();
+    // The unselected sibling keeps its own confirmable state.
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
   });
 
   it("treats an ambiguous Execute response as unknown and reconciles without replay", async () => {

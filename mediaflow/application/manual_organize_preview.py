@@ -185,6 +185,7 @@ class ManualOrganizePreviewService:
         review_decisions: object | None = None,
         skip_current_snapshot_check: bool = False,
         recovery_source_task_id: str | None = None,
+        tolerate_unready_sources: bool = False,
     ) -> ManualOrganizePreview:
         """Create one durable zero-mutation Preview.
 
@@ -194,6 +195,13 @@ class ManualOrganizePreviewService:
         recovery path must review the plan under that pin rather than under the
         current Active revision.  The ordinary Files path keeps the strict
         current-Active rule.
+
+        ``tolerate_unready_sources`` is the one explicit opt-in for the RO-2
+        same-page preparation re-analysis: one source that is missing or has
+        changed becomes its own bounded per-item finding instead of aborting
+        the whole analysis.  That keeps a failed sibling from erasing the
+        correction and readable state of every other remaining item.  It is
+        never used by the ordinary Files admission, which keeps failing closed.
         """
 
         actor = self._actor(actor)
@@ -258,6 +266,22 @@ class ManualOrganizePreviewService:
                     )
                 self._validate_choice(intent, item.choice, record)
             except ManualIntentError as error:
+                if tolerate_unready_sources:
+                    # RO-2: a same-page re-analysis keeps one failed source as
+                    # its own bounded finding instead of erasing the correction
+                    # and readable state of every other remaining item.  The
+                    # per-item outcome below publishes the exact reason and
+                    # next action; nothing is admitted and nothing is mutated.
+                    source_admission_errors[item.source.file_id] = ManualPreviewError(
+                        str(error),
+                        code=error.code,
+                        status=error.status,
+                        next_action=error.next_action,
+                        details={"itemId": item.item_id, **error.details},
+                    )
+                    records[item.item_id] = item.source
+                    states[item.item_id] = self._input_state(intent, item, item.source)
+                    continue
                 if error.code in {"source_stale", "source_missing", "source_invalid"}:
                     self._invalidate_items((item.item_id,), str(error), intent_id=intent.intent_id)
                 raise ManualPreviewError(

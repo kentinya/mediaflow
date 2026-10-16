@@ -1625,6 +1625,9 @@ def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, obje
     Only the two authorization booleans and one fixed explanation leave the
     persisted exact executor input, so the operator can see the destructive
     implication without any plan payload, path or fingerprint being published.
+    The explanation also names the reviewed operation's own source semantics:
+    a MOVE that succeeds leaves no source copy, so it must never be described as
+    "preserving the source".
     """
 
     raw_execution = plan.get("executionPlan")
@@ -1633,26 +1636,49 @@ def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, obje
     cleanup = raw_cleanup if isinstance(raw_cleanup, dict) else {}
     overwrite_required = bool(execution.get("overwriteAuthorized"))
     cleanup_required = cleanup.get("mode") not in {None, "", "none"}
+    operation = str(plan.get("operation") or execution.get("operation") or "").upper()
+    if operation == "MOVE":
+        operation_statement = (
+            "this exact plan moves each source to its reviewed target; after a successful "
+            "organize the source location no longer holds the original media file"
+        )
+    elif operation == "COPY":
+        operation_statement = (
+            "this exact plan copies each source to its reviewed target; the original source "
+            "media file is preserved"
+        )
+    elif operation == "LINK":
+        operation_statement = (
+            "this exact plan links each source to its reviewed target; the original source "
+            "media file is preserved"
+        )
+    elif operation in {"NOOP", "SKIP", ""}:
+        operation_statement = (
+            "this exact plan performs no file operation; the source media file is left in place"
+        )
+    else:
+        operation_statement = (
+            "this exact plan applies the reviewed operation to each source; review its "
+            "per-item effect before confirming"
+        )
     if overwrite_required and cleanup_required:
         statement = (
-            "this exact plan would replace an existing destination file and delete the "
-            "emptied source directories; both require separate explicit authority"
+            f"{operation_statement}; it would also replace an existing destination file and "
+            "delete the emptied source directories, and both require separate explicit "
+            "authority"
         )
     elif overwrite_required:
         statement = (
-            "this exact plan would replace an existing destination file; it requires "
-            "separate explicit overwrite authority"
+            f"{operation_statement}; it would also replace an existing destination file and "
+            "requires separate explicit overwrite authority"
         )
     elif cleanup_required:
         statement = (
-            "this exact plan would delete the emptied source directories after organizing; "
-            "it requires separate explicit source-cleanup authority"
+            f"{operation_statement}; it would also delete the emptied source directories and "
+            "requires separate explicit source-cleanup authority"
         )
     else:
-        statement = (
-            "this exact plan replaces and deletes nothing; source media is preserved by the "
-            "reviewed operation"
-        )
+        statement = operation_statement
     return {
         "overwriteRequired": overwrite_required,
         "sourceCleanupRequired": cleanup_required,
@@ -1916,6 +1942,17 @@ def _bounded_attachment_list(value: object) -> list[dict[str, object]]:
                 or _bounded_location(source.get("path"), segments=1),
                 "storageId": _bounded_identifier(destination.get("storageId"))
                 or _bounded_identifier(source.get("storageId")),
+                # The exact reviewed source and destination of this sidecar, so
+                # the operator can see what really moves/links with the main
+                # file.  Both are bounded Storage-relative identities.
+                "source": {
+                    "storageId": _bounded_identifier(source.get("storageId")),
+                    "path": _bounded_manual_source_path(source.get("path")),
+                },
+                "destination": {
+                    "storageId": _bounded_identifier(destination.get("storageId")),
+                    "path": _bounded_manual_source_path(destination.get("path")),
+                },
             }
         )
     return bounded

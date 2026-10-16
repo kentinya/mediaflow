@@ -102,6 +102,11 @@ export interface OrganizeDiscoveryAction {
    * deliberately not offered yet, such as a pause whose safe-boundary
    * acknowledgement has not landed. `null` when the action is not pending. */
   readonly pendingReason: string | null;
+  /** A bounded explanation of why a mutating action is refused, published by
+   * the backend so the page can explain the refusal without inventing one. */
+  readonly reason: string | null;
+  /** The backend's own next action for an unavailable mutating action. */
+  readonly nextAction: string | null;
 }
 
 export interface OrganizeDiscoveryModel {
@@ -226,6 +231,14 @@ function normalizeAction(
       typeof record.pendingReason === "string" &&
       record.pendingReason.length > 0
         ? record.pendingReason
+        : null,
+    reason:
+      typeof record.reason === "string" && record.reason.length > 0
+        ? record.reason
+        : null,
+    nextAction:
+      typeof record.nextAction === "string" && record.nextAction.length > 0
+        ? record.nextAction
         : null,
   };
 }
@@ -400,6 +413,8 @@ export function normalizeOrganizeDiscovery(
               sideEffects: "none",
               refusal: null,
               pendingReason: null,
+              reason: null,
+              nextAction: null,
             }
           : normalizeAction(actions, "prepare"),
     },

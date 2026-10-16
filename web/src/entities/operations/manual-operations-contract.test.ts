@@ -146,7 +146,7 @@ describe("real API Preview documents", () => {
         overwriteRequired: false,
         sourceCleanupRequired: false,
         statement:
-          "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+          "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file",
       });
       expect(item?.title).toBe("One");
       expect(item?.provider).toBe("tmdb");

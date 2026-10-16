@@ -72,6 +72,11 @@ export interface PreviewFailureModel {
 }
 
 /** One planned sidecar attachment with a bounded operator label. */
+export interface ManualPreviewAttachmentLocationModel {
+  readonly storageId: string | null;
+  readonly path: string | null;
+}
+
 export interface ManualPreviewAttachmentModel {
   readonly type: string | null;
   readonly operation: string | null;
@@ -79,6 +84,10 @@ export interface ManualPreviewAttachmentModel {
   readonly language: string | null;
   readonly filename: string | null;
   readonly storageId: string | null;
+  /** The exact reviewed source of this sidecar, or `null` for a legacy row. */
+  readonly source: ManualPreviewAttachmentLocationModel | null;
+  /** The exact reviewed destination of this sidecar, or `null`. */
+  readonly destination: ManualPreviewAttachmentLocationModel | null;
 }
 
 /**
@@ -470,6 +479,15 @@ function normalizeDestructiveImplications(
 function normalizeAttachment(value: unknown): ManualPreviewAttachmentModel {
   const source = readRecord(value, "plan.attachments[]");
   try {
+    const location = (field: string) => {
+      const raw = source[field];
+      if (raw === null || raw === undefined) return null;
+      const record = readRecord(raw, `plan.attachments[].${field}`);
+      return {
+        storageId: optionalText(record, "storageId"),
+        path: optionalIdentityPath(record, "path"),
+      };
+    };
     return {
       type: optionalText(source, "type"),
       operation: optionalText(source, "operation"),
@@ -477,6 +495,8 @@ function normalizeAttachment(value: unknown): ManualPreviewAttachmentModel {
       language: optionalText(source, "language"),
       filename: optionalText(source, "filename"),
       storageId: optionalText(source, "storageId"),
+      source: location("source"),
+      destination: location("destination"),
     };
   } catch {
     return fail();

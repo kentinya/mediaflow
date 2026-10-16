@@ -406,6 +406,15 @@
     "intentId": "<uuid>",
     "items": [
       {
+        "allowedMetadataIdentities": [
+          {
+            "mediaType": "movie",
+            "provider": "tmdb",
+            "providerId": "129",
+            "title": "One",
+            "year": 2001
+          }
+        ],
         "choice": {
           "classificationPolicyId": "A",
           "metadata": null,
@@ -611,6 +620,15 @@
     "intentId": "<uuid>",
     "items": [
       {
+        "allowedMetadataIdentities": [
+          {
+            "mediaType": "movie",
+            "provider": "tmdb",
+            "providerId": "129",
+            "title": "One",
+            "year": 2001
+          }
+        ],
         "choice": {
           "classificationPolicyId": "A",
           "metadata": null,
@@ -954,7 +972,7 @@
           "destructiveImplications": {
             "overwriteRequired": false,
             "sourceCleanupRequired": false,
-            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+            "statement": "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -1207,7 +1225,7 @@
           "destructiveImplications": {
             "overwriteRequired": false,
             "sourceCleanupRequired": false,
-            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+            "statement": "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -1437,7 +1455,7 @@
           "destructiveImplications": {
             "overwriteRequired": false,
             "sourceCleanupRequired": false,
-            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+            "statement": "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -1664,7 +1682,7 @@
           "destructiveImplications": {
             "overwriteRequired": false,
             "sourceCleanupRequired": false,
-            "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+            "statement": "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file"
           },
           "deterministic": true,
           "executionState": "ready_for_explicit_authorization",
@@ -1897,7 +1915,7 @@
               "destructiveImplications": {
                 "overwriteRequired": false,
                 "sourceCleanupRequired": false,
-                "statement": "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation"
+                "statement": "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file"
               },
               "deterministic": true,
               "executionState": "ready_for_explicit_authorization",

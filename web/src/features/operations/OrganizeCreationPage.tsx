@@ -43,7 +43,7 @@ import {
   organizeIntentQueryOptions,
   organizePreviewQueryOptions,
 } from "./organize-query";
-import { ItemFindings, displayEnum, safeValue } from "./organize-summary";
+import { ItemFindings, displayEnum } from "./organize-summary";
 import {
   filesReturnHref,
   filesReturnSearch,
@@ -448,14 +448,34 @@ export function OrganizeCreationPage() {
     executeHistoryQuery.data?.ok === true
       ? executeHistoryQuery.data.model
       : undefined;
-  const executionHistorySafe =
-    executionHistory !== undefined &&
-    executionHistory.items.length === 0 &&
-    executionHistory.total === 0;
+  // The union of every item any durable execution of this preparation already
+  // admitted.  These are the siblings that must never re-enter this creation
+  // scope: they show their own durable progress and are confirmed separately.
+  const admittedItemIds = useMemo(() => {
+    const values = new Set<string>();
+    for (const execution of executionHistory?.items ?? []) {
+      for (const itemId of execution.selectedItemIds) values.add(itemId);
+    }
+    return values;
+  }, [executionHistory]);
   const activeSelection = useMemo(() => {
     const requested = selected ?? executableIds;
-    return executableIds.filter((itemId) => requested.includes(itemId));
-  }, [executableIds, selected]);
+    // Already-admitted items are never part of a fresh confirmation: the
+    // filter is applied to the exact candidate list, so stale local state or a
+    // reload can never re-submit a completed, failed or uncertain sibling.
+    return executableIds.filter(
+      (itemId) => requested.includes(itemId) && !admittedItemIds.has(itemId),
+    );
+  }, [executableIds, selected, admittedItemIds]);
+  // The reviewed summary can only be confirmed while it is still the current
+  // durable plan and its history read completed.  An already-admitted sibling
+  // does not disable the page: it is excluded from the fresh selection above
+  // and shown separately, so the remaining ready items stay confirmable.
+  const confirmationBlockedByHistory =
+    executionHistory === undefined || !preview?.current;
+  const selectionOverlapsAdmitted = (selected ?? []).some((itemId) =>
+    admittedItemIds.has(itemId),
+  );
   const selectionKey = JSON.stringify(activeSelection);
   const confirmationIsBoundToSelection =
     confirmationSelectionKey === selectionKey;
@@ -944,18 +964,83 @@ export function OrganizeCreationPage() {
             <section className="mf-count-section" aria-label="计划摘要">
               <h3>计划摘要</h3>
               <p className="mf-dashboard-meta">
-                来源：{safeValue(preview.scopeId) ?? "—"} ·{" "}
-                {displayEnum(preview.status)} ·{" "}
+                来源资源库：{preparation.resourceLibraryId} · 范围：
+                {preparation.selection.scopes.length === 0
+                  ? "—"
+                  : preparation.selection.scopes
+                      .map((scope) => scope.path)
+                      .join("、")}{" "}
+                · {displayEnum(preview.status)} ·{" "}
                 {preview.current ? "当前方案" : "历史方案"} · 不会修改 Storage
               </p>
               <p className="mf-dashboard-meta">
-                可整理主文件 {preview.items.length} 项 · 可确认{" "}
+                发现完整性：
+                {preparation.progress.incomplete
+                  ? `未完整（${label(
+                      REASON_LABELS,
+                      preparation.progress.incompleteReason ?? "",
+                    )}）`
+                  : "已完整遍历"}{" "}
+                · 可整理主文件 {preview.items.length} 项 · 可确认{" "}
                 {executableIds.length} 项 · 未就绪{" "}
                 {preview.items.length - executableIds.length} 项
               </p>
               {preview.nextAction && (
                 <p className="mf-dashboard-meta">{preview.nextAction}</p>
               )}
+              {executionHistory !== undefined && admittedItemIds.size > 0 && (
+                <StatusBanner variant="info" title="已有受理的兄弟项">
+                  <p>
+                    本准备中已有 {admittedItemIds.size}{" "}
+                    项被明确确认并进入执行。这些项保留各自的持久进度与结果，
+                    不会再次进入本次创建范围；可在已有执行记录中查看。
+                  </p>
+                  <ul>
+                    {executionHistory.items.map((existing) => (
+                      <li key={existing.executionId}>
+                        <Link
+                          to="/operations/organize/execution/$executionId"
+                          params={{ executionId: existing.executionId }}
+                          search={{
+                            ...(filesReturn === null
+                              ? {}
+                              : filesReturnSearch(filesReturn)),
+                            ...operationsReturnSearch(operationsReturn),
+                          }}
+                        >
+                          查看已有执行：{existing.selectedItemCount} 个条目，
+                          {displayEnum(existing.status)}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </StatusBanner>
+              )}
+              {preparation.actions.prepare.available && (
+                <div className="mf-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={analyzeMutation.isPending}
+                    onClick={() => analyzeMutation.mutate()}
+                  >
+                    {analyzeMutation.isPending
+                      ? "正在请求重新分析…"
+                      : "重新检查并更新摘要"}
+                  </Button>
+                  <span className="mf-dashboard-meta">
+                    只重新运行零变更分析并链接新摘要；不执行任何整理。
+                  </span>
+                </div>
+              )}
+              {preparation.actions.prepare.reason !== null &&
+                !preparation.actions.prepare.available && (
+                  <p className="mf-dashboard-meta" role="status">
+                    当前不能重新分析：
+                    {preparation.actions.prepare.nextAction ??
+                      preparation.actions.prepare.reason}
+                  </p>
+                )}
               {preview.truncated ? (
                 <StatusBanner variant="warning" title="摘要被截断">
                   <p>
@@ -965,20 +1050,28 @@ export function OrganizeCreationPage() {
               ) : null}
               {preview.items.map((item) => {
                 const isExecutable = executableIds.includes(item.itemId);
+                const alreadyAdmitted = admittedItemIds.has(item.itemId);
                 return (
                   <div className="mf-count-section" key={item.itemId}>
                     <h4>
                       {item.sourceFilename ?? item.itemId}{" "}
                       <span className="mf-status-badge">
-                        {isExecutable ? "可执行" : "未就绪"}
+                        {alreadyAdmitted
+                          ? "已受理执行"
+                          : isExecutable
+                            ? "可执行"
+                            : "未就绪"}
                       </span>
                     </h4>
                     <label>
                       <input
                         type="checkbox"
                         aria-label={`选择 ${item.sourceFilename ?? item.itemId}`}
-                        checked={activeSelection.includes(item.itemId)}
-                        disabled={!isExecutable}
+                        checked={
+                          !alreadyAdmitted &&
+                          activeSelection.includes(item.itemId)
+                        }
+                        disabled={!isExecutable || alreadyAdmitted}
                         onChange={(event) => {
                           setSelected(
                             event.target.checked
@@ -992,7 +1085,9 @@ export function OrganizeCreationPage() {
                           setConfirmationSelectionKey(null);
                         }}
                       />{" "}
-                      纳入此条目
+                      {alreadyAdmitted
+                        ? "已受理执行，不再纳入本次创建"
+                        : "纳入此条目"}
                     </label>
                     <ItemFindings item={item} />
                     {item.failure !== null && (
@@ -1014,70 +1109,147 @@ export function OrganizeCreationPage() {
                       识别类型决定命名、分类和整理策略；保存后会按固定的原配置重新分析，
                       并生成新的计划摘要。
                     </p>
-                    {intent.items.map((item) => {
-                      const options = intent.options.recognitionTypes.filter(
-                        (value) => value.enabled,
-                      );
-                      const selectedOption = options.find(
-                        (value) => value.id === item.choice.recognitionTypeId,
-                      );
-                      const mappingComplete =
-                        selectedOption !== undefined &&
-                        selectedOption.namingPolicyId !== null &&
-                        selectedOption.classificationPolicyId !== null &&
-                        selectedOption.organizePolicyId !== null;
-                      const saved = item.choice.recognitionTypeId ?? "";
-                      return (
-                        <div key={`correction-${item.itemId}`}>
-                          <label>
-                            识别类型（{item.filename ?? item.itemId}）
-                            <select
-                              aria-label={`识别类型 ${item.filename ?? item.itemId}`}
-                              value={saved}
-                              disabled={correctionMutation.isPending}
-                              onChange={(event) => {
-                                const next = options.find(
-                                  (value) => value.id === event.target.value,
-                                );
-                                if (
-                                  next?.namingPolicyId == null ||
-                                  next.classificationPolicyId == null ||
-                                  next.organizePolicyId == null
-                                ) {
-                                  setResult(
-                                    "当前固定配置中该识别类型缺少完整策略映射，不能保存。",
+                    {intent.items
+                      .filter((item) => !admittedItemIds.has(item.itemId))
+                      .map((item) => {
+                        const options = intent.options.recognitionTypes.filter(
+                          (value) => value.enabled,
+                        );
+                        const selectedOption = options.find(
+                          (value) => value.id === item.choice.recognitionTypeId,
+                        );
+                        const mappingComplete =
+                          selectedOption !== undefined &&
+                          selectedOption.namingPolicyId !== null &&
+                          selectedOption.classificationPolicyId !== null &&
+                          selectedOption.organizePolicyId !== null;
+                        const saved = item.choice.recognitionTypeId ?? "";
+                        return (
+                          <div key={`correction-${item.itemId}`}>
+                            <label>
+                              识别类型（{item.filename ?? item.itemId}）
+                              <select
+                                aria-label={`识别类型 ${item.filename ?? item.itemId}`}
+                                value={saved}
+                                disabled={correctionMutation.isPending}
+                                onChange={(event) => {
+                                  const next = options.find(
+                                    (value) => value.id === event.target.value,
                                   );
-                                  return;
-                                }
-                                correctionMutation.mutate({
-                                  itemId: item.itemId,
-                                  recognitionTypeId: next.id,
-                                  intentVersion: intent.version,
-                                  itemVersion: item.version,
-                                  namingPolicyId: next.namingPolicyId,
-                                  classificationPolicyId:
-                                    next.classificationPolicyId,
-                                  organizePolicyId: next.organizePolicyId,
-                                  metadata: item.choice.metadata,
-                                });
-                              }}
-                            >
-                              <option value="">选择识别类型</option>
-                              {options.map((value) => (
-                                <option key={value.id} value={value.id}>
-                                  {value.name ?? value.id}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          {!mappingComplete && saved !== "" && (
-                            <p className="mf-dashboard-meta" role="status">
-                              当前识别类型缺少完整策略映射；不能单独修改下游策略。
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
+                                  if (
+                                    next?.namingPolicyId == null ||
+                                    next.classificationPolicyId == null ||
+                                    next.organizePolicyId == null
+                                  ) {
+                                    setResult(
+                                      "当前固定配置中该识别类型缺少完整策略映射，不能保存。",
+                                    );
+                                    return;
+                                  }
+                                  correctionMutation.mutate({
+                                    itemId: item.itemId,
+                                    recognitionTypeId: next.id,
+                                    intentVersion: intent.version,
+                                    itemVersion: item.version,
+                                    namingPolicyId: next.namingPolicyId,
+                                    classificationPolicyId:
+                                      next.classificationPolicyId,
+                                    organizePolicyId: next.organizePolicyId,
+                                    metadata: item.choice.metadata,
+                                  });
+                                }}
+                              >
+                                <option value="">选择识别类型</option>
+                                {options.map((value) => (
+                                  <option key={value.id} value={value.id}>
+                                    {value.name ?? value.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {!mappingComplete && saved !== "" && (
+                              <p className="mf-dashboard-meta" role="status">
+                                当前识别类型缺少完整策略映射；不能单独修改下游策略。
+                              </p>
+                            )}
+                            {item.allowedMetadataIdentities.length > 0 && (
+                              <label>
+                                元数据身份（{item.filename ?? item.itemId}）
+                                <select
+                                  aria-label={`元数据身份 ${item.filename ?? item.itemId}`}
+                                  value={
+                                    item.choice.metadata === null
+                                      ? ""
+                                      : `${item.choice.metadata.provider}/${item.choice.metadata.providerId}`
+                                  }
+                                  disabled={correctionMutation.isPending}
+                                  onChange={(event) => {
+                                    const chosen =
+                                      item.allowedMetadataIdentities.find(
+                                        (value) =>
+                                          `${value.provider}/${value.providerId}` ===
+                                          event.target.value,
+                                      );
+                                    if (chosen === undefined) return;
+                                    const recognitionOption = options.find(
+                                      (value) =>
+                                        value.id ===
+                                        item.choice.recognitionTypeId,
+                                    );
+                                    if (
+                                      recognitionOption?.namingPolicyId ==
+                                        null ||
+                                      recognitionOption.classificationPolicyId ==
+                                        null ||
+                                      recognitionOption.organizePolicyId == null
+                                    ) {
+                                      setResult(
+                                        "当前识别类型缺少完整策略映射，不能只修改元数据身份。",
+                                      );
+                                      return;
+                                    }
+                                    correctionMutation.mutate({
+                                      itemId: item.itemId,
+                                      recognitionTypeId:
+                                        item.choice.recognitionTypeId ?? "",
+                                      intentVersion: intent.version,
+                                      itemVersion: item.version,
+                                      namingPolicyId:
+                                        recognitionOption.namingPolicyId,
+                                      classificationPolicyId:
+                                        recognitionOption.classificationPolicyId,
+                                      organizePolicyId:
+                                        recognitionOption.organizePolicyId,
+                                      metadata: {
+                                        provider: chosen.provider,
+                                        providerId: chosen.providerId,
+                                        mediaType: chosen.mediaType,
+                                        title: chosen.title,
+                                        year: chosen.year,
+                                      },
+                                    });
+                                  }}
+                                >
+                                  <option value="">选择已固定身份</option>
+                                  {item.allowedMetadataIdentities.map(
+                                    (value) => (
+                                      <option
+                                        key={`${value.provider}/${value.providerId}`}
+                                        value={`${value.provider}/${value.providerId}`}
+                                      >
+                                        {value.title ?? value.providerId}
+                                        {value.year !== null
+                                          ? ` (${value.year})`
+                                          : ""}
+                                      </option>
+                                    ),
+                                  )}
+                                </select>
+                              </label>
+                            )}
+                          </div>
+                        );
+                      })}
                   </section>
                 )}
               <h4>确认整理</h4>
@@ -1088,6 +1260,21 @@ export function OrganizeCreationPage() {
                       preview.executeAction.reason ?? "后端未提供执行操作"
                     }`}
               </p>
+              {!preview.current && (
+                <StatusBanner variant="warning" title="摘要已不是当前方案">
+                  <p>
+                    此计划摘要已被更新的分析取代；请使用上方“重新检查并更新摘要”
+                    生成当前方案，不能确认历史摘要。
+                  </p>
+                </StatusBanner>
+              )}
+              {selectionOverlapsAdmitted && (
+                <StatusBanner variant="warning" title="所选条目已受理">
+                  <p>
+                    所选条目中已有被执行受理的项；已受理项不会重复执行。请取消选择已受理项后确认剩余就绪项。
+                  </p>
+                </StatusBanner>
+              )}
               {requiresOverwrite && (
                 <label>
                   <input
@@ -1119,7 +1306,7 @@ export function OrganizeCreationPage() {
                   type="button"
                   disabled={
                     !preview.executeAction.available ||
-                    !executionHistorySafe ||
+                    confirmationBlockedByHistory ||
                     executeMutation.isPending ||
                     unknownSubmission !== null ||
                     activeSelection.length === 0 ||

@@ -27,9 +27,12 @@ from types import SimpleNamespace
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
+from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.strategy_test import (
     SyntheticMetadataProvider,
 )
@@ -37,6 +40,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
     DiscoveryStatus,
 )
+from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -151,7 +155,48 @@ class _PreparationFixture(unittest.TestCase):
         target = _RecordingStorage("target", self.target_root)
         storages = {"source": source, "target": target}
         providers = MetadataProviderRegistry(
-            (SyntheticMetadataProvider({"movies": {"Movies/One.2001.mkv": ("One", 2001)}}),)
+            (
+                SyntheticMetadataProvider(
+                    (
+                        MediaCandidate(
+                            "tmdb",
+                            "201",
+                            MediaType.MOVIE,
+                            "One",
+                            year=2001,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                        MediaCandidate(
+                            "tmdb",
+                            "202",
+                            MediaType.MOVIE,
+                            "Two",
+                            year=2002,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                        MediaCandidate(
+                            "tmdb",
+                            "203",
+                            MediaType.MOVIE,
+                            "Three",
+                            year=2003,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                        MediaCandidate(
+                            "tmdb",
+                            "204",
+                            MediaType.MOVIE,
+                            "Four",
+                            year=2004,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                    )
+                ),
+            )
         )
         with (
             SQLiteConfigurationRepository(self.database) as configuration_repository,
@@ -188,6 +233,16 @@ class _PreparationFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
+            executions = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                checkpoint_service=ProcessingCheckpointService(repository),
+                storages=dict(storages),
+            )
+            execution_worker = ManualOrganizeExecutionWorker(
+                executions, worker_id="prep-execution-worker", notice=lambda _line: None
+            )
             api = MediaFlowApi(
                 repository,
                 None,
@@ -208,6 +263,7 @@ class _PreparationFixture(unittest.TestCase):
                 bootstrap_document=document,
                 manual_intent_service=intents,
                 manual_preview_service=previews,
+                manual_execution_service=executions,
                 media_discovery_service=discovery,
                 storage_adapters=dict(storages),
             )
@@ -216,6 +272,8 @@ class _PreparationFixture(unittest.TestCase):
                 repository=repository,
                 intents=intents,
                 previews=previews,
+                executions=executions,
+                execution_worker=execution_worker,
                 discovery=discovery,
                 source=source,
                 target=target,
@@ -267,6 +325,43 @@ class _PreparationFixture(unittest.TestCase):
         )
         self.assertIn(status, (200, 202), document)
         return document
+
+    def execute(self, value, preview: dict, item_ids: list[str], *, allow_overwrite=False):
+        """Confirm one exact reviewed subset through the production API."""
+
+        status, document = self.request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview['previewId']}",
+        )
+        self.assertEqual(200, status, document)
+        status, result = self.request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            "POST",
+            {
+                "confirmation": True,
+                "itemIds": item_ids,
+                "expectedIntentVersion": document["intentVersion"],
+                "allowOverwrite": allow_overwrite,
+                "allowSourceCleanup": False,
+            },
+        )
+        self.assertIn(status, (200, 202), result)
+        return result
+
+    def analyze(self, value, discovery_id: str, expected_version: int):
+        return self.request(
+            value,
+            f"/api/v1/operations/organize/discoveries/{discovery_id}/analyze",
+            "POST",
+            {"expectedVersion": expected_version},
+        )
+
+    def run_execution_worker(self, value):
+        completed = value.execution_worker.run_next()
+        if completed is None:
+            raise AssertionError("no admitted execution was claimable")
+        return value.repository.get_manual_execution(completed.execution_id)
 
 
 def _activate(service, document):
@@ -426,6 +521,145 @@ class PreparationJourneyTests(_PreparationFixture):
             stored = value.repository.get_media_discovery(admitted["discoveryId"])
             self.assertEqual(DiscoveryStatus.QUEUED, stored.status)
             self.assertIsNone(stored.preview_id)
+
+    def test_selected_execution_does_not_block_the_unselected_sibling(self) -> None:
+        """RO-2/AC-3/4/5: one confirmed item never blocks the remaining sibling.
+
+        Two genuinely ready plans are produced.  The operator confirms exactly
+        one; the real Worker moves only that item.  Re-opening the same
+        preparation must still let the unselected sibling be corrected and
+        re-analyzed into a fresh summary — without re-including the completed
+        item (which would fail with ``source_missing`` and erase the sibling's
+        correction).
+        """
+
+        self.media("Movies/Three.2003.mkv")
+        self.media("Movies/Four.2004.mkv")
+        with self.journey() as value:
+            self.admit(value, ["Movies"])
+            settled = self.run_worker(value)
+            self.assertEqual("completed", settled["status"], settled)
+            preview = value.repository.get_manual_preview(settled["previewId"])
+            self.assertEqual(
+                {item.status.value for item in preview.items},
+                {"previewed"},
+            )
+            by_path = {item.source.path: item for item in preview.items}
+            three = by_path["Movies/Three.2003.mkv"]
+
+            # Confirm exactly the Three item; the real Worker performs the move.
+            self.execute(value, settled, [three.item_id])
+            completed = self.run_execution_worker(value)
+            self.assertEqual("completed", completed.status.value, completed)
+            self.assertEqual([("delete", "Movies/Three.2003.mkv")], value.source.mutations)
+            self.assertFalse((self.source_root / "Movies/Three.2003.mkv").exists())
+            self.assertTrue((self.source_root / "Movies/Four.2004.mkv").exists())
+
+            # The remaining sibling is still individually correctable.
+            intent = value.repository.get_manual_intent(settled["intentId"])
+            four_item = next(
+                item for item in intent.items if item.source.path.endswith("Four.2004.mkv")
+            )
+            updated = value.intents.update_choice(
+                intent.intent_id,
+                four_item.item_id,
+                {
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+                expected_version=intent.version,
+                expected_item_version=four_item.version,
+                actor="operator",
+            )
+            saved = next(item for item in updated.items if item.item_id == four_item.item_id)
+            self.assertEqual("C", saved.choice.recognition_type_id)
+
+            # Re-analysis must only review the remaining item, so the completed
+            # sibling is never re-included and the analysis does not fail.
+            status, readback = self.analyze(value, settled["discoveryId"], settled["version"])
+            self.assertEqual(200, status, readback)
+            self.assertEqual("analyzing", readback["status"], readback)
+            reanalyzed = self.run_worker(value)
+            self.assertEqual("completed", reanalyzed["status"], reanalyzed)
+            self.assertIsNotNone(reanalyzed["previewId"], reanalyzed)
+            refreshed = value.repository.get_manual_preview(reanalyzed["previewId"])
+            self.assertEqual(
+                {item.source.path for item in refreshed.items},
+                {"Movies/Four.2004.mkv"},
+            )
+            self.assertEqual({item.status.value for item in refreshed.items}, {"previewed"})
+            self.assertEqual("C", refreshed.items[0].choice.recognition_type_id)
+            # No second mutation happened during correction/re-analysis.
+            self.assertEqual([("delete", "Movies/Three.2003.mkv")], value.source.mutations)
+
+    def test_reanalysis_is_advertised_exactly_when_it_is_legal(self) -> None:
+        """RO-2/AC-3: the published prepare action matches the real admission."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            admitted = self.admit(value, ["Movies"])
+            # Before the walk finishes there is no frozen source list yet.
+            status, queued = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{admitted['discoveryId']}",
+            )
+            self.assertEqual(200, status, queued)
+            self.assertFalse(queued["actions"]["prepare"]["available"], queued)
+            settled = self.run_worker(value)
+            self.assertIsNotNone(settled["previewId"], settled)
+            # A completed preparation that already linked its summary still
+            # advertises the same-page re-check the backend really accepts.
+            status, readback = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{settled['discoveryId']}",
+            )
+            self.assertEqual(200, status, readback)
+            self.assertTrue(readback["actions"]["prepare"]["available"], readback)
+            status, accepted = self.analyze(value, settled["discoveryId"], readback["version"])
+            self.assertEqual(200, status, accepted)
+
+    def test_intent_document_offers_bounded_source_grounded_identities(self) -> None:
+        """RO-2/AC-3: the same-page correction offers only real identity options."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            self.admit(value, ["Movies"])
+            settled = self.run_worker(value)
+            status, intent_document = self.request(
+                value, f"/api/v1/operations/organize/intents/{settled['intentId']}"
+            )
+            self.assertEqual(200, status, intent_document)
+            item = intent_document["items"][0]
+            identities = item["allowedMetadataIdentities"]
+            # The preparation analysis already grounded this source's identity
+            # through its own Result, so the operator can select it on-page.
+            self.assertGreaterEqual(len(identities), 1, item)
+            self.assertEqual(identities[0]["provider"], "tmdb")
+            self.assertEqual(identities[0]["providerId"], "201")
+
+            # Saving the offered identity is accepted and re-runs the analysis.
+            status, saved = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{settled['intentId']}/items/"
+                f"{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent_document["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": item["choice"]["recognitionTypeId"],
+                    "metadata": {
+                        "provider": identities[0]["provider"],
+                        "providerId": identities[0]["providerId"],
+                        "mediaType": identities[0]["mediaType"],
+                        "title": identities[0]["title"],
+                        "year": identities[0]["year"],
+                    },
+                },
+            )
+            self.assertEqual(200, status, saved)
+            self.assertEqual([], value.source.mutations)
 
 
 if __name__ == "__main__":

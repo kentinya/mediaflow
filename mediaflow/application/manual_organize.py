@@ -1117,6 +1117,88 @@ class ManualOrganizeIntentService:
         snapshot = self._snapshot_from_runtime(runtime, snapshot_id, snapshot_digest)
         return self.default_choice_for_source(source, snapshot)
 
+    def allowed_metadata_identities(
+        self, item, intent: ManualOrganizeIntent
+    ) -> tuple[dict[str, object], ...]:
+        """The bounded, source-grounded identities one item's choice may select.
+
+        These are exactly the authorities ``_validate_metadata_reference`` will
+        accept for this item: a provider identity already captured by the
+        source's own durable Result/evidence or a source-linked metadata review.
+        The page offers them as bounded options so an ordinary operator can make
+        a legal identity correction without inventing a provider payload; the
+        save still re-validates against the same authority.
+        """
+
+        try:
+            record = self._resolve_choice_source(item, intent)
+        except ManualIntentError:
+            return ()
+        snapshot = intent.options
+        if snapshot is None:
+            return ()
+        selected_type = snapshot.option_maps()["recognitionType"].get(
+            item.choice.recognition_type_id
+        )
+        expected_metadata = (
+            snapshot.option_maps()["metadataPolicy"].get(selected_type.metadata_policy_id)
+            if selected_type is not None
+            else None
+        )
+        fallback_media_type = getattr(expected_metadata, "media_type", None)
+        authorities = self._metadata_authorities(record, snapshot, fallback_media_type)
+        bounded: list[dict[str, object]] = []
+        seen: set[tuple[object, object, object, object, object]] = set()
+        # The identity already pinned on this item's own choice is itself a legal
+        # value: it was validated when the intent was admitted, so re-selecting
+        # it must stay possible after another field changes.
+        current = item.choice.metadata
+        if current is not None and current.provider and current.provider_id:
+            key = (
+                current.provider,
+                current.provider_id,
+                current.media_type,
+                current.title,
+                current.year,
+            )
+            seen.add(key)
+            bounded.append(
+                {
+                    "provider": current.provider,
+                    "providerId": current.provider_id,
+                    "mediaType": current.media_type,
+                    "title": current.title,
+                    "year": current.year,
+                }
+            )
+        for value in authorities:
+            provider = value.get("provider")
+            provider_id = value.get("providerId")
+            if not provider or not provider_id:
+                continue
+            key = (
+                provider,
+                provider_id,
+                value.get("mediaType"),
+                value.get("title"),
+                value.get("year"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            bounded.append(
+                {
+                    "provider": provider,
+                    "providerId": provider_id,
+                    "mediaType": value.get("mediaType"),
+                    "title": value.get("title"),
+                    "year": value.get("year"),
+                }
+            )
+            if len(bounded) >= 20:
+                break
+        return tuple(bounded)
+
     @staticmethod
     def _choice_from_patch(current: ManualChoice, patch: dict[str, object]) -> ManualChoice:
         allowed = {
@@ -1289,6 +1371,13 @@ class ManualOrganizeIntentService:
     ) -> tuple[dict[str, object], ...]:
         authorities: list[dict[str, object]] = []
 
+        # The source's own latest exact preparation/Preview plan already
+        # resolved a real provider identity for this source.  It is durable,
+        # source-linked evidence (the same authority the preview analysis
+        # produced), so the operator can legally re-select it in a same-page
+        # correction without inventing a provider payload.
+        self._append_preview_plan_authorities(authorities, record, snapshot, fallback_media_type)
+
         for result in self._source_results(record):
             if (
                 getattr(result, "source_storage_id", record.storage_id) != record.storage_id
@@ -1382,6 +1471,50 @@ class ManualOrganizeIntentService:
             return fallback
         option = snapshot.option_maps()["metadataPolicy"].get(policy_id)
         return getattr(option, "media_type", None) or fallback
+
+    def _append_preview_plan_authorities(
+        self,
+        authorities: list[dict[str, object]],
+        record,
+        snapshot: ManualConfigurationSnapshot,
+        fallback_media_type: str | None,
+    ) -> None:
+        """Ground the source's own latest exact Preview identity as an option.
+
+        A preparation's zero-mutation analysis resolved a real provider
+        identity for this exact source and persisted it in the linked Preview
+        plan.  That is durable, source-linked evidence: the same authority the
+        intent choice save validates against, so a same-page identity correction
+        can legally select it.  Only the exact source match is used.
+        """
+
+        reader = getattr(self._repository, "list_manual_previews_by_source", None)
+        if not callable(reader):
+            return
+        try:
+            previews = tuple(reader(record.storage_id, record.path, limit=10))
+        except Exception:  # noqa: BLE001 - an absent reader is simply no authority
+            return
+        for preview in previews:
+            for item in getattr(preview, "items", ()):
+                source = getattr(item, "source", None)
+                if (
+                    getattr(source, "storage_id", None) != record.storage_id
+                    or getattr(source, "path", None) != record.path
+                ):
+                    continue
+                plan = getattr(item, "plan", None)
+                identity = plan.get("mediaIdentity") if isinstance(plan, dict) else None
+                if not isinstance(identity, dict):
+                    continue
+                self._append_metadata_authority(
+                    authorities,
+                    identity.get("provider"),
+                    identity.get("providerId"),
+                    identity.get("mediaType") or fallback_media_type,
+                    identity.get("title"),
+                    identity.get("year"),
+                )
 
     @staticmethod
     def _append_metadata_authority(

@@ -310,6 +310,10 @@ def build_managed_fixture(
     (source_root / "Two.2002.mkv").write_bytes(b"second synthetic browser media")
     (source_root / "Three.2003.mkv").write_bytes(b"new-task synthetic browser media")
     (source_root / "Four.2004.mkv").write_bytes(b"default-origin synthetic browser media")
+    # Dedicated sibling sources for the RO-2 independence proof, so a real
+    # MOVE of one can never consume the other journey's fixtures.
+    (source_root / "Ninth.2009.mkv").write_bytes(b"sibling independence synthetic media")
+    (source_root / "Tenth.2010.mkv").write_bytes(b"sibling independence synthetic media")
 
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
@@ -473,6 +477,26 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Eight",
                         year=2008,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # The RO-2 sibling-independence proof's own sources, so a
+                    # real MOVE of one never consumes another journey's media.
+                    MediaCandidate(
+                        "tmdb",
+                        "109",
+                        MediaType.MOVIE,
+                        "Ninth",
+                        year=2009,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "110",
+                        MediaType.MOVIE,
+                        "Tenth",
+                        year=2010,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -1862,7 +1886,14 @@ def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict
     harness itself created.
     """
 
-    allowed = ("One.2001.mkv", "Two.2002.mkv", "Three.2003.mkv", "Four.2004.mkv")
+    allowed = (
+        "One.2001.mkv",
+        "Two.2002.mkv",
+        "Three.2003.mkv",
+        "Four.2004.mkv",
+        "Ninth.2009.mkv",
+        "Tenth.2010.mkv",
+    )
     if filename not in allowed:
         raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")
     stem = filename.split(".")[0]

@@ -53,18 +53,39 @@ export function safeValue(value: string | null): string {
 
 export function destructiveStatement(
   value: ManualPreviewItemModel["destructiveImplications"],
+  operation: ManualPreviewItemModel["operation"] = null,
 ): string {
   if (value === null) return "—";
-  if (value.overwriteRequired && value.sourceCleanupRequired) {
-    return "此精确方案会替换已有目标文件，并在整理后删除已清空的来源目录；需要分别明确授权。";
-  }
+  // The reviewed operation's own source semantics are the authority: a MOVE
+  // that succeeds leaves no source copy, so it must never be described as
+  // preserving the source.  Overwrite and source cleanup stay separate,
+  // independently-authorized effects and are never inferred from "not
+  // overwriting/cleaning" meaning "keeps the source".
+  const retention: string = (() => {
+    switch (operation) {
+      case "MOVE":
+        return "此精确方案会把来源移动到目标；整理成功后来源位置不再保留原文件。";
+      case "COPY":
+        return "此精确方案会把来源复制到目标，来源媒体保留。";
+      case "LINK":
+        return "此精确方案会为来源建立链接，来源媒体保留。";
+      case "NOOP":
+      case "SKIP":
+        return "此精确方案不执行文件操作，来源媒体保留在原位。";
+      default:
+        return "请按上方“操作”一项确认来源是否保留。";
+    }
+  })();
+  const effects: string[] = [];
   if (value.overwriteRequired) {
-    return "此精确方案会替换已有目标文件；需要明确授权覆盖。";
+    effects.push("会替换已有目标文件，需要明确授权覆盖");
   }
   if (value.sourceCleanupRequired) {
-    return "此精确方案会在整理后删除已清空的来源目录；需要明确授权来源清理。";
+    effects.push("会删除整理后为空的来源目录，需要明确授权来源清理");
   }
-  return "此方案不会替换或删除文件，整理后会保留来源媒体。";
+  return effects.length === 0
+    ? retention
+    : `${retention}另外，${effects.join("；")}。`;
 }
 
 export function ItemFindings({
@@ -90,6 +111,42 @@ export function ItemFindings({
       <dd>
         {safeValue(item.provider)} / {safeValue(item.providerId)} ·{" "}
         {safeValue(item.title)}
+        {item.mediaIdentity?.matchedBy
+          ? `（匹配：${item.mediaIdentity.matchedBy}）`
+          : ""}
+      </dd>
+      <dt>目标媒体库</dt>
+      <dd>
+        {safeValue(item.analysis?.classification?.mediaLibraryId ?? null)}
+        {item.analysis?.classification?.matchedRuleName
+          ? ` · 规则：${item.analysis.classification.matchedRuleName}`
+          : ""}
+      </dd>
+      <dt>策略</dt>
+      <dd>
+        {item.policies === null
+          ? "—"
+          : `识别类型策略 ${safeValue(item.policies.recognitionTypePolicyId)} · 元数据策略 ${safeValue(
+              item.policies.metadataPolicyId,
+            )} · 命名 ${safeValue(item.policies.namingPolicyId)} · 分类 ${safeValue(
+              item.policies.classificationPolicyId,
+            )} · 整理 ${safeValue(item.policies.organizePolicyId)}`}
+      </dd>
+      <dt>识别与身份理由</dt>
+      <dd>
+        {item.analysis?.recognition === null ||
+        item.analysis?.recognition === undefined
+          ? "—"
+          : item.analysis.recognition.reasons.length === 0
+            ? `${displayEnum(item.analysis.recognition.status ?? "")}${
+                item.analysis.recognition.ruleId
+                  ? `（规则 ${item.analysis.recognition.ruleId}）`
+                  : ""
+              }`
+            : item.analysis.recognition.reasons
+                .map((value) => value.message ?? value.code ?? "")
+                .filter((value) => value !== "")
+                .join("；")}
       </dd>
       <dt>操作</dt>
       <dd>{displayEnum(safeValue(item.operation))}</dd>
@@ -110,16 +167,28 @@ export function ItemFindings({
       </dd>
       <dt>附件</dt>
       <dd>
-        {item.attachments.length === 0
-          ? "无"
-          : item.attachments
-              .map(
-                (value) =>
-                  `${value.type ?? "附件"}${
-                    value.language ? `（${value.language}）` : ""
-                  }`,
-              )
-              .join("、")}
+        {item.attachments.length === 0 ? (
+          "无"
+        ) : (
+          <ul className="mf-preview-attachments">
+            {item.attachments.map((value, index) => (
+              <li key={`attachment-${index}`}>
+                {value.type ?? "附件"}
+                {value.language ? `（${value.language}）` : ""} ·{" "}
+                {displayEnum(value.operation ?? "")}
+                {value.source !== null || value.destination !== null ? (
+                  <span className="mf-exact-identity">
+                    {" "}
+                    {safeValue(value.source?.storageId ?? null)}:
+                    {safeValue(value.source?.path ?? null)} →{" "}
+                    {safeValue(value.destination?.storageId ?? null)}:
+                    {safeValue(value.destination?.path ?? null)}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </dd>
       <dt>冲突</dt>
       <dd>
@@ -132,7 +201,7 @@ export function ItemFindings({
       <dt>提示</dt>
       <dd>{item.warnings.length === 0 ? "无" : item.warnings.join("；")}</dd>
       <dt>破坏性影响</dt>
-      <dd>{destructiveStatement(implications)}</dd>
+      <dd>{destructiveStatement(implications, item.operation)}</dd>
       <dt>来源目录清理</dt>
       <dd>
         {item.cleanupProjection === null ? (

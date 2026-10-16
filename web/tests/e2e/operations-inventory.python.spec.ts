@@ -912,8 +912,11 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
         entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
     );
   expect(exactExecutePosts()).toHaveLength(1);
+  // The admitted item is now shown as already accepted and is excluded from a
+  // fresh confirmation, so the control cannot re-run it.
+  await expect(page.getByText("已受理执行，不再纳入本次创建")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "确认整理 1 项" }),
+    page.getByRole("button", { name: "确认整理 0 项" }),
   ).toBeDisabled();
   expect(
     await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
@@ -1014,6 +1017,113 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
   expect(exactExecutePosts()).toHaveLength(1);
 });
 
+test("a selected execution never blocks the unselected sibling's correction and re-analysis", async ({
+  page,
+  request,
+}) => {
+  // RO-2 P1 (B blocker 1): two genuinely ready plans, one confirmed, the
+  // sibling must remain correctable and re-analyzable on the same page
+  // without re-including the completed item.
+  const api = recordApiCalls(page);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+
+  await page.getByRole("link", { name: "新建整理任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.getByRole("radio", { name: "source" }).check();
+  await page.getByRole("button", { name: "选择文件或文件夹" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await page.getByRole("checkbox", { name: "选择 Ninth.2009.mkv" }).check();
+  await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page).toHaveURL(/discoveryId=/);
+  const discoveryId = new URL(page.url()).searchParams.get("discoveryId");
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/可整理主文件 2 项/)).toBeVisible();
+
+  // The same-page re-check is offered even though a summary already exists.
+  await expect(
+    page.getByRole("button", { name: "重新检查并更新摘要" }),
+  ).toBeVisible();
+
+  // Confirm exactly the Ninth item.
+  await page.getByRole("checkbox", { name: "选择 Tenth.2010.mkv" }).uncheck();
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/run=/);
+  const worker = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(worker.ok()).toBeTruthy();
+  expect(await worker.json()).toMatchObject({ completed: true, itemCount: 1 });
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Ninth.2009.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({ sourceExists: false });
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Tenth.2010.mkv`,
+      )
+    ).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  // Re-open the same preparation: the admitted sibling is shown as already
+  // accepted, and the unselected sibling stays confirmable.
+  await page.goto(
+    `${BASE}/ui-v2/operations/organize/new?discoveryId=${discoveryId}`,
+  );
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText("已受理执行，不再纳入本次创建")).toBeVisible();
+
+  // Correct the unselected sibling's RecognitionType on-page; the analysis
+  // must only review the remaining item and succeed.
+  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await recognition.last().selectOption("C");
+  await expect(page.getByText(/修正已持久保存/)).toBeVisible();
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/可整理主文件 1 项/)).toBeVisible();
+  // No second execution was admitted by the correction/re-analysis.
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    ),
+  ).toHaveLength(1);
+});
+
 test("a real standalone pipeline run keeps its durable steps through detail and restart", async ({
   page,
   request,
@@ -1028,9 +1138,9 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   await connect(page);
   await openInventory(page);
   // The seeded population plus the three Manual runs produced by the earlier
-  // new-task journey (one from the previous test and two from the corrected
-  // same-page preparation).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
+  // new-task journeys (the reviewed-plan journey, the lost-admission journey
+  // and the sibling-independence journey).
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 5);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1046,7 +1156,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(run.status).toBe("completed");
 
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
@@ -1207,7 +1317,7 @@ test("the default unfiltered task-center origin selects its admitted run through
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 4);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 6);
 
   // The native entry carries the valid empty origin marker.
   await page.getByRole("link", { name: "新建整理任务" }).click();
