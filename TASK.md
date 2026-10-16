@@ -247,7 +247,7 @@ B 核对 Task Base..Head、原始日志和身份，独立在 production build/�
 Task ID: 45.2
 Status: READY FOR B REVIEW
 Task Base: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743
-Implementation Head: ae861d5a1fc43bb59cce65541fc9865f3231aa1a
+Implementation Head: 64cfa85db37aebb9c42e99d7d8dbb2892cafdb57
 ```
 
 ### Delivered (RO-2 correction after B FIX REQUIRED)
@@ -270,8 +270,8 @@ Implementation Head: ae861d5a1fc43bb59cce65541fc9865f3231aa1a
 
 ### Evidence
 
-候选 `ae861d5a1fc43bb59cce65541fc9865f3231aa1a`；完整索引与原始日志：
-`.git/validation-evidence/ae861d5a1fc43bb59cce65541fc9865f3231aa1a/developer-t4-fix/INDEX.md`。
+候选 `64cfa85db37aebb9c42e99d7d8dbb2892cafdb57`；完整索引与原始日志：
+`.git/validation-evidence/64cfa85db37aebb9c42e99d7d8dbb2892cafdb57/developer-t4-fix/INDEX.md`。
 
 - 隔离 checkout 全量 Python：**2470 tests OK / 7 skipped / 195.9s**。
 - 聚焦：discovery **141 OK**，execution **158 OK**。
@@ -279,7 +279,7 @@ Implementation Head: ae861d5a1fc43bb59cce65541fc9865f3231aa1a
   （含新增“已执行项不阻塞未选兄弟项”旅程）；Unicode principal **1 passed**；visual capture
   **2 passed**，已人工查看新建摘要整页截图。
 - Wheel：构建并 smoke PASS，实际加载 preparation consumer。
-- Docker：creation proof **9 个断言 PASS**（candidateSha ae861d5），release-security smoke PASS。
+- Docker：creation proof **9 个断言 PASS**（candidateSha 64cfa85），release-security smoke PASS。
 - 治理、ruff、compileall、pip check、两份示例配置、无 FFmpeg/FFprobe 均 PASS。
 
 ### Pre-existing failure (not waived)
