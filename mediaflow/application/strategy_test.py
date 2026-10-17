@@ -73,6 +73,17 @@ class StrategyConfigurationError(RuntimeError):
     pass
 
 
+def _durable_policy_media_type(policy) -> MediaType | None:
+    """The explicit media type one MetadataPolicy grounds a durable identity to.
+
+    A policy with no declared media type cannot prove that a durable identity
+    belongs to it, so the analysis-reuse path declines to pin one.
+    """
+
+    expected = getattr(policy, "media_type", None)
+    return expected if isinstance(expected, MediaType) else None
+
+
 @dataclass(frozen=True)
 class StrategyTestConfiguration:
     recognition_types: tuple[RecognitionType, ...]
@@ -394,6 +405,7 @@ class StrategyTestRunner:
         metadata_correction: MetadataCorrectionSelection | None = None,
         metadata_identity: MediaIdentity | None = None,
         synthetic_identity: MediaIdentity | None = None,
+        durable_identity: MediaIdentity | None = None,
         classification_selection: ClassificationSelection | None = None,
         recognition_selection: RecognitionSelection | None = None,
         forced_recognition_type_id: str | None = None,
@@ -488,6 +500,49 @@ class StrategyTestRunner:
             raise StrategyConfigurationError(
                 "pinned and synthetic metadata identities cannot be combined"
             )
+        if durable_identity is not None:
+            # A durable analysis-reuse identity is the identity an already
+            # completed, source/pin-bound re-analysis resolved under this exact
+            # pinned MetadataPolicy.  It is applied without any Provider call,
+            # but it must still match the effective policy exactly so a stale or
+            # cross-source identity can never be replanned.
+            if metadata_identity is not None or synthetic_identity is not None:
+                raise StrategyConfigurationError(
+                    "durable metadata identity cannot be combined with another identity"
+                )
+            if live_metadata:
+                raise StrategyConfigurationError(
+                    "durable metadata identity cannot be combined with live metadata mode"
+                )
+            if resolved is None or metadata_policy is None:
+                raise StrategyConfigurationError(
+                    "durable metadata identity requires a resolved MetadataPolicy"
+                )
+            if (
+                metadata_policy.query_type is MediaQueryType.NONE
+                or _durable_policy_media_type(metadata_policy) is None
+            ):
+                # A policy that performs no lookup (or has no explicit media
+                # type) cannot ground a durable identity; fall through to the
+                # ordinary offline path instead of pinning one.
+                durable_identity = None
+            elif durable_identity.recognition_type_id != recognition.recognition_type_id:
+                raise StrategyConfigurationError(
+                    "durable metadata identity RecognitionType no longer matches"
+                )
+            elif (
+                durable_identity.provider != metadata_policy.provider_id
+                or durable_identity.media_type is not metadata_policy.media_type
+            ):
+                raise StrategyConfigurationError(
+                    "durable metadata identity does not match the effective MetadataPolicy"
+                )
+            else:
+                metadata = MetadataIdentificationResult(
+                    MetadataIdentificationStatus.MATCHED,
+                    recognition.recognition_type,
+                    identity=durable_identity,
+                )
         if synthetic_identity is not None:
             # Explicit offline synthetic identity for the complete-flow check.  It
             # performs no Provider call and is never reported as a verified match,

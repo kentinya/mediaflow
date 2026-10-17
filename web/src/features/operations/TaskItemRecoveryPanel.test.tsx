@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
@@ -91,6 +91,7 @@ function recognitionRecovery(resolved = false): Record<string, unknown> {
 }
 
 afterEach(() => {
+  cleanup();
   authStore.clearToken();
   vi.unstubAllGlobals();
 });
@@ -320,5 +321,185 @@ describe("TaskItemRecoveryPanel", () => {
       itemIds: ["item-1"],
       confirmation: true,
     });
+  });
+
+  it("restores a durable prepared summary after a refresh without reposting", async () => {
+    authStore.setToken("task-recovery-test-token");
+    const durable = completedRecovery({
+      preparation_id: "preparation-1",
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "prepared",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: null,
+      execution_id: null,
+      hasExecutionAuthority: false,
+      next_action: "review the current plan summary and confirm",
+    });
+    const calls: { method: string; path: string }[] = [];
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        calls.push({ method, path: url });
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(durable), { status: 200 });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    // The persisted summary is restored from the durable record; the UI never
+    // re-posts prepare-summary to rebuild a lost summary.
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    expect(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理 1 项/,
+      }),
+    ).toBeVisible();
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "POST" && call.path.endsWith("/prepare-summary"),
+      ),
+    ).toBe(false);
+  });
+
+  it("reconciles a lost confirmation response through the durable record", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    let currentRecovery = completedRecovery({
+      preparation_id: "preparation-1",
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "prepared",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: null,
+      execution_id: null,
+      hasExecutionAuthority: false,
+      next_action: "review the current plan summary and confirm",
+    });
+    let confirmAttempts = 0;
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/manual-recovery-preparations/preparation-1/confirm"
+        ) {
+          confirmAttempts += 1;
+          // The admission really committed, but the response is lost.
+          currentRecovery = completedRecovery({
+            preparation_id: "preparation-1",
+            preview_id: "preview-1",
+            intent_id: "intent-1",
+            source_task_id: "task-1",
+            source_item_id: "item-1",
+            status: "confirmed",
+            checkpoint_version: checkpointVersion,
+            configuration_snapshot_id: "active-1",
+            configuration_snapshot_digest: "d".repeat(64),
+            authorization_id: "authorization-1",
+            execution_id: "execution-1",
+            hasExecutionAuthority: false,
+            next_action: "inspect the linked execution",
+          });
+          throw new TypeError("network down");
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    const summary = await within(panel).findByRole("region", {
+      name: "新计划摘要",
+    });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理 1 项/,
+      }),
+    );
+    // The unknown response is never reported as a proven zero effect.
+    expect(await within(panel).findByText(/请求响应未送达/)).toBeVisible();
+    expect(confirmAttempts).toBe(1);
+
+    // An explicit re-read reveals the admitted execution; the confirm action is
+    // no longer offered and no automatic retry POST is issued.
+    await user.click(
+      within(panel).getByRole("button", { name: /重新读取条目后再继续/ }),
+    );
+    expect(
+      await within(panel).findByRole("heading", { name: "本次确认已经受理" }),
+    ).toBeVisible();
+    expect(confirmAttempts).toBe(1);
   });
 });

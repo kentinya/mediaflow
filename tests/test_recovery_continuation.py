@@ -2622,6 +2622,74 @@ class RecoveryContinuationTests(unittest.TestCase):
         )
         return run
 
+    def test_recovery_confirmed_execution_clears_attention_after_real_worker(self):
+        """A confirmed recovery clears the current problem once the real Worker succeeds.
+
+        The same-page journey's durable preparation -> execution -> TaskItem/Result
+        chain is the read authority for the current problem list.  Before the
+        Worker runs the run is still in attention; after the real MOVE completes
+        with a verified effect the source item leaves the problem list and the
+        media is actually moved by OrganizerExecutor.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            # Before confirmation the run is still an outstanding problem.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                before = repository.operations_run(run.task_id)
+                assert before is not None
+                self.assertTrue(before.attention)
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            # Admission alone is not success: the source is untouched and the
+            # problem is still outstanding until the real Worker outcome.
+            self.assertTrue(environment["source_file"].exists())
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                queued = repository.operations_run(run.task_id)
+                assert queued is not None
+                self.assertTrue(queued.attention)
+            # The real resident Worker claims and runs the admitted execution.
+            services["execution"].run_admitted(
+                admitted["executionId"], worker_id="recovery-e2e-worker"
+            )
+            self._close_manual_services(services)
+            self.assertFalse(environment["source_file"].exists())
+            target_files = tuple(Path(environment["target_root"]).rglob("*.mkv"))
+            self.assertEqual(1, len(target_files))
+            # The confirmed follow-up is a durable success, so the source item
+            # no longer occupies the current problem list.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                after = repository.operations_run(run.task_id)
+                assert after is not None
+                self.assertFalse(after.attention)
+                self.assertEqual((), after.problem_types)
+
     def test_recovery_prepare_summary_is_read_only_and_durable(self):
         """Prepare publishes a durable, authority-free summary with zero mutation."""
 
@@ -2681,6 +2749,43 @@ class RecoveryContinuationTests(unittest.TestCase):
             assert durable is not None
             self.assertEqual(preparation["preparation_id"], durable["preparation_id"])
             self.assertEqual(preparation["preview_id"], durable["preview_id"])
+
+    def test_recovery_prepare_summary_reuses_analysis_without_provider_lookup(self):
+        """Preparing the summary adds no Provider search or detail round-trip.
+
+        The completed linked re-analysis already resolved this source's identity
+        under the pinned policy.  The summary consumes that durable identity
+        instead of re-running the analysis chain inside the HTTP request.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            searches_before = len(provider.movie_queries)
+            details_before = len(provider.movie_details)
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual(searches_before, len(provider.movie_queries))
+            self.assertEqual(details_before, len(provider.movie_details))
+            preview = services["previews"].get(preparation["preview_id"])
+            self.assertEqual("previewed", preview.items[0].status.value)
+            self.assertIsNotNone(preview.items[0].plan)
 
     def test_recovery_confirm_prepared_admits_exact_subset_and_links_summary(self):
         """Confirmation admits the exact subset and links the summary atomically."""
@@ -2930,6 +3035,169 @@ class RecoveryContinuationTests(unittest.TestCase):
                         )
                     ),
                 )
+
+    def test_recovery_confirm_refuses_different_or_partial_selection(self):
+        """A repeat confirmation of a *different* selection is never folded in.
+
+        Only an exactly equivalent repeat may resolve to the already-admitted
+        execution; a different, extra, empty, duplicate or malformed selection
+        is a different submission and must be refused with its own reason.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            confirm_path = (
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm"
+            )
+            status, admitted = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            execution_id = admitted["executionId"]
+            # Exactly equivalent repeat still resolves to the same execution.
+            status, repeated = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{repeated}")
+            self.assertEqual(execution_id, repeated["executionId"])
+            # A different selection is refused and returns no execution.
+            status, refused = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": ["never-reviewed-item"], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            self.assertEqual("confirmation_mismatch", refused["error"]["code"])
+            # A different destructive permission is also a different submission.
+            status, refused_permission = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={
+                    "itemIds": [ready_item_id],
+                    "confirmation": True,
+                    "allowOverwrite": True,
+                },
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused_permission}")
+            self.assertEqual("confirmation_mismatch", refused_permission["error"]["code"])
+            # An empty or duplicate selection is refused before any admission.
+            for body in (
+                {"itemIds": [], "confirmation": True},
+                {"itemIds": [ready_item_id, ready_item_id], "confirmation": True},
+            ):
+                status, malformed = api_request(
+                    api, confirm_path, method="POST", body=body, token="operator-token"
+                )
+                self.assertEqual(400, status, f"{malformed}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    1,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+
+    def test_recovery_confirm_reruns_checkpoint_fence_inside_atomic_admission(self):
+        """A checkpoint change after preflight is still refused inside the transaction.
+
+        The HTTP preflight reads the item's checkpoint; a concurrent decision
+        can then move the item before the atomic admission begins.  The
+        admission must re-project the same bounded checkpoint while holding its
+        write transaction, so the stale summary can never create an execution.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                executions_before = len(
+                    repository.list_manual_executions_for_intent(preview.intent_id, limit=100)
+                )
+            # The preflight has already passed; change the original item's
+            # checkpoint before the atomic admission runs.
+            with SQLiteTaskRepository(environment["database"]) as mutator:
+                item = mutator.get_item(run.items[0].task_item_id)
+                assert item is not None
+                mutator.upsert_item(
+                    replace(item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+                )
+            status, refused = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            self.assertIn(
+                refused["error"]["code"], {"stale_checkpoint", "item_stale", "preview_stale"}
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    executions_before,
+                    len(repository.list_manual_executions_for_intent(preview.intent_id, limit=100)),
+                )
+                active_authorizations = tuple(
+                    value
+                    for value in repository.list_manual_execution_authorizations(limit=50)
+                    if value.status.value == "active"
+                )
+                self.assertEqual((), active_authorizations)
 
 
 def _ambiguous_identification() -> MetadataIdentificationResult:

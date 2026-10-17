@@ -840,6 +840,7 @@ class ManualOrganizeExecutionService:
             now,
             display=display,
             preparation_id=preparation_id,
+            checkpoint_projector=self._checkpoint_service._project,
         )
         if admit_only:
             # The durable execution is committed and waiting for the resident

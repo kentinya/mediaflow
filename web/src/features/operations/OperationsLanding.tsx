@@ -883,28 +883,6 @@ export function OperationsLanding() {
                         ),
                       })
                     }
-                    onOpenRecoveryPreview={(
-                      previewId,
-                      linkId,
-                      sourceTaskId,
-                      sourceItemId,
-                    ) =>
-                      void navigate({
-                        to: "/operations/organize/preview/$previewId",
-                        params: { previewId },
-                        search: {
-                          recoveryLinkId: linkId,
-                          recoveryTaskId: sourceTaskId,
-                          recoveryItemId: sourceItemId,
-                          ...operationsReturnSearch(
-                            operationsReturnContextFromSearch({
-                              ...listSearch(selectedId),
-                              ...runDetailStateSearch(detailState),
-                            }),
-                          ),
-                        },
-                      })
-                    }
                     onOpenLinkedAnalysis={(taskId, itemId) =>
                       void navigate({
                         to: "/operations/tasks/$taskId",
@@ -920,23 +898,6 @@ export function OperationsLanding() {
                         },
                       })
                     }
-                    onOpenBatchLinkedAnalysis={(taskId, sourceItemId) => {
-                      const returnState = {
-                        ...detailState,
-                        tab: "detail" as const,
-                        evidenceItem: sourceItemId,
-                      };
-                      void navigate({
-                        to: "/operations/tasks/$taskId",
-                        params: { taskId },
-                        search: {
-                          returnOps: operationsReturnContextFromSearch({
-                            ...listSearch(selectedId),
-                            ...runDetailStateSearch(returnState),
-                          }),
-                        },
-                      });
-                    }}
                     onOpenRecoveryExecution={(executionId) =>
                       void navigate({
                         to: "/operations/organize/execution/$executionId",
@@ -1397,9 +1358,7 @@ function RunDetailPanel({
   detailState,
   onDetailStateChange,
   onOpenPreview,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
-  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
 }: {
@@ -1409,17 +1368,7 @@ function RunDetailPanel({
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
   /** Route to one freshly admitted exact organize Preview. */
   readonly onOpenPreview: (previewId: string) => void;
-  readonly onOpenRecoveryPreview: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
@@ -1589,9 +1538,19 @@ function RunDetailPanel({
         void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
         onOpenRecoveryExecution(result.model.executionId);
       } else {
-        setRemainingMessage(
-          `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
-        );
+        if (isUnknownLifecycleOutcome(result)) {
+          // A lost response must not be described as a proven zero effect.  Keep
+          // the submission locked and let the operator explicitly re-read the
+          // exact run to discover whether this confirmation was admitted.
+          setLocked(true);
+          setRemainingMessage(
+            "确认响应未送达，暂时无法判断是否已受理。请先重新读取此运行的持久状态，再决定是否继续。 ",
+          );
+        } else {
+          setRemainingMessage(
+            `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
+          );
+        }
       }
     } finally {
       setRemainingBusy(false);
@@ -1698,9 +1657,7 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                onOpenRecoveryPreview={onOpenRecoveryPreview}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-                onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
                 facts={
                   <RunDetailFacts

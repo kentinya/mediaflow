@@ -183,6 +183,7 @@ class ManualOrganizePreviewService:
         source_scope_id: str | None = None,
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
         review_decisions: object | None = None,
+        reuse_analysis_identity: object | None = None,
         skip_current_snapshot_check: bool = False,
         recovery_source_task_id: str | None = None,
         tolerate_unready_sources: bool = False,
@@ -315,6 +316,7 @@ class ManualOrganizePreviewService:
                         records[item.item_id],
                         preview_id,
                         review_decisions=review_decisions,
+                        reuse_analysis_identity=reuse_analysis_identity,
                     )
             except ManualPreviewUnavailable as error:
                 outcome = _PreviewOutcome(
@@ -2179,7 +2181,14 @@ class ManualOrganizePreviewService:
         return tuple(sorted(result, key=lambda value: str(value.get("confirmationId"))))
 
     def _run_item(
-        self, intent, item, record, preview_id: str, *, review_decisions: object | None = None
+        self,
+        intent,
+        item,
+        record,
+        preview_id: str,
+        *,
+        review_decisions: object | None = None,
+        reuse_analysis_identity: object | None = None,
     ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
         type_policy = next(
@@ -2242,6 +2251,7 @@ class ManualOrganizePreviewService:
         metadata_selection = None
         metadata_identity = None
         metadata_correction = None
+        durable_identity = None
         if metadata_reference is not None and metadata_policy.query_type is MediaQueryType.NONE:
             # An offline MetadataPolicy performs no lookup by definition, so a bounded
             # identity that the source-linked authority already grounded is pinned
@@ -2267,11 +2277,30 @@ class ManualOrganizePreviewService:
             metadata_selection, metadata_correction = self._bound_metadata_decision(
                 bound, item, type_policy, metadata_policy
             )
+            if (
+                metadata_selection is None
+                and metadata_correction is None
+                and reuse_analysis_identity is not None
+                and metadata_policy.query_type is not MediaQueryType.NONE
+                and self._durable_identity_compatible(
+                    metadata_policy, item, reuse_analysis_identity
+                )
+            ):
+                # Reuse the exact identity an already completed, source/pin-bound
+                # re-analysis resolved under this same MetadataPolicy.  This is a
+                # durable reviewed fact, not a fresh lookup: the summary is built
+                # without a second Provider search/detail round-trip.  The identity
+                # is re-validated against the pinned policy before it is applied.
+                durable_identity = self._rebind_durable_identity(
+                    reuse_analysis_identity, item.choice.recognition_type_id
+                )
         live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
-        if metadata_identity is not None:
+        if metadata_identity is not None or durable_identity is not None:
             live_metadata = False
-        if metadata_identity is None and (
-            metadata_selection is not None or metadata_correction is not None
+        if (
+            metadata_identity is None
+            and durable_identity is None
+            and (metadata_selection is not None or metadata_correction is not None)
         ):
             live_metadata = True
         providers = (
@@ -2289,6 +2318,7 @@ class ManualOrganizePreviewService:
             metadata_selection=metadata_selection,
             metadata_correction=metadata_correction,
             metadata_identity=metadata_identity,
+            durable_identity=durable_identity,
             classification_selection=classification_selection,
             forced_recognition_type_id=item.choice.recognition_type_id,
             storage_path=item.source.path,
@@ -2660,6 +2690,37 @@ class ManualOrganizePreviewService:
             classification_review=lookup("classification_reviews"),
             recognition_review=lookup("recognition_reviews"),
         )
+
+    def _durable_identity_compatible(self, metadata_policy, item, identity) -> bool:
+        """Whether a completed analysis identity can be pinned to this item.
+
+        The identity must match the pinned MetadataPolicy's provider and media
+        type, so a stale, cross-source or cross-policy identity is never
+        replanned.  Its RecognitionType is only the type the analysis happened
+        to resolve under; because the same provider+media type is source-
+        determined, the identity is rebound to this item's own forced
+        RecognitionType by :meth:`_rebind_durable_identity` rather than being
+        rejected for a policy-equivalent type difference.
+        """
+
+        if not isinstance(identity, MediaIdentity):
+            return False
+        if not self._identity_compatible(
+            metadata_policy, identity.provider, identity.media_type.value
+        ):
+            return False
+        expected = getattr(metadata_policy, "media_type", None)
+        if expected is not None and identity.media_type is not expected:
+            return False
+        return True
+
+    @staticmethod
+    def _rebind_durable_identity(
+        identity: MediaIdentity, recognition_type_id: str
+    ) -> MediaIdentity:
+        if identity.recognition_type_id == recognition_type_id:
+            return identity
+        return replace(identity, recognition_type_id=recognition_type_id)
 
     @staticmethod
     def _identity_compatible(policy, provider: str | None, media_type: str | None) -> bool:

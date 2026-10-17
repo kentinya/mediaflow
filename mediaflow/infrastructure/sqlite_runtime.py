@@ -309,7 +309,7 @@ from mediaflow.infrastructure.file_index_schema import (
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 46
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -398,6 +398,20 @@ def _canonical_json(value: object) -> str:
 
 def _fingerprint_json(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _json_text_list(value: object) -> tuple[str, ...]:
+    """Decode one persisted bounded string list, tolerating legacy/NULL rows."""
+
+    if value is None:
+        return ()
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(item for item in parsed if isinstance(item, str))
 
 
 def _command_family_pattern(command: str) -> str:
@@ -2019,8 +2033,9 @@ class SQLiteTaskRepository:
                     input_fingerprint,
                     configuration_snapshot_id, configuration_snapshot_digest, actor,
                     status, current, authorization_id, execution_id,
+                    selected_item_ids_json, allow_overwrite, allow_source_cleanup,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 self._manual_recovery_preparation_values(preparation),
             )
 
@@ -2111,6 +2126,9 @@ class SQLiteTaskRepository:
         *,
         authorization_id: str,
         execution_id: str,
+        selected_item_ids: tuple[str, ...],
+        allow_overwrite: bool,
+        allow_source_cleanup: bool,
         now: datetime,
     ) -> ManualRecoveryPreparation:
         """Link the exact admitted execution to its confirming summary.
@@ -2118,7 +2136,9 @@ class SQLiteTaskRepository:
         This is the only transition that fills ``authorization_id`` and
         ``execution_id``; it is performed inside the same atomic admission that
         consumes the one-shot authority, so a summary never appears confirmed
-        without a durable execution.
+        without a durable execution.  The exact confirmed selection and
+        destructive permissions are persisted together with the execution
+        identity so a repeat confirmation can prove equivalence.
         """
 
         if not isinstance(authorization_id, str) or not authorization_id.strip():
@@ -2127,15 +2147,23 @@ class SQLiteTaskRepository:
             raise ValueError("manual recovery preparation execution ID is required")
         if now.tzinfo is None:
             raise ValueError("manual recovery preparation completion timestamp needs timezone")
+        values = tuple(str(value) for value in selected_item_ids)
+        if not values or len(set(values)) != len(values):
+            raise ValueError("manual recovery preparation selection must be non-empty and unique")
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE manual_recovery_preparations
-                SET status=?, authorization_id=?, execution_id=?, updated_at=?
+                SET status=?, authorization_id=?, execution_id=?,
+                    selected_item_ids_json=?, allow_overwrite=?, allow_source_cleanup=?,
+                    updated_at=?
                 WHERE preparation_id=? AND status=?""",
                 (
                     ManualRecoveryPreparationStatus.CONFIRMED.value,
                     authorization_id,
                     execution_id,
+                    _canonical_json(list(values)),
+                    int(bool(allow_overwrite)),
+                    int(bool(allow_source_cleanup)),
                     now.isoformat(),
                     preparation_id,
                     ManualRecoveryPreparationStatus.PREPARED.value,
@@ -5669,6 +5697,28 @@ class SQLiteTaskRepository:
             )
 
         actionable_failure = task_item_exists("failure")
+        # A confirmed recovery plan summary whose linked execution already
+        # completed with a verified effect is a durable follow-up that no longer
+        # needs operator attention.  This mirrors ``completed_manual_follow_up``
+        # but reads the newer preparation -> execution -> TaskItem/Result chain,
+        # never the legacy link, so a source item resolved through the same-page
+        # journey leaves the current problem list once its real Worker outcome
+        # proves the effect.
+        completed_preparation_follow_up = (
+            "EXISTS (SELECT 1 FROM manual_recovery_preparations preparations "
+            "JOIN manual_executions prep_executions "
+            "ON prep_executions.execution_id = preparations.execution_id "
+            "JOIN manual_execution_items prep_execution_items "
+            "ON prep_execution_items.execution_id = preparations.execution_id "
+            "WHERE preparations.status = 'confirmed' "
+            "AND preparations.source_item_id = continuation_items.item_id "
+            "AND preparations.execution_id IS NOT NULL "
+            "AND prep_executions.status = 'completed' "
+            "AND prep_execution_items.status = 'success' "
+            "AND prep_execution_items.result_id IS NOT NULL "
+            "AND prep_execution_items.effect_certainty = 'verified_complete' "
+            "AND prep_execution_items.uncertain_effects = '[]')"
+        )
         # A resolved review or admitted analysis/retry is no longer a
         # technical failure. Its pending safe-continuation step remains in
         # the generic attention view until a later durable outcome replaces
@@ -5715,11 +5765,12 @@ class SQLiteTaskRepository:
             f"WHERE continuation_items.task_id = {task_identity} "
             "AND continuation_items.status = 'pending' "
             "AND ((continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
-            f"AND NOT {completed_manual_follow_up}) "
+            f"AND NOT {completed_manual_follow_up} "
+            f"AND NOT {completed_preparation_follow_up}) "
             "OR (continuation_items.stage = 'task_retry_requested' AND NOT EXISTS ("
             "SELECT 1 FROM manual_recovery_links recovery_links WHERE "
             "recovery_links.source_item_id = continuation_items.item_id "
-            "AND recovery_links.status = 'consumed'))))"
+            f"AND recovery_links.status = 'consumed') AND NOT {completed_preparation_follow_up})))"
         )
         item_attention = (
             "EXISTS (SELECT 1 FROM task_items attention_items"
@@ -10470,6 +10521,7 @@ class SQLiteTaskRepository:
         *,
         display: RunDisplayContext | None = None,
         preparation_id: str | None = None,
+        checkpoint_projector=None,
     ) -> ManualExecution:
         """Atomically consume exact authority, create Task scope, and fence paths.
 
@@ -10759,7 +10811,15 @@ class SQLiteTaskRepository:
                     # update proves the summary was still the current prepared
                     # record for this source item; a changed or already-confirmed
                     # summary rolls the whole admission back instead of leaving
-                    # an orphaned authority or execution.
+                    # an orphaned authority or execution.  The exact confirmed
+                    # selection and destructive permissions are persisted with
+                    # the execution identity so a repeat confirmation can prove
+                    # equivalence.  The original item's checkpoint is
+                    # re-projected inside this transaction (the same bounded,
+                    # side-effect-free projection the HTTP preflight used) so a
+                    # concurrent decision/result cannot be admitted against a
+                    # stale summary.  No Provider, Storage or long analysis is
+                    # invoked while the write transaction is held.
                     preparation = self._connection.execute(
                         "SELECT * FROM manual_recovery_preparations "
                         "WHERE preparation_id=? AND status=? AND current=1",
@@ -10774,14 +10834,46 @@ class SQLiteTaskRepository:
                             code="preparation_stale",
                             next_action="reload the current plan summary and confirm again",
                         )
+                    context = self._get_processing_checkpoint_context_locked(
+                        preparation["source_item_id"], result_limit=32, audit_limit=64
+                    )
+                    if context is None:
+                        raise ManualExecutionError(
+                            "the original recovery item is unavailable",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                        )
+                    if checkpoint_projector is None:
+                        from mediaflow.application.processing_checkpoint import (
+                            ProcessingCheckpointService,
+                        )
+
+                        current = ProcessingCheckpointService(self)._project(context)
+                    else:
+                        current = checkpoint_projector(context)
+                    if (
+                        context.item.task_id != preparation["source_task_id"]
+                        or current.checkpoint_version != preparation["checkpoint_version"]
+                    ):
+                        raise ManualExecutionError(
+                            "the item changed after the summary was prepared",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                            details={"currentCheckpointVersion": current.checkpoint_version},
+                        )
                     completed = self._connection.execute(
                         """UPDATE manual_recovery_preparations
-                        SET status=?, authorization_id=?, execution_id=?, updated_at=?
+                        SET status=?, authorization_id=?, execution_id=?,
+                            selected_item_ids_json=?, allow_overwrite=?,
+                            allow_source_cleanup=?, updated_at=?
                         WHERE preparation_id=? AND status=? AND current=1""",
                         (
                             ManualRecoveryPreparationStatus.CONFIRMED.value,
                             authorization.authorization_id,
                             execution.execution_id,
+                            _canonical_json(list(execution.selected_item_ids)),
+                            int(bool(execution.allow_overwrite)),
+                            int(bool(execution.allow_source_cleanup)),
                             now.isoformat(),
                             preparation_id,
                             ManualRecoveryPreparationStatus.PREPARED.value,
@@ -14346,6 +14438,9 @@ class SQLiteTaskRepository:
                     configuration_snapshot_digest TEXT NOT NULL,
                     actor TEXT NOT NULL, status TEXT NOT NULL, current INTEGER NOT NULL,
                     authorization_id TEXT UNIQUE, execution_id TEXT,
+                    selected_item_ids_json TEXT NOT NULL DEFAULT '[]',
+                    allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                    allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
                     FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
@@ -14773,6 +14868,37 @@ class SQLiteTaskRepository:
                 "CREATE INDEX IF NOT EXISTS manual_previews_recovery_source "
                 "ON manual_previews(recovery_source_task_id, created_at, preview_id)"
             )
+            # Schema 46: a recovery plan summary records the exact ready subset
+            # and destructive permissions the operator confirmed, so a repeat
+            # confirmation of a *different* selection can never be folded into
+            # the already-admitted submission.  Additive: a legacy row keeps its
+            # existing columns and simply carries no confirmed selection until a
+            # new confirmation fills it.
+            if self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='manual_recovery_preparations'"
+            ).fetchone():
+                preparation_columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(manual_recovery_preparations)"
+                    ).fetchall()
+                }
+                if "selected_item_ids_json" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "selected_item_ids_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                if "allow_overwrite" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "allow_overwrite INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "allow_source_cleanup" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "allow_source_cleanup INTEGER NOT NULL DEFAULT 0"
+                    )
             delivery_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -16162,6 +16288,9 @@ class SQLiteTaskRepository:
             int(preparation.status is ManualRecoveryPreparationStatus.PREPARED),
             preparation.authorization_id,
             preparation.execution_id,
+            _canonical_json(list(preparation.selected_item_ids)),
+            int(bool(preparation.allow_overwrite)),
+            int(bool(preparation.allow_source_cleanup)),
             preparation.created_at.isoformat(),
             preparation.updated_at.isoformat(),
         )
@@ -16192,6 +16321,9 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["updated_at"]),
             row["authorization_id"],
             row["execution_id"],
+            tuple(_json_text_list(row["selected_item_ids_json"])),
+            bool(row["allow_overwrite"]),
+            bool(row["allow_source_cleanup"]),
         )
 
     @staticmethod

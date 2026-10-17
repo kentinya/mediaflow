@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  authorizeTaskItemRecoveryOrganize,
   confirmTaskItemRecoveryPreparation,
   continueTaskItemAnalysis,
   ignoreTaskItemReview,
@@ -76,12 +75,6 @@ export interface TaskItemRecoveryPanelProps {
   readonly itemId: string;
   readonly runId: string;
   readonly active: boolean;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
@@ -92,7 +85,6 @@ export function TaskItemRecoveryPanel({
   itemId,
   runId,
   active,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
 }: TaskItemRecoveryPanelProps) {
@@ -110,8 +102,6 @@ export function TaskItemRecoveryPanel({
     useState<MetadataSearchModel | null>(null);
   const [conflictStrategy, setConflictStrategy] = useState("");
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
-  const [allowOverwriteAtPreview, setAllowOverwriteAtPreview] = useState(false);
-  const [allowCleanupAtPreview, setAllowCleanupAtPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [repeatLocked, setRepeatLocked] = useState(false);
@@ -129,6 +119,28 @@ export function TaskItemRecoveryPanel({
   const model = query.data?.ok === true ? query.data.model : null;
   const checkpoint = model?.checkpoint ?? null;
   const decision = model?.decision ?? null;
+  // The durable summary the current authenticated principal may read is the
+  // single read authority for this journey.  A locally prepared summary is
+  // only a faster path to the same record; a refresh, return, reconnect or
+  // restart restores it from the persisted preparation instead of losing it.
+  const durablePreparation = model?.manualRecoveryPreparation ?? null;
+  const activePreparation =
+    preparation ??
+    (durablePreparation !== null &&
+    (durablePreparation.status === "prepared" ||
+      durablePreparation.status === "confirmed")
+      ? {
+          preparationId: durablePreparation.preparationId,
+          previewId: durablePreparation.previewId,
+          status: durablePreparation.status,
+          checkpointVersion: durablePreparation.checkpointVersion,
+        }
+      : null);
+  const confirmedPreparation =
+    durablePreparation?.status === "confirmed" &&
+    durablePreparation.executionId !== null
+      ? durablePreparation
+      : null;
   const permitted = new Set(checkpoint?.permittedActionIds ?? []);
   const decisionKey = JSON.stringify([
     checkpoint?.checkpointVersion ?? null,
@@ -286,33 +298,6 @@ export function TaskItemRecoveryPanel({
     }
   };
 
-  const authorizePreview = async () => {
-    if (checkpoint === null || busy || repeatLocked) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const result = await authorizeTaskItemRecoveryOrganize(token, {
-        taskId,
-        itemId,
-        expectedCheckpointVersion: checkpoint.checkpointVersion,
-        allowOverwrite: allowOverwriteAtPreview,
-        allowSourceCleanup: allowCleanupAtPreview,
-      });
-      if (result.ok) {
-        setMessage(
-          "精确 Preview 和一次性授权已准备好。先打开 Preview 检查完整计划，再决定是否执行。 ",
-        );
-        setRepeatLocked(false);
-        refreshLinkedReads();
-      } else {
-        await reportUnknown(result.code, result.status);
-        refreshLinkedReads();
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const prepareSummary = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
     setBusy(true);
@@ -350,7 +335,7 @@ export function TaskItemRecoveryPanel({
 
   const confirmPreparation = async () => {
     if (
-      preparation === null ||
+      activePreparation === null ||
       confirmSelection === null ||
       confirmSelection.length === 0 ||
       busy ||
@@ -363,7 +348,7 @@ export function TaskItemRecoveryPanel({
     try {
       const result = await confirmTaskItemRecoveryPreparation(
         token,
-        preparation.preparationId,
+        activePreparation.preparationId,
         {
           itemIds: confirmSelection,
           allowOverwrite: allowOverwriteConfirm,
@@ -380,6 +365,10 @@ export function TaskItemRecoveryPanel({
         refreshLinkedReads();
         onOpenRecoveryExecution?.(result.model.executionId);
       } else {
+        // An unknown response is never treated as a refusal.  Keep the
+        // submission locked and let the operator explicitly re-read the
+        // durable preparation, which reveals whether this exact confirmation
+        // was admitted.
         await reportUnknown(result.code, result.status);
         refreshLinkedReads();
       }
@@ -392,7 +381,11 @@ export function TaskItemRecoveryPanel({
     const result = await query.refetch();
     if (result.data?.ok === true) {
       setRepeatLocked(false);
-      setMessage("已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ");
+      setMessage(
+        result.data.model.manualRecoveryPreparation?.status === "confirmed"
+          ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
+          : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
+      );
     } else {
       setMessage("条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ");
     }
@@ -429,6 +422,7 @@ export function TaskItemRecoveryPanel({
   const canPreparePreview =
     model?.manualRecoveryAvailable === true &&
     checkpoint?.continuationStatus === "completed" &&
+    confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
 
   return (
@@ -473,20 +467,40 @@ export function TaskItemRecoveryPanel({
           <p>{message}</p>
         </StatusBanner>
       )}
-      {preparation !== null && (
-        <SamePagePlanSummary
-          token={token}
-          previewId={preparation.previewId}
-          selected={confirmSelection}
-          onSelected={setConfirmSelection}
-          allowOverwrite={allowOverwriteConfirm}
-          onAllowOverwrite={setAllowOverwriteConfirm}
-          allowCleanup={allowCleanupConfirm}
-          onAllowCleanup={setAllowCleanupConfirm}
-          busy={busy || repeatLocked}
-          onConfirm={() => void confirmPreparation()}
-          heading="新计划摘要（零变更）"
-        />
+      {activePreparation !== null &&
+        activePreparation.status === "prepared" && (
+          <SamePagePlanSummary
+            token={token}
+            previewId={activePreparation.previewId}
+            selected={confirmSelection}
+            onSelected={setConfirmSelection}
+            allowOverwrite={allowOverwriteConfirm}
+            onAllowOverwrite={setAllowOverwriteConfirm}
+            allowCleanup={allowCleanupConfirm}
+            onAllowCleanup={setAllowCleanupConfirm}
+            busy={busy || repeatLocked}
+            onConfirm={() => void confirmPreparation()}
+            heading="新计划摘要（零变更）"
+          />
+        )}
+      {confirmedPreparation !== null && (
+        <StatusBanner variant="info" title="本次确认已经受理">
+          <p>
+            已确认的精确子集已进入常驻 Worker
+            执行；受理不代表文件整理已成功。请打开关联执行查看逐项结果。
+          </p>
+          {confirmedPreparation.executionId && onOpenRecoveryExecution && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() =>
+                onOpenRecoveryExecution(confirmedPreparation.executionId!)
+              }
+            >
+              查看关联执行结果
+            </button>
+          )}
+        </StatusBanner>
       )}
       {repeatLocked && (
         <div className="mf-actions">
@@ -617,57 +631,6 @@ export function TaskItemRecoveryPanel({
               {busy ? "正在准备…" : "生成计划摘要并在此确认"}
             </button>
           </div>
-          <details open={false}>
-            <summary>高级：保留原一次性权限的精确 Preview 兼容入口</summary>
-            <label>
-              <input
-                type="checkbox"
-                checked={allowOverwriteAtPreview}
-                disabled={busy || repeatLocked}
-                onChange={(event) =>
-                  setAllowOverwriteAtPreview(event.target.checked)
-                }
-              />
-              如精确 Preview 显示需要，允许本条目替换现有目标
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={allowCleanupAtPreview}
-                disabled={busy || repeatLocked}
-                onChange={(event) =>
-                  setAllowCleanupAtPreview(event.target.checked)
-                }
-              />
-              如精确 Preview 显示需要，允许删除整理后为空的来源目录
-            </label>
-            <div className="mf-actions">
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                disabled={busy || repeatLocked}
-                onClick={() => void authorizePreview()}
-              >
-                {busy ? "正在准备…" : "准备精确 Preview"}
-              </button>
-              {linked && onOpenRecoveryPreview && (
-                <button
-                  type="button"
-                  className="mf-button"
-                  onClick={() =>
-                    onOpenRecoveryPreview(
-                      linked.previewId,
-                      linked.linkId,
-                      taskId,
-                      itemId,
-                    )
-                  }
-                >
-                  检查精确 Preview
-                </button>
-              )}
-            </div>
-          </details>
         </div>
       )}
       {linked && (
@@ -688,20 +651,13 @@ export function TaskItemRecoveryPanel({
               查看关联执行结果
             </button>
           )}
-          {onOpenRecoveryPreview && linked.status === "authorized" && (
+          {onOpenRecoveryExecution && linked.executionId && (
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              onClick={() =>
-                onOpenRecoveryPreview(
-                  linked.previewId,
-                  linked.linkId,
-                  taskId,
-                  itemId,
-                )
-              }
+              onClick={() => onOpenRecoveryExecution(linked.executionId!)}
             >
-              查看已审核计划
+              查看关联执行结果
             </button>
           )}
         </div>

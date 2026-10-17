@@ -33,6 +33,7 @@ from mediaflow.domain.manual_recovery import (
     ManualRecoveryPreparation,
     ManualRecoveryPreparationStatus,
 )
+from mediaflow.domain.metadata import MediaIdentity, MediaType
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
 
@@ -325,20 +326,16 @@ class ManualRecoveryContinuationService:
                 code="preparation_actor_mismatch",
                 status=403,
             )
+        selected = self._normalize_selection(item_ids)
+        allow_overwrite = bool(allow_overwrite)
+        allow_source_cleanup = bool(allow_source_cleanup)
         if preparation.status is ManualRecoveryPreparationStatus.CONFIRMED:
-            if preparation.execution_id is None:
-                raise ManualRecoveryContinuationError(
-                    "the confirmed summary has no durable execution",
-                    code="preparation_inconsistent",
-                )
-            execution = self._repository.get_manual_execution(preparation.execution_id)
-            if execution is None:
-                raise ManualRecoveryContinuationError(
-                    "the linked execution is unavailable",
-                    code="execution_unavailable",
-                    status=503,
-                )
-            return execution
+            return self._confirmed_equivalent_execution(
+                preparation,
+                selected=selected,
+                allow_overwrite=allow_overwrite,
+                allow_source_cleanup=allow_source_cleanup,
+            )
         if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:
             raise ManualRecoveryContinuationError(
                 "this recovery plan summary is no longer the current plan",
@@ -354,6 +351,10 @@ class ManualRecoveryContinuationService:
                 code="preparation_superseded",
                 next_action="reload the current plan summary and confirm again",
             )
+        # The preflight proves the item still carries the exact summary
+        # checkpoint; the atomic admission re-projects the same bounded
+        # checkpoint inside its own write transaction, so a concurrent change
+        # between this read and admission is still refused.
         checkpoint = self._checkpoint_service.get(
             preparation.source_item_id, task_id=preparation.source_task_id
         )
@@ -366,7 +367,7 @@ class ManualRecoveryContinuationService:
         try:
             execution = self._execution.begin_web_execution(
                 preparation.preview_id,
-                list(item_ids),
+                list(selected),
                 expected_intent_version=preparation.intent_version,
                 actor=actor,
                 permission=permission,
@@ -385,6 +386,52 @@ class ManualRecoveryContinuationService:
             raise ManualRecoveryContinuationError(
                 "the admitted execution was not linked to its plan summary",
                 code="preparation_unlinked",
+                status=503,
+            )
+        return execution
+
+    def _confirmed_equivalent_execution(
+        self,
+        preparation: ManualRecoveryPreparation,
+        *,
+        selected: tuple[str, ...],
+        allow_overwrite: bool,
+        allow_source_cleanup: bool,
+    ) -> ManualExecution:
+        """Resolve a repeat confirmation only when it is exactly equivalent.
+
+        A repeated submission may be folded into the already-admitted execution
+        only when it reviewed the same principal, the same exact selected item
+        set and the same destructive permissions.  Any different, narrower,
+        overlapping or empty selection is a *different* submission and must be
+        refused with its own reason instead of silently returning work the
+        operator never selected.
+        """
+
+        if preparation.execution_id is None or preparation.authorization_id is None:
+            raise ManualRecoveryContinuationError(
+                "the confirmed summary has no durable execution",
+                code="preparation_inconsistent",
+            )
+        if (
+            set(selected) != set(preparation.selected_item_ids)
+            or allow_overwrite != preparation.allow_overwrite
+            or allow_source_cleanup != preparation.allow_source_cleanup
+        ):
+            raise ManualRecoveryContinuationError(
+                "this confirmation differs from the already-admitted submission",
+                code="confirmation_mismatch",
+                next_action=(
+                    "inspect the linked execution; a different selection or permission "
+                    "requires a fresh plan summary and explicit confirmation"
+                ),
+                details={"executionId": preparation.execution_id},
+            )
+        execution = self._repository.get_manual_execution(preparation.execution_id)
+        if execution is None:
+            raise ManualRecoveryContinuationError(
+                "the linked execution is unavailable",
+                code="execution_unavailable",
                 status=503,
             )
         return execution
@@ -475,6 +522,13 @@ class ManualRecoveryContinuationService:
                 if value.item_id == analysis_item.item_id
             ),
             None,
+        )
+        # The durable identity the completed linked re-analysis resolved is a
+        # reviewed fact about this exact source under this pin.  Reading it back
+        # lets the summary reuse the plan without a second live Provider lookup;
+        # it is only ever applied when it still matches the pinned policy.
+        reuse_analysis_identity = self._reusable_analysis_identity(
+            analysis_item.item_id, analysis_result
         )
         analysis_checkpoint = self._checkpoint_service.get(
             analysis_item.item_id, task_id=analysis_task.task_id
@@ -614,6 +668,7 @@ class ManualRecoveryContinuationService:
             snapshot_digest=intent.snapshot_digest,
             actor=actor,
             review_decisions=decisions,
+            reuse_analysis_identity=reuse_analysis_identity,
         )
         preview_item = next(
             (value for value in preview.items if value.item_id == manual_item.item_id), None
@@ -768,6 +823,149 @@ class ManualRecoveryContinuationService:
             item.task_id == source_task_id and item.task_item_id == source_item_id
             for item in executions[0].items
         )
+
+    def _reusable_analysis_identity(self, analysis_item_id: str, analysis_result):
+        """The durable identity one completed linked re-analysis resolved, if any.
+
+        Preference order is the exact persisted Result identity (a reviewed fact
+        about this source under this pin), then the latest bounded pipeline
+        evidence metadata section for the same item.  A malformed or absent
+        identity simply returns ``None`` so the caller falls back to the ordinary
+        (live) analysis instead of inventing one.
+        """
+
+        if analysis_result is not None:
+            identity = self._identity_from_result(analysis_result)
+            if identity is not None:
+                return identity
+        reader = getattr(self._repository, "list_evidence_for_item", None)
+        if not callable(reader):
+            return None
+        try:
+            evidence = tuple(reader(analysis_item_id, limit=16))
+        except Exception:
+            return None
+        for value in evidence:
+            section = getattr(value, "section", None)
+            if not callable(section):
+                continue
+            metadata = section("metadata")
+            if metadata is None or not bool(getattr(metadata, "available", False)):
+                continue
+            document = getattr(metadata, "value", None)
+            identity = self._identity_from_document(document)
+            if identity is not None:
+                return identity
+        return None
+
+    @staticmethod
+    def _identity_from_result(result):
+        provider = getattr(result, "provider", None)
+        provider_id = getattr(result, "provider_id", None)
+        recognition_type = getattr(result, "recognition_type", None)
+        media_type = getattr(result, "media_type", None)
+        title = getattr(result, "title", None)
+        year = getattr(result, "year", None)
+        return ManualRecoveryContinuationService._build_identity(
+            provider, provider_id, media_type, title, year, recognition_type
+        )
+
+    @staticmethod
+    def _identity_from_document(document):
+        if not isinstance(document, dict):
+            return None
+        return ManualRecoveryContinuationService._build_identity(
+            document.get("provider"),
+            document.get("providerId"),
+            document.get("mediaType"),
+            document.get("title"),
+            document.get("year"),
+            document.get("recognitionTypeId"),
+            original_title=document.get("originalTitle"),
+            genres=document.get("genres"),
+            countries=document.get("countries"),
+            languages=document.get("languages"),
+        )
+
+    @staticmethod
+    def _build_identity(
+        provider,
+        provider_id,
+        media_type,
+        title,
+        year,
+        recognition_type,
+        *,
+        original_title=None,
+        genres=None,
+        countries=None,
+        languages=None,
+    ):
+        if not all(isinstance(value, str) and value for value in (provider, provider_id, title)):
+            return None
+        if not isinstance(media_type, str) or not media_type:
+            return None
+
+        def _text_tuple(value):
+            if not isinstance(value, (list, tuple)):
+                return ()
+            return tuple(item for item in value if isinstance(item, str) and item)
+
+        try:
+            return MediaIdentity(
+                provider=provider,
+                provider_id=provider_id,
+                media_type=MediaType(media_type),
+                title=title,
+                original_title=original_title if isinstance(original_title, str) else None,
+                year=year if isinstance(year, int) and not isinstance(year, bool) else None,
+                genres=_text_tuple(genres),
+                countries=_text_tuple(countries),
+                languages=_text_tuple(languages),
+                recognition_type_id=(
+                    recognition_type if isinstance(recognition_type, str) else None
+                ),
+            )
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _normalize_selection(item_ids) -> tuple[str, ...]:
+        """Validate one exact, bounded, unique item selection before any admission."""
+
+        if isinstance(item_ids, (str, bytes)):
+            raise ManualRecoveryContinuationError(
+                "the confirmed selection must be a bounded item list",
+                code="malformed_selection",
+                status=400,
+            )
+        try:
+            values = tuple(item_ids)
+        except TypeError as error:
+            raise ManualRecoveryContinuationError(
+                "the confirmed selection must be a bounded item list",
+                code="malformed_selection",
+                status=400,
+            ) from error
+        if not values:
+            raise ManualRecoveryContinuationError(
+                "at least one ready item must be selected",
+                code="selection_empty",
+                status=400,
+            )
+        if any(not isinstance(value, str) or not value.strip() for value in values):
+            raise ManualRecoveryContinuationError(
+                "the confirmed selection must contain non-empty item IDs",
+                code="malformed_selection",
+                status=400,
+            )
+        if len(set(values)) != len(values):
+            raise ManualRecoveryContinuationError(
+                "the confirmed selection must not contain duplicates",
+                code="duplicate_selection",
+                status=400,
+            )
+        return values
 
     @staticmethod
     def _actor(value: str) -> str:

@@ -253,6 +253,12 @@ def _metadata_section(strategy) -> EvidenceSection:
         "season": identity.season if identity else None,
         "episode": identity.episode if identity else None,
         "episodes": _bounded_items(identity.episodes if identity else ()),
+        # The classification-relevant identity facets are persisted so a
+        # completed re-analysis can be reused for a same-page summary without a
+        # second Provider lookup while still classifying identically.
+        "genres": _bounded_items(identity.genres if identity else ()),
+        "countries": _bounded_items(identity.countries if identity else ()),
+        "languages": _bounded_items(identity.languages if identity else ()),
         "confidence": identity.confidence if identity else None,
         "matchedBy": _bounded(identity.matched_by if identity else None),
         "matchStatus": _bounded(match.status.value) if match else None,

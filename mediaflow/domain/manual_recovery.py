@@ -70,6 +70,13 @@ class ManualRecoveryPreparation:
     updated_at: datetime
     authorization_id: str | None = None
     execution_id: str | None = None
+    #: The exact item IDs the operator confirmed.  Empty while PREPARED; the
+    #: atomic admission fills it together with ``authorization_id`` so a later
+    #: repeat of a *different* selection can never be mistaken for the admitted
+    #: submission.
+    selected_item_ids: tuple[str, ...] = ()
+    allow_overwrite: bool = False
+    allow_source_cleanup: bool = False
 
     @property
     def prepared(self) -> bool:
@@ -112,6 +119,9 @@ class ManualRecoveryPreparation:
             "status": self.status.value,
             "authorization_id": self.authorization_id,
             "execution_id": self.execution_id,
+            "selected_item_ids": list(self.selected_item_ids),
+            "allow_overwrite": self.allow_overwrite,
+            "allow_source_cleanup": self.allow_source_cleanup,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "next_action": self.next_action(),
@@ -248,5 +258,8 @@ class ManualRecoveryPreparationRepository(Protocol):
         *,
         authorization_id: str,
         execution_id: str,
+        selected_item_ids: tuple[str, ...],
+        allow_overwrite: bool,
+        allow_source_cleanup: bool,
         now: datetime,
     ) -> ManualRecoveryPreparation: ...

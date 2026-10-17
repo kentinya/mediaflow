@@ -534,17 +534,7 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** Optional run facts rendered inside 任务详情 above the progress card. */
   readonly facts?: ReactNode;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
 
@@ -555,9 +545,7 @@ export function RunDetailTabs({
   onStateChange,
   active,
   facts,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
-  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
@@ -623,7 +611,6 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
-            onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
             active={active}
           />
           {state.evidenceItem !== null && (
@@ -631,7 +618,6 @@ export function RunDetailTabs({
               runId={runId}
               itemId={state.evidenceItem}
               active={active}
-              onOpenRecoveryPreview={onOpenRecoveryPreview}
               onOpenLinkedAnalysis={onOpenLinkedAnalysis}
               onOpenRecoveryExecution={onOpenRecoveryExecution}
               onClose={() => inspectItem(null)}
@@ -817,7 +803,6 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
-  onOpenBatchLinkedAnalysis,
   active,
 }: {
   readonly runId: string;
@@ -825,10 +810,6 @@ function RunItemsSection({
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
   readonly active: boolean;
 }) {
   const token = useAuthToken();
@@ -1012,7 +993,7 @@ function RunItemsSection({
                   runId={runId}
                   selected={selectedRecoveryItems}
                   onSelectionChange={setSelectedRecoveryItems}
-                  onOpenLinkedAnalysis={onOpenBatchLinkedAnalysis}
+                  onInspectItem={onInspectItem}
                 />
               )}
             </>
@@ -1074,16 +1055,13 @@ function FailedAnalysisBatchControls({
   runId,
   selected,
   onSelectionChange,
-  onOpenLinkedAnalysis,
+  onInspectItem,
 }: {
   readonly taskId: string;
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
-  readonly onOpenLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
+  readonly onInspectItem: (itemId: string) => void;
 }) {
   const token = useAuthToken();
   const authGeneration = useAuthGeneration();
@@ -1117,7 +1095,7 @@ function FailedAnalysisBatchControls({
             runId={runId}
             selected={selected}
             onSelectionChange={onSelectionChange}
-            onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+            onInspectItem={onInspectItem}
             principalId={data.principalId}
             authGeneration={authGeneration}
           />
@@ -1132,7 +1110,7 @@ function VerifiedFailedAnalysisBatchControls({
   runId,
   selected,
   onSelectionChange,
-  onOpenLinkedAnalysis,
+  onInspectItem,
   principalId,
   authGeneration,
 }: {
@@ -1140,10 +1118,7 @@ function VerifiedFailedAnalysisBatchControls({
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
-  readonly onOpenLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
+  readonly onInspectItem: (itemId: string) => void;
   readonly principalId: string;
   readonly authGeneration: number;
 }) {
@@ -1422,18 +1397,19 @@ function VerifiedFailedAnalysisBatchControls({
                     {child.itemId} — {labels[child.status] ?? child.status}
                     {child.error ? `：${child.error}` : ""}；下一步：
                     {child.nextAction}
-                    {child.newTaskId && onOpenLinkedAnalysis && (
+                    {onInspectItem && (
                       <>
                         {" "}
                         ·{" "}
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"
-                          onClick={() =>
-                            onOpenLinkedAnalysis(child.newTaskId!, child.itemId)
-                          }
+                          onClick={() => onInspectItem(child.itemId)}
                         >
-                          查看关联分析 Task
+                          {child.status === "queued" ||
+                          child.status === "running"
+                            ? "在此任务内查看分析进度"
+                            : "在当前界面生成并确认摘要"}
                         </button>
                       </>
                     )}
@@ -1465,7 +1441,6 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onClose,
@@ -1473,12 +1448,6 @@ function RunEvidenceSection({
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onClose: () => void;
@@ -1699,7 +1668,6 @@ function RunEvidenceSection({
                 itemId={itemId}
                 runId={runId}
                 active={active}
-                onOpenRecoveryPreview={onOpenRecoveryPreview}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
               />

@@ -2595,17 +2595,13 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
       item.source_item_id === seeded.batchEligibleItemId,
   );
   expect(linkedAnalysis.new_task_id).toEqual(expect.any(String));
-  await batchPanel.getByRole("button", { name: "查看关联分析 Task" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/tasks/${linkedAnalysis.new_task_id}`),
-  );
-  await expect(
-    page.getByRole("heading", {
-      name: `Task ${linkedAnalysis.new_task_id}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "返回原运行", exact: true }).click();
+  // The completed batch child no longer sends the operator to the internal
+  // DryRun analysis Task; it returns to the source item's same-page recovery
+  // interface so the ready subset can be summarized and confirmed there.
+  await batchPanel
+    .getByRole("button", { name: "在当前界面生成并确认摘要" })
+    .first()
+    .click();
   await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
   await expect(page).toHaveURL(
     new RegExp(`item=${seeded.batchEligibleItemId}`),
