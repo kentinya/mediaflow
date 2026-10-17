@@ -545,23 +545,23 @@ Task45.3 继续修正 B Review 2 的 R2–R5。四类阻塞均按同一 Task 的
 
 ### 最终候选
 
-- Implementation Head：`7c940288aca652df5130a8114ceeb6e8cbf65694`（本轮 R2–R5 修正 checkpoint）。
+- Implementation Head：`d09245e2d49622f8e88ead4fc1583d55cffe9727`（R2–R5 修正 checkpoint + 测试补充）。
 - Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
 - 全部运行时门禁均在该候选的隔离 worktree / 精确 image 上验证。
-- 证据索引：`.git/validation-evidence/7c940288aca652df5130a8114ceeb6e8cbf65694/developer-45.3-r3/`
+- 证据索引：`.git/validation-evidence/d09245e2d49622f8e88ead4fc1583d55cffe9727/developer-45.3-r3/`
   （`INDEX.md`、`logs/` 原始日志；仅本地可达，未推送）。
 
 ### 验证（本轮候选）
 
 - 治理：`.venv/bin/python scripts/check_governance.py` → **PASS**。
-- 隔离全量：`.venv/bin/python -m unittest discover -s tests` → **2499 tests / 7 skipped / 1 failed / 192.1s**。
+- 隔离全量：`.venv/bin/python -m unittest discover -s tests` → **2501 tests / 7 skipped / 1 failed / 198.3s**。
   唯一失败 `test_resource_library_pipeline.ResourceLibraryPipelineTests.test_scan_cli_needs_no_path_or_metadata_token`
   为本机工作区 ignored `.mediaflow/mediaflow.sqlite3` 为 schema48 导致的环境失败；已在 Task Base
   （`8f5cf4e`）独立复现同一失败，非本轮回归，交 B 判断。
 - 聚焦恢复/执行/权限/任务中心/批次/暂停：`tests.test_processing_checkpoint
   tests.test_processing_recovery_admission tests.test_recovery_continuation tests.test_recovery_batch
   tests.test_scope_continuation tests.test_conflict_resolution tests.test_recognition_review
-  tests.test_metadata_review tests.test_classification_review` → **213 tests / OK**；
+  tests.test_metadata_review tests.test_classification_review` → **215 tests / OK**；
   `tests.test_v2_manual_organize tests.test_manual_organize_execution tests.test_organizer_mutation_authority
   tests.test_operations_task_center tests.test_operations_run_inventory tests.test_operations_run_detail
   tests.test_operations_run_detail_plan_evidence tests.test_organize_preparation` → **217 tests / OK**。
