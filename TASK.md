@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: B REVIEWS TASK 45.3 AT IMPLEMENTATION HEAD d9ba0164d1b740c9515f0ef64d45d034e1691765
+Next Action: B REVIEWS TASK 45.3 CORRECTION AT IMPLEMENTATION HEAD 1d4a9870b153ee5fe127296d9f809e157661f938
 ```
 
 ## Goal
@@ -502,96 +502,90 @@ assertion、隐藏 skip 或删除测试造绿。纯环境失败需 Base 证明�
 pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子准入，未建立第二套
 队列、恢复引擎或授权体系。
 
-- **Domain** (`manual_recovery.py`)：新增 `ManualRecoveryPreparation` 与
-  `ManualRecoveryPreparationStatus`。`PREPARED` 明确**不含** `authorization_id`/`execution_id`，
-  不会为填字段提前签发权限；`CONFIRMED` 才链接精确执行。
-- **Persistence** (`sqlite_runtime.py`)：新增 `manual_recovery_preparations` 表（additive，
-  既有库重开即建，不改写旧行/结果/pin）及 create/get/get_current/list/supersede/complete；
-  `admit_manual_execution` 增加可选 `preparation_id`，在同一原子事务内完成“消费一次性权限 +
-  创建执行 + 链接摘要”，守卫式更新失败即整体回滚，不留孤立权限或执行。
-- **Application** (`manual_recovery_continuation.py`)：抽出共享的 `_prepare_continuation`，
-  `authorize_continued` 与新增 `prepare_summary` 复用同一套原项/分析/决定/来源/pin 校验与精确
-  Preview；新增 `confirm_prepared` 绑定摘要、Preview、checkpoint 版本与 actor，仅准入所选就绪
-  子集，并复用 `begin_web_execution` 的原子准入与重复/并发折叠。`discovery_for_preparation`
-  提供无权限投影。
-- **API** (`service_api.py`)：新增 `POST .../recovery/prepare-summary`（201，零权限、零 mutation）、
-  `POST /api/v1/manual-recovery-preparations/{id}/confirm`（202，真实执行身份）及路由归一化；
-  恢复详情投影附带 `manualRecoveryPreparation`。
-- **Web**：`task-item-recovery.ts`/`api-client.ts` 增加严格 typed model 与两个调用；新增共享
-  `SamePagePlanSummary.tsx`（复用 `organize-summary` 的 `ItemFindings`/破坏性影响说明），
-  `TaskItemRecoveryPanel.tsx` 主路径为“生成计划摘要并在此确认 → 选子集 → 确认继续整理 N 项”；
-  暂停整理的 withheld Continue 在 `OperationsLanding` 同一面板内生成剩余范围摘要并确认，
-  不再跳独立 Preview（按钮改为“在当前界面生成剩余范围摘要”）；原一次性权限的精确 Preview
-  兼容入口保留为折叠高级选项。
-- **Tests/脚本**：`test_recovery_continuation.py` 新增 6 个后端旅程用例（只读摘要/确认子集与原子
-  链接/过期与supersede/权限/actor/并发去重）；`test_task_persistence.py` 新增 preparation 往返与
-  additive 迁移用例；`TaskItemRecoveryPanel.test.tsx` 新增同页 prepare→confirm 组件用例；
-  `OperationsInventory.test.tsx` 新增暂停运行同页摘要确认用例；`operations-inventory.python.spec.ts`
-  的原生恢复与暂停继续旅程改为同页摘要+确认；`wheel_smoke_test.py` 增加恢复准备 consumer 加载
-  证明；新增 `docker_task_center_recovery_browser_proof.py`。
+本轮（B FIX REQUIRED 后）按 R1–R5 修正：
+
+- **R1 原项 checkpoint 与精确确认绑定贯穿原子准入**：`ManualRecoveryPreparation` 增加
+  `selected_item_ids`/`allow_overwrite`/`allow_source_cleanup`（schema 46，additive）；
+  `admit_manual_execution` 在同一事务内重新投影原项 checkpoint 并与摘要绑定，同时持久化确切
+  确认子集与破坏性许可；`confirm_prepared` 先严格校验选择，再仅当 actor/摘要/Preview/选择/
+  原 pin/版本/许可完全等价时才读回原执行，否则以 `confirmation_mismatch` 拒绝。
+- **R2 preparation 成为页面/恢复链/当前问题共同读权威**：Web 从 durable preparation 恢复
+  PREPARED/CONFIRMED，刷新/重连/重启不重发 POST；unknown 确认经显式重读对账并显示已受理执行；
+  运行文档的 attention/problem 判定新增 confirmed preparation→execution→TaskItem/Result 链，
+  成功解除当前问题；暂停剩余范围 unknown 不再声称“零执行/零修改”。
+- **R3 恢复处理与批次摘要**：移除普通 Web 恢复的“高级独立 Preview 兼容入口”；批次子项改为回到
+  原任务内同页摘要/分析进度，不再要求操作者管理内部 DryRun Task。
+- **R4 摘要准备不再同步重跑 Provider/规划**：完成的分析身份（provider/providerId/mediaType/
+  title/year/genres/countries/languages）经 durable evidence 持久化并由 `_prepare_continuation`
+  复用，`prepare_summary` 零新增 Provider search/detail，分类结果保持一致。
+- **R5 证据与真实旧库迁移**：新增 `scripts/task_base_migration_proof.py`，用实际 Task Base
+  （`8f5cf4e`）代码建旧库（schema 45，无 preparation 表）并升级/重开，验证旧结果/许可/pin/
+  恢复链保留、旧工作不自动执行、新列与新边界往返。
+
+- **Domain** (`manual_recovery.py`)：`ManualRecoveryPreparation` 携带确认子集与破坏性许可；
+  `PREPARED` 不含 `authorization_id`/`execution_id`。
+- **Persistence** (`sqlite_runtime.py`)：schema 46 增加 preparation 的
+  `selected_item_ids_json`/`allow_overwrite`/`allow_source_cleanup`（既有库 additive 迁移）；
+  `admit_manual_execution` 事务内复核原项 checkpoint 并写入精确确认绑定。
+- **Application** (`manual_recovery_continuation.py`)：共享 `_prepare_continuation` 复用完成分析
+  身份；`confirm_prepared` 严格等价校验；`_confirmed_equivalent_execution` 折叠等价重复。
+- **API** (`service_api.py`)：`prepare-summary`（201，零权限）与
+  `manual-recovery-preparations/{id}/confirm`（202）；恢复详情附带 `manualRecoveryPreparation`。
+- **Web**：`TaskItemRecoveryPanel` 主路径同页 prepare→选子集→confirm，durable 恢复与 unknown
+  对账；`SamePagePlanSummary` 共享；`RunDetailTabs` 批次子项回原任务；移除独立 Preview 绕路。
+- **Tests/脚本**：新增 R1 反例（不同/空/重复选择、事务内 checkpoint 栅栏）、R2 恢复权威与
+  unknown 对账、R4 零 Provider 调用、R5 真实旧库迁移；Web 组件新增刷新恢复与 unknown 对账。
 
 ### 最终候选
 
-- Implementation Head：`41aebbcd58649a206d237c8034c1a160ba4d7f2f`。
-- 可执行候选（全部运行时门禁在此验证）：`0ae8fb9d2236556e63b9bdddd302b4059812370b`。
-  自该 SHA 起仅追加 `TASK.md` 报告/状态（`3d8fdbf`→`d9ba016`→`41aebbc`）；
-  `git diff 0ae8fb9 41aebbcd -- mediaflow web/src web/tests pyproject.toml Dockerfile compose.yaml`
-  为空，故按 workflow 复用已验证的运行时证据。
-- 本 Task 实现 checkpoint：`ca86094522222e4a44c12864cdba0be0cfc90036`（实现）与
-  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），`0ae8fb9`（暂停继续 E2E）。
+- Implementation Head：`1d4a9870b153ee5fe127296d9f809e157661f938`（本轮 R1–R5 修正 checkpoint）。
+- 全部运行时门禁均在该候选的隔离 worktree / 精确 image 上验证。
 - Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
-- 证据索引：`.git/validation-evidence/3d8fdbf308b34a81497849e7568481d64a2195ae/developer-45.3/`
-  （`INDEX.md` 与 `docker-recovery/` 原始日志/矩阵/截图；仅本地可达，未推送）。
+- 证据索引：`.git/validation-evidence/1d4a9870b153ee5fe127296d9f809e157661f938/developer-45.3-r2/`
+  （`INDEX.md`、`logs/` 原始日志、`docker-recovery/` 矩阵/证据/截图；仅本地可达，未推送）。
 
-### 验证（候选 = 最终 checkpoint `0ae8fb9`）
+### 验证（本轮候选）
 
-- 隔离干净 checkout（exact `0ae8fb9`，无共享 schema48 运行库）：
-  `python -m unittest discover -s tests` → **2488 tests / 7 skipped / OK / 187.3s**。
-- `scripts/check_governance.py` PASS；`ruff format --check .`（371 files）、`ruff check .` 全通过；
-  `compileall -q mediaflow tests scripts` OK；`pip check` 无破损；两份示例配置 `config validate`
-  OK；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配（exit 1）。
-- Web：`typecheck`、`lint`、`format:check` 全通过；`npm run test -- run` **1123 passed (76 files)**；
+- 隔离 Git worktree（含 `.git`，真实旧库迁移测试可运行）全量：
+  `.venv/bin/python -m unittest discover -s tests` → **2496 tests / 7 skipped / OK / 193.6s**。
+- 聚焦恢复/执行/权限/任务中心/准备：446 tests / OK。
+- `scripts/check_governance.py` PASS；`ruff format --check .`、`ruff check .`、
+  `compileall -q mediaflow tests scripts`、`pip check`、两份示例配置 `config validate` 全通过。
+- 真实旧库迁移证明：`.venv/bin/python scripts/task_base_migration_proof.py` → **PASS**，
+  schema 45→46，旧 Task/Result/pin/link 不变，`manualExecutions=0`，新列与新边界往返成功。
+- Web：`typecheck`/`lint`/`format:check` 全通过；`npm run test -- run` **1125 passed (76 files)**；
   `npm run build` 成功；fake E2E **246 passed**。
-- 真实 Python 浏览器：`playwright.python.config.ts operations-inventory.python.spec.ts`
-  **27 passed / 45.1s**，含同页恢复旅程（prepare 201/零权限、confirm 202、真实 Worker MOVE）
-  与暂停运行同页摘要确认。
-- wheel：`pip wheel . --no-deps`（`sha256 5fa498c11cd13a75db3b6015c4378393d0035944db4547ef34b73dbf959a8688`）
-  后用 `wheel_smoke_test.py` 安装验证，新增 `recoveryPreparationConsumer: loaded`。
-- **既有失败（已在 Base 独立复现）**：主工作区共享 ignored 运行库 `.mediaflow/mediaflow.sqlite3`
-  为 schema48，导致 `test_resource_library_pipeline.test_scan_cli_needs_no_path_or_metadata_token`
-  报 “runtime database schema is newer”；在 Task Base 干净 checkout 中该用例 PASS，干净候选全量
-  2488/OK，判定为环境既有失败，非本 Task 回归，交 B 判断。
-- Docker 恢复浏览器证明：`.venv/bin/python scripts/docker_task_center_recovery_browser_proof.py
-  --image mediaflow:task45.3-recovery`（需 `MEDIAFLOW_SMOKE_TEMP_DIR` 指向 Docker 可挂载目录）
-  → **通过**：真实镜像/API/SQLite/常驻 Worker，识别决定→分析→同页摘要→精确确认→真实 MOVE；
-  确认前 `sourceExists=True, targetExists=False`，确认后 `False/True`；`prepare-summary` 1 次、
-  `confirm` 1 次、旧 `manual-recovery-links/execute` 0 次。image `4f5f00cd44fb`；证据：
-  `/tmp/mediaflow-task45-3-docker-recovery-proof/{matrix.json,evidence.json,*.png}`。
-- Docker release-security：`TMPDIR=<Docker 可挂载目录> .venv/bin/python
-  scripts/docker_release_security_smoke_test.py --image mediaflow:task45.3-security`
-  → **通过**（image `efe6148ca9d1`）；镜像内 `prepare_summary`/`confirm_prepared`/
-  `create_manual_recovery_preparation` 均存在。
+- 真实 Python 浏览器：`operations-inventory.python.spec.ts` **27 passed / 47.1s**，含同页摘要/确认、
+  暂停重新授权与批次子项回原任务；`operations-principal-identity.python.spec.ts` **1 passed**。
+- wheel：`pip wheel . --no-deps`（`sha256 a41ee900748d81ffb9552b24a534c291821672446b214327e8f62daf057ef0ad`），
+  `wheel_smoke_test.py` 验证 `preparationConsumer`/`recoveryPreparationConsumer: loaded`。
+- Docker release-security：`TMPDIR=<项目内可挂载目录> .venv/bin/python
+  scripts/docker_release_security_smoke_test.py --image mediaflow:task45.3-security-r2` → **通过**
+  （image `0d0d092a6f82`）。
+- Docker 恢复浏览器证明：`MEDIAFLOW_SMOKE_TEMP_DIR=<项目内可挂载目录> .venv/bin/python
+  scripts/docker_task_center_recovery_browser_proof.py --image mediaflow:task45.3-recovery-final`
+  → **通过**（image `8e3481198b5d`，candidateSha `1d4a987`）；确认前 `sourceExists=True,
+  targetExists=False`，确认后 `False/True`，真实 Worker MOVE 到
+  `Movies/其他电影/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv`。
 - **环境约束（非回归）**：本机 Docker Desktop 的挂载命名空间不含 `/var/folders`（默认 `TMPDIR`），
-  因此两个 Docker 脚本必须用 `TMPDIR`/`MEDIAFLOW_SMOKE_TEMP_DIR` 指向项目内可挂载目录；
-  `docker_release_security_smoke_test.py` 在 Task Base 用默认 `TMPDIR` 复现同一挂载失败，
-  非本 Task 引入。
+  两个 Docker 脚本需用 `TMPDIR`/`MEDIAFLOW_SMOKE_TEMP_DIR` 指向项目内可挂载目录；
+  `docker_release_security_smoke_test.py` 在 Task Base 用默认 `TMPDIR` 复现同一挂载失败。
+  主工作区共享 ignored 运行库为 schema48，全量在隔离 worktree 执行，未触碰用户库。
 
 ### 决定
 
-- 摘要与执行权限分离：`PREPARED` 行不携带 `authorization_id`，确认才在同一原子准入内消费权限
-  并链接执行，满足“保存决定不取得 mutation 权限、确认前零变更”。
-- `confirm_prepared` 以摘要身份+Preview+checkpoint+actor 绑定，重复/并发确认折叠为同一次执行。
-- 保留原 `authorize_continued`/`manual-recovery-links/execute` 兼容语义，未删除既有已接受旅程。
+- 摘要与执行权限分离：`PREPARED` 不携带 `authorization_id`；确认才在同一原子准入内消费权限、
+  复核原项 checkpoint 并链接执行。
+- 重复确认仅在 actor/摘要/选择/许可完全等价时折叠；不同/空/部分选择明确拒绝。
+- 摘要准备消费已完成分析的 durable 身份，不再在 HTTP 内重跑 Provider；分类结果保持一致。
+- 保留原 `authorize_continued`/`manual-recovery-links/execute` API 兼容语义，仅移除普通 Web 绕路。
 
 ### 风险 / 偏差
 
-- 五类恢复共用同一套 prepare/confirm 入口与既有决策表单；识别完整旅程已原生浏览器跑通，
-  其余四类的专用表单保存→分析→同页摘要→确认已在后端与组件层接入并验证，但每类专用文案、
-  窄屏细节与逐类浏览器分支的进一步细化仍属本 Task 可继续的剩余工作。
-- 暂停整理的 Continue 重新授权已接入同页摘要（步骤 17），复用既有
-  `ScopeContinuationService`/`submitRemainingScopePreview`，未新增队列或权限。
-- 任务内有界多选（步骤 16）复用既有 `RecoveryBatchContinuationService`；批次的同页按项摘要
-  汇总尚未接入，仍保留既有逐项准入/拒绝与恢复链接。
+- 五类恢复共用同一套 prepare/confirm 入口与既有决策表单；识别、分类、元数据、冲突与技术失败
+  的专用输入均汇入同一分析→摘要→确认链，逐类专用文案与窄屏细节仍可在后续迭代细化。
+- 任务内有界多选复用既有 `RecoveryBatchContinuationService`；批次子项现回到原任务内同页处理，
+  逐项独立接受/拒绝语义不变。
 
 ### 可复用经验候选
 
@@ -600,8 +594,145 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
 ## B Review Result
 
 ```text
-Reviewed Range: NOT REVIEWED
-Decision: PENDING
+Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..6d6905162bfcdc192934649d8f7a56c248fd5e36
+Executable Candidate: 0ae8fb9d2236556e63b9bdddd302b4059812370b
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: DEVELOPER IMPLEMENTS TASK 45.3
+Next: DEVELOPER CORRECTS THE SAME TASK 45.3
 ```
+
+### B 独立验证 — 2026-10-17
+
+- 治理 PASS；已提交 Slice45 ACTIVE 与工作树一致，Task Base 未移动。
+  `git diff 0ae8fb9..6d69051 --name-only` 只有 TASK.md，运行时候选可明确定位。
+  本轮只修改 B-owned TASK.md；未修改 Slice/Roadmap/Progress/稳定需求或产品代码，未推送。
+- 独立 Python：`tests.test_recovery_continuation tests.test_task_persistence
+  tests.test_processing_checkpoint tests.test_manual_organize_execution`：**100 tests / 7.016s / OK**，
+  原始 ResourceWarning 保留；`web/ npm run build` PASS，保留产物大小 warning。
+- 精确候选 production build + 真实 Python API/临时 SQLite/Local Storage/生产 Worker consumer：
+  完成识别决定→分析→同页摘要，并独立复现刷新、确认响应丢失和 Worker 完成后的查询。
+  分析/摘要时来源仍存在；确认只准入，随后真实 Worker MOVE 成功。
+  本轮使用 harness 显式驱动真实 consumer，未声称另做了生产容器/驻留部署验收。
+- API 独立反例：已确认摘要用不同 itemIds/影响许可再次确认仍返回原执行 202；
+  第二 SQLite connection 在 preflight 后、atomic admission 前改变原项 checkpoint，仍准入 202。
+  后一用例为可控交错注入，证明事务内缺少原 checkpoint 栅栏；未声称已造成媒体损失。
+- 原始脚本、logs、trace、实际桌面/窄屏截图、查询及候选/产物身份：
+  `.git/validation-evidence/6d6905162bfcdc192934649d8f7a56c248fd5e36/b-review1-20261017/INDEX.md`。
+  已查看桌面截图；本轮拒绝不代表五类/窄屏/键盘视觉全部通过。证据仅本地可达。
+- 已有确定阻塞，按 workflow 提前拒绝；本轮不重跑全量 Python/Web、完整浏览器 spec、
+  Unicode principal、wheel、Docker 或旧版本迁移矩阵，不将未执行门禁记 PASS。
+
+### 阻塞与同 Task 修正清单
+
+以下均对应现有 Goal/Scope/AC，不是新 Task，不改变 High/T4 或任何 Required Tests。
+先逐个复现并修正，再按原计划完成最终候选全部门禁；不要只增加 mock 或修改断言。
+
+#### R1 / P1 — 原项 checkpoint 与精确确认绑定未贯穿原子准入（AC-4/5）
+
+定位：`manual_recovery_continuation.py:328–341,357–376`、
+`sqlite_runtime.py:10756–10795`。CONFIRMED 分支直接返回执行，未比较新请求的选择和影响许可；
+事务内只检查 preparation 的 status/current，未复核原项 checkpoint。
+独立 probe：`itemIds=['never-reviewed-item']` 返回 202 和旧 selectedItemIds；
+第二连接改变原项为 IGNORED 后，旧摘要仍新建执行（202）。
+
+Developer 按以下顺序修正：
+
+1. 复用现有 exact-equivalent admission 的绑定比较。确认请求先严格校验 itemIds/布尔许可；
+   只有 actor、摘要/Preview、选择、原 pin/版本及影响许可完全等价才读回原 execution。
+   不同、额外、空、非法或部分重叠的选择不能被解释为旧请求成功。
+2. 把原 task/item、有效分析/决定版本、checkpoint、摘要/Preview/source/pin 与当前合法性
+   的数据库比较纳入同一个 admission 事务；只在 HTTP preflight 比较不够。
+   比较数据库权威字段/版本，不在写事务里调用 Provider、Storage 或长分析。
+3. 事务失败整体回滚执行、许可消费和关键关联；复核 authorize→admit 失败后没有可用孤立许可。
+   既有 Worker 的实时来源校验和 owner/fence 继续保留，不能用它们替代准入栅栏。
+4. 用两个真实 SQLite connection 和 barrier/event 固定上述交错；补相同请求去重、不同绑定拒绝、
+   两个摘要/部分重叠选择和事务故障测试。不要仅复用同一个 API/connection 并发测试。
+
+#### R2 / P1 — preparation 尚未成为页面、恢复链与当前问题的共同读权威（AC-3/5/6）
+
+定位：`TaskItemRecoveryPanel.tsx:118–128,390–432`、
+`OperationsLanding.tsx:1566–1599`、`sqlite_runtime.py:5676–5724`。
+Web 解析了 manualRecoveryPreparation，却未用它恢复本地摘要/执行；reconcile 只解锁。
+当前 attention 查询仍只识别旧 manual_recovery_links。独立原生复现：
+数据库 PREPARED 时刷新后摘要数从 1 变 0；confirm 已提交 202 后丢响应，显式读取后无执行入口、
+确认按钮重新 enabled；Worker 实际完成 MOVE 后原任务仍在 attention（total/attention=1）。
+暂停剩余范围的确认还将所有失败响应统一描述为“没有创建执行，Storage 未被修改”。
+
+Developer 按以下顺序修正：
+
+1. 页面由当前认证主体可读的 durable preparation 恢复 PREPARED/CONFIRMED/过期状态；
+   刷新、返回、重新认证和重启读取同一摘要/执行，不为恢复 UI 自动生成新摘要或重发 POST。
+   原执行身份可诊断可打开；主体切换不继承旧提交提示或权限。
+2. 复用 Task45.2 的精确未知提交对账模式。保留安全的请求定位材料；确认响应未知时查回
+   该次 preparation/execution 与实际选择，已受理就显示已有进度并禁止再确认。
+   仅“TaskItem GET 成功”不能证明本次未受理。暂停剩余范围走同样的 unknown 处理，
+   不能在无法确定时声明零执行/零效果。
+3. 把新 preparation→execution→TaskItem/Result 的持久关联接入原任务/分析尝试/列表查询与详情，
+   复用共享投影，不伪造 legacy link、按路径猜关联或直接把原失败改成成功。
+   排队/运行/再次失败保持真实；验证成功后解除当前待办，原失败历史仍可读。
+4. 分别补刷新 PREPARED、确认已提交后断网、同主体重连/换主体、重启、成功解除及再次失败
+   的真实浏览器/API/查询反例；验证一个项处理不改变兄弟项或另一任务。
+
+#### R3 / P1 — 必需的恢复处理与批次摘要尚未完成，仍有独立 Preview 绕路（AC-1/3/4）
+
+定位：`TaskItemRecoveryPanel.tsx:603–708` 仍提供高级 authorize/Preview 跳转；
+`RunDetailTabs.tsx:1408–1445` 的批次结果仍要求查看关联分析 Task，未汇总同页就绪摘要；
+`_prepare_continuation` 只接受一个已完成的 linked analysis item，且新摘要只含一个 manual item。
+Developer 报告也明确保留了步骤 12–16 及逐类浏览器分支的未完成项。
+
+Developer 按以下顺序修正：
+
+1. 保留已可用的识别、Metadata 候选/纠正搜索、分类、主文件/附件冲突和技术失败原生输入，
+   核对并补齐真实缺口，全部汇合到同一安全分析→当前界面摘要→明确确认链。
+   不是重写表单或补五套执行逻辑；未验证的类型不能仅凭共享入口声称完成。
+2. 新分析出现另一种 blocker 时，处理其真实关联项并回到当前任务/类型上下文；普通操作
+   不要求用户管理内部 DryRun Task。错误必须显示业务原因、持久状态与可修正动作。
+3. 将现有有界 RecoveryBatchContinuationService 逐项 accepted/refused/analysis 结果接入
+   当前处理界面，汇总各自精确摘要并允许只确认就绪子集；不同 pin/上下文明确分组或拒绝。
+   补“两个就绪项只选一个”、成功/忽略/未知/过期独立拒绝、未选项仍可处理的真实 fixture。
+4. 接入既有能证明安全的附件剩余步骤，摘要显示已完成/剩余及影响；不能从头重放主文件，
+   也不能拒绝所有已有安全附件能力来规避范围。
+5. 移除普通 Web 恢复中的高级独立 Preview 备选路径和提前授权控件；旧 API 管理兼容及
+   诊断历史可保留。不能用折叠隐藏代替取消该旅程。
+6. 原生跑通五类处理、技术失败→修复→新 Metadata 阻塞→选择→摘要→再次失败，
+   再检查返回/深链、桌面/窄屏/键盘及权限状态。不要以识别单项 PASS 推断其他入口完成。
+
+#### R4 / P1 — 摘要准备在 HTTP 内重新跑 Provider/规划（AC-2；Scope 2）
+
+定位：`service_api.py:7734`→`prepare_summary`→`_prepare_continuation:611`→
+`ManualOrganizePreviewService.create`。独立计数证明 linked Worker 分析完成后，
+prepare-summary 又同步增加一次 Provider search 和 detail（各 2→3）。
+
+1. 优先让摘要消费已完成且版本/来源/pin 一致的耐久分析和计划，不另跑分析链。
+2. 确需重分析/刷新计划时，复用持久 Job/Worker，HTTP 只准入并返回可重开进度；
+   Worker 发布前核对原决定/输入版本，晚返回旧结果不能覆盖新摘要。
+3. 用可阻塞 fake Provider 验证 HTTP 不等长分析、状态可轮询/重开；以调用计数和 mutation/
+   authority 计数区分显式分析、摘要读取及确认。不通过去掉必要分析或降低来源校验修复。
+
+#### R5 / 阻塞验证缺口 — 最终 T4 原始证据与实际旧库迁移不足（AC-7）
+
+指定 Developer 索引实际只有 INDEX.md 和 docker-recovery 的 JSON/PNG，未附 Python/Web/
+real-Python/Unicode/wheel/security 全部门禁的原始日志，不能仅按测试数字和叙述复用。
+索引称 final candidate 3d8fdbf、报告标 0ae8fb9；B 已证明两者 executable inputs 未变，
+该标签差异本身不单独阻塞，后续索引应写清 source/checkpoint 映射。
+`test_task_persistence.py:1413` 是新代码建库后 DROP 新表，不是约定的实际 Task Base 建旧库；
+未证明所需原 Task/Result/pin/许可/恢复链及迁移故障安全。
+
+1. 完成 R1–R4 后固定最终 executable candidate，按原 Required Tests 完整跑 T4 门禁；
+   提供实际命令/cwd/版本、source与checkpoint、锁文件/fixture/产物摘要、exit/counts/skips/
+   duration、原始 logs/trace/截图和首次失败/复跑，不把缺失门禁标绿。
+2. 真正从 Task Base 旧代码创建带上述历史状态的临时库，升级/重开并注入迁移失败；
+   验证旧结果/许可/pin/恢复链保持，旧工作不自动执行。保存可复跑脚本和读回证据。
+3. wheel/Docker 验证当前恢复 consumer 与 served assets 确实来自该候选，记录完整 image ID/
+   wheel digest，补原计划的混合项/非重放/重连证明。已有同名标签或 import loaded 不代替链路。
+4. 保留主工作区用户库不动；隔离 checkout 运行全量，任何环境例外按原要求提供 Base 反证。
+   不以删除测试、放宽断言/超时或隐藏 skip 消除失败。
+
+### Slice 核对与范围决定
+
+- RO-1/S-1、RO-2/S-2 保留 Task45.1/45.2 的既有 B PASS；本 Task 的恢复成功解除、
+  unknown 与投影集成尚未满足，不将旧 PASS 扩大到本次新增链。
+- RO-3/S-3、S-4、RO-4/S-5 恢复/同页继续及异常连续性、RO-6/S-6 验证仍 incomplete。
+- RO-5/S-7 独立 Scan 完整退役仍未实现，依原 Task 非目标保持后续范围。
+- **不创建 Task45.4，不提交 Closure Packet，不宣称 Slice 关闭。** 当前 Contract 可继续满足，
+  Task45.3 合法且不需 A 改范围；保持相同 ID/Base/Goal/Scope/AC/High/T4 修正后重新审查。
