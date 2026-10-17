@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 /**
  * Real-Python browser proof for the unified run inventory (Task 42.1) and the
@@ -40,6 +40,35 @@ const SEEDED_RUN_TOTAL = 4;
 
 /** The unique server-side command filter that isolates the rich detail run. */
 const RICH_RUN_COMMAND = "manual_organize";
+
+async function assertHighContrastButton(button: Locator): Promise<void> {
+  const ratio = await button.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const luminance = (color: string): number => {
+      const channels = color
+        .match(/[\d.]+/g)
+        ?.slice(0, 3)
+        .map(Number);
+      if (channels === undefined || channels.length !== 3) {
+        throw new Error(`Unsupported computed button color: ${color}`);
+      }
+      const linear = channels.map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045
+          ? value / 12.92
+          : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+    };
+    const foreground = luminance(style.color);
+    const background = luminance(style.backgroundColor);
+    return (
+      (Math.max(foreground, background) + 0.05) /
+      (Math.min(foreground, background) + 0.05)
+    );
+  });
+  expect(ratio).toBeGreaterThanOrEqual(4.5);
+}
 
 async function connect(page: Page, token = TOKEN): Promise<void> {
   await page.goto("/ui-v2/");
@@ -1871,7 +1900,13 @@ test("native task-item recognition recovery reaches a separately authorized link
     recovery.getByText(/保存仅记录人工决定，不执行 OrganizerExecutor/),
   ).toBeVisible();
   const selectedRecognition = recovery.getByRole("radio").last();
+  await selectedRecognition.focus();
+  await expect(selectedRecognition).toBeFocused();
   await selectedRecognition.check();
+  const saveDecisionButton = recovery.getByRole("button", {
+    name: "保存决策并继续安全分析",
+  });
+  await assertHighContrastButton(saveDecisionButton);
   const decisionResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
@@ -1884,9 +1919,7 @@ test("native task-item recognition recovery reaches a separately authorized link
       new URL(response.url()).pathname ===
         `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
   );
-  await recovery
-    .getByRole("button", { name: "保存决策并继续安全分析" })
-    .click();
+  await saveDecisionButton.click();
   const saved = await decisionResponse;
   expect(saved.status()).toBe(200);
   expect(saved.request().postDataJSON()).toMatchObject({
@@ -1983,6 +2016,12 @@ test("native task-item recognition recovery reaches a separately authorized link
   await expect(summary).toContainText(
     "Movies/Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
   );
+  const confirmSummaryButton = summary.getByRole("button", {
+    name: /确认继续整理 1 项/,
+  });
+  await assertHighContrastButton(confirmSummaryButton);
+  await confirmSummaryButton.focus();
+  await expect(confirmSummaryButton).toBeFocused();
   // The exact source still exists: the summary is zero-mutation and grants no
   // execution authority.
   state = await (
@@ -2705,6 +2744,12 @@ test("two ready batch children aggregate their summaries and only the selected s
     .getByRole("checkbox", { name: /选择 BatchSummaryA/ })
     .first()
     .uncheck();
+  const confirmBatchButton = batchSummary.getByRole("button", {
+    name: /确认继续整理所选 1 项/,
+  });
+  await assertHighContrastButton(confirmBatchButton);
+  await confirmBatchButton.focus();
+  await expect(confirmBatchButton).toBeFocused();
   let confirmationCommitted = false;
   let confirmPosts = 0;
   const committedConfirmation: {
@@ -2790,9 +2835,11 @@ test("two ready batch children aggregate their summaries and only the selected s
     selectedItemIds: [selectedItemId],
     sourceItemId: submittedSourceItemId,
   });
-  await expect(
-    batchSummary.getByRole("button", { name: /正在受理/ }),
-  ).toBeDisabled();
+  const lockedBatchButton = batchSummary.getByRole("button", {
+    name: /正在受理/,
+  });
+  await expect(lockedBatchButton).toBeDisabled();
+  await assertHighContrastButton(lockedBatchButton);
   await expect(
     batchSummary.getByRole("heading", { name: /条目 / }).last(),
   ).toBeVisible();

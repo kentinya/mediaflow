@@ -4144,6 +4144,22 @@ button.mf-grid-button {
   margin: 0 auto;
   padding: 28px 32px 64px;
 }
+.mf-operations-inventory
+  .mf-button:not(.mf-button-secondary):not(.mf-button-danger) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.mf-operations-inventory .mf-button-secondary {
+  background: #fff;
+  color: var(--ink);
+}
+.mf-operations-inventory .mf-button:disabled:not(.mf-button-danger) {
+  border-color: #d5dde8;
+  background: #edf1f6;
+  color: #46556b;
+  opacity: 1;
+}
 .mf-task-center-summary .mf-count-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
