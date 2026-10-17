@@ -263,7 +263,7 @@ export function RunLifecycleControls({
               >
                 {previewPending
                   ? "正在生成精确预览…"
-                  : "查看剩余范围的精确预览"}
+                  : "在当前界面生成剩余范围摘要"}
               </button>
               <span className="mf-dashboard-meta">
                 {withheldResume.recovery.durableOutcome}

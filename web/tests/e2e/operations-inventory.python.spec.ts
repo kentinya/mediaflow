@@ -1956,7 +1956,9 @@ test("native task-item recognition recovery reaches a separately authorized link
   await restoredRecovery.getByRole("button", { name: "Refresh" }).click();
   await expect(restoredRecovery.getByText(/单项分析已完成/)).toBeVisible();
   await expect(
-    restoredRecovery.getByRole("button", { name: "准备精确 Preview" }),
+    restoredRecovery.getByRole("button", {
+      name: "生成计划摘要并在此确认",
+    }),
   ).toBeVisible();
 
   state = await (
@@ -1969,50 +1971,52 @@ test("native task-item recognition recovery reaches a separately authorized link
     "Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
   );
 
-  // The one explicit authorization opens the exact durable Preview. The
-  // browser must select and review its full plan and explicitly Execute there.
   await restoredRecovery
-    .getByRole("button", { name: "准备精确 Preview" })
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
     .click();
-  await expect(
-    restoredRecovery.getByText(/精确 Preview 和一次性授权已准备好/),
-  ).toBeVisible();
-  await restoredRecovery
-    .getByRole("button", { name: "查看已审核计划" })
-    .click();
-  await expect(page).toHaveURL(/\/operations\/organize\/preview\//);
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-  await expect(page.locator("body")).toContainText("Recovery.2005.mkv");
-  await expect(page.locator("body")).toContainText(
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText("Recovery.2005.mkv");
+  await expect(summary).toContainText(
     "Movies/Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
   );
-  await page.getByLabel("选择 Recovery.2005.mkv").check();
-  const executeResponse = page.waitForResponse(
+  // The exact source still exists: the summary is zero-mutation and grants no
+  // execution authority.
+  state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-state`)
+  ).json();
+  expect(state.sourceExists).toBe(true);
+  expect(state.targetFiles).not.toContain(
+    "Movies/Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
+  );
+
+  const confirmResponse = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
         new URL(response.url()).pathname,
       ),
   );
-  await page.getByRole("button", { name: "确认执行所选条目" }).click();
-  const execute = await executeResponse;
-  expect(execute.status()).toBe(200);
-  expect(await execute.json()).toMatchObject({
-    status: "consumed",
-    execution_id: expect.any(String),
-  });
-  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
-  await expect(page).toHaveURL(new RegExp(`item=${seeded.itemId}`));
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
+  const confirmed = await confirmResponse;
+  expect(confirmed.status()).toBe(202);
+  const confirmation = (await confirmed.json()) as {
+    readonly executionId: string;
+    readonly selectedItemIds: readonly string[];
+  };
+  // Exactly the one ready item was admitted; the exact identity is the
+  // reviewed manual item, not the browser's TaskItem view.
+  expect(confirmation.selectedItemIds).toHaveLength(1);
+  // The confirmation navigated to the linked durable execution; the operator
+  // never had to open a standalone Preview or manage an internal token.
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
+  );
 
-  await page.getByRole("button", { name: "Refresh" }).first().click();
-  const completedRecovery = page.getByRole("region", {
-    name: "条目审核与恢复",
-  });
-  await expect(completedRecovery.getByText(/状态：consumed/)).toBeVisible();
-  await expect(
-    completedRecovery.getByRole("button", { name: "查看关联执行结果" }),
-  ).toBeVisible();
-
+  const workerRun = await (
+    await request.post(`${BASE}/__harness__/run-manual-worker`)
+  ).json();
+  expect(workerRun).toMatchObject({ completed: true });
   state = await (
     await request.get(`${BASE}/__harness__/task-item-recovery-state`)
   ).json();
@@ -2025,12 +2029,13 @@ test("native task-item recognition recovery reaches a separately authorized link
       value.method === "POST" &&
       /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(value.path),
   );
-  expect(executionPosts).toHaveLength(1);
+  // The same-page confirmation uses the product confirmation route, never the
+  // compatibility one-shot execute route.
+  expect(executionPosts).toHaveLength(0);
   const pageContent = await page.content();
   expect(pageContent).not.toContain("/tmp/");
   expect(pageContent).not.toContain(ADMIN_TOKEN);
 });
-
 test("explicit disconnect clears a lost-response batch before another principal opens the run", async ({
   page,
   request,

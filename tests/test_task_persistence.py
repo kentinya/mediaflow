@@ -1321,6 +1321,135 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
         )
 
 
+class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
+    def test_preparation_round_trips_and_supersedes_without_authority(self) -> None:
+        """A prepared summary persists, supersedes and never invents authority."""
+
+        from mediaflow.domain.manual_recovery import (
+            ManualRecoveryPreparation,
+            ManualRecoveryPreparationStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "preparations.sqlite3")
+            now = datetime(2026, 10, 17, tzinfo=UTC)
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_manual_intent_with_audit(
+                    _manual_intent("intent-1"),
+                    _manual_items("intent-1"),
+                    _manual_audit("intent-1"),
+                )
+                task_id, item_id = self._source_task_and_item(repository)
+                preparation = ManualRecoveryPreparation(
+                    "prep-1",
+                    task_id,
+                    item_id,
+                    "continuation-1",
+                    "analysis-task-1",
+                    "analysis-result-1",
+                    "intent-1",
+                    "preview-1",
+                    1,
+                    "b" * 64,
+                    "c" * 64,
+                    "snap-1",
+                    "digest-1",
+                    "operator",
+                    ManualRecoveryPreparationStatus.PREPARED,
+                    now,
+                    now,
+                )
+                repository.create_manual_recovery_preparation(preparation)
+                stored = repository.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                assert stored.authorization_id is None
+                assert stored.execution_id is None
+                assert stored.intent_version == 1
+                assert stored.status is ManualRecoveryPreparationStatus.PREPARED
+                assert repository.get_current_manual_recovery_preparation(task_id, item_id)
+                assert repository.list_manual_recovery_preparations(task_id, item_id)
+
+                # A prepared summary must not claim execution authority.
+                with self.assertRaises(ValueError):
+                    repository.create_manual_recovery_preparation(
+                        replace(preparation, preparation_id="prep-bad", authorization_id="a")
+                    )
+
+                superseded = repository.supersede_manual_recovery_preparation("prep-1", now=now)
+                assert superseded.status is ManualRecoveryPreparationStatus.SUPERSEDED
+                assert repository.get_current_manual_recovery_preparation(task_id, item_id) is None
+
+            # Reopening preserves the exact record; the historical row is intact.
+            with SQLiteTaskRepository(database) as reopened:
+                stored = reopened.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                assert stored.status is ManualRecoveryPreparationStatus.SUPERSEDED
+                assert stored.authorization_id is None
+
+    def _source_task_and_item(self, repository):
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        coordinator = PersistentTaskCoordinator(repository, repository)
+        task = coordinator.create(
+            "manual_organize",
+            execute_authorized=False,
+            item_limit=1,
+            configuration_snapshot_id="snap-1",
+            configuration_snapshot_digest="digest-1",
+            require_configuration_snapshot=True,
+        )
+        item = coordinator.begin_item(
+            task.task_id, "source", "source", "Media/One.2001.mkv", "Media/One.2001.mkv"
+        )
+        repository.upsert_item(replace(item, status=TaskItemStatus.FAILED, stage="failed"))
+        repository.release(item.storage_id, item.source_path, item.task_id)
+        return task.task_id, item.item_id
+
+
+class Schema45ToManualRecoveryPreparationUpgradeTests(unittest.TestCase):
+    """The additive preparation table appears without touching prior facts."""
+
+    def test_reopening_adds_the_preparation_table_and_preserves_prior_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-preparation.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_manual_intent_with_audit(
+                    _manual_intent("intent-base"),
+                    _manual_items("intent-base"),
+                    _manual_audit("intent-base"),
+                )
+                connection = repository._connection
+                connection.execute("DROP INDEX IF EXISTS manual_recovery_preparations_source")
+                connection.execute("DROP TABLE IF EXISTS manual_recovery_preparations")
+                connection.commit()
+            with sqlite3.connect(database) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'manual_recovery_preparation%'"
+                    ).fetchall()
+                }
+            self.assertEqual(tables, set())
+
+            with SQLiteTaskRepository(database) as repository:
+                tables = {
+                    row[0]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'manual_recovery_preparation%'"
+                    ).fetchall()
+                }
+                self.assertIn("manual_recovery_preparations", tables)
+                # The pre-existing admitted intent is unchanged and has no
+                # fabricated summary.
+                intent = repository.get_manual_intent("intent-base")
+                assert intent is not None
+                self.assertEqual(intent.intent_id, "intent-base")
+                self.assertEqual(repository.list_manual_recovery_preparations("task", "item"), ())
+
+
 def _manual_intent(intent_id: str):
     from mediaflow.domain.manual_organize import (
         ManualConfigurationSnapshot,

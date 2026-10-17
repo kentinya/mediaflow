@@ -78,12 +78,37 @@ export interface ManualRecoveryLinkModel {
   readonly nextAction: string;
 }
 
+/**
+ * One durable, non-authorizing plan summary of a recovery source item.
+ *
+ * `hasExecutionAuthority` is always false while the summary is `prepared`;
+ * the summary is a read/prepare artifact, and confirmation is a separate,
+ * explicitly confirmed action.  The linked execution appears only after that
+ * confirmation admitted the exact ready subset.
+ */
+export interface ManualRecoveryPreparationModel {
+  readonly preparationId: string;
+  readonly status: "prepared" | "confirmed" | "superseded" | "stale";
+  readonly previewId: string;
+  readonly intentId: string;
+  readonly sourceTaskId: string;
+  readonly sourceItemId: string;
+  readonly checkpointVersion: string;
+  readonly configurationSnapshotId: string;
+  readonly configurationSnapshotDigest: string;
+  readonly authorizationId: string | null;
+  readonly executionId: string | null;
+  readonly hasExecutionAuthority: boolean;
+  readonly nextAction: string;
+}
+
 export interface TaskItemRecoveryModel {
   readonly taskId: string;
   readonly itemId: string;
   readonly checkpoint: TaskItemRecoveryCheckpoint;
   readonly decision: TaskItemDecision | null;
   readonly manualRecoveryLink: ManualRecoveryLinkModel | null;
+  readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
   readonly nextAction: string;
 }
@@ -357,6 +382,39 @@ export function normalizeManualRecoveryLink(
   };
 }
 
+export function normalizeManualRecoveryPreparation(
+  payload: unknown,
+): ManualRecoveryPreparationModel {
+  const source = readRecord(payload, "manualRecoveryPreparation");
+  const status = text(source, "status");
+  if (!["prepared", "confirmed", "superseded", "stale"].includes(status)) {
+    return fail();
+  }
+  const version = text(source, "checkpoint_version");
+  if (!/^[a-f0-9]{64}$/.test(version)) return fail();
+  return {
+    preparationId: text(source, "preparation_id"),
+    status: status as ManualRecoveryPreparationModel["status"],
+    previewId: text(source, "preview_id"),
+    intentId: text(source, "intent_id"),
+    sourceTaskId: text(source, "source_task_id"),
+    sourceItemId: text(source, "source_item_id"),
+    checkpointVersion: version,
+    configurationSnapshotId: text(source, "configuration_snapshot_id"),
+    configurationSnapshotDigest: text(source, "configuration_snapshot_digest"),
+    authorizationId: optionalText(source, "authorization_id"),
+    executionId: optionalText(source, "execution_id"),
+    hasExecutionAuthority: normalizeBoolean(
+      source["hasExecutionAuthority"] ?? false,
+      "hasExecutionAuthority",
+    ),
+    nextAction: text(
+      source,
+      source["next_action"] === undefined ? "nextAction" : "next_action",
+    ),
+  };
+}
+
 export function normalizeTaskItemRecovery(
   payload: unknown,
 ): TaskItemRecoveryModel {
@@ -364,6 +422,9 @@ export function normalizeTaskItemRecovery(
   const rawDecision = source["decision"];
   const rawLink =
     source["manualRecoveryLink"] ?? source["manual_recovery_link"];
+  const rawPreparation =
+    source["manualRecoveryPreparation"] ??
+    source["manual_recovery_preparation"];
   return {
     taskId: text(source, "task_id"),
     itemId: text(source, "item_id"),
@@ -376,6 +437,10 @@ export function normalizeTaskItemRecovery(
       rawLink === null || rawLink === undefined
         ? null
         : normalizeManualRecoveryLink(rawLink),
+    manualRecoveryPreparation:
+      rawPreparation === null || rawPreparation === undefined
+        ? null
+        : normalizeManualRecoveryPreparation(rawPreparation),
     manualRecoveryAvailable: normalizeBoolean(
       source["manualRecoveryAvailable"],
       "manualRecoveryAvailable",

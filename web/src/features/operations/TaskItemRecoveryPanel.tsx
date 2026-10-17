@@ -3,8 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   authorizeTaskItemRecoveryOrganize,
+  confirmTaskItemRecoveryPreparation,
   continueTaskItemAnalysis,
   ignoreTaskItemReview,
+  prepareTaskItemRecoverySummary,
   searchTaskItemMetadata,
   submitTaskItemRecoveryDecision,
 } from "../../shared/api/api-client";
@@ -20,6 +22,7 @@ import {
   taskItemRecoveryQueryKey,
   taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 
@@ -112,6 +115,17 @@ export function TaskItemRecoveryPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [repeatLocked, setRepeatLocked] = useState(false);
+  const [preparation, setPreparation] = useState<{
+    readonly preparationId: string;
+    readonly previewId: string;
+    readonly status: string;
+    readonly checkpointVersion: string;
+  } | null>(null);
+  const [confirmSelection, setConfirmSelection] = useState<
+    readonly string[] | null
+  >(null);
+  const [allowOverwriteConfirm, setAllowOverwriteConfirm] = useState(false);
+  const [allowCleanupConfirm, setAllowCleanupConfirm] = useState(false);
   const model = query.data?.ok === true ? query.data.model : null;
   const checkpoint = model?.checkpoint ?? null;
   const decision = model?.decision ?? null;
@@ -299,6 +313,81 @@ export function TaskItemRecoveryPanel({
     }
   };
 
+  const prepareSummary = async () => {
+    if (checkpoint === null || busy || repeatLocked) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await prepareTaskItemRecoverySummary(
+        token,
+        taskId,
+        itemId,
+        checkpoint.checkpointVersion,
+      );
+      if (result.ok) {
+        setPreparation({
+          preparationId: result.model.preparationId,
+          previewId: result.model.previewId,
+          status: result.model.status,
+          checkpointVersion: result.model.checkpointVersion,
+        });
+        setConfirmSelection(null);
+        setAllowOverwriteConfirm(false);
+        setAllowCleanupConfirm(false);
+        setMessage(
+          "已在当前界面生成新的零变更计划摘要。检查下方来源、目标、附件与影响后，选择就绪子集并明确确认继续。",
+        );
+        setRepeatLocked(false);
+        refreshLinkedReads();
+      } else {
+        await reportUnknown(result.code, result.status);
+        refreshLinkedReads();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmPreparation = async () => {
+    if (
+      preparation === null ||
+      confirmSelection === null ||
+      confirmSelection.length === 0 ||
+      busy ||
+      repeatLocked
+    ) {
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await confirmTaskItemRecoveryPreparation(
+        token,
+        preparation.preparationId,
+        {
+          itemIds: confirmSelection,
+          allowOverwrite: allowOverwriteConfirm,
+          allowSourceCleanup: allowCleanupConfirm,
+        },
+      );
+      if (result.ok) {
+        setMessage(
+          `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。可在关联执行中跟踪逐项结果。`,
+        );
+        setPreparation(null);
+        setConfirmSelection(null);
+        setRepeatLocked(false);
+        refreshLinkedReads();
+        onOpenRecoveryExecution?.(result.model.executionId);
+      } else {
+        await reportUnknown(result.code, result.status);
+        refreshLinkedReads();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reconcile = async () => {
     const result = await query.refetch();
     if (result.data?.ok === true) {
@@ -383,6 +472,21 @@ export function TaskItemRecoveryPanel({
         >
           <p>{message}</p>
         </StatusBanner>
+      )}
+      {preparation !== null && (
+        <SamePagePlanSummary
+          token={token}
+          previewId={preparation.previewId}
+          selected={confirmSelection}
+          onSelected={setConfirmSelection}
+          allowOverwrite={allowOverwriteConfirm}
+          onAllowOverwrite={setAllowOverwriteConfirm}
+          allowCleanup={allowCleanupConfirm}
+          onAllowCleanup={setAllowCleanupConfirm}
+          busy={busy || repeatLocked}
+          onConfirm={() => void confirmPreparation()}
+          heading="新计划摘要（零变更）"
+        />
       )}
       {repeatLocked && (
         <div className="mf-actions">
@@ -500,57 +604,70 @@ export function TaskItemRecoveryPanel({
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>
           <p>
-            Worker 已完成此原条目的 DryRun。准备新的精确 Preview
-            后，必须检查完整计划并单独确认执行。
+            Worker 已完成此原条目的 DryRun。在当前界面生成新的零变更计划摘要，
+            检查后选择就绪子集并明确确认继续；普通恢复不再需要跳转独立 Preview。
           </p>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowOverwriteAtPreview}
-              disabled={busy || repeatLocked}
-              onChange={(event) =>
-                setAllowOverwriteAtPreview(event.target.checked)
-              }
-            />
-            如精确 Preview 显示需要，允许本条目替换现有目标
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowCleanupAtPreview}
-              disabled={busy || repeatLocked}
-              onChange={(event) =>
-                setAllowCleanupAtPreview(event.target.checked)
-              }
-            />
-            如精确 Preview 显示需要，允许删除整理后为空的来源目录
-          </label>
           <div className="mf-actions">
             <button
               type="button"
-              className="mf-button mf-button-secondary"
+              className="mf-button"
               disabled={busy || repeatLocked}
-              onClick={() => void authorizePreview()}
+              onClick={() => void prepareSummary()}
             >
-              {busy ? "正在准备…" : "准备精确 Preview"}
+              {busy ? "正在准备…" : "生成计划摘要并在此确认"}
             </button>
-            {linked && onOpenRecoveryPreview && (
+          </div>
+          <details open={false}>
+            <summary>高级：保留原一次性权限的精确 Preview 兼容入口</summary>
+            <label>
+              <input
+                type="checkbox"
+                checked={allowOverwriteAtPreview}
+                disabled={busy || repeatLocked}
+                onChange={(event) =>
+                  setAllowOverwriteAtPreview(event.target.checked)
+                }
+              />
+              如精确 Preview 显示需要，允许本条目替换现有目标
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={allowCleanupAtPreview}
+                disabled={busy || repeatLocked}
+                onChange={(event) =>
+                  setAllowCleanupAtPreview(event.target.checked)
+                }
+              />
+              如精确 Preview 显示需要，允许删除整理后为空的来源目录
+            </label>
+            <div className="mf-actions">
               <button
                 type="button"
-                className="mf-button"
-                onClick={() =>
-                  onOpenRecoveryPreview(
-                    linked.previewId,
-                    linked.linkId,
-                    taskId,
-                    itemId,
-                  )
-                }
+                className="mf-button mf-button-secondary"
+                disabled={busy || repeatLocked}
+                onClick={() => void authorizePreview()}
               >
-                检查精确 Preview
+                {busy ? "正在准备…" : "准备精确 Preview"}
               </button>
-            )}
-          </div>
+              {linked && onOpenRecoveryPreview && (
+                <button
+                  type="button"
+                  className="mf-button"
+                  onClick={() =>
+                    onOpenRecoveryPreview(
+                      linked.previewId,
+                      linked.linkId,
+                      taskId,
+                      itemId,
+                    )
+                  }
+                >
+                  检查精确 Preview
+                </button>
+              )}
+            </div>
+          </details>
         </div>
       )}
       {linked && (

@@ -2610,6 +2610,327 @@ class RecoveryContinuationTests(unittest.TestCase):
                 collision=collision,
             )
 
+    def _complete_analysis_for_summary(self, environment, provider):
+        """Drive one original manual failure to a completed linked re-analysis."""
+        services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            submission = self._admit_and_continue(services, run, repository)
+        self._close_manual_services(services)
+        self._run_worker(environment, provider)
+        self._completed_continuation_item(
+            environment, submission.job.job_id, RecoveryContinuationStatus.COMPLETED
+        )
+        return run
+
+    def test_recovery_prepare_summary_is_read_only_and_durable(self):
+        """Prepare publishes a durable, authority-free summary with zero mutation."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                executions_before = len(
+                    repository.list_manual_executions_for_task_item(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual("prepared", preparation["status"])
+            self.assertIsNone(preparation["authorization_id"])
+            self.assertIsNone(preparation["execution_id"])
+            self.assertFalse(preparation["hasExecutionAuthority"])
+            # Zero mutation, zero authority, zero new execution.
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    executions_before,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+                self.assertIsNone(
+                    repository.get_manual_recovery_link_by_source(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                )
+            # The summary survives a fresh repository handle and a new service.
+            reopened = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, reopened)
+            rediscovery, _api = self._recovery_api(environment, reopened)
+            durable = rediscovery.discovery_for_preparation(run.task_id, run.items[0].task_item_id)
+            assert durable is not None
+            self.assertEqual(preparation["preparation_id"], durable["preparation_id"])
+            self.assertEqual(preparation["preview_id"], durable["preview_id"])
+
+    def test_recovery_confirm_prepared_admits_exact_subset_and_links_summary(self):
+        """Confirmation admits the exact subset and links the summary atomically."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            self.assertEqual([ready_item_id], admitted["selectedItemIds"])
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                persisted = repository.get_manual_recovery_preparation(
+                    preparation["preparation_id"]
+                )
+                assert persisted is not None
+                self.assertEqual("confirmed", persisted.status.value)
+                self.assertEqual(admitted["executionId"], persisted.execution_id)
+                self.assertIsNotNone(persisted.authorization_id)
+            # A repeated confirmation resolves to the same durable execution.
+            status, repeated = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{repeated}")
+            self.assertEqual(admitted["executionId"], repeated["executionId"])
+
+    def test_recovery_prepare_summary_supersedes_previous_and_rejects_stale_checkpoint(self):
+        """A fresh summary supersedes the old one; a stale checkpoint is refused."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, first = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            status, second = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            self.assertNotEqual(first["preparation_id"], second["preparation_id"])
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                superseded = repository.get_manual_recovery_preparation(first["preparation_id"])
+                assert superseded is not None
+                self.assertEqual("superseded", superseded.status.value)
+                current = repository.get_current_manual_recovery_preparation(
+                    run.task_id, run.items[0].task_item_id
+                )
+                assert current is not None
+                self.assertEqual(second["preparation_id"], current.preparation_id)
+            # Confirming the superseded summary is refused; the current one is not.
+            status, refused = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{first['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            # A stale checkpoint version is refused before any work is created.
+            status, stale = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": "0" * 64},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{stale}")
+            self.assertEqual("stale_checkpoint", stale["error"]["code"])
+
+    def test_recovery_prepare_summary_requires_write_permission(self):
+        """A read-only principal cannot prepare a plan summary."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, denied = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="viewer-token",
+            )
+            self.assertEqual(403, status, f"{denied}")
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_recovery_confirm_rejects_other_actor_and_confirmation_without_flag(self):
+        """Only the preparing actor may confirm, and only with confirmation=true."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            confirm_path = (
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm"
+            )
+            # confirmation must be exactly true.
+            status, refused = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": False},
+                token="operator-token",
+            )
+            self.assertEqual(400, status, f"{refused}")
+            # A read-only principal cannot confirm at all.
+            status, denied = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": True},
+                token="viewer-token",
+            )
+            self.assertEqual(403, status, f"{denied}")
+            # A different write principal is refused because the summary is not
+            # theirs, and no execution is admitted.
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_recovery_confirm_concurrently_admits_one_execution(self):
+        """Two concurrent confirmations of the same summary admit at most one."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+
+            def confirm():
+                return api_request(
+                    api,
+                    f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                    method="POST",
+                    body={"itemIds": [ready_item_id], "confirmation": True},
+                    token="operator-token",
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = [
+                    future.result() for future in (pool.submit(confirm), pool.submit(confirm))
+                ]
+            accepted = [value for value in outcomes if value[0] == 202]
+            self.assertGreaterEqual(len(accepted), 1, f"{outcomes}")
+            execution_ids = {value[1]["executionId"] for value in accepted}
+            self.assertEqual(1, len(execution_ids), f"{outcomes}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    1,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+
 
 def _ambiguous_identification() -> MetadataIdentificationResult:
     candidates = (

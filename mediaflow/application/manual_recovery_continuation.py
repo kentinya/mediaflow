@@ -10,7 +10,7 @@ return to the original Organize journey after reload.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -21,6 +21,7 @@ from mediaflow.application.processing_checkpoint import ProcessingCheckpointServ
 from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
+    ManualExecution,
     ManualExecutionAuthorizationStatus,
     ManualExecutionError,
 )
@@ -29,6 +30,8 @@ from mediaflow.domain.manual_organize_preview import ManualPreviewItemStatus
 from mediaflow.domain.manual_recovery import (
     ManualRecoveryLink,
     ManualRecoveryLinkStatus,
+    ManualRecoveryPreparation,
+    ManualRecoveryPreparationStatus,
 )
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
@@ -56,6 +59,26 @@ class ManualRecoveryContinuationError(ManualExecutionError):
             status=status,
             details=details,
         )
+
+
+@dataclass(frozen=True)
+class PreparedContinuation:
+    """The shared, non-authorizing preparation of one recovery item.
+
+    It carries exactly the durable evidence both the read-only summary and the
+    later explicit confirmation need: the original checkpoint/continuation, the
+    completed linked re-analysis, the original manual execution item and its
+    open intent item, and the freshly created exact zero-mutation Preview.
+    Creating it never mints, consumes or stores execution authority.
+    """
+
+    checkpoint: object
+    continuation: object
+    manual_item: object
+    intent: object
+    intent_item: object
+    preview: object
+    preview_item: object
 
 
 class ManualRecoveryContinuationService:
@@ -113,6 +136,288 @@ class ManualRecoveryContinuationService:
                 "continued manual execution requires confirmation=true",
                 code="confirmation_required",
             )
+        # A live or already-consumed link is the durable answer for this source
+        # item; resolving it before any fresh Preview avoids minting a plan the
+        # operator did not ask for.
+        existing = self._repository.get_manual_recovery_link_by_source(
+            source_task_id, source_item_id
+        )
+        reacquire_stale_link = False
+        if existing is not None:
+            authorization = self._execution.get_authorization(existing.authorization_id)
+            if authorization.status is ManualExecutionAuthorizationStatus.ACTIVE:
+                return existing
+            if authorization.status is ManualExecutionAuthorizationStatus.CONSUMED:
+                if authorization.execution_id is not None:
+                    return replace(
+                        existing,
+                        status=ManualRecoveryLinkStatus.CONSUMED,
+                        execution_id=authorization.execution_id,
+                        updated_at=authorization.consumed_at or self._clock(),
+                    )
+                raise ManualRecoveryContinuationError(
+                    "the continued manual execution authorization is already consumed",
+                    code="authorization_consumed",
+                )
+            # An expired or revoked one-shot authority never executed, so the item may
+            # acquire a fresh bounded authority once every gate below still passes.
+            self._repository.mark_manual_recovery_link_stale(existing.link_id, now=self._clock())
+            reacquire_stale_link = True
+        prepared = self._prepare_continuation(
+            source_task_id,
+            source_item_id,
+            expected_checkpoint_version=expected_checkpoint_version,
+            actor=actor,
+        )
+        continuation = prepared.continuation
+        manual_item = prepared.manual_item
+        intent = prepared.intent
+        preview = prepared.preview
+        preview_item = prepared.preview_item
+
+        authority = self._execution.authorize(
+            preview.preview_id,
+            [manual_item.item_id],
+            expected_intent_version=preview.intent_version,
+            expected_item_versions={manual_item.item_id: preview_item.item_version},
+            snapshot_id=preview.configuration_snapshot_id,
+            snapshot_digest=preview.configuration_snapshot_digest,
+            actor=actor,
+            permission=permission,
+            confirmation=True,
+            allow_overwrite=allow_overwrite,
+            allow_source_cleanup=allow_source_cleanup,
+            ttl_seconds=ttl_seconds,
+            note=note,
+        )
+        now = self._clock()
+        if reacquire_stale_link:
+            link = self._repository.supersede_manual_recovery_link(
+                existing.link_id,
+                analysis_continuation_id=continuation.continuation_id,
+                analysis_task_id=continuation.new_task_id,
+                analysis_result_id=continuation.new_result_id,
+                intent_id=intent.intent_id,
+                preview_id=preview.preview_id,
+                authorization_id=authority.authorization_id,
+                actor=actor,
+                now=now,
+            )
+        else:
+            link = ManualRecoveryLink(
+                str(uuid4()),
+                source_task_id,
+                source_item_id,
+                continuation.continuation_id,
+                continuation.new_task_id,
+                continuation.new_result_id,
+                intent.intent_id,
+                preview.preview_id,
+                authority.authorization_id,
+                actor,
+                ManualRecoveryLinkStatus.AUTHORIZED,
+                now,
+                now,
+            )
+            self._repository.create_manual_recovery_link(link)
+        return link
+
+    def prepare_summary(
+        self,
+        source_task_id: str,
+        source_item_id: str,
+        *,
+        expected_checkpoint_version: str,
+        actor: str,
+    ) -> ManualRecoveryPreparation:
+        """Create one non-authorizing plan summary for a recovery item.
+
+        This is the read/prepare half of the native same-interface recovery
+        journey.  It re-validates the original item, the completed linked
+        re-analysis and the open pinned intent, then publishes one exact
+        zero-mutation Preview and records a durable summary.  It mints **no**
+        execution authority, consumes none, and performs zero Storage mutation;
+        the operator must still explicitly confirm a ready subset.
+        """
+
+        actor = self._actor(actor)
+        prepared = self._prepare_continuation(
+            source_task_id,
+            source_item_id,
+            expected_checkpoint_version=expected_checkpoint_version,
+            actor=actor,
+        )
+        checkpoint = prepared.checkpoint
+        continuation = prepared.continuation
+        preview = prepared.preview
+        preview_item = prepared.preview_item
+        now = self._clock()
+        previous = self._repository.get_current_manual_recovery_preparation(
+            source_task_id, source_item_id
+        )
+        if previous is not None:
+            self._repository.supersede_manual_recovery_preparation(previous.preparation_id, now=now)
+        preparation = ManualRecoveryPreparation(
+            str(uuid4()),
+            source_task_id,
+            source_item_id,
+            continuation.continuation_id,
+            continuation.new_task_id,
+            continuation.new_result_id,
+            prepared.intent.intent_id,
+            preview.preview_id,
+            preview.intent_version,
+            checkpoint.checkpoint_version,
+            preview_item.input_fingerprint,
+            preview.configuration_snapshot_id,
+            preview.configuration_snapshot_digest,
+            actor,
+            ManualRecoveryPreparationStatus.PREPARED,
+            now,
+            now,
+        )
+        self._repository.create_manual_recovery_preparation(preparation)
+        return preparation
+
+    def confirm_prepared(
+        self,
+        preparation_id: str,
+        *,
+        item_ids,
+        actor: str,
+        permission: str = MANUAL_EXECUTION_PERMISSION,
+        confirmation: bool = False,
+        allow_overwrite: bool = False,
+        allow_source_cleanup: bool = False,
+    ) -> ManualExecution:
+        """Confirm one exact ready subset of a prepared summary.
+
+        The confirmation is bound to the persisted summary, its exact Preview,
+        the original checkpoint version and the current actor.  Only the ready
+        subset the operator selected is admitted through the existing one-shot
+        authority path and the existing atomic admission; the summary is linked
+        to the resulting execution inside that same transaction.  Unselected,
+        not-ready, already-admitted or uncertain siblings are never implied.
+        """
+
+        actor = self._actor(actor)
+        if permission != MANUAL_EXECUTION_PERMISSION:
+            raise ManualRecoveryContinuationError(
+                "continued manual execution permission is invalid",
+                code="invalid_permission",
+                status=403,
+            )
+        if confirmation is not True:
+            raise ManualRecoveryContinuationError(
+                "continued manual execution requires confirmation=true",
+                code="confirmation_required",
+            )
+        preparation = self._repository.get_manual_recovery_preparation(preparation_id)
+        if preparation is None:
+            raise ManualRecoveryContinuationError(
+                "the recovery plan summary was not found",
+                code="preparation_not_found",
+                status=404,
+            )
+        if preparation.actor != actor:
+            raise ManualRecoveryContinuationError(
+                "the recovery plan summary belongs to another actor",
+                code="preparation_actor_mismatch",
+                status=403,
+            )
+        if preparation.status is ManualRecoveryPreparationStatus.CONFIRMED:
+            if preparation.execution_id is None:
+                raise ManualRecoveryContinuationError(
+                    "the confirmed summary has no durable execution",
+                    code="preparation_inconsistent",
+                )
+            execution = self._repository.get_manual_execution(preparation.execution_id)
+            if execution is None:
+                raise ManualRecoveryContinuationError(
+                    "the linked execution is unavailable",
+                    code="execution_unavailable",
+                    status=503,
+                )
+            return execution
+        if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:
+            raise ManualRecoveryContinuationError(
+                "this recovery plan summary is no longer the current plan",
+                code="preparation_stale",
+                next_action=preparation.next_action(),
+            )
+        current = self._repository.get_current_manual_recovery_preparation(
+            preparation.source_task_id, preparation.source_item_id
+        )
+        if current is None or current.preparation_id != preparation.preparation_id:
+            raise ManualRecoveryContinuationError(
+                "a newer plan summary replaced this one",
+                code="preparation_superseded",
+                next_action="reload the current plan summary and confirm again",
+            )
+        checkpoint = self._checkpoint_service.get(
+            preparation.source_item_id, task_id=preparation.source_task_id
+        )
+        if checkpoint.checkpoint_version != preparation.checkpoint_version:
+            raise ManualRecoveryContinuationError(
+                "the item changed after the summary was prepared",
+                code="stale_checkpoint",
+                details={"currentCheckpointVersion": checkpoint.checkpoint_version},
+            )
+        try:
+            execution = self._execution.begin_web_execution(
+                preparation.preview_id,
+                list(item_ids),
+                expected_intent_version=preparation.intent_version,
+                actor=actor,
+                permission=permission,
+                confirmation=True,
+                allow_overwrite=allow_overwrite,
+                allow_source_cleanup=allow_source_cleanup,
+                preparation_id=preparation.preparation_id,
+            )
+        except ManualExecutionError as error:
+            self._handle_confirm_failure(preparation, error)
+            raise
+        # The atomic admission linked the summary inside its own transaction;
+        # reload the durable record so the caller sees the confirmed state.
+        linked = self._repository.get_manual_recovery_preparation(preparation.preparation_id)
+        if linked is not None and linked.status is not ManualRecoveryPreparationStatus.CONFIRMED:
+            raise ManualRecoveryContinuationError(
+                "the admitted execution was not linked to its plan summary",
+                code="preparation_unlinked",
+                status=503,
+            )
+        return execution
+
+    def _handle_confirm_failure(
+        self, preparation: ManualRecoveryPreparation, error: ManualExecutionError
+    ) -> None:
+        """Keep an unconfirmed summary usable when confirmation is refused.
+
+        A refusal that consumed no authority (for example a stale item or a
+        selection outside the ready scope) leaves the summary inspectable so the
+        operator can correct and retry; a summary whose authority was consumed
+        is resolved by the repository's atomic link, never here.
+        """
+
+        return None
+
+    def _prepare_continuation(
+        self,
+        source_task_id: str,
+        source_item_id: str,
+        *,
+        expected_checkpoint_version: str,
+        actor: str,
+    ) -> PreparedContinuation:
+        """Shared non-authorizing preparation of one recovery item.
+
+        Both the read-only summary and the explicit one-shot authorization call
+        this so they can never diverge on the original item, the linked
+        re-analysis, the pinned open intent, the resolved decisions or the exact
+        zero-mutation Preview.
+        """
+
         checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
         if expected_checkpoint_version != checkpoint.checkpoint_version:
             raise ManualRecoveryContinuationError(
@@ -217,31 +522,6 @@ class ManualRecoveryContinuationService:
                     "the exact item before continuing"
                 ),
             )
-
-        existing = self._repository.get_manual_recovery_link_by_source(
-            source_task_id, source_item_id
-        )
-        reacquire_stale_link = False
-        if existing is not None:
-            authorization = self._execution.get_authorization(existing.authorization_id)
-            if authorization.status is ManualExecutionAuthorizationStatus.ACTIVE:
-                return existing
-            if authorization.status is ManualExecutionAuthorizationStatus.CONSUMED:
-                if authorization.execution_id is not None:
-                    return replace(
-                        existing,
-                        status=ManualRecoveryLinkStatus.CONSUMED,
-                        execution_id=authorization.execution_id,
-                        updated_at=authorization.consumed_at or self._clock(),
-                    )
-                raise ManualRecoveryContinuationError(
-                    "the continued manual execution authorization is already consumed",
-                    code="authorization_consumed",
-                )
-            # An expired or revoked one-shot authority never executed, so the item may
-            # acquire a fresh bounded authority once every gate below still passes.
-            self._repository.mark_manual_recovery_link_stale(existing.link_id, now=self._clock())
-            reacquire_stale_link = True
 
         executions = self._repository.list_manual_executions_for_task_item(
             source_task_id, source_item_id
@@ -352,52 +632,15 @@ class ManualRecoveryContinuationService:
                 ),
                 details={"previewId": preview.preview_id},
             )
-        authority = self._execution.authorize(
-            preview.preview_id,
-            [manual_item.item_id],
-            expected_intent_version=preview.intent_version,
-            expected_item_versions={manual_item.item_id: preview_item.item_version},
-            snapshot_id=preview.configuration_snapshot_id,
-            snapshot_digest=preview.configuration_snapshot_digest,
-            actor=actor,
-            permission=permission,
-            confirmation=True,
-            allow_overwrite=allow_overwrite,
-            allow_source_cleanup=allow_source_cleanup,
-            ttl_seconds=ttl_seconds,
-            note=note,
+        return PreparedContinuation(
+            checkpoint=checkpoint,
+            continuation=continuation,
+            manual_item=manual_item,
+            intent=intent,
+            intent_item=intent_item,
+            preview=preview,
+            preview_item=preview_item,
         )
-        now = self._clock()
-        if reacquire_stale_link:
-            link = self._repository.supersede_manual_recovery_link(
-                existing.link_id,
-                analysis_continuation_id=continuation.continuation_id,
-                analysis_task_id=continuation.new_task_id,
-                analysis_result_id=continuation.new_result_id,
-                intent_id=intent.intent_id,
-                preview_id=preview.preview_id,
-                authorization_id=authority.authorization_id,
-                actor=actor,
-                now=now,
-            )
-        else:
-            link = ManualRecoveryLink(
-                str(uuid4()),
-                source_task_id,
-                source_item_id,
-                continuation.continuation_id,
-                continuation.new_task_id,
-                continuation.new_result_id,
-                intent.intent_id,
-                preview.preview_id,
-                authority.authorization_id,
-                actor,
-                ManualRecoveryLinkStatus.AUTHORIZED,
-                now,
-                now,
-            )
-            self._repository.create_manual_recovery_link(link)
-        return link
 
     def execute_continued(
         self,
@@ -491,6 +734,26 @@ class ManualRecoveryContinuationService:
             )
         except Exception:
             pass
+        return value
+
+    def discovery_for_preparation(
+        self, source_task_id: str, source_item_id: str
+    ) -> dict[str, object] | None:
+        """Return the current non-authorizing plan summary for one source item.
+
+        The projection is deliberately authority-free: it exposes only the
+        durable preparation identity, its exact Preview and the safe next step.
+        A confirmed preparation additionally names its linked execution so the
+        operator can follow the real result.
+        """
+
+        preparation = self._repository.get_current_manual_recovery_preparation(
+            source_task_id, source_item_id
+        )
+        if preparation is None:
+            return None
+        value = preparation.document()
+        value["hasExecutionAuthority"] = False
         return value
 
     def supports_source_item(self, source_task_id: str, source_item_id: str) -> bool:

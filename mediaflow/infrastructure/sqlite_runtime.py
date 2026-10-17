@@ -108,6 +108,8 @@ from mediaflow.domain.manual_organize_preview import (
 from mediaflow.domain.manual_recovery import (
     ManualRecoveryLink,
     ManualRecoveryLinkStatus,
+    ManualRecoveryPreparation,
+    ManualRecoveryPreparationStatus,
 )
 from mediaflow.domain.manual_safety import (
     redact_evidence_text,
@@ -2001,6 +2003,156 @@ class SQLiteTaskRepository:
         value = self.get_manual_recovery_link(link_id)
         if value is None:
             raise LookupError(f"manual recovery link {link_id!r} was not found")
+        return value
+
+    def create_manual_recovery_preparation(self, preparation: ManualRecoveryPreparation) -> None:
+        if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:
+            raise ValueError("manual recovery preparation must start prepared")
+        if preparation.authorization_id is not None or preparation.execution_id is not None:
+            raise ValueError("a prepared summary must not carry execution authority")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO manual_recovery_preparations (
+                    preparation_id, source_task_id, source_item_id,
+                    analysis_continuation_id, analysis_task_id, analysis_result_id,
+                    intent_id, preview_id, intent_version, checkpoint_version,
+                    input_fingerprint,
+                    configuration_snapshot_id, configuration_snapshot_digest, actor,
+                    status, current, authorization_id, execution_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._manual_recovery_preparation_values(preparation),
+            )
+
+    def get_manual_recovery_preparation(
+        self, preparation_id: str
+    ) -> ManualRecoveryPreparation | None:
+        if not isinstance(preparation_id, str) or not preparation_id.strip():
+            raise ValueError("manual recovery preparation ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_recovery_preparations WHERE preparation_id=?",
+                (preparation_id,),
+            ).fetchone()
+        return self._manual_recovery_preparation(row) if row else None
+
+    def get_current_manual_recovery_preparation(
+        self, source_task_id: str, source_item_id: str
+    ) -> ManualRecoveryPreparation | None:
+        if not isinstance(source_task_id, str) or not source_task_id.strip():
+            raise ValueError("manual recovery source Task ID is required")
+        if not isinstance(source_item_id, str) or not source_item_id.strip():
+            raise ValueError("manual recovery source TaskItem ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM manual_recovery_preparations
+                WHERE source_task_id=? AND source_item_id=? AND current=1
+                ORDER BY created_at DESC, preparation_id DESC LIMIT 1""",
+                (source_task_id, source_item_id),
+            ).fetchone()
+        return self._manual_recovery_preparation(row) if row else None
+
+    def list_manual_recovery_preparations(
+        self, source_task_id: str, source_item_id: str, *, limit: int = 32
+    ) -> tuple[ManualRecoveryPreparation, ...]:
+        if not isinstance(source_task_id, str) or not source_task_id.strip():
+            raise ValueError("manual recovery source Task ID is required")
+        if not isinstance(source_item_id, str) or not source_item_id.strip():
+            raise ValueError("manual recovery source TaskItem ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("manual recovery preparation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM manual_recovery_preparations
+                WHERE source_task_id=? AND source_item_id=?
+                ORDER BY created_at DESC, preparation_id DESC LIMIT ?""",
+                (source_task_id, source_item_id, limit),
+            ).fetchall()
+        return tuple(self._manual_recovery_preparation(row) for row in rows)
+
+    def supersede_manual_recovery_preparation(
+        self, preparation_id: str, *, now: datetime
+    ) -> ManualRecoveryPreparation:
+        """Mark the previous current summary historical without touching history.
+
+        Used when a newer decision/analysis replaced an unconfirmed summary, or
+        when a fresh summary is published for the same source item.  The row is
+        kept fully readable; only its ``current`` flag and status change.
+        """
+
+        if now.tzinfo is None:
+            raise ValueError("manual recovery preparation supersede timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_preparations
+                SET status=?, current=0, updated_at=?
+                WHERE preparation_id=? AND current=1""",
+                (
+                    ManualRecoveryPreparationStatus.SUPERSEDED.value,
+                    now.isoformat(),
+                    preparation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_preparation(preparation_id)
+                if value is None:
+                    raise LookupError(
+                        f"manual recovery preparation {preparation_id!r} was not found"
+                    )
+                return value
+        value = self.get_manual_recovery_preparation(preparation_id)
+        if value is None:
+            raise LookupError(f"manual recovery preparation {preparation_id!r} was not found")
+        return value
+
+    def complete_manual_recovery_preparation(
+        self,
+        preparation_id: str,
+        *,
+        authorization_id: str,
+        execution_id: str,
+        now: datetime,
+    ) -> ManualRecoveryPreparation:
+        """Link the exact admitted execution to its confirming summary.
+
+        This is the only transition that fills ``authorization_id`` and
+        ``execution_id``; it is performed inside the same atomic admission that
+        consumes the one-shot authority, so a summary never appears confirmed
+        without a durable execution.
+        """
+
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual recovery preparation authorization ID is required")
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("manual recovery preparation execution ID is required")
+        if now.tzinfo is None:
+            raise ValueError("manual recovery preparation completion timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_preparations
+                SET status=?, authorization_id=?, execution_id=?, updated_at=?
+                WHERE preparation_id=? AND status=?""",
+                (
+                    ManualRecoveryPreparationStatus.CONFIRMED.value,
+                    authorization_id,
+                    execution_id,
+                    now.isoformat(),
+                    preparation_id,
+                    ManualRecoveryPreparationStatus.PREPARED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_preparation(preparation_id)
+                if value is None:
+                    raise LookupError(
+                        f"manual recovery preparation {preparation_id!r} was not found"
+                    )
+                if value.status is ManualRecoveryPreparationStatus.CONFIRMED:
+                    return value
+                raise ValueError("manual recovery preparation is no longer prepared")
+        value = self.get_manual_recovery_preparation(preparation_id)
+        if value is None:
+            raise LookupError(f"manual recovery preparation {preparation_id!r} was not found")
         return value
 
     def create_recovery_batch(self, batch: RecoveryBatch) -> None:
@@ -10317,6 +10469,7 @@ class SQLiteTaskRepository:
         now: datetime,
         *,
         display: RunDisplayContext | None = None,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         """Atomically consume exact authority, create Task scope, and fence paths.
 
@@ -10324,6 +10477,12 @@ class SQLiteTaskRepository:
         ``operations_run_display`` row commits inside this same transaction:
         a newly admitted manual Organize run always carries its historical
         business identity for the unified Operations inventory.
+
+        When ``preparation_id`` names one still-``prepared`` recovery summary,
+        that summary is linked to this execution and its consumed authority
+        inside the same transaction.  A summary therefore never appears
+        confirmed without a durable execution, and an admission can never leave
+        an unlinked prepared summary behind.
         """
 
         if not items or tuple(item.item_id for item in items) != execution.selected_item_ids:
@@ -10594,6 +10753,46 @@ class SQLiteTaskRepository:
                         {"taskId": execution.task_id},
                     )
                 )
+                if preparation_id is not None:
+                    # Link the non-authorizing summary to the exact execution it
+                    # confirmed, inside this same atomic admission.  The guarded
+                    # update proves the summary was still the current prepared
+                    # record for this source item; a changed or already-confirmed
+                    # summary rolls the whole admission back instead of leaving
+                    # an orphaned authority or execution.
+                    preparation = self._connection.execute(
+                        "SELECT * FROM manual_recovery_preparations "
+                        "WHERE preparation_id=? AND status=? AND current=1",
+                        (
+                            preparation_id,
+                            ManualRecoveryPreparationStatus.PREPARED.value,
+                        ),
+                    ).fetchone()
+                    if preparation is None:
+                        raise ManualExecutionError(
+                            "the recovery plan summary changed before confirmation",
+                            code="preparation_stale",
+                            next_action="reload the current plan summary and confirm again",
+                        )
+                    completed = self._connection.execute(
+                        """UPDATE manual_recovery_preparations
+                        SET status=?, authorization_id=?, execution_id=?, updated_at=?
+                        WHERE preparation_id=? AND status=? AND current=1""",
+                        (
+                            ManualRecoveryPreparationStatus.CONFIRMED.value,
+                            authorization.authorization_id,
+                            execution.execution_id,
+                            now.isoformat(),
+                            preparation_id,
+                            ManualRecoveryPreparationStatus.PREPARED.value,
+                        ),
+                    )
+                    if completed.rowcount != 1:
+                        raise ManualExecutionError(
+                            "the recovery plan summary changed before confirmation",
+                            code="preparation_stale",
+                            next_action="reload the current plan summary and confirm again",
+                        )
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -14133,6 +14332,34 @@ class SQLiteTaskRepository:
                     ON manual_recovery_links(source_task_id, source_item_id, link_id);
                 CREATE INDEX IF NOT EXISTS manual_recovery_links_authorization
                     ON manual_recovery_links(authorization_id);
+                CREATE TABLE IF NOT EXISTS manual_recovery_preparations (
+                    preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+                    source_item_id TEXT NOT NULL,
+                    analysis_continuation_id TEXT NOT NULL,
+                    analysis_task_id TEXT NOT NULL,
+                    analysis_result_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
+                    intent_version INTEGER NOT NULL,
+                    checkpoint_version TEXT NOT NULL,
+                    input_fingerprint TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    actor TEXT NOT NULL, status TEXT NOT NULL, current INTEGER NOT NULL,
+                    authorization_id TEXT UNIQUE, execution_id TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+                    FOREIGN KEY(analysis_continuation_id)
+                        REFERENCES recovery_continuations(continuation_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES manual_execution_authorizations(authorization_id),
+                    FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_recovery_preparations_source
+                    ON manual_recovery_preparations(source_task_id, source_item_id,
+                                                   current, created_at, preparation_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL,
@@ -15910,6 +16137,61 @@ class SQLiteTaskRepository:
             row["error"],
             row["recovery"],
             row["authority_statement"],
+        )
+
+    @staticmethod
+    def _manual_recovery_preparation_values(
+        preparation: ManualRecoveryPreparation,
+    ) -> tuple[object, ...]:
+        return (
+            preparation.preparation_id,
+            preparation.source_task_id,
+            preparation.source_item_id,
+            preparation.analysis_continuation_id,
+            preparation.analysis_task_id,
+            preparation.analysis_result_id,
+            preparation.intent_id,
+            preparation.preview_id,
+            preparation.intent_version,
+            preparation.checkpoint_version,
+            preparation.input_fingerprint,
+            preparation.configuration_snapshot_id,
+            preparation.configuration_snapshot_digest,
+            preparation.actor,
+            preparation.status.value,
+            int(preparation.status is ManualRecoveryPreparationStatus.PREPARED),
+            preparation.authorization_id,
+            preparation.execution_id,
+            preparation.created_at.isoformat(),
+            preparation.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_recovery_preparation(row: sqlite3.Row) -> ManualRecoveryPreparation:
+        try:
+            status = ManualRecoveryPreparationStatus(row["status"])
+        except ValueError:
+            status = ManualRecoveryPreparationStatus.STALE
+        return ManualRecoveryPreparation(
+            row["preparation_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["analysis_continuation_id"],
+            row["analysis_task_id"],
+            row["analysis_result_id"],
+            row["intent_id"],
+            row["preview_id"],
+            int(row["intent_version"]),
+            row["checkpoint_version"],
+            row["input_fingerprint"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["actor"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["authorization_id"],
+            row["execution_id"],
         )
 
     @staticmethod

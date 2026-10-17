@@ -349,6 +349,7 @@ class ManualOrganizeExecutionService:
         confirmation: bool,
         allow_overwrite: bool = False,
         allow_source_cleanup: bool = False,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         """Serve one meaningful Web Execute action with server-held authority.
 
@@ -379,6 +380,7 @@ class ManualOrganizeExecutionService:
                 actor=actor,
                 permission=permission,
                 confirmation=True,
+                preparation_id=preparation_id,
             )
         except ManualExecutionError as error:
             existing = self._existing_admitted_execution(authority, error)
@@ -564,6 +566,7 @@ class ManualOrganizeExecutionService:
         actor: str,
         permission: str = "execute_manual_organize",
         confirmation: bool,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         """Consume exact authority and persist the admitted execution only.
 
@@ -573,6 +576,10 @@ class ManualOrganizeExecutionService:
         execution, Task scope, item outcomes and Storage fences.  What this
         boundary deliberately never does is invoke ``OrganizerExecutor``: the
         resident Processing Worker owns that part of the boundary.
+
+        ``preparation_id`` links one non-authorizing recovery summary to the
+        exact execution its confirmation admitted, inside the same atomic
+        admission transaction.
         """
 
         return self.execute(
@@ -581,6 +588,7 @@ class ManualOrganizeExecutionService:
             permission=permission,
             confirmation=confirmation,
             admit_only=True,
+            preparation_id=preparation_id,
         )
 
     def _run_display_context(
@@ -673,6 +681,7 @@ class ManualOrganizeExecutionService:
         permission: str = "execute_manual_organize",
         confirmation: bool,
         admit_only: bool = False,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         if not isinstance(admit_only, bool):
             raise ManualExecutionError(
@@ -823,7 +832,15 @@ class ManualOrganizeExecutionService:
             plans=plan_by_item,
             runtime=runtime,
         )
-        admitted = admit(authority, execution, execution_items, locks, now, display=display)
+        admitted = admit(
+            authority,
+            execution,
+            execution_items,
+            locks,
+            now,
+            display=display,
+            preparation_id=preparation_id,
+        )
         if admit_only:
             # The durable execution is committed and waiting for the resident
             # Processing Worker; this boundary never calls OrganizerExecutor.

@@ -79,10 +79,12 @@ import {
 } from "../../entities/rules/rules-workspace";
 import {
   normalizeManualRecoveryLink,
+  normalizeManualRecoveryPreparation,
   normalizeMetadataSearch,
   normalizeRecoveryBatch,
   normalizeTaskItemRecovery,
   type ManualRecoveryLinkModel,
+  type ManualRecoveryPreparationModel,
   type MetadataSearchModel,
   type RecoveryBatchModel,
   type TaskItemRecoveryModel,
@@ -1879,6 +1881,7 @@ import {
 } from "../../entities/operations/notification";
 import {
   normalizeBoundedText,
+  normalizeIdentityText,
   readRecord,
 } from "../../entities/shared/normalize";
 import { normalizePrincipalId } from "../auth/principal-identity";
@@ -2535,6 +2538,100 @@ export async function executeTaskItemRecoveryOrganize(
     normalizeManualRecoveryLink,
     fetchImpl,
   );
+}
+
+/**
+ * Publish one non-authorizing plan summary of a recovery source item.
+ *
+ * This is a read/prepare action: it creates no execution authority and
+ * performs no Storage mutation.  The operator still has to explicitly confirm
+ * a ready subset through `confirmTaskItemRecoveryPreparation`.
+ */
+export async function prepareTaskItemRecoverySummary(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  expectedCheckpointVersion: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryPreparationModel>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `${taskItemRecoveryBase(taskId, itemId)}/prepare-summary`,
+    { expectedCheckpointVersion },
+    normalizeManualRecoveryPreparation,
+    fetchImpl,
+  );
+}
+
+/**
+ * Confirm an exact ready subset of one prepared recovery summary.
+ *
+ * Only the explicitly selected ready items are admitted; the linked execution
+ * is the durable result of that confirmation.  A repeated or concurrent call
+ * resolves to the same durable execution instead of admitting a second one.
+ */
+export async function confirmTaskItemRecoveryPreparation(
+  token: string | null,
+  preparationId: string,
+  options: {
+    readonly itemIds: readonly string[];
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryConfirmationModel>> {
+  if (!isSafeIdentifier(preparationId) || options.itemIds.length === 0) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/manual-recovery-preparations/${encodeURIComponent(preparationId)}/confirm`,
+    {
+      itemIds: [...options.itemIds],
+      confirmation: true,
+      allowOverwrite: options.allowOverwrite,
+      allowSourceCleanup: options.allowSourceCleanup,
+    },
+    normalizeManualRecoveryConfirmation,
+    fetchImpl,
+  );
+}
+
+/** One bounded, secret-free confirmation result: the admitted execution. */
+export interface ManualRecoveryConfirmationModel {
+  readonly executionId: string;
+  readonly taskId: string;
+  readonly status: string;
+  readonly selectedItemIds: readonly string[];
+  readonly nextAction: string;
+}
+
+export function normalizeManualRecoveryConfirmation(
+  payload: unknown,
+): ManualRecoveryConfirmationModel {
+  const source = readRecord(payload, "manualRecoveryConfirmation");
+  const rawItems = source["selectedItemIds"];
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    throw new Error(
+      "manual recovery confirmation response did not match its contract",
+    );
+  }
+  return {
+    executionId: normalizeIdentityText(
+      source["executionId"],
+      "executionId",
+      200,
+    ),
+    taskId: normalizeIdentityText(source["taskId"], "taskId", 200),
+    status: normalizeBoundedText(source["status"], "status"),
+    selectedItemIds: rawItems.map((value) =>
+      normalizeIdentityText(value, "selectedItemId", 200),
+    ),
+    nextAction: normalizeBoundedText(source["nextAction"], "nextAction"),
+  };
 }
 
 export interface SubmitOrganizeIntentOptions {

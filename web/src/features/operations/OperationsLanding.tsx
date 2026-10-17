@@ -28,6 +28,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
+  executeOrganizePreview,
   mutateLifecycle,
   submitRemainingScopePreview,
   type LifecycleMutationResult,
@@ -62,6 +63,7 @@ import {
 } from "./run-query";
 import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { ProblemFilePanel } from "./ProblemFilePanel";
 import {
   readRunDetailState,
@@ -1433,6 +1435,21 @@ function RunDetailPanel({
   // never cleared by a poll, a cache event or a second submission attempt.
   const [locked, setLocked] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  // The paused-run remaining-scope continuation is reviewed and confirmed in
+  // this same panel (RO-3/AC-6): a withheld Continue first admits the exact
+  // zero-mutation remaining-scope Preview, and the operator then selects the
+  // ready subset and explicitly confirms it.  No standalone Preview is needed.
+  const [remainingScope, setRemainingScope] = useState<{
+    readonly previewId: string;
+    readonly intentVersion: number;
+  } | null>(null);
+  const [remainingSelection, setRemainingSelection] = useState<
+    readonly string[] | null
+  >(null);
+  const [remainingOverwrite, setRemainingOverwrite] = useState(false);
+  const [remainingCleanup, setRemainingCleanup] = useState(false);
+  const [remainingBusy, setRemainingBusy] = useState(false);
+  const [remainingMessage, setRemainingMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const opener =
@@ -1516,9 +1533,9 @@ function RunDetailPanel({
   };
 
   // The native exact-Preview recovery of a withheld Continue (RO-5). It is a
-  // zero-mutation admission: on success the operator is routed to the ordinary
-  // organize Preview review, where one fresh explicit execution intent is still
-  // required. Nothing is executed here.
+  // zero-mutation admission: the exact remaining-scope plan summary is then
+  // reviewed and confirmed inside this panel (RO-3/AC-6). Nothing is executed
+  // by this admission.
   const remainingScopePreview = useMutation({
     mutationFn: (request: { readonly taskId: string }) =>
       submitRemainingScopePreview(token, { taskId: request.taskId }),
@@ -1531,9 +1548,55 @@ function RunDetailPanel({
         }
         return;
       }
-      onOpenPreview(result.model.previewId);
+      setRemainingSelection(null);
+      setRemainingOverwrite(false);
+      setRemainingCleanup(false);
+      setRemainingMessage(
+        "已在当前界面生成剩余范围的零变更计划摘要。检查后选择就绪子集并明确确认继续。",
+      );
+      setRemainingScope({
+        previewId: result.model.previewId,
+        intentVersion: result.model.intentVersion ?? 0,
+      });
     },
   });
+
+  const confirmRemainingScope = async () => {
+    if (
+      remainingScope === null ||
+      remainingSelection === null ||
+      remainingSelection.length === 0
+    ) {
+      return;
+    }
+    setRemainingBusy(true);
+    setRemainingMessage(null);
+    try {
+      const result = await executeOrganizePreview(token, {
+        previewId: remainingScope.previewId,
+        itemIds: remainingSelection,
+        expectedIntentVersion: remainingScope.intentVersion,
+        allowOverwrite: remainingOverwrite,
+        allowSourceCleanup: remainingCleanup,
+      });
+      if (result.ok) {
+        setRemainingScope(null);
+        setRemainingSelection(null);
+        setRemainingMessage(
+          `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
+        );
+        void query.refetch();
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+        onOpenRecoveryExecution(result.model.executionId);
+      } else {
+        setRemainingMessage(
+          `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
+        );
+      }
+    } finally {
+      setRemainingBusy(false);
+    }
+  };
 
   return (
     <section className="mf-run-detail" aria-label="运行详情">
@@ -1603,6 +1666,31 @@ function RunDetailPanel({
                     })
                   }
                 />
+              )}
+              {remainingScope !== null && (
+                <div className="mf-count-section">
+                  <h4>暂停运行的剩余范围</h4>
+                  {remainingMessage && <p>{remainingMessage}</p>}
+                  <SamePagePlanSummary
+                    token={token}
+                    previewId={remainingScope.previewId}
+                    selected={remainingSelection}
+                    onSelected={setRemainingSelection}
+                    allowOverwrite={remainingOverwrite}
+                    onAllowOverwrite={setRemainingOverwrite}
+                    allowCleanup={remainingCleanup}
+                    onAllowCleanup={setRemainingCleanup}
+                    busy={remainingBusy}
+                    onConfirm={() => void confirmRemainingScope()}
+                    heading="剩余范围计划摘要（零变更）"
+                    confirmLabel={(count) => `确认继续整理剩余 ${count} 项`}
+                  />
+                </div>
+              )}
+              {remainingMessage !== null && remainingScope === null && (
+                <StatusBanner variant="info" title="剩余范围继续状态">
+                  <p>{remainingMessage}</p>
+                </StatusBanner>
               )}
               <RunDetailTabs
                 runId={run.runId}

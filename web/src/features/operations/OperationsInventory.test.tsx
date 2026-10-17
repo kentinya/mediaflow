@@ -7,6 +7,7 @@ import {
   parseOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { renderApp } from "../../../tests/utils";
+import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 
 const TOKEN = "operations-inventory-token";
 
@@ -1552,6 +1553,7 @@ function stubLifecycleJourney(options: {
     attempt: number,
   ) => Response;
   readonly posts: { readonly url: string; readonly body: unknown }[];
+  readonly extraGet?: (url: string) => Response | null;
 }): {
   readonly fetchMock: ReturnType<typeof vi.fn>;
   readonly overviewReads: () => number;
@@ -1596,6 +1598,10 @@ function stubLifecycleJourney(options: {
     }
     if (url.startsWith("/api/v1/operations/manual-actions")) {
       return jsonResponse(manualActionsPayload());
+    }
+    const extra = options.extraGet?.(url);
+    if (extra !== undefined && extra !== null) {
+      return extra;
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
@@ -1758,7 +1764,7 @@ describe("selected run lifecycle controls", () => {
       within(controls).queryByRole("button", { name: "继续剩余范围" }),
     ).toBeNull();
     const recovery = within(controls).getByRole("button", {
-      name: "查看剩余范围的精确预览",
+      name: "在当前界面生成剩余范围摘要",
     });
     await user.click(recovery);
 
@@ -1862,5 +1868,100 @@ describe("selected run lifecycle controls", () => {
     expect(returnOps).toContain("status=paused");
     expect(returnOps).toContain("run=task-001");
     expect(posts).toHaveLength(0);
+  });
+
+  it("prepares and confirms the paused remaining scope in the same panel", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-remaining";
+    preview["intentId"] = "intent-remaining";
+    preview["intentVersion"] = 3;
+    preview["executionCandidateItemIds"] = ["item-1"];
+    const items = preview["items"] as Record<string, unknown>[];
+    items[0]!["itemId"] = "item-1";
+    items[0]!["previewItemId"] = "preview-item-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "item-1",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const actions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    actions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-remaining/execute";
+
+    const { fetchMock } = stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction("resume", false, "authority required", {
+            available: true,
+            reason: null,
+            method: "POST",
+            path: "/api/v1/tasks/task-001/remaining-scope-previews",
+            requiresConfirmation: false,
+            sideEffects: "none",
+            durableOutcome: "durable exact Preview",
+            nextAction: "review then authorize",
+          }),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/preview-remaining") ? jsonResponse(preview) : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(preview, 201);
+        }
+        if (url.endsWith("/execute")) {
+          return jsonResponse(
+            {
+              executionId: "execution-remaining",
+              taskId: "task-remaining",
+              status: "admitted",
+              selectedItemIds: ["item-1"],
+              nextAction: "track the durable Worker execution",
+            },
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    expect(fetchMock).toBeDefined();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    const confirm = await within(summary).findByRole("button", {
+      name: /确认继续整理剩余 1 项/,
+    });
+    // The summary is zero-mutation: no execution is admitted before confirm.
+    expect(posts.some((post) => post.url.endsWith("/execute"))).toBe(false);
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(posts.some((post) => post.url.endsWith("/execute"))).toBe(true),
+    );
+    const execute = posts.find((post) => post.url.endsWith("/execute"))!;
+    expect(execute.body).toMatchObject({
+      itemIds: ["item-1"],
+      expectedIntentVersion: 3,
+    });
   });
 });

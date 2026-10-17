@@ -2041,6 +2041,9 @@ class MediaFlowApi:
                 value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                )
                 value["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
                 )
@@ -2404,6 +2407,9 @@ class MediaFlowApi:
             if self._manual_recovery is not None:
                 recovery["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
+                )
+                recovery["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
                 )
                 recovery["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
@@ -7537,6 +7543,9 @@ class MediaFlowApi:
                 value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                )
             return self._response(start_response, 200, value)
         if (
             len(parts) == 7
@@ -7690,6 +7699,101 @@ class MediaFlowApi:
                     "sourceItemId": parts[5],
                     "sideEffects": "none",
                     "executionMode": "not_authorized_yet",
+                },
+            )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "prepare-summary"]
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery plan summary preparation")
+            document = self._document(environ)
+            if set(document) != {"expectedCheckpointVersion"}:
+                raise ValueError(
+                    "manual recovery plan summary preparation requires only "
+                    "expectedCheckpointVersion"
+                )
+            expected = document["expectedCheckpointVersion"]
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            preparation = self._manual_recovery.prepare_summary(
+                parts[3],
+                parts[5],
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+            )
+            return self._response(
+                start_response,
+                201,
+                redact_manual_value(
+                    {
+                        **preparation.document(),
+                        "hasExecutionAuthority": False,
+                        "sideEffects": "none",
+                        "executionMode": "not_authorized_yet",
+                    }
+                ),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
+            and parts[4] == "confirm"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery plan summary confirmation")
+            document = self._document(environ)
+            allowed = {"itemIds", "confirmation", "allowOverwrite", "allowSourceCleanup"}
+            if set(document).difference(allowed):
+                raise ValueError("manual recovery plan summary confirmation fields are invalid")
+            if not {"itemIds", "confirmation"}.issubset(document):
+                raise ValueError(
+                    "manual recovery plan summary confirmation requires itemIds and confirmation"
+                )
+            if document["confirmation"] is not True:
+                raise ValueError(
+                    "manual recovery plan summary confirmation requires confirmation=true"
+                )
+            item_ids = document["itemIds"]
+            if not isinstance(item_ids, list) or not item_ids:
+                raise ValueError("manual recovery plan summary confirmation requires itemIds")
+            execution = self._manual_recovery.confirm_prepared(
+                parts[3],
+                item_ids=item_ids,
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=True,
+                allow_overwrite=bool(document.get("allowOverwrite", False)),
+                allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    "executionId": execution.execution_id,
+                    "taskId": execution.task_id,
+                    "status": execution.status.value,
+                    "selectedItemIds": list(execution.selected_item_ids),
+                    "nextAction": execution.next_action,
+                    "executionPath": "/api/v1/manual-executions/" + execution.execution_id,
+                    "sideEffects": "execution_admitted",
                 },
             )
         if (
@@ -10039,9 +10143,22 @@ class MediaFlowApi:
             len(parts) == 8
             and parts[:3] == ["api", "v1", "tasks"]
             and parts[4] == "items"
+            and parts[6:8] == ["recovery", "prepare-summary"]
+        ):
+            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
             and parts[6:8] == ["recovery", "authorize-organize"]
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
+            and parts[4] == "confirm"
+        ):
+            return "/api/v1/manual-recovery-preparations/{id}/confirm"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
             return "/api/v1/recovery-batches/{id}"
         if (
