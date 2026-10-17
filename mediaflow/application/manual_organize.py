@@ -1491,17 +1491,53 @@ class ManualOrganizeIntentService:
         reader = getattr(self._repository, "list_manual_previews_by_source", None)
         if not callable(reader):
             return
+        storage_id = getattr(record, "storage_id", None)
+        path = getattr(record, "path", None)
+        resource_library_id = getattr(record, "resource_library_id", None)
+        source_fingerprint = getattr(record, "fingerprint", None)
+        occurrence_id = getattr(record, "occurrence_id", None)
+        if not isinstance(storage_id, str) or not isinstance(path, str):
+            return
         try:
-            previews = tuple(reader(record.storage_id, record.path, limit=10))
-        except Exception:  # noqa: BLE001 - an absent reader is simply no authority
+            previews = tuple(
+                reader(
+                    storage_id,
+                    path,
+                    resource_library_id=resource_library_id,
+                    source_fingerprint=source_fingerprint,
+                    occurrence_id=occurrence_id,
+                    configuration_snapshot_id=snapshot.snapshot_id,
+                    configuration_snapshot_digest=snapshot.digest,
+                    limit=10,
+                )
+            )
+        except Exception:  # noqa: BLE001 - an absent or incompatible reader is no authority
+            # This method is the source-version-aware read; a reader that cannot
+            # honor the exact source identity and pin fails closed instead of
+            # falling back to a path-only match that could borrow another
+            # version's candidates.
             return
         for preview in previews:
+            if (
+                getattr(preview, "configuration_snapshot_id", None) != snapshot.snapshot_id
+                or getattr(preview, "configuration_snapshot_digest", None) != snapshot.digest
+            ):
+                # A candidate must come from analysis under this item's own
+                # pinned configuration; a different pin never grounds a new
+                # choice authority.
+                continue
             for item in getattr(preview, "items", ()):
                 source = getattr(item, "source", None)
                 if (
-                    getattr(source, "storage_id", None) != record.storage_id
-                    or getattr(source, "path", None) != record.path
+                    getattr(source, "storage_id", None) != storage_id
+                    or getattr(source, "path", None) != path
+                    or getattr(source, "resource_library_id", None) != resource_library_id
+                    or getattr(source, "fingerprint", None) != source_fingerprint
+                    or getattr(source, "occurrence_id", None) != occurrence_id
                 ):
+                    # Path-equal is not enough: a replaced file (different
+                    # fingerprint/occurrence) or a different ResourceLibrary
+                    # binding must not inherit an older version's candidates.
                     continue
                 plan = getattr(item, "plan", None)
                 if not isinstance(plan, dict):

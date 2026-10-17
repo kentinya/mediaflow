@@ -455,6 +455,18 @@ class PersistentTaskRepository(Protocol):
     def list_manual_previews(
         self, intent_id: str, *, limit: int = 100
     ) -> tuple[ManualOrganizePreview, ...]: ...
+    def list_manual_previews_by_source(
+        self,
+        storage_id: str,
+        path: str,
+        *,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        occurrence_id: str | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        limit: int = 10,
+    ) -> tuple[ManualOrganizePreview, ...]: ...
     def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None: ...
     def mark_manual_preview_items_stale(
         self,

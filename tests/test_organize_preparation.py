@@ -21,7 +21,7 @@ import json
 import tempfile
 import unittest
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,18 +88,34 @@ class _PreparationFixture(unittest.TestCase):
         self.target_root = root / "target"
         self.source_root.mkdir()
         self.target_root.mkdir()
+        self.second_source_root = root / "source2"
+        self.second_source_root.mkdir()
         self.clock_value = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 
     def clock(self) -> datetime:
         return self.clock_value
 
-    def media(self, relative: str, *, size: int = 64) -> Path:
-        path = self.source_root / relative
+    def media(self, relative: str, *, size: int = 64, root: Path | None = None) -> Path:
+        path = (root or self.source_root) / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"m" * size)
         return path
 
-    def document(self, *, exclude_rules: tuple[str, ...] = ()) -> dict:
+    def resource_library(self, library_id: str = "library", **overrides) -> dict:
+        value = {
+            "id": library_id,
+            "name": library_id,
+            "storageId": "source",
+            "storagePath": "",
+            "enabled": True,
+            "extensions": ["mkv", "mp4"],
+            "maxDepth": None,
+            "excludeRules": [],
+        }
+        value.update(overrides)
+        return value
+
+    def document(self, *, exclude_rules: tuple[str, ...] = (), resource_libraries=None) -> dict:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["persistence"]["databasePath"] = str(self.database)
         document["historyPath"] = str(self.source_root.parent / "history.jsonl")
@@ -112,6 +128,13 @@ class _PreparationFixture(unittest.TestCase):
                 "enabled": True,
             },
             {
+                "id": "source2",
+                "name": "Source 2",
+                "type": "local",
+                "rootPath": str(self.second_source_root),
+                "enabled": True,
+            },
+            {
                 "id": "target",
                 "name": "Target",
                 "type": "local",
@@ -119,17 +142,10 @@ class _PreparationFixture(unittest.TestCase):
                 "enabled": True,
             },
         ]
-        library = {
-            "id": "library",
-            "name": "Library",
-            "storageId": "source",
-            "storagePath": "",
-            "enabled": True,
-            "extensions": ["mkv", "mp4"],
-            "maxDepth": None,
-            "excludeRules": list(exclude_rules),
-        }
-        document["resourceLibraries"] = [library]
+        library = self.resource_library(excludeRules=list(exclude_rules))
+        document["resourceLibraries"] = (
+            list(resource_libraries) if resource_libraries is not None else [library]
+        )
         document["mediaLibraries"] = [
             {
                 "id": "movies",
@@ -154,57 +170,57 @@ class _PreparationFixture(unittest.TestCase):
         *,
         budgets: DiscoveryBudgets | None = None,
         candidates: tuple[MediaCandidate, ...] | None = None,
+        resource_libraries=None,
+        provider: SyntheticMetadataProvider | None = None,
     ):
-        document = self.document()
+        document = self.document(resource_libraries=resource_libraries)
         source = _RecordingStorage("source", self.source_root)
+        source2 = _RecordingStorage("source2", self.second_source_root)
         target = _RecordingStorage("target", self.target_root)
-        storages = {"source": source, "target": target}
-        providers = MetadataProviderRegistry(
-            (
-                SyntheticMetadataProvider(
-                    candidates
-                    if candidates is not None
-                    else (
-                        MediaCandidate(
-                            "tmdb",
-                            "201",
-                            MediaType.MOVIE,
-                            "One",
-                            year=2001,
-                            genres=("Animation",),
-                            countries=("JP",),
-                        ),
-                        MediaCandidate(
-                            "tmdb",
-                            "202",
-                            MediaType.MOVIE,
-                            "Two",
-                            year=2002,
-                            genres=("Animation",),
-                            countries=("JP",),
-                        ),
-                        MediaCandidate(
-                            "tmdb",
-                            "203",
-                            MediaType.MOVIE,
-                            "Three",
-                            year=2003,
-                            genres=("Animation",),
-                            countries=("JP",),
-                        ),
-                        MediaCandidate(
-                            "tmdb",
-                            "204",
-                            MediaType.MOVIE,
-                            "Four",
-                            year=2004,
-                            genres=("Animation",),
-                            countries=("JP",),
-                        ),
-                    )
+        storages = {"source": source, "source2": source2, "target": target}
+        metadata_provider = provider or SyntheticMetadataProvider(
+            candidates
+            if candidates is not None
+            else (
+                MediaCandidate(
+                    "tmdb",
+                    "201",
+                    MediaType.MOVIE,
+                    "One",
+                    year=2001,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "202",
+                    MediaType.MOVIE,
+                    "Two",
+                    year=2002,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "203",
+                    MediaType.MOVIE,
+                    "Three",
+                    year=2003,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+                MediaCandidate(
+                    "tmdb",
+                    "204",
+                    MediaType.MOVIE,
+                    "Four",
+                    year=2004,
+                    genres=("Animation",),
+                    countries=("JP",),
                 ),
             )
         )
+        providers = MetadataProviderRegistry((metadata_provider,))
         with (
             SQLiteConfigurationRepository(self.database) as configuration_repository,
             SQLiteTaskRepository(self.database) as repository,
@@ -214,11 +230,17 @@ class _PreparationFixture(unittest.TestCase):
             )
             revision = _activate(managed, document)
             runtime = _runtime_for(managed, revision)
+
+            def resolve_runtime(snapshot_id, snapshot_digest):
+                if snapshot_id == revision.revision_id and snapshot_digest == revision.digest:
+                    return runtime
+                return _runtime_for(managed, managed.require(snapshot_id))
+
             intents = ManualOrganizeIntentService(
                 repository,
                 None,
                 managed,
-                runtime_resolver=lambda snapshot_id, digest: runtime,
+                runtime_resolver=resolve_runtime,
                 storage_factory=lambda value, ids: dict(storages),
             )
             previews = ManualOrganizePreviewService(
@@ -226,6 +248,7 @@ class _PreparationFixture(unittest.TestCase):
                 intents,
                 None,
                 configuration=runtime,
+                runtime_resolver=resolve_runtime,
                 storages=dict(storages),
                 providers=providers,
                 clock=self.clock,
@@ -234,7 +257,7 @@ class _PreparationFixture(unittest.TestCase):
                 repository,
                 intents,
                 configuration=runtime,
-                runtime_resolver=lambda snapshot_id, digest: runtime,
+                runtime_resolver=resolve_runtime,
                 preview_service=previews,
                 storages=dict(storages),
                 clock=self.clock,
@@ -282,7 +305,9 @@ class _PreparationFixture(unittest.TestCase):
                 executions=executions,
                 execution_worker=execution_worker,
                 discovery=discovery,
+                managed=managed,
                 source=source,
+                source2=source2,
                 target=target,
             )
 
@@ -323,10 +348,10 @@ class _PreparationFixture(unittest.TestCase):
             raise AssertionError(document)
         return document
 
-    def admit(self, value, paths: list[str]):
+    def admit(self, value, paths: list[str], *, library_id: str = "library"):
         status, document = self.request(
             value,
-            "/api/v1/resource-libraries/library/files/discoveries",
+            f"/api/v1/resource-libraries/{library_id}/files/discoveries",
             "POST",
             {"paths": paths, "autoPrepare": True},
         )
@@ -804,6 +829,229 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertEqual("completed", completed.status.value, completed)
             self.assertEqual([("delete", "Movies/One.2001.mkv")], value.source.mutations)
             self.assertFalse((self.source_root / "Movies/One.2001.mkv").exists())
+
+    def test_unrelated_same_name_preparations_do_not_displace_own_candidates(self) -> None:
+        """AC-3/5: an unrelated preparation never steals this source's candidates.
+
+        A source's own ambiguous candidates must survive any number of
+        unrelated preparations whose Storage-relative path merely contains the
+        same filename text (same name in other directories, or the same name in
+        another Storage).  The exact source query must match before ordering
+        and limiting, and the original legal choice must remain selectable.
+        """
+
+        self.media("One.2001.mkv")
+        for index in range(11):
+            self.media(f"Other{index}/One.2001.mkv")
+            self.media("One.2001.mkv", root=self.second_source_root)
+        ambiguous = (
+            MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "999", MediaType.MOVIE, "One", year=2001),
+        )
+        libraries = [
+            self.resource_library("library"),
+            self.resource_library("library2", storageId="source2"),
+        ]
+        with self.journey(candidates=ambiguous, resource_libraries=libraries) as value:
+            self.admit(value, ["One.2001.mkv"])
+            original = self.run_worker(value)
+            intent_path = f"/api/v1/operations/organize/intents/{original['intentId']}"
+            status, before = self.request(value, intent_path)
+            self.assertEqual(200, status, before)
+            self.assertEqual(
+                {"201", "999"},
+                {value["providerId"] for value in before["items"][0]["allowedMetadataIdentities"]},
+            )
+
+            # Many unrelated preparations, including > the bounded query limit
+            # and a same-named file in a second Storage authority.
+            for index in range(11):
+                self.clock_value += timedelta(seconds=1)
+                self.admit(value, [f"Other{index}/One.2001.mkv"])
+                self.run_worker(value)
+            self.clock_value += timedelta(seconds=1)
+            second = self.admit(value, ["One.2001.mkv"], library_id="library2")
+            self.run_worker(value)
+
+            status, after = self.request(value, intent_path)
+            self.assertEqual(200, status, after)
+            item = after["items"][0]
+            self.assertEqual(
+                {"201", "999"},
+                {value["providerId"] for value in item["allowedMetadataIdentities"]},
+                item,
+            )
+            # The original legal choice still saves without re-running analysis.
+            status, saved = self.request(
+                value,
+                f"{intent_path}/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": after["version"],
+                    "expectedItemVersion": item["version"],
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "999",
+                        "mediaType": "movie",
+                        "title": "One",
+                        "year": 2001,
+                    },
+                },
+            )
+            self.assertEqual(200, status, saved)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.source2.mutations)
+            self.assertIsNotNone(second["discoveryId"])
+
+    def test_replaced_source_version_does_not_inherit_old_candidates(self) -> None:
+        """AC-5/6: a replaced file never inherits an older version's authority.
+
+        After a same-path source is replaced by a different occurrence, a new
+        preparation must not expose the old version's candidates before its own
+        analysis, and a direct save of an old identity must be refused.  Once
+        the new analysis completes, only the new version's own candidates are
+        offered.
+        """
+
+        source = self.media("One.2001.mkv")
+        old = (
+            MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "999", MediaType.MOVIE, "One", year=2001),
+        )
+        new = (
+            MediaCandidate("tmdb", "301", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "999", MediaType.MOVIE, "One", year=2001),
+        )
+        provider = SyntheticMetadataProvider(old)
+        with self.journey(provider=provider) as value:
+            self.admit(value, ["One.2001.mkv"])
+            first = self.run_worker(value)
+            first_preview = value.repository.get_manual_preview(first["previewId"])
+            old_fingerprint = first_preview.items[0].source.fingerprint
+            self.assertEqual(
+                {"201", "999"},
+                {
+                    value["providerId"]
+                    for value in self.request(
+                        value, f"/api/v1/operations/organize/intents/{first['intentId']}"
+                    )[1]["items"][0]["allowedMetadataIdentities"]
+                },
+            )
+
+            # Replace the file with a genuinely different occurrence and switch
+            # the provider to the new version's own candidates.
+            source.write_bytes(b"replaced media content" * 100)
+            provider._candidates = new
+            self.clock_value += timedelta(seconds=1)
+            self.admit(value, ["One.2001.mkv"])
+            # Stop after discovery/freeze: no new Provider analysis yet.
+            frozen = value.discovery.claim_and_run(
+                worker_id="fresh-discovery", claim_token="fresh-token"
+            )
+            self.assertIsNotNone(frozen.intent_id, frozen)
+            self.assertIsNone(frozen.preview_id, frozen)
+            fresh_intent = value.repository.get_manual_intent(frozen.intent_id)
+            fresh_fingerprint = fresh_intent.items[0].source.fingerprint
+            self.assertNotEqual(old_fingerprint, fresh_fingerprint)
+
+            fresh_path = f"/api/v1/operations/organize/intents/{frozen.intent_id}"
+            status, fresh = self.request(value, fresh_path)
+            self.assertEqual(200, status, fresh)
+            item = fresh["items"][0]
+            # The old version's candidates are not published for the new file.
+            self.assertEqual([], item["allowedMetadataIdentities"], item)
+            status, rejected = self.request(
+                value,
+                f"{fresh_path}/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": fresh["version"],
+                    "expectedItemVersion": item["version"],
+                    "metadata": {
+                        "provider": "tmdb",
+                        "providerId": "999",
+                        "mediaType": "movie",
+                        "title": "One",
+                        "year": 2001,
+                    },
+                },
+            )
+            self.assertEqual(400, status, rejected)
+            self.assertEqual("metadata_unverified", rejected["error"]["code"])
+            self.assertEqual([], value.source.mutations)
+
+            # The new analysis, once completed, publishes only its own candidates.
+            status, discovery = self.request(
+                value, f"/api/v1/operations/organize/discoveries/{frozen.discovery_id}"
+            )
+            self.assertEqual(200, status, discovery)
+            status, accepted = self.analyze(value, frozen.discovery_id, discovery["version"])
+            self.assertEqual(200, status, accepted)
+            reanalyzed = self.run_worker(value)
+            self.assertEqual("completed", reanalyzed["status"], reanalyzed)
+            status, refreshed = self.request(value, fresh_path)
+            self.assertEqual(200, status, refreshed)
+            identities = refreshed["items"][0]["allowedMetadataIdentities"]
+            self.assertEqual({"301", "999"}, {value["providerId"] for value in identities})
+            self.assertNotIn("201", {value["providerId"] for value in identities})
+
+    def test_candidate_authority_requires_the_pinned_configuration(self) -> None:
+        """AC-5: candidates are grounded in this item's own pinned revision.
+
+        A source prepared under revision A keeps its own candidates even after a
+        successor Active revision B is activated; a *new* preparation under B
+        must not borrow A's candidate authority before its own analysis.
+        """
+
+        source = self.media("One.2001.mkv")
+        old = (
+            MediaCandidate("tmdb", "201", MediaType.MOVIE, "One", year=2001),
+            MediaCandidate("tmdb", "999", MediaType.MOVIE, "One", year=2001),
+        )
+        with self.journey(candidates=old) as value:
+            self.admit(value, ["One.2001.mkv"])
+            first = self.run_worker(value)
+            first_path = f"/api/v1/operations/organize/intents/{first['intentId']}"
+            status, pinned = self.request(value, first_path)
+            self.assertEqual(200, status, pinned)
+            self.assertEqual(
+                {"201", "999"},
+                {value["providerId"] for value in pinned["items"][0]["allowedMetadataIdentities"]},
+            )
+
+            # Activate a successor revision; the pinned revision stays published.
+            successor_document = self.document()
+            successor_document["mediaLibraries"][0]["rootPath"] = "Organized/MoviesB"
+            successor = _activate(value.managed, successor_document)
+            self.assertNotEqual(
+                value.repository.get_manual_intent(first["intentId"]).snapshot_id,
+                successor.revision_id,
+            )
+
+            # The existing pinned preparation still reads its own candidates.
+            status, after = self.request(value, first_path)
+            self.assertEqual(200, status, after)
+            self.assertEqual(
+                {"201", "999"},
+                {value["providerId"] for value in after["items"][0]["allowedMetadataIdentities"]},
+            )
+
+            # A brand-new preparation under revision B must not inherit A's
+            # candidates before its own analysis has produced any.
+            source.write_bytes(b"another replacement" * 100)
+            self.clock_value += timedelta(seconds=1)
+            self.admit(value, ["One.2001.mkv"])
+            frozen = value.discovery.claim_and_run(
+                worker_id="revision-b", claim_token="revision-b-token"
+            )
+            self.assertIsNotNone(frozen.intent_id, frozen)
+            self.assertIsNone(frozen.preview_id, frozen)
+            status, fresh = self.request(
+                value, f"/api/v1/operations/organize/intents/{frozen.intent_id}"
+            )
+            self.assertEqual(200, status, fresh)
+            self.assertEqual([], fresh["items"][0]["allowedMetadataIdentities"], fresh)
+            self.assertEqual([], value.source.mutations)
 
 
 if __name__ == "__main__":

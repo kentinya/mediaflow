@@ -9567,39 +9567,118 @@ class SQLiteTaskRepository:
             return tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
 
     def list_manual_previews_by_source(
-        self, storage_id: str, path: str, *, limit: int = 10
+        self,
+        storage_id: str,
+        path: str,
+        *,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        occurrence_id: str | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        limit: int = 10,
     ) -> tuple[ManualOrganizePreview, ...]:
         """Every exact Preview whose reviewed scope contains this exact source.
 
         Used only to ground a same-page identity correction in durable,
         source-linked evidence.  It reads the persisted Preview plan identity
         for the exact Storage source and never mutates or re-runs analysis.
+
+        The exact source identity is matched *in the database before ordering
+        and limiting*, so an unrelated preparation with the same filename in
+        another directory or Storage can never displace this source's own
+        records.  When the caller supplies the source occurrence/fingerprint,
+        the pinned configuration snapshot, or the ResourceLibrary/Storage
+        binding, only evidence from that exact source version and pin is
+        returned; a replaced file or a different binding never inherits an old
+        Preview's candidate authority.
         """
 
         if not isinstance(storage_id, str) or not storage_id.strip():
             raise ValueError("manual Preview source Storage ID is required")
         if not isinstance(path, str) or not path.strip() or "\x00" in path:
             raise ValueError("manual Preview source path is required")
+        for name, value in (
+            ("ResourceLibrary ID", resource_library_id),
+            ("occurrence ID", occurrence_id),
+            ("configuration snapshot ID", configuration_snapshot_id),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"manual Preview source {name} is invalid")
+        if configuration_snapshot_digest is not None and (
+            not isinstance(configuration_snapshot_digest, str)
+            or not configuration_snapshot_digest.strip()
+        ):
+            raise ValueError("manual Preview source configuration digest is invalid")
+        if source_fingerprint is not None and (
+            not isinstance(source_fingerprint, str)
+            or len(source_fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in source_fingerprint)
+        ):
+            raise ValueError("manual Preview source fingerprint is invalid")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("manual Preview source limit must be between 1 and 100")
-        # ``source_json`` is canonical JSON; the exact source match is verified
-        # in Python after a bounded candidate read, so a path that merely
-        # contains the requested text can never be mistaken for the exact one.
+        # ``source_json`` is canonical JSON, so the exact Storage ID and full
+        # path are matched with ``json_extract`` equality before ordering and
+        # limiting.  A path that merely contains the requested text can never
+        # be mistaken for the exact source, and unrelated rows cannot consume
+        # the bounded result window.
+        clauses = [
+            "json_extract(i.source_json, '$.storageId') = ?",
+            "json_extract(i.source_json, '$.path') = ?",
+        ]
+        parameters: list[object] = [storage_id, path]
+        if resource_library_id is not None:
+            clauses.append("json_extract(i.source_json, '$.resourceLibraryId') = ?")
+            parameters.append(resource_library_id)
+        if source_fingerprint is not None:
+            clauses.append("i.source_fingerprint = ?")
+            parameters.append(source_fingerprint)
+        if occurrence_id is not None:
+            clauses.append("json_extract(i.source_json, '$.occurrenceId') = ?")
+            parameters.append(occurrence_id)
+        if configuration_snapshot_id is not None:
+            clauses.append("p.configuration_snapshot_id = ?")
+            parameters.append(configuration_snapshot_id)
+        if configuration_snapshot_digest is not None:
+            clauses.append("p.configuration_snapshot_digest = ?")
+            parameters.append(configuration_snapshot_digest)
+        parameters.append(limit)
+        query = (
+            "SELECT DISTINCT p.preview_id FROM manual_previews p "
+            "JOIN manual_preview_items i ON i.preview_id=p.preview_id "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY p.created_at DESC, p.preview_id DESC LIMIT ?"
+        )
         with self._lock:
-            rows = self._connection.execute(
-                "SELECT DISTINCT p.preview_id FROM manual_previews p "
-                "JOIN manual_preview_items i ON i.preview_id=p.preview_id "
-                "WHERE i.source_json LIKE ? "
-                "ORDER BY p.created_at DESC, p.preview_id DESC LIMIT ?",
-                (f"%{path}%", limit),
-            ).fetchall()
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
             previews = tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
         return tuple(
             preview
             for preview in previews
-            if any(
+            if (
+                configuration_snapshot_id is None
+                or preview.configuration_snapshot_id == configuration_snapshot_id
+            )
+            and (
+                configuration_snapshot_digest is None
+                or preview.configuration_snapshot_digest == configuration_snapshot_digest
+            )
+            and any(
                 getattr(item.source, "storage_id", None) == storage_id
                 and getattr(item.source, "path", None) == path
+                and (
+                    resource_library_id is None
+                    or getattr(item.source, "resource_library_id", None) == resource_library_id
+                )
+                and (
+                    source_fingerprint is None
+                    or getattr(item.source, "fingerprint", None) == source_fingerprint
+                )
+                and (
+                    occurrence_id is None
+                    or getattr(item.source, "occurrence_id", None) == occurrence_id
+                )
                 for item in preview.items
             )
         )
