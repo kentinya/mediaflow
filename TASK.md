@@ -532,10 +532,13 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
 
 ### 最终候选
 
-- Implementation Head：`0ae8fb9d2236556e63b9bdddd302b4059812370b`。
+- Implementation Head：`3d8fdbf308b34a81497849e7568481d64a2195ae`。
 - 本 Task 实现 checkpoint：`ca86094522222e4a44c12864cdba0be0cfc90036`（实现）与
-  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），末次 `0ae8fb9`（暂停继续 E2E）。
+  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），`0ae8fb9`（暂停继续 E2E），
+  末次 `3d8fdbf`（报告）。`ca860945..3d8fdbf` 无 `mediaflow/`/`web/src/` 字节变化。
 - Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
+- 证据索引：`.git/validation-evidence/3d8fdbf308b34a81497849e7568481d64a2195ae/developer-45.3/`
+  （`INDEX.md` 与 `docker-recovery/` 原始日志/矩阵/截图；仅本地可达，未推送）。
 
 ### 验证（候选 = 最终 checkpoint `0ae8fb9`）
 
@@ -559,8 +562,16 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
   --image mediaflow:task45.3-recovery`（需 `MEDIAFLOW_SMOKE_TEMP_DIR` 指向 Docker 可挂载目录）
   → **通过**：真实镜像/API/SQLite/常驻 Worker，识别决定→分析→同页摘要→精确确认→真实 MOVE；
   确认前 `sourceExists=True, targetExists=False`，确认后 `False/True`；`prepare-summary` 1 次、
-  `confirm` 1 次、旧 `manual-recovery-links/execute` 0 次。证据：
+  `confirm` 1 次、旧 `manual-recovery-links/execute` 0 次。image `4f5f00cd44fb`；证据：
   `/tmp/mediaflow-task45-3-docker-recovery-proof/{matrix.json,evidence.json,*.png}`。
+- Docker release-security：`TMPDIR=<Docker 可挂载目录> .venv/bin/python
+  scripts/docker_release_security_smoke_test.py --image mediaflow:task45.3-security`
+  → **通过**（image `efe6148ca9d1`）；镜像内 `prepare_summary`/`confirm_prepared`/
+  `create_manual_recovery_preparation` 均存在。
+- **环境约束（非回归）**：本机 Docker Desktop 的挂载命名空间不含 `/var/folders`（默认 `TMPDIR`），
+  因此两个 Docker 脚本必须用 `TMPDIR`/`MEDIAFLOW_SMOKE_TEMP_DIR` 指向项目内可挂载目录；
+  `docker_release_security_smoke_test.py` 在 Task Base 用默认 `TMPDIR` 复现同一挂载失败，
+  非本 Task 引入。
 
 ### 决定
 
