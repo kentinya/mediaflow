@@ -281,7 +281,6 @@ def _metadata_section(strategy) -> EvidenceSection:
         "regionalReleaseDate": _bounded(
             identity.regional_release_date if identity else None, _MAX_ITEM_TEXT
         ),
-        "overview": _bounded(identity.overview if identity else None, _MAX_TEXT),
         "externalIds": _bounded_external_ids(identity.external_ids if identity else ()),
         "posterPath": _bounded(identity.poster_path if identity else None, _MAX_ITEM_TEXT),
         "backdropPath": _bounded(identity.backdrop_path if identity else None, _MAX_ITEM_TEXT),
