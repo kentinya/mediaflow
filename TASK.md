@@ -550,6 +550,7 @@ Task45.3 继续修正 B Review 2 的 R2–R5。四类阻塞均按同一 Task 的
 - 全部运行时门禁均在该候选的隔离 worktree / 精确 image 上验证。
 - 证据索引：`.git/validation-evidence/d09245e2d49622f8e88ead4fc1583d55cffe9727/developer-45.3-r3/`
   （`INDEX.md`、`logs/` 原始日志；仅本地可达，未推送）。
+- 本报告提交为 executable candidate 之后的文档-only successor，不改变任何 executable 输入。
 
 ### 验证（本轮候选）
 
