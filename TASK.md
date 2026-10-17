@@ -545,8 +545,7 @@ Task45.3 继续修正 B Review 2 的 R2–R5。四类阻塞均按同一 Task 的
 
 ### 最终候选
 
-- Implementation Head：`d09245e2d49622f8e88ead4fc1583d55cffe9727`（R2–R5 修正 checkpoint + 测试补充）。
-- Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
+- Implementation Head：`d09245e2d49622f8e88ead4fc1583d55cffe9727`（R2–R5 修正 checkpoint + 测试补充）。- Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
 - 全部运行时门禁均在该候选的隔离 worktree / 精确 image 上验证。
 - 证据索引：`.git/validation-evidence/d09245e2d49622f8e88ead4fc1583d55cffe9727/developer-45.3-r3/`
   （`INDEX.md`、`logs/` 原始日志；仅本地可达，未推送）。
@@ -589,6 +588,10 @@ Task45.3 继续修正 B Review 2 的 R2–R5。四类阻塞均按同一 Task 的
 - **环境约束（非回归）**：本机 Docker Desktop 挂载命名空间不含 `/var/folders`（默认 `TMPDIR`），
   两个 Docker 脚本需用 `TMPDIR`/`MEDIAFLOW_SMOKE_TEMP_DIR` 指向项目内可挂载目录；主工作区共享
   ignored 运行库为 schema48，全量唯一失败已在 Task Base 复现。
+- **证据复用**：Docker 镜像在 executable checkpoint `7c94028` 上构建（image `bf10b798d56d` /
+  `a7f394c7282d`）；`git diff 7c94028..d09245e -- mediaflow scripts web/src web/tests` 为空，
+  仅 `tests/test_recovery_continuation.py` 变化，而 Dockerfile 不包含 `tests/`，因此两个镜像的
+  executable 输入与本候选一致，Docker 证据可复用；Web 单元/浏览器在本候选上重新执行。
 
 ### 决定
 
