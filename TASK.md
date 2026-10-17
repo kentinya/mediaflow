@@ -247,49 +247,49 @@ B 核对 Task Base..Head、原始日志和身份，独立在 production build/�
 Task ID: 45.2
 Status: READY FOR B REVIEW
 Task Base: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743
-Implementation Head: 8f5d0591d53130921a91d8dde9827a1af44e1e52
+Implementation Head: da4b70c9c9ccfe92d8b407a215aef9e893e1e83f
 ```
 
-### Delivered (RO-2 correction after B FIX REQUIRED, round 2)
+### Delivered (RO-2 correction after B FIX REQUIRED, round 3)
 
-在同一 Task45.2 内修正 B 第二轮 P1：**新来源遇到元数据歧义时，必要身份补正无法在准备界面完成**。
-保留原 Goal/Scope/AC 与 T4；复用既有 discovery 队列、常驻 Worker、Preview 权威、
+在同一 Task45.2 内修正 B 第三轮两个 P1：**候选查询未按精确权威收敛**。保留原 Goal/Scope/AC、
+High/T4 与零变更/执行边界；复用既有 discovery 队列、常驻 Worker、Preview 权威、
 `allowedMetadataIdentities` 投影与 choice 准入，未新增第二套队列/恢复引擎/正式 Review，
-schema 仍为 45。
+schema 仍为 45（本轮无 schema 变更）。
 
-- **接通候选权威。** `ManualOrganizeIntentService._append_preview_plan_authorities` 现在除最终
-  `mediaIdentity` 外，还读取该来源已链接 Preview 的 `plan.analysis.metadata.match.candidates`
-  （零变更分析真实解析并持久的有界候选）。展示与保存共用同一套 `_metadata_authorities` /
-  `_validate_metadata_reference`，因此歧义来源的候选在 `allowedMetadataIdentities` 中可见、可保存，
-  而任意注入的身份仍被 `metadata_unverified` 拒绝；仍校验精确来源/配置/Provider/媒体类型/版本。
-- **补齐同页选择。** `OrganizeCreationPage.tsx` 的身份选择器显示候选标题/年份/Provider/ID 与匹配理由；
-  明确选择后复用现有 choice API 保存，再经现有 Worker 重新分析生成同页新摘要。`organize-summary.tsx`
-  展示 `analysis.metadata.match` 的候选与理由，不再只展示最终 identity。
-- **修正状态与指引。** `ManualOrganizePreviewService` 对无 identity 的歧义项给出“需要选择元数据候选”
-  的下一步，不再引导不存在的 linked Metadata review。`operations_lifecycle._manual_preview_item_operator`
-  对该准备 finding 发布真实 durable state（“zero-mutation preparation finding；未创建执行 TaskItem/Result”），
-  不再冒称正式执行失败。新摘要生成后清除旧选择与覆盖/来源清理授权（确认绑定 `previewId`）。
-- **保持执行边界。** 保存候选与重新分析均零 Storage mutation、无执行授权；确认前零正式恢复待办；
-  只有审阅新摘要并明确确认精确子集后才进入原执行链。
+- **限量前先精确匹配。** `SQLiteTaskRepository.list_manual_previews_by_source` 不再
+  `source_json LIKE '%path%'` 后先取全局最近 10 条再 Python 过滤；改为在 SQL 中用
+  `json_extract` 精确匹配 Storage ID 与完整路径，并可按 ResourceLibrary、来源
+  fingerprint/occurrence、固定配置 snapshot ID/digest 过滤，然后才排序、限量。因此同名不同
+  目录/Storage、超过查询页量的无关准备不会挤掉本来源自己的候选。
+- **只接受同一来源版本与 pin 的证据。** `ManualOrganizeIntentService._append_preview_plan_authorities`
+  传入并复核精确 Storage ID、完整路径、ResourceLibrary 绑定、来源 fingerprint/occurrence 及
+  intent 固定配置 snapshot/digest；路径相同但文件已换、或配置/库绑定不同都不继承旧候选。
+  读取方法无法满足精确身份时 fail-closed，不再回退到仅按路径匹配。展示与 choice 保存继续共用
+  同一套 `_metadata_authorities`/`_validate_metadata_reference`，GET 不调用 Provider。
+- **保持执行边界与旧历史。** 保存候选与重新分析仍零 Storage mutation、无执行授权；合法旧 pin
+  仍使用自己的证据，不改绑当前 Active；任意注入/跨来源身份仍被 `metadata_unverified` 拒绝。
 
 ### Evidence
 
-候选 `8f5d0591d53130921a91d8dde9827a1af44e1e52`；完整索引与原始日志：
-`.git/validation-evidence/8f5d0591d53130921a91d8dde9827a1af44e1e52/developer-t4-fix2/INDEX.md`。
+候选 `da4b70c9c9ccfe92d8b407a215aef9e893e1e83f`；完整索引与原始日志：
+`.git/validation-evidence/da4b70c9c9ccfe92d8b407a215aef9e893e1e83f/developer-t4-fix3/INDEX.md`。
 
-- 隔离干净 checkout 全量 Python：**2471 tests OK / 7 skipped / 184.854s**。
-- 聚焦：`tests.test_organize_preparation` **10 OK**（含新增
-  `test_new_source_ambiguous_candidates_are_selectable_and_executable`：全新来源 → 候选可见 →
-  跨来源拒绝 → 合法选择持久 → 新摘要可执行 → 确认后 Worker 按所选身份 MOVE）；
+- 隔离干净 clone（精确候选、真实 git、`[test,dev]` 依赖）全量 Python：**2474 tests OK / 7 skipped / 175.143s**。
+- 聚焦：`tests.test_organize_preparation` **13 OK**（含 3 个新增回归：无关同名准备不挤占本来源候选、
+  替换来源版本不继承旧候选、候选权威需本项固定配置；均先在 pre-fix 源码独立复现失败）；
   `tests.test_media_discovery tests.test_manual_organize_intent tests.test_manual_organize_preview` **132 OK**；
   `tests.test_v2_manual_organize tests.test_manual_organize_execution tests.test_organizer_mutation_authority tests.test_operations_task_center tests.test_operations_run_inventory` **158 OK**；
   `tests.test_manual_operations tests.test_manual_operations_contract tests.test_operations_run_detail*` **80 OK**。
-- Web：typecheck/lint/format/build PASS；Vitest **1121 passed**；fake E2E **246 passed**；
-  真实 Python inventory **27 passed**（含新增“全新歧义来源可补正并执行”旅程）；Unicode principal **1 passed**；
-  visual capture **2 passed**，已人工查看新建摘要整页与窄屏截图。
+- Web：typecheck/lint/format/build PASS；Vitest **1121 passed**（76 files）；fake E2E **246 passed**；
+  真实 Python inventory **27 passed**；Unicode principal **1 passed**；visual capture **2 passed**，
+  已人工查看新建摘要整页（1536×1024）与窄屏（380×720）。Web 源码相对 `8f5d059` 零 diff，
+  但其消费的 Python 后端已改，故真实链路证据全部重跑。
 - Wheel：构建并 smoke PASS，实际加载 preparation consumer。
-- Docker：creation proof **9 个断言 PASS**（candidateSha 8f5d059），release-security smoke PASS。
+- Docker：creation proof **9 个断言 PASS**（含确认执行真实 Worker MOVE），release-security smoke PASS。
 - 治理、ruff format/check、compileall、pip check、两份示例配置、无 FFmpeg/FFprobe、`git diff --check` 均 PASS。
+- 迁移：本轮修正未改 `SCHEMA_VERSION`（仍 45）、无 CREATE/ALTER/migration 变更；schema45 迁移由
+  本 Task 早期提交引入并由 `tests.test_task_persistence` schema45 用例覆盖，全量中通过。
 
 ### Pre-existing failure (not waived)
 
@@ -300,139 +300,146 @@ schema 仍为 45。
 
 ### Risks / notes for B
 
-- 身份候选来自该来源已链接 Preview 的零变更分析持久候选；离线栈无外网 Provider 时，分析本身仍会
-  真实调用固定 Provider 抽象并持久候选，因此不依赖任何预置 Result/choice/review。有真实 Provider
-  的部署行为一致。
+- 候选权威现在来自该来源在**同一固定配置**下、**同一来源版本**（fingerprint/occurrence）与
+  库/Storage 绑定的零变更分析持久候选或最终 identity。路径相同但文件已换、或配置/库不同都不继承。
+- 读取方法无法满足精确身份时 fail-closed；本仓库唯一实现为 `SQLiteTaskRepository`。
 - 主工作区保留全部预存脏文件（含参考图删除意图、未跟踪图片、`.DS_Store`、imagegen ZIP）；
   `config/alist.json` 未被读取、暂存或输出。
 - 架构事实：复用既有 discovery 队列/Worker/Preview/执行边界与 choice 准入，未新增第二套队列、
   恢复引擎或正式 Review；schema 45 不变。
+- 环境事实：Docker proof 需把 `TMPDIR` 指向 Docker 可共享路径（本机 `/tmp` 未共享），
+  已在 `$HOME/mf-docker-tmp` 下重跑通过；非代码问题。
 
 Reusable lesson candidates (for A's closure reconciliation):
 
-1. **准备期的候选权威必须覆盖“未自动选择”分支。** 只发布最终 identity 会让歧义/待确认来源在页面上
-   永久不可补正；应从同一零变更分析持久的有界候选派生可选项，与保存校验共用一套 authority。
-2. **公告动作与真实准入必须共用同一判定函数。** 将“是否可重新分析”抽成单一谓词供 API 投影与
-   应用准入共用，可避免“已完成的摘要不提供重新检查”这类投影/准入分叉。
+1. **来源查询须在限量前按精确业务身份筛选。** 先模糊匹配再取最近 N 条再过滤，会让无关记录
+   挤掉当前来源的合法证据；应在数据库查询中先精确匹配 Storage/完整路径/绑定/版本，再排序限量。
+2. **候选权威必须绑定来源版本与固定 pin。** 仅比较路径会让替换后的文件继承旧版本候选；
+   展示与保存应共用同一套校验来源 fingerprint/occurrence、库绑定与配置 snapshot 的判定。
 3. **零变更准备 finding 不得复用执行失败文案。** 准备未就绪不是持久 TaskItem/Result 失败；应发布
    真实 durable state 与候选/修复动作，避免引导不存在的正式恢复待办。
 
 ## B Review Result
 
 ```text
-Reviewed Range: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743..64cfa85db37aebb9c42e99d7d8dbb2892cafdb57
-Report Head: ee05fe5e1fa0ae54e38748481fb3c9ae7d161951
+Reviewed Range: 1fbb709e9273d9b6b7fa3648a1eb2cfceaf0b743..8f5d0591d53130921a91d8dde9827a1af44e1e52
+Report Head: c8ec322d511465cbbacb70c7211be694fa2c08da
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: DEVELOPER CORRECTS TASK 45.2
 ```
 
-### Authority and independent evidence
+### Authority and evidence — B independent review, 2026-10-17
 
-治理 PASS；已提交 Slice45 ACTIVE Contract 与工作树一致，Task 合法，无需 A 改范围。
-`64cfa85..ee05fe5` 仅改 TASK.md；可执行源码无未提交变更。完整 Task diff 为 38 个文件，
-未改 Slice、Roadmap、Progress、稳定需求、CURRENT 文档或冻结 Automation 范围。
-本轮 B 仅更新 TASK.md，保留所有预存用户脏文件及 ignored 私有配置；不提交、不推送。
-上一轮详细 B 判定保留于 `ee05fe5:TASK.md`，本次按同一 Task 修正循环复查。
+治理 PASS；已提交 Slice45 ACTIVE Contract 与工作树一致，Task45.2 继续合法，未发现需要
+A 改 Contract 的范围问题。完整 Task 范围为 38 个文件；`8f5d059..c8ec322` 仅改 TASK.md，
+可执行输入无未提交变更。上一轮 B 判定保留在 `c8ec322:TASK.md`。
+本轮仅更新本 Task 的审查段，不提交、不推送，不修改 Slice/Roadmap/稳定需求/CURRENT 文档。
 
-耐久证据、精确受测产物 SHA256、原始读回、脚本、截图及 trace：
-`.git/validation-evidence/64cfa85db37aebb9c42e99d7d8dbb2892cafdb57/b-review2-20261016/INDEX.md`。
-证据仅本地可达，不宣称远程可达。
+独立脚本、原始 API/SQLite 读回、日志、截图、trace 与身份索引位于：
+`.git/validation-evidence/8f5d0591d53130921a91d8dde9827a1af44e1e52/b-review3-20261017/INDEX.md`。
+仅本地可达；全部测试使用临时 Local/fake Provider，不访问生产媒体/Provider 或私有配置。
 
 ### 已独立证实的修正
 
-- **未选兄弟项可以继续完成。** 真实 production build / Python API / SQLite / Local Storage /
-  Worker：从任务中心经 Files 选 Ninth/Tenth，两项实际就绪；只确认 Ninth 并真实 MOVE，
-  Tenth 保留。重新认证进入同一准备，在同页补正 Tenth 为 C、重新分析，得到仅 Tenth 的
-  真正可执行摘要；保存其已允许身份并再次分析，明确确认后第二次 Worker 成功 MOVE。
-  两次独立执行、精确来源/目标和 verified steps 均有耐久读回；Ninth 没有重放。
-- 已有摘要提供“重新检查并更新摘要”，后端公告使用实际准入谓词；无需借旧 intent 页来
-  更新本次代表性摘要。MOVE 已明确解释成功后来源不再保留，实看桌面/窄屏的来源范围、
-  策略、目标媒体库与实际结果一致。上述事实不等于整个 Task 或其他分支已通过。
+全新 Eleventh 来源，无预置 Result/choice/review，生产构建 + 真实 Python API/SQLite/
+Local Storage/Worker 的原生旅程已完成：任务中心 → Files 选择 → 歧义摘要 → 同页明确选择
+911 → 新摘要真正可执行 → 确认前源仍存在且目标为空 → 明确确认 → Worker 成功 MOVE，
+真实目标包含 `tmdbid-911`。准备 finding 的状态与候选说明已接通，未再依赖不存在的正式 Review。
+已实看桌面 1536×1024 与窄屏 380×720 截图。该代表性修正确实有效，但下列边界仍阻塞 PASS。
 
-### Remaining Task blocker — P1
+### P1 blockers — 候选查询未按精确权威收敛
 
-**新来源遇到元数据歧义时，必要身份补正仍然无法在准备界面完成。**
+1. **无关准备能挤掉本项候选，破坏仍未就绪项的独立补正。**
+   `SQLiteTaskRepository.list_manual_previews_by_source` 在 `source_json LIKE '%path%'` 后先取
+   全局最近 10 个 Preview，随后才以 Python 过滤 Storage ID/精确路径。根目录
+   `One.2001.mkv` 的两个真实候选最初可见；另建 11 个 `OtherN/One.2001.mkv` 的独立准备后，
+   原项查询返回空集、`allowedMetadataIdentities=[]`，保存原合法 999 返回
+   **400 / metadata_unverified**。来源、原摘要与候选均未变，source/target mutation 计数为零。
+   原生浏览器对 Eleventh 同样复现：起初有候选；11 个无关准备完成后重新认证读取原准备，
+   身份选择器消失，原合法 911 保存被拒绝。摘要仍提示选择候选，补正区却说没有候选。
+   不能要求用户因无关任务活动重新调用 Provider/生成摘要才能恢复本项已有合法选择。
+   证据：`candidate-isolation.json`、`native-isolation.json`、对应日志/截图/trace。
+   对应 Task **AC-3/5、Scope §3、RO-2 / S-2、UX-003**。
 
-独立 Python 复现：全新 `Movies/One.2001.mkv`，本地合成 Provider 返回两个真实同分候选
-201/999。准备的持久 `plan.analysis.metadata.match` 明确保存 `ambiguous` 与两个候选，
-`plan.mediaIdentity=null`，但 intent 的 `allowedMetadataIdentities=[]`。把其中真实候选
-交给现有 choice API 仍返回 **400 / metadata_unverified**；Storage mutation 为零。
-
-独立原生浏览器复现：从任务中心选全新 Three，真实 Provider 抽象返回 103/903 两个
-标题/年份精确候选。页面为“未就绪 / 可确认 0 项”，没有身份选择器、候选解释或可用的
-候选补正动作，只能改识别类型或重新跑相同分析；它提示处理 linked Metadata review，
-但准备没有创建该正式 review。API 的 failure 投影还声称 TaskItem/Result 已持久失败，
-与本次仅准备的真实状态不符。旧 intent 链接不能代替本页补正或生成不存在的正式恢复待办。
-
-根因和位置：
-
-- `manual_organize.py:1475` 的 `_append_preview_plan_authorities` 只读成功后的
-  `plan.mediaIdentity`，歧义时在 `:1507`–`:1509` 跳过，未接入本准备已持久的来源候选。
-- `OrganizeCreationPage.tsx:1175` 仅在 identity 列表非空时渲染补正输入；
-  `organize-summary.tsx:110` 也只展示最终 identity，不解释尚待选择的候选。
-- 现有新增 Python identity 测试仅重新选择已经成功的 201；真实浏览器的兄弟项测试只改类型。
-  这些绿色结果没有验证“未就绪 → 真正保存候选决定 → 新摘要可执行”的必要路径。
-
-对应 **AC-3/5、Implementation Scope §3、RO-2 / S-2**，以及 UX-001/002/005、
-V2-OPS-010。这是上一轮 blocker 2 未完成的分支，保持 Task45.2，不新建修复 Task。
+2. **新来源版本可以借用旧 Preview 的候选，未落实声称的精确来源绑定。**
+   `ManualOrganizeIntentService._append_preview_plan_authorities` 仅比较 Storage ID/路径，
+   未比较传入 snapshot、来源 fingerprint/occurrence、ResourceLibrary 绑定或 Preview 的
+   相应固定身份。独立真实 SQLite/API 复现：先准备旧文件并持久歧义候选；随后将同路径文件
+   替换为不同大小/指纹的新版本，明确创建新准备。新准备刚完成发现、冻结 intent，尚无
+   Preview/Provider 分析，就已公布旧版本的 201/999；choice API 保存旧 999 返回 **200**。
+   旧/新 fingerprint 不同，新准备 `preview_id=None`，全部 Storage mutation 仍为零。
+   这证明新 Preview authority 在读取与保存时没有要求候选属于本来源版本；本复现不声称
+   已造成错误 mutation。配置参数也未参与该方法过滤，不能据此报告精确配置隔离已验证。
+   证据：`candidate-isolation.json` 的 `replaced_source` 及独立脚本。
+   对应 Task **AC-5/6、Scope §2/3、Slice Safety Invariant 4** 和本 Task 既定修正要求。
 
 ### 同一 Task 的修正要求
 
-复用当前准备/intent/Preview 的持久候选及已有合法 Metadata selection/Provider 解析，
-使来源已接地、固定 Provider/类型允许的候选能在本页被解释、明确选择并安全保存；API 与
-页面必须使用相同的准入权威，保留精确来源/配置/版本校验、有界数据、RBAC 和脱敏。
-不能仅在前端添加选项、允许任意 Provider payload、预先种成功 Result，或为准备制造正式
-Review/执行失败来绕过。保存和分析继续零媒体变更、零执行授权；最终只执行明确确认子集。
-未找到身份与真正需要候选选择的情况须有相符的原因、真实持久状态和可行补正/修复动作。
-不要求在此提前实现 RO-3 的五类正式执行恢复页或第二套恢复引擎。
+保持 Task ID/Base/Goal/Scope/AC、High/T4 与现有零变更/执行边界。修正新引入的
+Preview-derived 候选权威：在有界读取前落实精确来源过滤，不能让其他路径、Storage、
+SQL LIKE 通配字符或无关新记录挤占本来源的结果；候选只可来自与当前项的来源版本、
+固定配置和库/Storage 绑定相符的分析，并继续校验 Provider/媒体类型。已有合法旧 pin
+仍使用其自己的证据，不能改绑当前 Active。无需借此重设计旧 Result/review 兼容语义。
 
-先以**无先行 Result/choice/review 的新来源**覆盖真实候选歧义，验证候选可见、合法选择
-实际持久、非法/跨来源选择拒绝、同页新摘要真正就绪，确认前零变更/零正式恢复待办，
-明确确认后 Worker 结果与所选身份一致；同时保留已通过的两次子集执行非重放回归。
-随后对新的 executable candidate 完成原 Required Tests 的全部 T4 checkpoint 门禁。
-Task ID/Base/Goal/Scope/AC 与 High/T4 均不变，不能通过降低断言或把此分支移到下一 Task 解阻。
+展示与 choice 保存继续共用同一权威，GET 不调用 Provider，缺少匹配证据时不得宣称候选
+已接地。当前有效候选不能因无关工作丢失；另一版本/绑定的 Preview 不能给新项授予选择权威。
+不接受扩大任意身份输入、增大固定 limit、删除历史或只改 UI/测试绕过。
+
+先覆盖同名不同目录/Storage、超过查询页量的无关准备、来源替换和配置/库绑定变化；验证
+原准备候选保持且合法保存、新版本未分析前不继承旧候选、非法/跨来源选择拒绝，同时保留
+真正新来源补正→新摘要→确认执行、兄弟项独立子集/非重放回归。通过后对新 executable
+candidate 完成原 Required Tests 全部 T4 checkpoint 门禁；不新建修复 Task，不降低验收。
 
 ### 简版修复方案 — Developer 执行指导
 
-继续 Task45.2，按以下步骤完成同一个补正旅程；不新增正式 Review 队列或恢复引擎。
+继续 Task45.2，只修正候选的读取与保存边界，复用现有准备、分析、choice 和执行链。
+主要检查 `manual_organize.py` 与 `sqlite_runtime.py`；页面只在确需修正指引时调整，
+不新建队列、候选管理系统或恢复引擎。
 
-1. **接通候选权威。** 在 `ManualOrganizeIntentService` 中，除最终 `mediaIdentity` 外，
-   读取当前准备中该文件已持久保存的 Metadata 候选。校验精确来源、固定配置、Provider、
-   媒体类型及版本；候选展示与 choice 保存校验共用同一套逻辑，不接受任意身份注入。
-2. **补齐同页选择。** 创建页对歧义项展示候选标题、年份、Provider ID 和匹配理由。
-   用户明确选择后复用现有 choice API 保存，再通过现有 Worker 重新分析，生成同页新摘要。
-   后端从对应持久候选重新核对所选身份，不能只在前端添加选项。
-3. **修正状态与指引。** 歧义显示“需要选择元数据候选”；没有候选时给出相应补正或修复指引。
-   准备状态不得声称已有失败 TaskItem/Result，不引导处理不存在的 review。新摘要生成后，
-   清除旧选择以及覆盖、来源清理确认，避免沿用旧方案的影响许可。
-4. **保持执行边界。** 保存候选和重新分析均零媒体变更、无执行授权；继续拒绝跨来源候选、
-   过期输入及不兼容 Provider/类型。只有用户审阅新摘要并明确确认精确子集后，才进入原执行链。
-5. **先验失败路径，再跑原 T4。** 使用没有旧 Result/choice/review 的新文件，构造真实歧义：
-   候选可见 → 实际保存选择 → 新摘要真正就绪 → 明确确认 → Worker 按所选身份执行。
-   覆盖非法/跨来源候选拒绝、确认前零变更/零正式恢复待办，并保留兄弟项独立执行和无重放
-   回归；这些通过后，对新候选完成原定全部 T4 checkpoint 门禁并记录耐久证据。
+1. **先找对记录，再限制数量。** 优先沿当前 intent/item 关联读取已持久分析；若保留
+   `list_manual_previews_by_source`，在数据库查询中先精确匹配 Storage ID 和完整路径，
+   再排序、限量。去掉 `LIKE` 模糊匹配后先取 10 条再过滤的做法，不以扩大 limit 修复。
+2. **只接受同一来源版本的证据。** 从 Preview 提取身份/候选前，核对当前项与分析记录的
+   来源指纹、适用的 occurrence、ResourceLibrary/Storage 绑定，以及固定配置 ID/digest；
+   保留 Provider/媒体类型校验。路径相同但文件已换、配置或绑定不同，不继承旧候选。
+   缺少必要匹配证据时不给予新的候选选择权限；旧历史仍可读，合法旧 pin 使用自己的证据。
+3. **展示和保存共用判定。** 页面可选项与 choice API 使用同一套候选筛选；保存时重新
+   校验来源和版本。过期选项明确提示重新检查并更新摘要。读取不调用 Provider，保存不
+   取得执行权限；更新摘要后仍由用户明确确认原有执行链。
+4. **先补两组回归。** 一组：原准备已有候选，再生成超过查询限量的同名不同目录/Storage
+   摘要，原候选仍可见、可保存；计数对象是摘要记录，不是一次批量中的文件数。
+   另一组：旧版本得到 A/B，替换文件后新分析得到 C/D，新页面只提供 C/D，直接提交旧 A/B
+   也被拒绝；覆盖新分析前和完成后，避免仅靠分析中的短暂窗口验证。补配置/绑定不匹配
+   和合法旧 pin 对照，全部准备/保存阶段保持零媒体变更。
+5. **保留已跑通旅程，再交 T4。** 复验全新歧义来源在同页选择→新摘要→明确确认→真实
+   Worker 执行，以及未选兄弟项独立继续、不重放。聚焦用例和原生旅程通过后，完成上方
+   Required Tests 的全部 T4 checkpoint 门禁，提交新的精确候选及耐久日志/截图/trace。
 
 ### Verification result and limits
 
-- B 独立相关 Python：**141 tests OK / 9.147s**；原生两次精确执行与新来源歧义均已实跑。
-  已实看 1536×1024 与 380×720 实际截图，保留 trace/API 原始读回。歧义 probe 的 exit 0
-  表示证实所断言缺陷，不是产品验收 PASS。
-- 查看 Developer 全量 Python/Web/真实 inventory/Unicode/visual/wheel/Docker 的原始日志、
-  索引与 matrix。原始隔离 Python 为 **2470 / 191.839s / OK / 7 skipped**（报告写 195.9s）；
-  Vitest 1120、fake E2E 246、inventory 26、Unicode 1、visual 2 的通过事实保留。
-  其成功身份重选和预存身份 Docker fixture 均未覆盖本次阻塞，不能替代真正的新来源补正。
-- 主工作区 schema48 环境失败及既有 Base 复现证据保留；未读取/修改用户运行库。
-- 根据 workflow 的早期已证实阻塞规则，**未重跑完整 Python/Web/Docker/wheel 矩阵，未签发
-  T4 或 Task PASS**；来源变化、旧 pin、未知准入的本轮独立分支未全部完成，不冒称通过。
-  探索脚本的首轮等待/fixture 断言问题及后续精确复跑详列证据索引，未修改产品测试或超时。
+- B 独立相关 Python：`tests.test_organize_preparation tests.test_manual_organize_intent
+  tests.test_manual_organize_preview`，**31 tests OK / 1.516s**。
+- 独立 native 成功执行与上述两个边界 probe 已实跑；桌面/窄屏图片已查看。probe 的成功
+  exit 表示证实其断言（包括缺陷），不是 Task PASS。探索脚本两次字段名错误，以及首次
+  浏览器 Refresh 尚未重载 intent 的观察差异与后续精确复跑均保留原始日志，不隐藏失败。
+- 已核对 Developer 原始全量/聚焦、Web、真实 Python、wheel、Docker 日志与产物 identity。
+  现有 served JS/CSS SHA256 与 Developer `identity.json` 完全匹配；报告 successor 仅文档。
+  原始隔离 Python **2471 / 181.968s / OK / 7 skipped**（Completion Report 写 184.854s，
+  本轮采用可读原始日志，不将二者混为同一次运行）；Vitest 1121、fake E2E 246、真实
+  inventory 27、Unicode 1、visual 2，以及 wheel consumer/Docker 通过的记录保留。
+- 上述 Developer 已有绿色结果未覆盖本轮精确来源查询反例。按 workflow 的早期阻塞规则，
+  本轮未重复完整 Python/Web/Docker/wheel 矩阵，未签发 T4 或 Task PASS；来源变化后的
+  完整同页更新、旧 pin、未知确认与两次子集非重放的全部独立分支也未重新验收。
+- 主工作区 schema48 环境失败的既有报告/原始证据保留，不改记绿；未读取或修改用户运行库。
+  全部预存脏文件及 `config/alist.json` 的 ignored/untracked/unstaged 状态保留。
 
 ### Slice outcome reassessment
 
-RO-1 / S-1 保留 Task45.1 PASS；RO-2 / S-2 的新来源身份补正仍未满足。
+RO-1 / S-1 保留 Task45.1 PASS；RO-2 / S-2 的精确、独立准备补正仍未满足。
 RO-3 / S-3/4 专用处理/同页摘要、RO-4 暂停后的同页重新授权、RO-5 / S-7 Scan 完整退役，
-以及 RO-6 剩余编排验收和 Slice-final 均未完成。继续 Task45.2 修正循环；不规划 Task45.3、
-不提交 Closure Packet、不改变 Slice/Roadmap/稳定要求，不代替 A 最终审查。
+以及 RO-6 剩余编排验收和 Slice-final 仍未完成。继续 Task45.2 修正循环，不规划 Task45.3，
+不提交 Closure Packet，不改变 Slice/Roadmap，不代替 A 最终审查。
 
-可复用经验候选：身份补正验收应从真正未就绪的新来源开始，证明保存决定后能达到可执行方案；
-重新选择已有成功身份只能证明重选兼容，不能证明恢复可用。留给 A 收尾筛选。
+可复用经验候选：来源查询须在限量前按精确业务身份筛选，并区分同路径的来源版本；
+否则既可能漏掉当前合法候选，也可能把旧证据当作新项权威。留给 A 收尾筛选。
