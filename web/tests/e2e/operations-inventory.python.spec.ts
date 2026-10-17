@@ -2625,6 +2625,129 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
  * complete-population summary, the overlapping cross-Task recovery lists and
  * the exact per-type file list are all server queries the page issues.
  */
+test("two ready batch children aggregate their summaries and only the selected subset is confirmed", async ({
+  page,
+  request,
+}) => {
+  const seeded = (await (
+    await request.post(`${BASE}/__harness__/seed-batch-summary-recovery`)
+  ).json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly itemIds: readonly string[];
+    readonly sourceNames: readonly string[];
+  };
+  expect(seeded.itemIds).toHaveLength(2);
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  await page.goto(`${BASE}/ui-v2/operations?run=${seeded.runId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(
+    items.getByRole("region", { name: "批量失败分析恢复" }),
+  ).toBeVisible();
+
+  let state = await (
+    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
+  ).json();
+  const initialTargetFiles = [...state.targetFiles].sort();
+  expect(Object.values(state.sourceExists)).toEqual([true, true]);
+
+  // Select both exact failed manual items and admit the batch analysis.
+  for (const itemId of seeded.itemIds) {
+    await items
+      .getByLabel(`选择 ${itemId} 进行单项分析恢复`)
+      .check();
+  }
+  const batchPanel = items.getByRole("region", { name: "批量失败分析恢复" });
+  await batchPanel.getByRole("button", { name: "继续所选分析(2)" }).click();
+  await expect(batchPanel.getByText(/批次结果/)).toBeVisible();
+
+  // Run the real resident Worker once per child to complete both linked
+  // re-analyses.
+  for (let index = 0; index < 2; index += 1) {
+    const workerResponse = await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker`,
+    );
+    expect(workerResponse.ok()).toBeTruthy();
+    const worker = await workerResponse.json();
+    expect(worker, JSON.stringify(worker)).toMatchObject({
+      ran: true,
+      continuationStatus: "completed",
+    });
+  }
+  await items.getByRole("button", { name: "Refresh" }).first().click();
+  await expect(batchPanel).toContainText("分析已完成");
+  state = await (
+    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
+  ).json();
+  for (const itemId of seeded.itemIds) {
+    expect(state.continuations[itemId][0]).toMatchObject({
+      status: "completed",
+      newResultId: expect.any(String),
+    });
+  }
+  // Nothing has moved: the analysis is zero-mutation.
+  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+
+  // Prepare each child's independent durable summary in the task's own panel.
+  await batchPanel.getByRole("button", { name: /为 2 项生成计划摘要/ }).click();
+  const batchSummary = batchPanel.getByRole("region", {
+    name: "批量同页计划摘要",
+  });
+  await expect(batchSummary).toBeVisible();
+  await expect(
+    batchSummary.getByRole("heading", { name: "本项零变更摘要" }),
+  ).toHaveCount(2);
+  // Both children are ready; only one is selected by the operator.
+  await batchSummary
+    .getByRole("checkbox", { name: /选择 BatchSummaryA/ })
+    .first()
+    .uncheck();
+  const confirmResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await batchSummary
+    .getByRole("button", { name: /确认继续整理所选 1 项/ })
+    .click();
+  const confirmed = await confirmResponse;
+  expect(confirmed.status()).toBe(202);
+  const confirmation = (await confirmed.json()) as {
+    readonly executionId: string;
+    readonly selectedItemIds: readonly string[];
+  };
+  // Exactly the one selected ready item was admitted; its sibling keeps its
+  // own independent summary and was never executed.
+  expect(confirmation.selectedItemIds).toHaveLength(1);
+  // The confirmation navigates to the linked durable execution; the operator
+  // never had to open a standalone Preview or manage an internal token.
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
+  );
+  state = await (
+    await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
+  ).json();
+  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+});
+
+/**
+ * Slice 45 RO-1/RO-3 — the nine sibling task-center views and the exact
+ * Task/type problem file list.
+ *
+ * The mixed problem population is created by `POST /__harness__/seed-task-center-problems`
+ * through the real production services (RecognitionReviewService,
+ * ClassificationReviewService, MetadataCorrectionService and a real failed
+ * TaskItem). This journey drives only the browser: the nine views, their
+ * complete-population summary, the overlapping cross-Task recovery lists and
+ * the exact per-type file list are all server queries the page issues.
+ */
 test("the nine views and the exact Task/type problem file list work natively", async ({
   page,
   request,

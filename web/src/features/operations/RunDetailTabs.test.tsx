@@ -13,6 +13,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../../../tests/utils";
 import { authStore } from "../../shared/api/auth-store";
+import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 
 const TOKEN = "detail-token";
 
@@ -1274,6 +1275,232 @@ describe("selected-run detail tabs", () => {
     expect(
       await within(batch).findByText(/批量提交已关闭，避免响应丢失后无法核对/),
     ).toBeVisible();
+  });
+
+  it("aggregates independent batch child summaries and confirms only the selected ready subset", async () => {
+    const user = userEvent.setup();
+    const batchId = "11111111-1111-1111-1111-111111111111";
+    const checkpointVersion = "c".repeat(64);
+    const confirmPosts: { url: string; body: unknown }[] = [];
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-child-1";
+    preview["intentId"] = "intent-child-1";
+    preview["intentVersion"] = 4;
+    preview["executionCandidateItemIds"] = ["child-1"];
+    const previewItems = preview["items"] as Record<string, unknown>[];
+    previewItems[0]!["itemId"] = "child-1";
+    previewItems[0]!["previewItemId"] = "preview-item-child-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "child-1",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const previewActions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    previewActions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-child-1/execute";
+    window.sessionStorage.setItem(
+      "mediaflow.operations.recovery-batch:v2:test-principal:task-001",
+      JSON.stringify({
+        batchId,
+        items: [{ itemId: "child-1", expectedCheckpointVersion: checkpointVersion }],
+      }),
+    );
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "POST") {
+        confirmPosts.push({
+          url,
+          body:
+            typeof init?.body === "string"
+              ? (JSON.parse(init.body) as unknown)
+              : null,
+        });
+        if (url.endsWith("/confirm")) {
+          return jsonResponse(
+            {
+              executionId: "execution-child-1",
+              taskId: "task-child-1",
+              status: "admitted",
+              selectedItemIds: ["child-1"],
+              nextAction: "track the durable Worker execution",
+            },
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
+      if (url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "test-principal" });
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({
+          items: [overviewDocument()],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+        return jsonResponse(itemsPageDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      if (url.includes("/recovery-batches/")) {
+        return jsonResponse({
+          batch_id: batchId,
+          source_task_id: "task-001",
+          actor: "test-principal",
+          status: "completed",
+          selected_count: 2,
+          unchanged_count: 0,
+          ignored_count: 0,
+          counts: { completed: 2 },
+          next_action: "inspect each item outcome",
+          items: [
+            {
+              batch_item_id: "bi-1",
+              batch_id: batchId,
+              source_task_id: "task-001",
+              source_item_id: "child-1",
+              checkpoint_version: checkpointVersion,
+              status: "completed",
+              request_id: "request-1",
+              continuation_id: "continuation-1",
+              job_id: "job-1",
+              new_task_id: "analysis-task-1",
+              new_result_id: "analysis-result-1",
+              reason: null,
+              error: null,
+              next_action: "review the current summary",
+              manualRecoveryPreparation: {
+                preparation_id: "preparation-child-1",
+                status: "prepared",
+                preview_id: "preview-child-1",
+                intent_id: "intent-child-1",
+                source_task_id: "task-001",
+                source_item_id: "child-1",
+                checkpoint_version: checkpointVersion,
+                configuration_snapshot_id: "snap-1",
+                configuration_snapshot_digest: "d".repeat(64),
+                authorization_id: null,
+                execution_id: null,
+                hasExecutionAuthority: false,
+                next_action: "review and confirm",
+              },
+            },
+            {
+              batch_item_id: "bi-2",
+              batch_id: batchId,
+              source_task_id: "task-001",
+              source_item_id: "child-2",
+              checkpoint_version: "e".repeat(64),
+              status: "completed",
+              request_id: "request-2",
+              continuation_id: "continuation-2",
+              job_id: "job-2",
+              new_task_id: "analysis-task-2",
+              new_result_id: "analysis-result-2",
+              reason: null,
+              error: null,
+              next_action: "no summary yet",
+              manualRecoveryPreparation: null,
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/preview-child-1")) {
+        return jsonResponse(preview);
+      }
+      if (url === "/api/v1/workers/readiness") {
+        return jsonResponse({
+          ready: true,
+          condition: "ready",
+          category: null,
+          durableState: "ready",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "none",
+          activeWorkersCount: 1,
+          activeSnapshotId: "snap-1",
+          expectedRuntimeSchemaVersion: 42,
+        });
+      }
+      if (url === "/api/v1/management/readiness") {
+        return jsonResponse({
+          available: true,
+          infrastructureReady: true,
+          asOf: "2026-08-22T12:00:00+00:00",
+          sideEffects: "none",
+          infrastructure: { services: {} },
+        });
+      }
+      if (url.startsWith("/api/v1/operations/manual-actions")) {
+        return jsonResponse({
+          scopeKind: null,
+          scopeId: null,
+          fileId: null,
+          resourceLibraryId: null,
+          selectionRequired: true,
+          source: null,
+          resourceLibraries: [],
+          runtime: { ready: true, condition: "ready", nextAction: null },
+          actions: {
+            scan: { available: false, reason: "not advertised" },
+            preview: { available: false, reason: "not advertised" },
+            organize: { available: false, reason: "not advertised" },
+          },
+          limits: { previewMaxItems: 100 },
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const summary = await screen.findByRole("region", {
+      name: "批量同页计划摘要",
+    });
+    // The ready child's durable summary is aggregated; the not-ready child is
+    // listed without a confirm action and never executed.
+    await within(summary).findByText(/child-2/);
+    expect(within(summary).queryByText(/child-2：本次确认/)).toBeNull();
+    const confirm = await within(summary).findByRole("button", {
+      name: /确认继续整理所选 1 项/,
+    });
+    await user.click(confirm);
+    await waitFor(() => expect(confirmPosts).toHaveLength(1));
+    expect(confirmPosts[0]?.url).toBe(
+      "/api/v1/manual-recovery-preparations/preparation-child-1/confirm",
+    );
+    expect(confirmPosts[0]?.body).toMatchObject({
+      itemIds: ["child-1"],
+      confirmation: true,
+    });
   });
 
   it("admits only GET requests while the detail journey runs", async () => {

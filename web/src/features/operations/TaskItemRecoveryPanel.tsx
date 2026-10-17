@@ -111,6 +111,9 @@ export function TaskItemRecoveryPanel({
     readonly status: string;
     readonly checkpointVersion: string;
   } | null>(null);
+  const [submittedPreparationId, setSubmittedPreparationId] = useState<
+    string | null
+  >(null);
   const [confirmSelection, setConfirmSelection] = useState<
     readonly string[] | null
   >(null);
@@ -124,18 +127,28 @@ export function TaskItemRecoveryPanel({
   // only a faster path to the same record; a refresh, return, reconnect or
   // restart restores it from the persisted preparation instead of losing it.
   const durablePreparation = model?.manualRecoveryPreparation ?? null;
+  // The durable record always wins over a local cache.  Once the persisted
+  // summary is confirmed, superseded or stale it can never be covered by an
+  // older local ``prepared`` value: the confirm action disappears and the
+  // linked execution is shown instead.
   const activePreparation =
-    preparation ??
-    (durablePreparation !== null &&
-    (durablePreparation.status === "prepared" ||
-      durablePreparation.status === "confirmed")
-      ? {
-          preparationId: durablePreparation.preparationId,
-          previewId: durablePreparation.previewId,
-          status: durablePreparation.status,
-          checkpointVersion: durablePreparation.checkpointVersion,
-        }
-      : null);
+    durablePreparation !== null
+      ? durablePreparation.status === "prepared"
+        ? {
+            preparationId: durablePreparation.preparationId,
+            previewId: durablePreparation.previewId,
+            status: "prepared" as const,
+            checkpointVersion: durablePreparation.checkpointVersion,
+          }
+        : null
+      : preparation !== null
+        ? {
+            preparationId: preparation.preparationId,
+            previewId: preparation.previewId,
+            status: preparation.status,
+            checkpointVersion: preparation.checkpointVersion,
+          }
+        : null;
   const confirmedPreparation =
     durablePreparation?.status === "confirmed" &&
     durablePreparation.executionId !== null
@@ -336,6 +349,7 @@ export function TaskItemRecoveryPanel({
   const confirmPreparation = async () => {
     if (
       activePreparation === null ||
+      activePreparation.status !== "prepared" ||
       confirmSelection === null ||
       confirmSelection.length === 0 ||
       busy ||
@@ -343,12 +357,14 @@ export function TaskItemRecoveryPanel({
     ) {
       return;
     }
+    const submittedPreparationId = activePreparation.preparationId;
+    setSubmittedPreparationId(submittedPreparationId);
     setBusy(true);
     setMessage(null);
     try {
       const result = await confirmTaskItemRecoveryPreparation(
         token,
-        activePreparation.preparationId,
+        submittedPreparationId,
         {
           itemIds: confirmSelection,
           allowOverwrite: allowOverwriteConfirm,
@@ -379,16 +395,50 @@ export function TaskItemRecoveryPanel({
 
   const reconcile = async () => {
     const result = await query.refetch();
-    if (result.data?.ok === true) {
-      setRepeatLocked(false);
-      setMessage(
-        result.data.model.manualRecoveryPreparation?.status === "confirmed"
-          ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
-          : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
-      );
-    } else {
+    if (result.data?.ok !== true) {
       setMessage("条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ");
+      return;
     }
+    const durable = result.data.model.manualRecoveryPreparation ?? null;
+    // The reconciliation is bound to the exact summary this page submitted.
+    // Reading a different current preparation, or only a successful TaskItem
+    // GET, must not unlock a submission whose own admission is still unknown.
+    if (submittedPreparationId !== null) {
+      if (durable === null || durable.preparationId !== submittedPreparationId) {
+        setRepeatLocked(true);
+        setMessage(
+          "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
+        );
+        return;
+      }
+      if (durable.status === "prepared") {
+        // The admission did not commit; the same prepared summary is safe to
+        // confirm again deliberately.
+        setRepeatLocked(false);
+        setSubmittedPreparationId(null);
+        setMessage("本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ");
+        return;
+      }
+      if (durable.status === "confirmed" && durable.executionId !== null) {
+        setRepeatLocked(false);
+        setSubmittedPreparationId(null);
+        setMessage(
+          "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 ",
+        );
+        return;
+      }
+      setRepeatLocked(true);
+      setMessage(
+        "该计划摘要已被更新或不再可用；保持提交锁定，请刷新页面后按当前摘要重新处理。 ",
+      );
+      return;
+    }
+    setRepeatLocked(false);
+    setMessage(
+      durable?.status === "confirmed"
+        ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
+        : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
+    );
   };
 
   if (query.data === undefined) {

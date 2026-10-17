@@ -184,6 +184,7 @@ class ManualOrganizePreviewService:
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
         review_decisions: object | None = None,
         reuse_analysis_identity: object | None = None,
+        require_durable_identity: bool = False,
         skip_current_snapshot_check: bool = False,
         recovery_source_task_id: str | None = None,
         tolerate_unready_sources: bool = False,
@@ -317,6 +318,7 @@ class ManualOrganizePreviewService:
                         preview_id,
                         review_decisions=review_decisions,
                         reuse_analysis_identity=reuse_analysis_identity,
+                        require_durable_identity=require_durable_identity,
                     )
             except ManualPreviewUnavailable as error:
                 outcome = _PreviewOutcome(
@@ -2189,6 +2191,7 @@ class ManualOrganizePreviewService:
         *,
         review_decisions: object | None = None,
         reuse_analysis_identity: object | None = None,
+        require_durable_identity: bool = False,
     ) -> _PreviewOutcome:
         runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
         type_policy = next(
@@ -2277,23 +2280,59 @@ class ManualOrganizePreviewService:
             metadata_selection, metadata_correction = self._bound_metadata_decision(
                 bound, item, type_policy, metadata_policy
             )
-            if (
-                metadata_selection is None
-                and metadata_correction is None
-                and reuse_analysis_identity is not None
-                and metadata_policy.query_type is not MediaQueryType.NONE
-                and self._durable_identity_compatible(
-                    metadata_policy, item, reuse_analysis_identity
+        # Reuse the exact identity an already completed, source/pin-bound
+        # re-analysis resolved under this same MetadataPolicy.  This is a durable
+        # reviewed fact, not a fresh lookup: the summary is built without a second
+        # Provider search/detail round-trip.  The identity is re-validated against
+        # the pinned policy before it is applied, and when the operator also saved
+        # an explicit Metadata decision/reference that decision must still agree
+        # with the durable identity; otherwise the item is blocked for a fresh
+        # analysis instead of silently overriding either fact.
+        if (
+            metadata_identity is None
+            and metadata_policy.query_type is not MediaQueryType.NONE
+            and reuse_analysis_identity is not None
+            and self._durable_identity_compatible(metadata_policy, item, reuse_analysis_identity)
+        ):
+            candidate_durable = self._rebind_durable_identity(
+                reuse_analysis_identity, item.choice.recognition_type_id
+            )
+            mismatch = self._metadata_decision_mismatch(
+                candidate_durable, metadata_selection, metadata_correction, metadata_reference
+            )
+            if mismatch is not None:
+                return _PreviewOutcome(
+                    ManualPreviewItemStatus.BLOCKED,
+                    error=mismatch,
+                    next_action=(
+                        "request a fresh analysis for this exact item so the saved Metadata "
+                        "decision and the resolved identity agree before continuing"
+                    ),
                 )
-            ):
-                # Reuse the exact identity an already completed, source/pin-bound
-                # re-analysis resolved under this same MetadataPolicy.  This is a
-                # durable reviewed fact, not a fresh lookup: the summary is built
-                # without a second Provider search/detail round-trip.  The identity
-                # is re-validated against the pinned policy before it is applied.
-                durable_identity = self._rebind_durable_identity(
-                    reuse_analysis_identity, item.choice.recognition_type_id
-                )
+            durable_identity = candidate_durable
+            metadata_selection = None
+            metadata_correction = None
+        if (
+            require_durable_identity
+            and durable_identity is None
+            and metadata_identity is None
+            and metadata_policy.query_type is not MediaQueryType.NONE
+        ):
+            # The same-page summary never falls back to a live Provider lookup
+            # inside the HTTP request: a missing, incomplete or expired durable
+            # identity becomes an explicit re-analysis action handled by the
+            # existing durable Job/Worker.
+            return _PreviewOutcome(
+                ManualPreviewItemStatus.BLOCKED,
+                error=(
+                    "the completed re-analysis has no reusable metadata identity under the "
+                    "pinned MetadataPolicy"
+                ),
+                next_action=(
+                    "request a fresh analysis for this exact item, wait for the Worker, then "
+                    "generate the plan summary again"
+                ),
+            )
         live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
         if metadata_identity is not None or durable_identity is not None:
             live_metadata = False
@@ -2721,6 +2760,48 @@ class ManualOrganizePreviewService:
         if identity.recognition_type_id == recognition_type_id:
             return identity
         return replace(identity, recognition_type_id=recognition_type_id)
+
+    @staticmethod
+    def _metadata_decision_mismatch(
+        durable: MediaIdentity,
+        metadata_selection,
+        metadata_correction,
+        metadata_reference,
+    ) -> str | None:
+        """Whether a saved Metadata decision contradicts the durable identity.
+
+        The summary reuses the identity the completed re-analysis actually
+        resolved, so any decision the operator also saved must agree with it on
+        the provider and media type, and on the concrete Provider ID whenever
+        the decision named one.  A contradiction is returned as a bounded reason
+        so the caller blocks for a fresh analysis instead of silently preferring
+        one fact over the other.
+        """
+
+        provider = None
+        provider_id = None
+        media_type = None
+        if metadata_selection is not None:
+            provider = getattr(metadata_selection, "provider", None)
+            provider_id = getattr(metadata_selection, "provider_id", None)
+            media_type = getattr(metadata_selection, "media_type", None)
+        elif metadata_correction is not None:
+            provider = getattr(metadata_correction, "provider", None)
+            provider_id = getattr(metadata_correction, "direct_provider_id", None)
+            media_type = getattr(metadata_correction, "media_type", None)
+        elif metadata_reference is not None:
+            provider = getattr(metadata_reference, "provider", None)
+            provider_id = getattr(metadata_reference, "provider_id", None)
+            media_type = getattr(metadata_reference, "media_type", None)
+        else:
+            return None
+        if provider and provider != durable.provider:
+            return "the saved Metadata decision names a different Provider than the analysis"
+        if provider_id and provider_id != durable.provider_id:
+            return "the saved Metadata decision names a different identity than the analysis"
+        if media_type and str(media_type) != durable.media_type.value:
+            return "the saved Metadata decision names a different media type than the analysis"
+        return None
 
     @staticmethod
     def _identity_compatible(policy, provider: str | None, media_type: str | None) -> bool:

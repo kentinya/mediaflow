@@ -669,6 +669,7 @@ class ManualRecoveryContinuationService:
             actor=actor,
             review_decisions=decisions,
             reuse_analysis_identity=reuse_analysis_identity,
+            require_durable_identity=True,
         )
         preview_item = next(
             (value for value in preview.items if value.item_id == manual_item.item_id), None
@@ -827,33 +828,32 @@ class ManualRecoveryContinuationService:
     def _reusable_analysis_identity(self, analysis_item_id: str, analysis_result):
         """The durable identity one completed linked re-analysis resolved, if any.
 
-        Preference order is the exact persisted Result identity (a reviewed fact
-        about this source under this pin), then the latest bounded pipeline
-        evidence metadata section for the same item.  A malformed or absent
-        identity simply returns ``None`` so the caller falls back to the ordinary
-        (live) analysis instead of inventing one.
+        Preference order is the completed attempt's bounded pipeline evidence
+        metadata section for the same item (the richest reviewed fact, including
+        the classification-relevant facets), then the exact persisted Result
+        identity.  A malformed or absent identity simply returns ``None`` so the
+        caller blocks for a fresh analysis instead of inventing one.
         """
 
+        reader = getattr(self._repository, "list_evidence_for_item", None)
+        if callable(reader):
+            try:
+                evidence = tuple(reader(analysis_item_id, limit=16))
+            except Exception:
+                evidence = ()
+            for value in evidence:
+                section = getattr(value, "section", None)
+                if not callable(section):
+                    continue
+                metadata = section("metadata")
+                if metadata is None or not bool(getattr(metadata, "available", False)):
+                    continue
+                document = getattr(metadata, "value", None)
+                identity = self._identity_from_document(document)
+                if identity is not None:
+                    return identity
         if analysis_result is not None:
             identity = self._identity_from_result(analysis_result)
-            if identity is not None:
-                return identity
-        reader = getattr(self._repository, "list_evidence_for_item", None)
-        if not callable(reader):
-            return None
-        try:
-            evidence = tuple(reader(analysis_item_id, limit=16))
-        except Exception:
-            return None
-        for value in evidence:
-            section = getattr(value, "section", None)
-            if not callable(section):
-                continue
-            metadata = section("metadata")
-            if metadata is None or not bool(getattr(metadata, "available", False)):
-                continue
-            document = getattr(metadata, "value", None)
-            identity = self._identity_from_document(document)
             if identity is not None:
                 return identity
         return None
@@ -885,6 +885,9 @@ class ManualRecoveryContinuationService:
             genres=document.get("genres"),
             countries=document.get("countries"),
             languages=document.get("languages"),
+            season=document.get("season"),
+            episode=document.get("episode"),
+            episodes=document.get("episodes"),
         )
 
     @staticmethod
@@ -900,6 +903,9 @@ class ManualRecoveryContinuationService:
         genres=None,
         countries=None,
         languages=None,
+        season=None,
+        episode=None,
+        episodes=None,
     ):
         if not all(isinstance(value, str) and value for value in (provider, provider_id, title)):
             return None
@@ -911,6 +917,9 @@ class ManualRecoveryContinuationService:
                 return ()
             return tuple(item for item in value if isinstance(item, str) and item)
 
+        def _int(value):
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
         try:
             return MediaIdentity(
                 provider=provider,
@@ -918,7 +927,14 @@ class ManualRecoveryContinuationService:
                 media_type=MediaType(media_type),
                 title=title,
                 original_title=original_title if isinstance(original_title, str) else None,
-                year=year if isinstance(year, int) and not isinstance(year, bool) else None,
+                year=_int(year),
+                season=_int(season),
+                episode=_int(episode),
+                episodes=tuple(
+                    value
+                    for value in (episodes or ())
+                    if isinstance(value, int) and not isinstance(value, bool)
+                ),
                 genres=_text_tuple(genres),
                 countries=_text_tuple(countries),
                 languages=_text_tuple(languages),

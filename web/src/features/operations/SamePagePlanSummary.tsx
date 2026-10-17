@@ -34,6 +34,13 @@ export interface SamePagePlanSummaryProps {
   readonly heading: string;
   /** Operator-facing confirm verb, defaulting to the recovery copy. */
   readonly confirmLabel?: (count: number) => string;
+  /**
+   * Whether this component renders its own confirm button.  The bounded batch
+   * journey aggregates several independent summaries under one explicit
+   * confirmation, so it renders the reviewed facts and selection here while
+   * the parent owns the single aggregate confirm action.
+   */
+  readonly showConfirm?: boolean;
 }
 
 export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
@@ -153,18 +160,24 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
             </label>
           )}
           <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button"
-              disabled={
-                props.busy ||
-                activeSelection.length === 0 ||
-                !destructiveConfirmed
-              }
-              onClick={props.onConfirm}
-            >
-              {props.busy ? "正在受理…" : confirmLabel(activeSelection.length)}
-            </button>
+            {props.showConfirm === false ? (
+              <p className="mf-dashboard-meta">
+                已选 {activeSelection.length} 项；请在下方统一确认所选就绪项。
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="mf-button"
+                disabled={
+                  props.busy ||
+                  activeSelection.length === 0 ||
+                  !destructiveConfirmed
+                }
+                onClick={props.onConfirm}
+              >
+                {props.busy ? "正在受理…" : confirmLabel(activeSelection.length)}
+              </button>
+            )}
           </div>
           <p className="mf-dashboard-meta">
             确认只会准入所选就绪子集；未选项保留自己的准备状态，不会被自动执行。

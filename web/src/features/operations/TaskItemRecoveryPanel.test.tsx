@@ -398,24 +398,13 @@ describe("TaskItemRecoveryPanel", () => {
     ).toBe(false);
   });
 
-  it("reconciles a lost confirmation response through the durable record", async () => {
+  it("reconciles a lost confirmation response for a locally prepared summary", async () => {
     const user = userEvent.setup();
     authStore.setToken("task-recovery-test-token");
-    let currentRecovery = completedRecovery({
-      preparation_id: "preparation-1",
-      preview_id: "preview-1",
-      intent_id: "intent-1",
-      source_task_id: "task-1",
-      source_item_id: "item-1",
-      status: "prepared",
-      checkpoint_version: checkpointVersion,
-      configuration_snapshot_id: "active-1",
-      configuration_snapshot_digest: "d".repeat(64),
-      authorization_id: null,
-      execution_id: null,
-      hasExecutionAuthority: false,
-      next_action: "review the current plan summary and confirm",
-    });
+    // The page starts with no durable summary: the operator prepares one here,
+    // confirms it, and the response is lost.  Reconciliation must read back
+    // *this* preparation's confirmed execution and stop offering confirm.
+    let currentRecovery = completedRecovery(null);
     let confirmAttempts = 0;
     const fetchMock = vi.fn(
       async (
@@ -439,6 +428,44 @@ describe("TaskItemRecoveryPanel", () => {
           return new Response(JSON.stringify(previewDocument()), {
             status: 200,
           });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary"
+        ) {
+          currentRecovery = completedRecovery({
+            preparation_id: "preparation-1",
+            preview_id: "preview-1",
+            intent_id: "intent-1",
+            source_task_id: "task-1",
+            source_item_id: "item-1",
+            status: "prepared",
+            checkpoint_version: checkpointVersion,
+            configuration_snapshot_id: "active-1",
+            configuration_snapshot_digest: "d".repeat(64),
+            authorization_id: null,
+            execution_id: null,
+            hasExecutionAuthority: false,
+            next_action: "review the current plan summary and confirm",
+          });
+          return new Response(
+            JSON.stringify({
+              preparation_id: "preparation-1",
+              preview_id: "preview-1",
+              intent_id: "intent-1",
+              source_task_id: "task-1",
+              source_item_id: "item-1",
+              status: "prepared",
+              checkpoint_version: checkpointVersion,
+              configuration_snapshot_id: "active-1",
+              configuration_snapshot_digest: "d".repeat(64),
+              authorization_id: null,
+              execution_id: null,
+              hasExecutionAuthority: false,
+              next_action: "review the current plan summary and confirm",
+            }),
+            { status: 201 },
+          );
         }
         if (
           method === "POST" &&
@@ -480,6 +507,12 @@ describe("TaskItemRecoveryPanel", () => {
     );
 
     const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    // Prepare a summary locally (the durable record also reflects it).
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "生成计划摘要并在此确认",
+      }),
+    );
     const summary = await within(panel).findByRole("region", {
       name: "新计划摘要",
     });
@@ -500,6 +533,131 @@ describe("TaskItemRecoveryPanel", () => {
     expect(
       await within(panel).findByRole("heading", { name: "本次确认已经受理" }),
     ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        within(panel).queryByRole("button", { name: /确认继续整理/ }),
+      ).toBeNull();
+    });
     expect(confirmAttempts).toBe(1);
+  });
+
+  it("never lets an older local prepared summary cover a durable confirmed one", async () => {
+    const user = userEvent.setup();
+    authStore.setToken("task-recovery-test-token");
+    // The operator prepares locally; before confirming, the durable record is
+    // already confirmed (for example another tab admitted it).  The durable
+    // state must win: no confirm action and no local selection can resubmit.
+    let currentRecovery = completedRecovery(null);
+    const fetchMock = vi.fn(
+      async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (
+          method === "GET" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery"
+        ) {
+          return new Response(JSON.stringify(currentRecovery), {
+            status: 200,
+          });
+        }
+        if (
+          method === "GET" &&
+          url === "/api/v1/operations/organize/previews/preview-1"
+        ) {
+          return new Response(JSON.stringify(previewDocument()), {
+            status: 200,
+          });
+        }
+        if (
+          method === "POST" &&
+          url === "/api/v1/tasks/task-1/items/item-1/recovery/prepare-summary"
+        ) {
+          currentRecovery = completedRecovery({
+            preparation_id: "preparation-1",
+            preview_id: "preview-1",
+            intent_id: "intent-1",
+            source_task_id: "task-1",
+            source_item_id: "item-1",
+            status: "prepared",
+            checkpoint_version: checkpointVersion,
+            configuration_snapshot_id: "active-1",
+            configuration_snapshot_digest: "d".repeat(64),
+            authorization_id: null,
+            execution_id: null,
+            hasExecutionAuthority: false,
+            next_action: "review the current plan summary and confirm",
+          });
+          return new Response(
+            JSON.stringify({
+              preparation_id: "preparation-1",
+              preview_id: "preview-1",
+              intent_id: "intent-1",
+              source_task_id: "task-1",
+              source_item_id: "item-1",
+              status: "prepared",
+              checkpoint_version: checkpointVersion,
+              configuration_snapshot_id: "active-1",
+              configuration_snapshot_digest: "d".repeat(64),
+              authorization_id: null,
+              execution_id: null,
+              hasExecutionAuthority: false,
+              next_action: "review the current plan summary and confirm",
+            }),
+            { status: 201 },
+          );
+        }
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithProviders(
+      <TaskItemRecoveryPanel
+        taskId="task-1"
+        itemId="item-1"
+        runId="task-1"
+        active={false}
+      />,
+    );
+
+    const panel = await screen.findByRole("region", { name: "条目审核与恢复" });
+    await user.click(
+      await within(panel).findByRole("button", {
+        name: "生成计划摘要并在此确认",
+      }),
+    );
+    await within(panel).findByRole("region", { name: "新计划摘要" });
+    // The durable record is now confirmed elsewhere.
+    currentRecovery = completedRecovery({
+      preparation_id: "preparation-1",
+      preview_id: "preview-1",
+      intent_id: "intent-1",
+      source_task_id: "task-1",
+      source_item_id: "item-1",
+      status: "confirmed",
+      checkpoint_version: checkpointVersion,
+      configuration_snapshot_id: "active-1",
+      configuration_snapshot_digest: "d".repeat(64),
+      authorization_id: "authorization-1",
+      execution_id: "execution-1",
+      hasExecutionAuthority: false,
+      next_action: "inspect the linked execution",
+    });
+    await user.click(
+      within(panel).getAllByRole("button", { name: "Refresh" })[0]!,
+    );
+    expect(
+      await within(panel).findByRole("heading", { name: "本次确认已经受理" }),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        within(panel).queryByRole("button", { name: /确认继续整理/ }),
+      ).toBeNull();
+    });
   });
 });

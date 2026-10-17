@@ -56,7 +56,16 @@ import {
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
-import { submitTaskRecoveryBatch } from "../../shared/api/api-client";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
+import {
+  confirmTaskItemRecoveryPreparation,
+  prepareTaskItemRecoverySummary,
+  submitTaskRecoveryBatch,
+} from "../../shared/api/api-client";
+import type {
+  ManualRecoveryPreparationModel,
+  RecoveryBatchChild,
+} from "../../entities/operations/task-item-recovery";
 import {
   clearOtherRecoveryBatchSessions,
   recoveryBatchSessionKey,
@@ -611,6 +620,7 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
+            onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
           />
           {state.evidenceItem !== null && (
@@ -803,6 +813,7 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
+  onOpenRecoveryExecution,
   active,
 }: {
   readonly runId: string;
@@ -810,6 +821,7 @@ function RunItemsSection({
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
 }) {
   const token = useAuthToken();
@@ -994,6 +1006,7 @@ function RunItemsSection({
                   selected={selectedRecoveryItems}
                   onSelectionChange={setSelectedRecoveryItems}
                   onInspectItem={onInspectItem}
+                  onOpenRecoveryExecution={onOpenRecoveryExecution}
                 />
               )}
             </>
@@ -1056,12 +1069,14 @@ function FailedAnalysisBatchControls({
   selected,
   onSelectionChange,
   onInspectItem,
+  onOpenRecoveryExecution,
 }: {
   readonly taskId: string;
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
   readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }) {
   const token = useAuthToken();
   const authGeneration = useAuthGeneration();
@@ -1096,6 +1111,7 @@ function FailedAnalysisBatchControls({
             selected={selected}
             onSelectionChange={onSelectionChange}
             onInspectItem={onInspectItem}
+            onOpenRecoveryExecution={onOpenRecoveryExecution}
             principalId={data.principalId}
             authGeneration={authGeneration}
           />
@@ -1111,6 +1127,7 @@ function VerifiedFailedAnalysisBatchControls({
   selected,
   onSelectionChange,
   onInspectItem,
+  onOpenRecoveryExecution,
   principalId,
   authGeneration,
 }: {
@@ -1119,6 +1136,7 @@ function VerifiedFailedAnalysisBatchControls({
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
   readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly principalId: string;
   readonly authGeneration: number;
 }) {
@@ -1148,6 +1166,7 @@ function VerifiedFailedAnalysisBatchControls({
     batchStorage.command !== null,
   );
   const [knownSubmitted, setKnownSubmitted] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(() =>
     !batchStorage.available
       ? "此浏览器无法读取账号隔离的批量命令记录；批量提交已关闭，避免响应丢失后无法核对。"
@@ -1418,6 +1437,20 @@ function VerifiedFailedAnalysisBatchControls({
                 ))}
               </ul>
               <p className="mf-dashboard-meta">{batch.nextAction}</p>
+              <BatchRecoverySummary
+                taskId={taskId}
+                children={batch.children}
+                token={token}
+                busy={summaryBusy}
+                onBusyChange={setSummaryBusy}
+                onOpenRecoveryExecution={onOpenRecoveryExecution}
+                onRefresh={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: [runItemsQueryKey, runId],
+                  });
+                  void batchQuery.refetch();
+                }}
+              />
             </>
           )}
           {settled && (
@@ -1430,6 +1463,292 @@ function VerifiedFailedAnalysisBatchControls({
             </button>
           )}
         </>
+      )}
+    </section>
+  );
+}
+
+// -- Aggregated batch same-page summaries -----------------------------------
+
+interface BatchChildPreparationState {
+  readonly selected: readonly string[] | null;
+  readonly allowOverwrite: boolean;
+  readonly allowCleanup: boolean;
+}
+
+/**
+ * Aggregates the independent, durable same-page summaries of one recovery
+ * batch's children and confirms only the ready subset the operator selects.
+ *
+ * Each child keeps its own exact Preview, pin, selection and destructive
+ * implications; this component never merges them into one fake common
+ * snapshot.  Children without a current durable summary are listed as not yet
+ * ready and cannot be confirmed.  Confirmation is per child through the same
+ * existing atomic admission the single-item journey uses, so success, refusal
+ * and unselected siblings each keep their own outcome.
+ */
+function BatchRecoverySummary({
+  taskId,
+  children,
+  token,
+  busy,
+  onBusyChange,
+  onOpenRecoveryExecution,
+  onRefresh,
+}: {
+  readonly taskId: string;
+  readonly children: readonly RecoveryBatchChild[];
+  readonly token: string | null;
+  readonly busy: boolean;
+  readonly onBusyChange: (value: boolean) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
+  readonly onRefresh: () => void;
+}) {
+  const [state, setState] = useState<
+    Record<string, BatchChildPreparationState>
+  >({});
+  const [message, setMessage] = useState<string | null>(null);
+  const [prepared, setPrepared] = useState<
+    Record<string, ManualRecoveryPreparationModel>
+  >({});
+  const preparationFor = (
+    child: RecoveryBatchChild,
+  ): ManualRecoveryPreparationModel | null =>
+    child.manualRecoveryPreparation ?? prepared[child.itemId] ?? null;
+  const readyChildren = children.filter(
+    (child) => preparationFor(child)?.status === "prepared",
+  );
+  const confirmedChildren = children.filter(
+    (child) => preparationFor(child)?.status === "confirmed",
+  );
+  const notReady = children.filter((child) => {
+    const preparation = preparationFor(child);
+    return (
+      preparation === null ||
+      (preparation.status !== "prepared" && preparation.status !== "confirmed")
+    );
+  });
+  const canPrepare = children.filter(
+    (child) =>
+      preparationFor(child) === null &&
+      child.manualRecoveryAvailable &&
+      child.recoveryContinuationStatus === "completed" &&
+      child.currentCheckpointVersion !== null,
+  );
+  const stateFor = (itemId: string): BatchChildPreparationState =>
+    state[itemId] ?? {
+      selected: null,
+      allowOverwrite: false,
+      allowCleanup: false,
+    };
+  const selectedCount = readyChildren.reduce((total, child) => {
+    const value = stateFor(child.itemId).selected;
+    return total + (value === null ? 0 : value.length);
+  }, 0);
+
+  const prepareReady = async () => {
+    if (busy || canPrepare.length === 0) return;
+    onBusyChange(true);
+    setMessage(null);
+    try {
+      const next: Record<string, ManualRecoveryPreparationModel> = {};
+      const failures: string[] = [];
+      for (const child of canPrepare) {
+        const result = await prepareTaskItemRecoverySummary(
+          token,
+          taskId,
+          child.itemId,
+          child.currentCheckpointVersion!,
+        );
+        if (result.ok) {
+          next[child.itemId] = result.model;
+        } else {
+          failures.push(`${child.itemId}：无法生成摘要（${result.code}）`);
+        }
+      }
+      setPrepared((previous) => ({ ...previous, ...next }));
+      const summary = [
+        Object.keys(next).length > 0
+          ? `已为 ${Object.keys(next).length} 项生成零变更计划摘要。`
+          : null,
+        ...failures,
+      ]
+        .filter((value): value is string => value !== null)
+        .join("；");
+      setMessage(summary.length > 0 ? summary : null);
+      onRefresh();
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  const confirmSelected = async () => {
+    if (busy || selectedCount === 0) return;
+    onBusyChange(true);
+    setMessage(null);
+    try {
+      const outcomes: string[] = [];
+      let admitted = 0;
+      for (const child of readyChildren) {
+        const current = stateFor(child.itemId);
+        if (current.selected === null || current.selected.length === 0) {
+          continue;
+        }
+        const preparation = preparationFor(child);
+        if (preparation === null) continue;
+        const result = await confirmTaskItemRecoveryPreparation(
+          token,
+          preparation.preparationId,
+          {
+            itemIds: current.selected,
+            allowOverwrite: current.allowOverwrite,
+            allowSourceCleanup: current.allowCleanup,
+          },
+        );
+        if (result.ok) {
+          admitted += 1;
+          setPrepared((previous) => ({
+            ...previous,
+            [child.itemId]: {
+              ...preparation,
+              status: "confirmed",
+              executionId: result.model.executionId,
+              hasExecutionAuthority: false,
+              nextAction: "inspect the linked execution",
+            },
+          }));
+          onOpenRecoveryExecution?.(result.model.executionId);
+        } else {
+          outcomes.push(
+            `${child.itemId}：未获受理（${result.code}），保留原状态与下一步`,
+          );
+        }
+      }
+      setMessage(
+        [
+          admitted > 0
+            ? `已受理 ${admitted} 项；常驻 Worker 将执行各自已确认的精确子集。`
+            : null,
+          ...outcomes,
+        ]
+          .filter((value): value is string => value !== null)
+          .join("；"),
+      );
+      onRefresh();
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  return (
+    <section className="mf-count-section" aria-label="批量同页计划摘要">
+      <h6>批量同页计划摘要</h6>
+      <p className="mf-dashboard-meta">
+        每项保留自己的固定来源、pin、目标与影响；选择后统一确认，只受理所选就绪项，
+        未选项、成功项与效果未知项不会被执行。
+      </p>
+      {message && (
+        <StatusBanner variant="info" title="批量确认状态">
+          <p>{message}</p>
+        </StatusBanner>
+      )}
+      {canPrepare.length > 0 && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={busy}
+            onClick={() => void prepareReady()}
+          >
+            {busy ? "正在准备…" : `为 ${canPrepare.length} 项生成计划摘要`}
+          </button>
+        </div>
+      )}
+      {confirmedChildren.map((child) => {
+        const confirmedPreparation = preparationFor(child);
+        return (
+          <StatusBanner
+            key={child.itemId}
+            variant="info"
+            title={`${child.itemId}：本次确认已经受理`}
+          >
+            <p>该精确子集已进入常驻 Worker；受理不代表文件整理已成功。</p>
+            {confirmedPreparation?.executionId && onOpenRecoveryExecution && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  onOpenRecoveryExecution(confirmedPreparation.executionId!)
+                }
+              >
+                查看关联执行结果
+              </button>
+            )}
+          </StatusBanner>
+        );
+      })}
+      {readyChildren.map((child) => {
+        const preparation = preparationFor(child)!;
+        const current = stateFor(child.itemId);
+        return (
+          <div className="mf-count-section" key={child.itemId}>
+            <h6>条目 {child.itemId}</h6>
+            <SamePagePlanSummary
+              token={token}
+              previewId={preparation.previewId}
+              selected={current.selected}
+              onSelected={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: { ...stateFor(child.itemId), selected: value },
+                }))
+              }
+              allowOverwrite={current.allowOverwrite}
+              onAllowOverwrite={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: {
+                    ...stateFor(child.itemId),
+                    allowOverwrite: value,
+                  },
+                }))
+              }
+              allowCleanup={current.allowCleanup}
+              onAllowCleanup={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: {
+                    ...stateFor(child.itemId),
+                    allowCleanup: value,
+                  },
+                }))
+              }
+              busy={busy}
+              onConfirm={() => void confirmSelected()}
+              heading="本项零变更摘要"
+              showConfirm={false}
+            />
+          </div>
+        );
+      })}
+      {notReady.length > 0 && (
+        <p className="mf-dashboard-meta">
+          未就绪 {notReady.length} 项（尚无当前持久摘要）：
+          {notReady.map((child) => child.itemId).join("、")}。请在各自条目内完成决定后
+          重新分析，不会在此被执行。
+        </p>
+      )}
+      {readyChildren.length > 0 && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={busy || selectedCount === 0}
+            onClick={() => void confirmSelected()}
+          >
+            {busy ? "正在受理…" : `确认继续整理所选 ${selectedCount} 项`}
+          </button>
+        </div>
       )}
     </section>
   );

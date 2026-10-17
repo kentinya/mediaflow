@@ -2787,6 +2787,93 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertEqual("previewed", preview.items[0].status.value)
             self.assertIsNotNone(preview.items[0].plan)
 
+    def test_recovery_prepare_summary_reuses_durable_identity_with_saved_metadata_decision(self):
+        """A saved Metadata decision must not force a live Provider lookup.
+
+        The operator resolves the ambiguous re-analysis candidate, the next
+        re-analysis completes under that exact decision, and the same-page
+        summary must consume the durable identity the completed analysis
+        resolved instead of running the decision through a fresh Provider
+        search/detail inside the HTTP request.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = PhaseCandidatesProvider(
+                (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            provider.replace(
+                search=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            provider.replace(
+                search=(
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_METADATA, linked.status)
+                review = repository.get_metadata_review_for_item(linked.item_id)
+                assert review is not None
+                MetadataReviewService(repository).resolve(review.review_id, 1, actor="operator")
+                resolved = repository.get_metadata_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual("42", resolved.selected_provider_id)
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            searches_before = len(provider.movie_queries)
+            details_before = len(provider.movie_details)
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual(searches_before, len(provider.movie_queries))
+            self.assertEqual(details_before, len(provider.movie_details))
+            preview = services["previews"].get(preparation["preview_id"])
+            self.assertEqual("previewed", preview.items[0].status.value)
+            self.assertIsNotNone(preview.items[0].plan)
+            self.assertIn("tmdbid-42", preview.items[0].plan["destination"]["path"])
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
     def test_recovery_confirm_prepared_admits_exact_subset_and_links_summary(self):
         """Confirmation admits the exact subset and links the summary atomically."""
 

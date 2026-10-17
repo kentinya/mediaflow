@@ -29,6 +29,8 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
+  fetchOrganizeAdmissionOutcome,
+  fetchOrganizePreviewDetail,
   mutateLifecycle,
   submitRemainingScopePreview,
   type LifecycleMutationResult,
@@ -1399,6 +1401,44 @@ function RunDetailPanel({
   const [remainingCleanup, setRemainingCleanup] = useState(false);
   const [remainingBusy, setRemainingBusy] = useState(false);
   const [remainingMessage, setRemainingMessage] = useState<string | null>(null);
+  // The exact remaining-scope admission this page submitted, so a lost
+  // response can be reconciled against *this* request rather than guessed from
+  // the most recent run.
+  const [remainingSubmitted, setRemainingSubmitted] = useState<{
+    readonly previewId: string;
+    readonly itemIds: readonly string[];
+    readonly intentVersion: number;
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  } | null>(null);
+  const [remainingAdmittedExecutionId, setRemainingAdmittedExecutionId] =
+    useState<string | null>(null);
+  // The durable exact-Preview recovery the run overview already exposes is the
+  // read authority for a paused remaining-scope confirmation.  A refresh,
+  // reconnect or restart restores the same summary (no execution yet) or the
+  // already-admitted execution instead of losing it, and never auto-POSTs.
+  const overview = query.data?.ok === true ? query.data.model : null;
+  const durableRecovery = overview?.continuation ?? null;
+  const durableRecoveryPreviewId =
+    durableRecovery?.recoveryKind === "exact_preview"
+      ? durableRecovery.recoveryPreviewId
+      : null;
+  const durableRecoveryExecutionId =
+    durableRecovery?.recoveryKind === "exact_preview"
+      ? durableRecovery.executionId
+      : null;
+  // Derive the effective summary from the durable overview plus the local
+  // submission state; no effect or state sync is needed, and the exact intent
+  // version is resolved from the Preview itself at confirmation time.  A
+  // restored summary therefore never admits or executes anything.
+  const effectiveRemainingScope =
+    remainingScope ??
+    (durableRecoveryPreviewId !== null &&
+    remainingAdmittedExecutionId === null
+      ? { previewId: durableRecoveryPreviewId, intentVersion: 0 }
+      : null);
+  const admittedRemainingExecutionId =
+    remainingAdmittedExecutionId ?? durableRecoveryExecutionId;
 
   useEffect(() => {
     const opener =
@@ -1512,7 +1552,7 @@ function RunDetailPanel({
 
   const confirmRemainingScope = async () => {
     if (
-      remainingScope === null ||
+      effectiveRemainingScope === null ||
       remainingSelection === null ||
       remainingSelection.length === 0
     ) {
@@ -1521,16 +1561,34 @@ function RunDetailPanel({
     setRemainingBusy(true);
     setRemainingMessage(null);
     try {
+      let intentVersion = effectiveRemainingScope.intentVersion;
+      if (intentVersion <= 0) {
+        // A restored durable summary carries no local intent version; read it
+        // from the exact Preview rather than guessing.  This is a bounded GET.
+        const detail = await fetchOrganizePreviewDetail(
+          token,
+          effectiveRemainingScope.previewId,
+        );
+        if (!detail.ok || detail.model.intentVersion === null) {
+          setRemainingMessage(
+            "无法读取该剩余范围摘要的当前版本；未提交确认。请刷新后重试。 ",
+          );
+          return;
+        }
+        intentVersion = detail.model.intentVersion;
+      }
       const result = await executeOrganizePreview(token, {
-        previewId: remainingScope.previewId,
+        previewId: effectiveRemainingScope.previewId,
         itemIds: remainingSelection,
-        expectedIntentVersion: remainingScope.intentVersion,
+        expectedIntentVersion: intentVersion,
         allowOverwrite: remainingOverwrite,
         allowSourceCleanup: remainingCleanup,
       });
       if (result.ok) {
         setRemainingScope(null);
         setRemainingSelection(null);
+        setRemainingSubmitted(null);
+        setRemainingAdmittedExecutionId(result.model.executionId);
         setRemainingMessage(
           `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
         );
@@ -1540,17 +1598,70 @@ function RunDetailPanel({
       } else {
         if (isUnknownLifecycleOutcome(result)) {
           // A lost response must not be described as a proven zero effect.  Keep
-          // the submission locked and let the operator explicitly re-read the
-          // exact run to discover whether this confirmation was admitted.
-          setLocked(true);
+          // the exact submitted admission so the operator can explicitly re-read
+          // whether this request was admitted; never guess from the latest run.
+          setRemainingSubmitted({
+            previewId: effectiveRemainingScope.previewId,
+            itemIds: remainingSelection,
+            intentVersion,
+            allowOverwrite: remainingOverwrite,
+            allowSourceCleanup: remainingCleanup,
+          });
           setRemainingMessage(
-            "确认响应未送达，暂时无法判断是否已受理。请先重新读取此运行的持久状态，再决定是否继续。 ",
+            "确认响应未送达，暂时无法判断是否已受理。请先核对本次确认的持久状态，再决定是否继续。 ",
           );
         } else {
           setRemainingMessage(
             `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
           );
         }
+      }
+    } finally {
+      setRemainingBusy(false);
+    }
+  };
+
+  /**
+   * Bounded reconciliation of one lost remaining-scope confirmation.  It reads
+   * only the exact admission this page submitted (the same preview, selection,
+   * version and destructive choices) and never replays a mutation.  A known
+   * admission surfaces the linked execution; an unadmitted answer keeps the
+   * summary available for a deliberate retry.
+   */
+  const reconcileRemainingScope = async () => {
+    if (remainingSubmitted === null) {
+      return;
+    }
+    setRemainingBusy(true);
+    try {
+      const result = await fetchOrganizeAdmissionOutcome(token, {
+        previewId: remainingSubmitted.previewId,
+        itemIds: remainingSubmitted.itemIds,
+        expectedIntentVersion: remainingSubmitted.intentVersion,
+        allowOverwrite: remainingSubmitted.allowOverwrite,
+        allowSourceCleanup: remainingSubmitted.allowSourceCleanup,
+      });
+      if (result.ok && result.model.outcome === "known") {
+        setRemainingSubmitted(null);
+        setRemainingScope(null);
+        setRemainingSelection(null);
+        setRemainingAdmittedExecutionId(result.model.executionId);
+        setRemainingMessage(
+          "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
+        );
+        void query.refetch();
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+      } else if (result.ok && result.model.outcome === "not_admitted") {
+        // The submission did not commit; the same durable summary is safe to
+        // confirm again deliberately.
+        setRemainingSubmitted(null);
+        setRemainingMessage(
+          "本次确认未获受理；已读回同一剩余范围摘要，可重新检查后再次确认。 ",
+        );
+      } else {
+        setRemainingMessage(
+          "尚未读回本次确认的持久状态；保持提交锁定，恢复读取后再检查。 ",
+        );
       }
     } finally {
       setRemainingBusy(false);
@@ -1626,30 +1737,68 @@ function RunDetailPanel({
                   }
                 />
               )}
-              {remainingScope !== null && (
+              {effectiveRemainingScope !== null && (
                 <div className="mf-count-section">
                   <h4>暂停运行的剩余范围</h4>
                   {remainingMessage && <p>{remainingMessage}</p>}
+                  {remainingSubmitted !== null && (
+                    <div className="mf-actions">
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        disabled={remainingBusy}
+                        onClick={() => void reconcileRemainingScope()}
+                      >
+                        {remainingBusy ? "正在核对…" : "核对本次确认的持久状态"}
+                      </button>
+                    </div>
+                  )}
                   <SamePagePlanSummary
                     token={token}
-                    previewId={remainingScope.previewId}
+                    previewId={effectiveRemainingScope.previewId}
                     selected={remainingSelection}
                     onSelected={setRemainingSelection}
                     allowOverwrite={remainingOverwrite}
                     onAllowOverwrite={setRemainingOverwrite}
                     allowCleanup={remainingCleanup}
                     onAllowCleanup={setRemainingCleanup}
-                    busy={remainingBusy}
+                    busy={remainingBusy || remainingSubmitted !== null}
                     onConfirm={() => void confirmRemainingScope()}
                     heading="剩余范围计划摘要（零变更）"
                     confirmLabel={(count) => `确认继续整理剩余 ${count} 项`}
                   />
                 </div>
               )}
-              {remainingMessage !== null && remainingScope === null && (
+              {remainingMessage !== null && effectiveRemainingScope === null && (
                 <StatusBanner variant="info" title="剩余范围继续状态">
                   <p>{remainingMessage}</p>
-                </StatusBanner>
+                  {remainingSubmitted !== null && (
+                    <div className="mf-actions">
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        disabled={remainingBusy}
+                        onClick={() => void reconcileRemainingScope()}
+                      >
+                        {remainingBusy ? "正在核对…" : "核对本次确认的持久状态"}
+                      </button>
+                    </div>
+                  )}
+                  {admittedRemainingExecutionId !== null && (
+                    <div className="mf-actions">
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        onClick={() =>
+                          onOpenRecoveryExecution(
+                            admittedRemainingExecutionId,
+                          )
+                        }
+                      >
+                        查看关联执行结果
+                      </button>
+                    </div>
+                  )}                </StatusBanner>
               )}
               <RunDetailTabs
                 runId={run.runId}

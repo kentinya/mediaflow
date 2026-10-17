@@ -1964,4 +1964,154 @@ describe("selected run lifecycle controls", () => {
       expectedIntentVersion: 3,
     });
   });
+
+  it("reconciles a lost paused remaining-scope confirmation against the exact request", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-remaining";
+    preview["intentId"] = "intent-remaining";
+    preview["intentVersion"] = 3;
+    preview["executionCandidateItemIds"] = ["item-1"];
+    const items = preview["items"] as Record<string, unknown>[];
+    items[0]!["itemId"] = "item-1";
+    items[0]!["previewItemId"] = "preview-item-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "item-1",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const actions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    actions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-remaining/execute";
+
+    let admissionReads = 0;
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction("resume", false, "authority required", {
+            available: true,
+            reason: null,
+            method: "POST",
+            path: "/api/v1/tasks/task-001/remaining-scope-previews",
+            requiresConfirmation: false,
+            sideEffects: "none",
+            durableOutcome: "durable exact Preview",
+            nextAction: "review then authorize",
+          }),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/preview-remaining")
+          ? jsonResponse(preview)
+          : url.includes("/preview-remaining/admission")
+            ? (() => {
+                admissionReads += 1;
+                return jsonResponse({
+                  outcome: "known",
+                  reason: null,
+                  executionId: "execution-remaining",
+                  taskId: "task-remaining",
+                  status: "admitted",
+                  selectedItemIds: ["item-1"],
+                  completedItemCount: 0,
+                  failedItemCount: 0,
+                  sideEffects: "none",
+                  nextAction: "track the durable Worker execution",
+                });
+              })()
+            : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(preview, 201);
+        }
+        if (url.endsWith("/execute")) {
+          // The admission really committed but the response is lost.
+          throw new TypeError("network down");
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理剩余 1 项/,
+      }),
+    );
+    // The lost response is never described as a proven zero effect; the exact
+    // submission is retained for reconciliation and no automatic retry occurs.
+    expect(
+      await screen.findByRole("button", { name: "核对本次确认的持久状态" }),
+    ).toBeVisible();
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "核对本次确认的持久状态" }),
+    );
+    // The reconciliation read binds the exact submitted selection and version.
+    await waitFor(() => expect(admissionReads).toBe(1));
+    expect(
+      await screen.findByRole("button", { name: "查看关联执行结果" }),
+    ).toBeVisible();
+    // No second execute was ever issued.
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(1);
+  });
+
+  it("restores the durable paused remaining-scope summary and admitted execution", async () => {
+    const posts: { url: string; body: unknown }[] = [];
+    const { fetchMock } = stubLifecycleJourney({
+      posts,
+      overview: {
+        continuation: {
+          continuationId: "preview-recovery",
+          status: "previewed",
+          command: "preview",
+          jobId: null,
+          newTaskId: null,
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          recoveryKind: "exact_preview",
+          recoveryPreviewId: "preview-remaining",
+          executionId: null,
+          nextAction: "review the exact Preview",
+          sideEffects: "none",
+        },
+      },
+      respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    expect(fetchMock).toBeDefined();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?status=paused&run=task-001");
+
+    // The durable summary is restored from the overview read alone; the browser
+    // never re-posts remaining-scope-previews to rebuild a lost summary.
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    expect(summary).toBeVisible();
+    expect(
+      posts.some((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toBe(false);
+  });
 });

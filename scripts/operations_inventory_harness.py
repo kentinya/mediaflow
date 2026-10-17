@@ -579,6 +579,7 @@ class AppState:
         self.continuation_task_id: str | None = None
         self.recovery_run: dict[str, str] | None = None
         self.recovery_batch_run: dict[str, object] | None = None
+        self.recovery_batch_summary_run: dict[str, object] | None = None
         self.task_center_problems: dict[str, object] | None = None
         self.task_center_problem_page: dict[str, object] | None = None
         self.inventory_poll_population: dict[str, object] | None = None
@@ -1295,6 +1296,139 @@ class _PreMutationFailureExecutor:
         )
 
 
+def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
+    """Create a real two-item Manual batch recovery for the R3 browser proof.
+
+    Two sources are admitted through the production Manual Organize services,
+    executed by a failure seam that stops before any Storage mutation, then run
+    through the real batch continuation and the real resident Worker so each
+    child has its own completed linked re-analysis.  The operator then prepares
+    each child's independent summary and confirms only the ready subset in the
+    task's own interface.
+    """
+
+    with state._manual_lock:
+        if state.recovery_batch_summary_run is not None:
+            return dict(state.recovery_batch_summary_run)
+        active = state.managed.active
+        names = (
+            "Batch/C/BatchSummaryA.2012.mkv",
+            "Batch/C/BatchSummaryB.2013.mkv",
+        )
+        source_files = {}
+        for name in names:
+            source = state.managed.root / "source" / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"synthetic batch summary media")
+            source_files[name] = source
+        scan = StorageScanner(
+            state.managed.runtime.create_storages(),
+            state.file_index,
+            clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+        ).scan(state.managed.runtime.resource_libraries[0])
+        if scan.status.value != "completed":
+            raise RuntimeError("batch summary fixture ResourceLibrary scan did not complete")
+
+        provider = state.managed.metadata_registry.resolve("tmdb")
+        existing_candidates = tuple(getattr(provider, "_candidates", ()))
+        provider._candidates = existing_candidates + tuple(
+            MediaCandidate(
+                "tmdb",
+                provider_id,
+                MediaType.MOVIE,
+                title,
+                year=2012,
+                genres=("Animation",),
+                countries=("JP",),
+            )
+            for provider_id, title in (("212", "BatchSummaryA"), ("213", "BatchSummaryB"))
+            if not any(value.provider_id == provider_id for value in existing_candidates)
+        )
+        state.api._worker_service.register_worker(
+            "harness-batch-summary-worker",
+            "Harness Batch Summary Worker",
+            10.0,
+            ("scan", "preview", "organize"),
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            runtime_schema_version=SCHEMA_VERSION,
+        )
+        status, intent = wsgi_request(
+            state.api,
+            "POST",
+            "/api/v1/resource-libraries/source/files/organize",
+            body={"paths": list(names)},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"batch summary intent failed: {status}")
+        for item in intent["items"]:
+            status, intent = wsgi_request(
+                state.api,
+                "POST",
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                body={
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+                token=HARNESS_ADMIN_TOKEN,
+            )
+            if status != 200:
+                raise RuntimeError(f"batch summary choice failed: {status}")
+        status, preview = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            body={"expectedVersion": intent["version"]},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"batch summary Preview failed: {status}")
+        status, execution = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            body={
+                "confirmation": True,
+                "itemIds": [value["itemId"] for value in preview["items"]],
+                "expectedIntentVersion": intent["version"],
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202:
+            raise RuntimeError(f"batch summary admission failed: {status}")
+        manual_execution = state.api._manual_execution
+        actual_executor = manual_execution._executor
+        manual_execution._executor = _PreMutationFailureExecutor()
+        try:
+            completed = ManualOrganizeExecutionWorker(
+                manual_execution,
+                worker_id="harness-batch-summary-worker",
+                notice=lambda _line: None,
+            ).run_next()
+        finally:
+            manual_execution._executor = actual_executor
+        if completed is None or completed.status.value != "failed":
+            raise RuntimeError("batch summary fixture did not produce a safe failure")
+        durable = state.repository.get_manual_execution(execution["executionId"])
+        if durable is None or len(durable.items) != 2:
+            raise RuntimeError("batch summary fixture lost its manual execution items")
+        item_ids = tuple(value.task_item_id for value in durable.items)
+        state.recovery_batch_summary_run = {
+            "runId": durable.task_id,
+            "taskId": durable.task_id,
+            "itemIds": list(item_ids),
+            "executionId": durable.execution_id,
+            "sourceNames": list(names),
+        }
+        return dict(state.recovery_batch_summary_run)
+
+
 def seed_task_item_recovery_journey(state: AppState) -> dict[str, str]:
     """Create a real linked Manual TaskItem at a pending Recognition decision.
 
@@ -1456,18 +1590,23 @@ def run_task_item_recovery_worker_once(state: AppState) -> dict[str, object]:
         )
         if value is not None
     ]
+    if state.recovery_batch_summary_run is not None:
+        recovery_item_ids.extend(
+            str(value) for value in state.recovery_batch_summary_run["itemIds"]
+        )
     if not recovery_item_ids:
         raise RuntimeError("task-item recovery fixture has not been seeded")
     from mediaflow.final_cli import _run_queued_workflow
 
-    queued = next(
+    queued = min(
         (
             value
             for item_id in recovery_item_ids
             for value in state.repository.list_recovery_continuations(item_id, limit=10)
             if value.status.value == "queued" and value.new_task_id is None
         ),
-        None,
+        key=lambda value: value.created_at,
+        default=None,
     )
     if queued is None:
         return {"ran": False, "reason": "no queued recovery continuation"}
@@ -1490,7 +1629,15 @@ def run_task_item_recovery_worker_once(state: AppState) -> dict[str, object]:
     # Older unclaimed seed Jobs are harness fixtures. Close them with an
     # unregistered claim before the exact recovery Job; a snapshot-bound
     # Worker may claim only this continuation and must never mistake it for a
-    # fixture. The actual recovery Job is claimed below by AutomationWorker.
+    # fixture. Jobs that belong to *any* recovery continuation (for example the
+    # sibling child of a two-item batch) are never closed: each child owns its
+    # own durable Job and must reach its own outcome.
+    recovery_job_ids = {
+        value.job_id
+        for item_id in recovery_item_ids
+        for value in state.repository.list_recovery_continuations(item_id, limit=10)
+        if value.job_id is not None
+    }
     while True:
         pending = tuple(
             sorted(
@@ -1503,6 +1650,9 @@ def run_task_item_recovery_worker_once(state: AppState) -> dict[str, object]:
             )
         )
         if not pending or pending[0].job_id == job.job_id:
+            break
+        if pending[0].job_id in recovery_job_ids:
+            # Another recovery child owns this Job; leave it for its own call.
             break
         claimed_fixture = state.repository.claim_next_job(datetime.now(UTC))
         if claimed_fixture is None:
@@ -1840,6 +1990,48 @@ def task_item_recovery_batch_state(state: AppState) -> dict[str, object]:
                 "Batch/C/BatchSingle.2006.mkv",
                 "Batch/C/BatchEligible.2007.mkv",
             )
+        },
+        "targetFiles": [
+            value.relative_to(state.managed.root / "destination").as_posix()
+            for value in (state.managed.root / "destination").rglob("*")
+            if value.is_file()
+        ],
+    }
+
+
+def batch_summary_recovery_state(state: AppState) -> dict[str, object]:
+    """Return read-only state for the two-item real Manual batch summary proof."""
+
+    if state.recovery_batch_summary_run is None:
+        return {"available": False}
+    run = state.recovery_batch_summary_run
+    item_ids = [str(value) for value in run["itemIds"]]
+    items = {item_id: state.repository.get_item(item_id) for item_id in item_ids}
+    continuations = {
+        item_id: state.repository.list_recovery_continuations(item_id, limit=10)
+        for item_id in item_ids
+    }
+    return {
+        "available": True,
+        "taskId": run["taskId"],
+        "itemIds": item_ids,
+        "itemStatuses": {
+            item_id: value.status.value if value is not None else None
+            for item_id, value in items.items()
+        },
+        "continuations": {
+            item_id: [
+                {
+                    "status": value.status.value,
+                    "newTaskId": value.new_task_id,
+                    "newResultId": value.new_result_id,
+                }
+                for value in rows
+            ]
+            for item_id, rows in continuations.items()
+        },
+        "sourceExists": {
+            name: (state.managed.root / "source" / name).is_file() for name in run["sourceNames"]
         },
         "targetFiles": [
             value.relative_to(state.managed.root / "destination").as_posix()
@@ -2738,6 +2930,10 @@ def application(environ, start_response):
             document = task_item_recovery_state(STATE)
         elif path == "/__harness__/seed-task-item-recovery-batch" and method == "POST":
             document = seed_task_item_recovery_batch(STATE)
+        elif path == "/__harness__/seed-batch-summary-recovery" and method == "POST":
+            document = seed_batch_summary_recovery(STATE)
+        elif path == "/__harness__/batch-summary-recovery-state" and method == "GET":
+            document = batch_summary_recovery_state(STATE)
         elif path == "/__harness__/stale-task-item-batch-selection" and method == "POST":
             document = stale_task_item_batch_selection(STATE)
         elif path == "/__harness__/task-item-recovery-batch-state" and method == "GET":

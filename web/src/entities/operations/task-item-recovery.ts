@@ -147,6 +147,14 @@ export interface RecoveryBatchChild {
   readonly reason: string | null;
   readonly error: string | null;
   readonly nextAction: string;
+  /** The child's current durable same-page summary, when one exists. */
+  readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
+  /** The current durable checkpoint version of the child item. */
+  readonly currentCheckpointVersion: string | null;
+  /** The child's completed single-item re-analysis status, if any. */
+  readonly recoveryContinuationStatus: string | null;
+  /** Whether the child is still one exact persisted manual execution item. */
+  readonly manualRecoveryAvailable: boolean;
 }
 
 export interface RecoveryBatchModel {
@@ -502,6 +510,21 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
         reason: optionalText(item, "reason"),
         error: optionalText(item, "error"),
         nextAction: text(item, "next_action"),
+        manualRecoveryPreparation:
+          item["manualRecoveryPreparation"] === null ||
+          item["manualRecoveryPreparation"] === undefined
+            ? null
+            : normalizeManualRecoveryPreparation(item["manualRecoveryPreparation"]),
+        currentCheckpointVersion: optionalText(
+          item,
+          "currentCheckpointVersion",
+        ),
+        recoveryContinuationStatus: optionalText(
+          item,
+          "recoveryContinuationStatus",
+        ),
+        manualRecoveryAvailable:
+          item["manualRecoveryAvailable"] === true,
       };
     }),
     nextAction: text(source, "next_action"),

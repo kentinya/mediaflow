@@ -7856,7 +7856,7 @@ class MediaFlowApi:
                 start_response,
                 202,
                 {
-                    **batch.document(),
+                    **self._recovery_batch_document(batch),
                     "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
@@ -7872,14 +7872,14 @@ class MediaFlowApi:
             batch = self._repository.get_recovery_batch(parts[5])
             if batch.source_task_id != parts[3]:
                 raise LookupError("Task recovery batch was not found")
-            return self._response(start_response, 200, batch.document())
+            return self._response(start_response, 200, self._recovery_batch_document(batch))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "recovery batch")
             return self._response(
                 start_response,
                 200,
-                self._repository.get_recovery_batch(parts[3]).document(),
+                self._recovery_batch_document(self._repository.get_recovery_batch(parts[3])),
             )
         if (
             len(parts) == 5
@@ -7900,7 +7900,7 @@ class MediaFlowApi:
                 start_response,
                 202,
                 {
-                    **batch.document(),
+                    **self._recovery_batch_document(batch),
                     "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
@@ -12985,6 +12985,64 @@ class MediaFlowApi:
             },
         }
         document["limits"] = {"intentMaxItems": self._organize_intent_limit()}
+        return document
+
+    def _recovery_batch_document(self, batch) -> dict:
+        """Bound one batch and attach each child's durable same-page summary.
+
+        A batch child that reached a completed linked analysis can be prepared
+        into the same non-authorizing plan summary the per-item journey uses.
+        The batch projection exposes each child's *current durable* preparation
+        (identity, status, ready/not-ready and the linked execution) so the
+        operator can aggregate the independent summaries in the task's own
+        interface, select exactly the ready subset and confirm only those.  It
+        creates nothing, mints no authority and never guesses a summary from a
+        child's status; a child with no preparation simply has none.
+        """
+
+        document = batch.document()
+        recovery = getattr(self, "_manual_recovery", None)
+        if recovery is None:
+            return document
+        items = document.get("items")
+        if not isinstance(items, list):
+            return document
+        for child in items:
+            if not isinstance(child, dict):
+                continue
+            source_item_id = child.get("source_item_id")
+            if not isinstance(source_item_id, str) or not source_item_id:
+                continue
+            try:
+                preparation = recovery.discovery_for_preparation(
+                    batch.source_task_id, source_item_id
+                )
+            except Exception:
+                preparation = None
+            if preparation is not None:
+                child["manualRecoveryPreparation"] = preparation
+            try:
+                checkpoint = self._checkpoint_service.get(
+                    source_item_id, task_id=batch.source_task_id
+                )
+            except Exception:
+                checkpoint = None
+            if checkpoint is not None:
+                # The current durable checkpoint version lets the batch
+                # interface prepare this child's own summary without guessing
+                # the version the operator selected before the analysis ran.
+                child["currentCheckpointVersion"] = checkpoint.checkpoint_version
+                child["recoveryContinuationStatus"] = (
+                    checkpoint.recovery_continuation.status.value
+                    if checkpoint.recovery_continuation is not None
+                    else None
+                )
+            try:
+                child["manualRecoveryAvailable"] = recovery.supports_source_item(
+                    batch.source_task_id, source_item_id
+                )
+            except Exception:
+                child["manualRecoveryAvailable"] = False
         return document
 
     def _organize_preview_document(self, preview, principal: ResolvedApiPrincipal) -> dict:
