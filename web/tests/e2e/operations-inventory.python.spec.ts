@@ -1789,24 +1789,27 @@ test("a mutation-authorized paused run without live authority is refused nativel
   await expect(controls).toContainText("exact Preview");
   await expect(controls).not.toContainText("mediaflow tasks");
 
-  // The refusal also publishes the *native* recovery entry RO-5 promises, so the
-  // operator is never left with copy and no surface. Driving it admits a real
-  // zero-mutation exact Preview of the remaining scope under the run's own pin.
-  const previewButton = controls.getByRole("button", {
-    name: "查看剩余范围的精确预览",
+  // The refusal also publishes the *native* recovery entry RO-3/RO-5 promise,
+  // so the operator is never left with copy and no surface.  Driving it admits a
+  // real zero-mutation exact remaining-scope Preview whose summary is reviewed
+  // and confirmed in this same panel; no standalone Preview is required.
+  const summaryButton = controls.getByRole("button", {
+    name: "在当前界面生成剩余范围摘要",
   });
-  await expect(previewButton).toBeVisible();
-  await previewButton.click();
-  await expect(page).toHaveURL(/\/operations\/organize\/preview\//);
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(summaryButton).toBeVisible();
+  await summaryButton.click();
+  const summary = detail.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
   // The reviewed scope is exactly the run's own remaining sources: nothing
   // outside the run's admitted scope is ever reviewed.
-  await expect(page.locator("body")).toContainText("Seven.2007.mkv");
-  await expect(page.locator("body")).toContainText("Eight.2008.mkv");
-  await expect(page.locator("body")).not.toContainText("One.2001.mkv");
-  // The Preview is the ordinary organize review: it grants no authority, so the
-  // operator must still make one fresh explicit execution intent.
-  await expect(page.getByRole("heading", { name: "执行整理" })).toBeVisible();
+  await expect(summary).toContainText("Seven.2007.mkv");
+  await expect(summary).toContainText("Eight.2008.mkv");
+  await expect(summary).not.toContainText("One.2001.mkv");
+  // The summary grants no authority: the operator must still explicitly
+  // confirm the ready subset here.
+  await expect(
+    summary.getByRole("button", { name: /确认继续整理剩余 \d+ 项/ }),
+  ).toBeVisible();
   await expect(page.locator("body")).not.toContainText("mediaflow tasks");
 
   // Return to the run and prove a direct deliberate POST is refused atomically
