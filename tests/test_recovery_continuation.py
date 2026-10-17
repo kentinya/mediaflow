@@ -2690,9 +2690,92 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertFalse(after.attention)
                 self.assertEqual((), after.problem_types)
 
+    def test_recovery_confirmed_execution_re_failure_keeps_both_failures_without_replay(self):
+        """A confirmed recovery that fails again keeps both failures and never replays.
+
+        The confirmed subset is admitted and the real Worker runs it.  If the
+        execution fails again, the new failure is recorded independently while
+        the original failure history is preserved, the admitted execution is
+        never automatically retried, and the source item remains an outstanding
+        problem with its own next step.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(
+                environment,
+                provider,
+                executor=SelectiveManualExecutor("Correct.2024.mkv"),
+            )
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_results_before = len(repository.list_results(admitted["taskId"]))
+            # The real Worker runs the admitted subset; the failure executor
+            # fails this exact source again before any Storage mutation.
+            services["execution"].run_admitted(
+                admitted["executionId"], worker_id="recovery-refail-worker"
+            )
+            self._close_manual_services(services)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_results_after = repository.list_results(admitted["taskId"])
+                # The re-failure is recorded on the continuation execution's own
+                # Task while the original failure history is retained on the
+                # source Task: neither overwrites the other.
+                self.assertGreater(len(continuation_results_after), continuation_results_before)
+                failures = tuple(
+                    value
+                    for value in continuation_results_after
+                    if value.status.lower() == "failed"
+                )
+                self.assertGreaterEqual(len(failures), 1)
+                original_results = repository.list_results(run.task_id)
+                self.assertGreaterEqual(len(original_results), 1)
+                # A re-failure is never automatically retried: the confirmed
+                # summary stays confirmed with its linked execution and no new
+                # authority is minted.
+                persisted = repository.get_manual_recovery_preparation(
+                    preparation["preparation_id"]
+                )
+                assert persisted is not None
+                self.assertEqual("confirmed", persisted.status.value)
+                self.assertEqual(admitted["executionId"], persisted.execution_id)
+                active = tuple(
+                    value
+                    for value in repository.list_manual_execution_authorizations(limit=50)
+                    if value.status.value == "active"
+                )
+                self.assertEqual((), active)
+
     def test_recovery_prepare_summary_is_read_only_and_durable(self):
         """Prepare publishes a durable, authority-free summary with zero mutation."""
-
         with tempfile.TemporaryDirectory() as directory:
             environment = self._environment(directory)
             provider = DetailCountingProvider(
