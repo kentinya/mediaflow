@@ -2658,9 +2658,7 @@ test("two ready batch children aggregate their summaries and only the selected s
 
   // Select both exact failed manual items and admit the batch analysis.
   for (const itemId of seeded.itemIds) {
-    await items
-      .getByLabel(`选择 ${itemId} 进行单项分析恢复`)
-      .check();
+    await items.getByLabel(`选择 ${itemId} 进行单项分析恢复`).check();
   }
   const batchPanel = items.getByRole("region", { name: "批量失败分析恢复" });
   await batchPanel.getByRole("button", { name: "继续所选分析(2)" }).click();
@@ -2707,34 +2705,120 @@ test("two ready batch children aggregate their summaries and only the selected s
     .getByRole("checkbox", { name: /选择 BatchSummaryA/ })
     .first()
     .uncheck();
-  const confirmResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
-        new URL(response.url()).pathname,
-      ),
+  let confirmationCommitted = false;
+  let confirmPosts = 0;
+  const committedConfirmation: {
+    value: {
+      readonly executionId: string;
+      readonly selectedItemIds: readonly string[];
+    } | null;
+  } = { value: null };
+  let committedPreparationId: string | null = null;
+  let announceBatchRead!: () => void;
+  let releaseBatchRead!: () => void;
+  const batchReadStarted = new Promise<void>((resolve) => {
+    announceBatchRead = resolve;
+  });
+  const batchReadGate = new Promise<void>((resolve) => {
+    releaseBatchRead = resolve;
+  });
+  await page.route(
+    `**/api/v1/tasks/${seeded.taskId}/recovery-batches/**`,
+    async (route) => {
+      if (!confirmationCommitted) {
+        await route.continue();
+        return;
+      }
+      announceBatchRead();
+      await batchReadGate;
+      await route.continue();
+    },
+  );
+  await page.route(
+    "**/api/v1/manual-recovery-preparations/*/confirm",
+    async (route) => {
+      confirmPosts += 1;
+      const preparationPath = new URL(route.request().url()).pathname;
+      const preparationMatch = preparationPath.match(
+        /\/manual-recovery-preparations\/([^/]+)\/confirm$/,
+      );
+      committedPreparationId = preparationMatch?.[1] ?? null;
+      const committed = await route.fetch();
+      expect(committed.status()).toBe(202);
+      committedConfirmation.value = (await committed.json()) as {
+        readonly executionId: string;
+        readonly selectedItemIds: readonly string[];
+      };
+      confirmationCommitted = true;
+      // The real Python API has committed. Drop only the response so the
+      // browser must reconcile against this batch's durable child state.
+      await route.abort("connectionreset");
+    },
+    { times: 1 },
   );
   await batchSummary
     .getByRole("button", { name: /确认继续整理所选 1 项/ })
     .click();
-  const confirmed = await confirmResponse;
-  expect(confirmed.status()).toBe(202);
-  const confirmation = (await confirmed.json()) as {
-    readonly executionId: string;
-    readonly selectedItemIds: readonly string[];
-  };
-  // Exactly the one selected ready item was admitted; its sibling keeps its
-  // own independent summary and was never executed.
-  expect(confirmation.selectedItemIds).toHaveLength(1);
-  // The confirmation navigates to the linked durable execution; the operator
-  // never had to open a standalone Preview or manage an internal token.
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
-  );
+  await expect(batchSummary).toContainText(/结果未知/);
+  await batchReadStarted;
+  const pendingConfirmation = await page.evaluate((taskId) => {
+    const prefix = `mediaflow.operations.recovery-batch:v2:harness-admin:${taskId}:confirm:`;
+    const key = Object.keys(sessionStorage).find((value) =>
+      value.startsWith(prefix),
+    );
+    return key === undefined ? null : sessionStorage.getItem(key);
+  }, seeded.taskId);
+  expect(pendingConfirmation).not.toBeNull();
+  const selectedItemId = committedConfirmation.value?.selectedItemIds[0];
+  expect(selectedItemId).toBeTruthy();
+  const pendingBySource = JSON.parse(pendingConfirmation!) as Record<
+    string,
+    {
+      readonly preparationId: string;
+      readonly principalId: string;
+      readonly selectedItemIds: readonly string[];
+      readonly sourceItemId: string;
+    }
+  >;
+  const pendingSourceItemIds = Object.keys(pendingBySource);
+  expect(pendingSourceItemIds).toHaveLength(1);
+  expect(committedPreparationId).not.toBeNull();
+  const submittedSourceItemId = pendingSourceItemIds[0];
+  expect(pendingBySource[submittedSourceItemId]).toMatchObject({
+    preparationId: committedPreparationId,
+    principalId: "harness-admin",
+    selectedItemIds: [selectedItemId],
+    sourceItemId: submittedSourceItemId,
+  });
+  await expect(
+    batchSummary.getByRole("button", { name: /正在受理/ }),
+  ).toBeDisabled();
+  await expect(
+    batchSummary.getByRole("heading", { name: /条目 / }).last(),
+  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  expect(confirmPosts).toBe(1);
+  expect(committedConfirmation.value?.selectedItemIds).toHaveLength(1);
+
+  // Release the exact durable read only after the unknown outcome and repeat
+  // lock are visible in the real browser. No second POST or navigation occurs.
+  releaseBatchRead();
+  await expect(batchSummary).toContainText(/持久状态已确认本次精确子集/);
+  await expect(batchSummary).toContainText(/本次确认已经受理/);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  expect(confirmPosts).toBe(1);
+  const pendingAfterRead = await page.evaluate((taskId) => {
+    const prefix = `mediaflow.operations.recovery-batch:v2:harness-admin:${taskId}:confirm:`;
+    return Object.keys(sessionStorage).filter((value) =>
+      value.startsWith(prefix),
+    );
+  }, seeded.taskId);
+  expect(pendingAfterRead).toEqual([]);
   state = await (
     await request.get(`${BASE}/__harness__/batch-summary-recovery-state`)
   ).json();
   expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+  expect(Object.values(state.sourceExists)).toEqual([true, true]);
 });
 
 /**

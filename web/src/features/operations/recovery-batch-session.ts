@@ -11,6 +11,15 @@ export function recoveryBatchSessionKey(
   return `${SCOPED_RECOVERY_BATCH_SESSION_PREFIX}${principalIdStorageSegment(principalId)}:${taskId}`;
 }
 
+/** Principal- and batch-scoped exact command hints for uncertain confirmations. */
+export function recoveryBatchConfirmationSessionKey(
+  principalId: string,
+  taskId: string,
+  batchId: string,
+): string {
+  return `${recoveryBatchSessionKey(principalId, taskId)}:confirm:${batchId}`;
+}
+
 /** Keep only the current backend-confirmed principal's recovery commands. */
 export function clearOtherRecoveryBatchSessions(principalId: string): void {
   if (typeof window === "undefined") return;

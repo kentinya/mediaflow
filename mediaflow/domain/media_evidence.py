@@ -58,7 +58,7 @@ def unavailable_section(reason: str = "legacy evidence was not captured") -> Evi
 
 @dataclass(frozen=True)
 class PipelineEvidence:
-    """Immutable captured evidence for one TaskItem attempt."""
+    """Immutable captured evidence and normalized identity for one TaskItem attempt."""
 
     evidence_id: str
     task_id: str
@@ -74,6 +74,10 @@ class PipelineEvidence:
     warnings: tuple[str, ...] = ()
     error: str | None = None
     truncated: bool = False
+    # This is an internal, normalized domain snapshot used to reproduce a
+    # later plan. It is kept separate from the bounded operator-facing
+    # metadata section, which is intentionally not a lossless execution input.
+    execution_identity: Mapping[str, Any] | None = None
 
     def section(self, name: str) -> EvidenceSection:
         return self.sections.get(name, unavailable_section())
@@ -91,6 +95,9 @@ class PipelineEvidence:
             "configurationSnapshotDigest": self.configuration_snapshot_digest,
             "outcome": self.outcome,
             "sections": {name: self.section(name).document() for name in EVIDENCE_SECTION_NAMES},
+            "executionIdentity": (
+                dict(self.execution_identity) if self.execution_identity is not None else None
+            ),
             "warnings": list(self.warnings),
             "error": self.error,
             "truncated": self.truncated,
@@ -131,6 +138,11 @@ def evidence_from_document(
         configuration_snapshot_digest=document.get("configurationSnapshotDigest"),
         outcome=str(document["outcome"]),
         sections=sections,
+        execution_identity=(
+            dict(document["executionIdentity"])
+            if isinstance(document.get("executionIdentity"), Mapping)
+            else None
+        ),
         warnings=tuple(str(item) for item in document.get("warnings", ())),
         error=document.get("error"),
         truncated=bool(document.get("truncated")),

@@ -100,6 +100,12 @@ export interface ManualRecoveryPreparationModel {
   readonly executionId: string | null;
   readonly hasExecutionAuthority: boolean;
   readonly nextAction: string;
+  /** Creator of the durable preparation, used to match the exact summary. */
+  readonly actor: string | null;
+  /** Exact admitted subset; empty while the preparation is still prepared. */
+  readonly selectedItemIds: readonly string[] | null;
+  readonly allowOverwrite: boolean | null;
+  readonly allowSourceCleanup: boolean | null;
 }
 
 export interface TaskItemRecoveryModel {
@@ -420,6 +426,32 @@ export function normalizeManualRecoveryPreparation(
       source,
       source["next_action"] === undefined ? "nextAction" : "next_action",
     ),
+    actor:
+      source["actor"] === null || source["actor"] === undefined
+        ? null
+        : normalizeIdentityText(source["actor"], "actor", MAX_TEXT_LENGTH),
+    selectedItemIds:
+      source["selected_item_ids"] === null ||
+      source["selected_item_ids"] === undefined
+        ? null
+        : normalizeTextArray(
+            source["selected_item_ids"],
+            "selected_item_ids",
+            100,
+          ),
+    allowOverwrite:
+      source["allow_overwrite"] === null ||
+      source["allow_overwrite"] === undefined
+        ? null
+        : normalizeBoolean(source["allow_overwrite"], "allow_overwrite"),
+    allowSourceCleanup:
+      source["allow_source_cleanup"] === null ||
+      source["allow_source_cleanup"] === undefined
+        ? null
+        : normalizeBoolean(
+            source["allow_source_cleanup"],
+            "allow_source_cleanup",
+          ),
   };
 }
 
@@ -514,7 +546,9 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
           item["manualRecoveryPreparation"] === null ||
           item["manualRecoveryPreparation"] === undefined
             ? null
-            : normalizeManualRecoveryPreparation(item["manualRecoveryPreparation"]),
+            : normalizeManualRecoveryPreparation(
+                item["manualRecoveryPreparation"],
+              ),
         currentCheckpointVersion: optionalText(
           item,
           "currentCheckpointVersion",
@@ -523,8 +557,7 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
           item,
           "recoveryContinuationStatus",
         ),
-        manualRecoveryAvailable:
-          item["manualRecoveryAvailable"] === true,
+        manualRecoveryAvailable: item["manualRecoveryAvailable"] === true,
       };
     }),
     nextAction: text(source, "next_action"),

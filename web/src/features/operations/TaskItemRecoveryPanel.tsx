@@ -404,7 +404,10 @@ export function TaskItemRecoveryPanel({
     // Reading a different current preparation, or only a successful TaskItem
     // GET, must not unlock a submission whose own admission is still unknown.
     if (submittedPreparationId !== null) {
-      if (durable === null || durable.preparationId !== submittedPreparationId) {
+      if (
+        durable === null ||
+        durable.preparationId !== submittedPreparationId
+      ) {
         setRepeatLocked(true);
         setMessage(
           "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
@@ -416,7 +419,9 @@ export function TaskItemRecoveryPanel({
         // confirm again deliberately.
         setRepeatLocked(false);
         setSubmittedPreparationId(null);
-        setMessage("本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ");
+        setMessage(
+          "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
+        );
         return;
       }
       if (durable.status === "confirmed" && durable.executionId !== null) {

@@ -35,11 +35,14 @@ from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.classification_review import ClassificationReviewStatus
 from mediaflow.domain.library import ResourceLibrary
+from mediaflow.domain.manual_organize import ManualChoice
 from mediaflow.domain.metadata import (
     CandidateMatchResult,
     CandidateMatchStatus,
     CandidateScore,
+    EpisodeIdentity,
     MediaCandidate,
+    MediaIdentity,
     MediaType,
     MetadataError,
     MetadataErrorCode,
@@ -175,7 +178,56 @@ class PhaseCandidatesProvider(DetailCountingProvider):
 
     def search_tv(self, query, policy=None, **kwargs):
         self.tv_queries.append((query.title_candidate, query.year))
+        self.calls += 1
         return self.search_candidates
+
+
+class EpisodeCountingProvider(DetailCountingProvider):
+    """Fake TV provider with a real episode title and observable call count."""
+
+    def __init__(self, candidate):
+        super().__init__((candidate,))
+        self.season_requests = []
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        self.calls += 1
+        candidate = self._by_id(provider_id)
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            candidate.title,
+            candidate.original_title,
+            candidate.year,
+            genres=candidate.genres,
+            countries=candidate.countries,
+            languages=candidate.languages,
+            keywords=candidate.keywords,
+            alternative_titles=("Corrected Alternate",),
+            translated_titles=("正确",),
+            release_date="2024-01-02",
+            canonical_release_date="2024-01-02",
+            regional_release_date="2024-01-03",
+            overview="A complete normalized provider identity.",
+            external_ids=(("imdb", "tt1234567"),),
+            poster_path="/posters/tv-42.jpg",
+            backdrop_path="/backdrops/tv-42.jpg",
+            confidence=98.5,
+            matched_by="candidate_matcher",
+            recognition_type_id="B",
+        )
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.calls += 1
+        self.season_requests.append((provider_id, season))
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            "Season 1",
+            season=season,
+            episode_metadata=(EpisodeIdentity(1, "Episode 1", "2024-01-10", "Episode overview"),),
+        )
 
 
 class RecoveryContinuationTests(unittest.TestCase):
@@ -388,6 +440,9 @@ class RecoveryContinuationTests(unittest.TestCase):
             task_repository,
             catalog,
             configuration_service=configuration_service,
+            storage_factory=lambda runtime, storage_ids: runtime.create_storages(
+                storage_ids=storage_ids
+            ),
         )
         previews = ManualOrganizePreviewService(
             task_repository,
@@ -494,24 +549,60 @@ class RecoveryContinuationTests(unittest.TestCase):
         self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
         return storage_construction
 
-    def _fail_manual_organize(self, environment, provider, *, executor=None, source_subdir="C"):
+    def _fail_manual_organize(
+        self,
+        environment,
+        provider,
+        *,
+        executor=None,
+        source_subdir="C",
+        choice: ManualChoice | None = None,
+    ):
         """Run a real manual organize that fails at the executor for the one source."""
-        records = self._scan_manual_source(environment, source_subdir=source_subdir)
+        source_name = Path(environment["source_file"]).name
+        records = self._scan_manual_source(
+            environment, names=(source_name,), source_subdir=source_subdir
+        )
         record = records[0]
         services = self._manual_services(
             environment,
             provider,
-            executor=executor or SelectiveManualExecutor("Correct.2024.mkv"),
+            executor=executor or SelectiveManualExecutor(source_name),
         )
         with SQLiteTaskRepository(environment["database"]):
-            preview = services["previews"].create_current(
-                scope_kind="file",
-                actor="operator",
-                file_id=record.file_id,
-                resource_library_id=record.resource_library_id,
-                occurrence_id=record.occurrence_id,
-                fingerprint=record.fingerprint,
-            )
+            if choice is None:
+                preview = services["previews"].create_current(
+                    scope_kind="file",
+                    actor="operator",
+                    file_id=record.file_id,
+                    resource_library_id=record.resource_library_id,
+                    occurrence_id=record.occurrence_id,
+                    fingerprint=record.fingerprint,
+                )
+            else:
+                intent = services["previews"].admit_storage_paths(
+                    resource_library_id=record.resource_library_id,
+                    relative_paths=(record.path.removeprefix("Media/"),),
+                    actor="operator",
+                )
+                changed = services["intents"].update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    choice,
+                    expected_version=intent.version,
+                    expected_item_version=intent.items[0].version,
+                    actor="operator",
+                )
+                preview = services["previews"].create(
+                    intent.intent_id,
+                    expected_version=changed.version,
+                    expected_item_versions={item.item_id: item.version for item in changed.items},
+                    snapshot_id=changed.snapshot_id,
+                    snapshot_digest=changed.snapshot_digest,
+                    actor="operator",
+                    source_scope="file",
+                    source_scope_id=record.file_id,
+                )
             item = preview.items[0]
             authority = services["execution"].authorize(
                 preview.preview_id,
@@ -2869,6 +2960,169 @@ class RecoveryContinuationTests(unittest.TestCase):
             preview = services["previews"].get(preparation["preview_id"])
             self.assertEqual("previewed", preview.items[0].status.value)
             self.assertIsNotNone(preview.items[0].plan)
+
+    def test_tv_episode_identity_survives_durable_summary_rebuild(self):
+        """The durable analysis identity preserves per-episode naming inputs."""
+
+        for missing_strategy in ("omit_token", "error"):
+            with self.subTest(missing_strategy=missing_strategy):
+                with tempfile.TemporaryDirectory() as directory:
+
+                    def configure_tv(document):
+                        for policy in document["namingPolicies"]:
+                            if policy["id"] == "B":
+                                policy["missingVariableStrategy"] = missing_strategy
+
+                    environment = self._environment(
+                        directory,
+                        source_subdir="电视剧",
+                        document_patch=configure_tv,
+                    )
+                    source_file = Path(environment["source_file"])
+                    tv_source = source_file.with_name("Correct.S01E01.2024.mkv")
+                    source_file.rename(tv_source)
+                    environment["source_file"] = tv_source
+                    environment["storage_path"] = "Media/电视剧/Correct.S01E01.2024.mkv"
+                    environment["display_source"] = str(tv_source)
+                    provider = EpisodeCountingProvider(
+                        MediaCandidate(
+                            "tmdb",
+                            "tv-42",
+                            MediaType.TV,
+                            "Correct",
+                            year=2024,
+                            genres=("Drama",),
+                            countries=("JP",),
+                            languages=("ja",),
+                            keywords=("mystery",),
+                        )
+                    )
+                    services, run, _record, first_preview = self._fail_manual_organize(
+                        environment,
+                        provider,
+                        executor=SelectiveManualExecutor("Correct.S01E01.2024.mkv"),
+                        source_subdir="电视剧",
+                        choice=ManualChoice("B", None, "B", "B", "B"),
+                    )
+                    first_target = first_preview.items[0].plan["destination"]["path"]
+                    self.assertIn("Episode 1", first_target)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        submission = self._admit_and_continue(services, run, repository)
+                    self._close_manual_services(services)
+                    self._run_worker(environment, provider)
+                    continuation, analysis_item = self._completed_continuation_item(
+                        environment,
+                        submission.job.job_id,
+                        RecoveryContinuationStatus.COMPLETED,
+                    )
+                    self.assertIsNotNone(analysis_item)
+                    assert analysis_item is not None
+                    self.assertIsNotNone(continuation.new_result_id)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        analysis_evidence = repository.list_evidence_for_item(
+                            analysis_item.item_id, limit=16
+                        )
+                        metadata_section = analysis_evidence[0].section("metadata")
+                        plan_section = analysis_evidence[0].section("plan")
+                        self.assertTrue(metadata_section.available)
+                        self.assertTrue(plan_section.available)
+                        assert metadata_section.value is not None
+                        assert plan_section.value is not None
+                        self.assertEqual("Episode 1", metadata_section.value.get("episodeTitle"))
+                        self.assertEqual(
+                            "Episode 1",
+                            metadata_section.value["episodeMetadata"][0]["title"],
+                        )
+                        self.assertEqual(("mystery",), tuple(metadata_section.value["keywords"]))
+                        durable_identity = (
+                            ManualRecoveryContinuationService._identity_from_document(
+                                analysis_evidence[0].execution_identity
+                            )
+                        )
+                        self.assertIsNotNone(durable_identity)
+                        assert durable_identity is not None
+                        self.assertEqual(("mystery",), durable_identity.keywords)
+                        self.assertEqual(
+                            ("Corrected Alternate",), durable_identity.alternative_titles
+                        )
+                        self.assertEqual(("正确",), durable_identity.translated_titles)
+                        self.assertEqual(("Drama",), durable_identity.genres)
+                        self.assertEqual(("JP",), durable_identity.countries)
+                        self.assertEqual(("ja",), durable_identity.languages)
+                        self.assertEqual(("imdb", "tt1234567"), durable_identity.external_ids[0])
+                        self.assertEqual(
+                            "Episode overview", durable_identity.episode_metadata[0].overview
+                        )
+                        self.assertEqual("Episode 1", durable_identity.episode_title)
+                        self.assertEqual("Episode 1", durable_identity.episode_metadata[0].title)
+                        self.assertIsNone(
+                            ManualRecoveryContinuationService._identity_from_document(
+                                metadata_section.value
+                            ),
+                            "bounded operator evidence is not a plan identity snapshot",
+                        )
+                        legacy_tv_evidence = dict(metadata_section.value)
+                        self.assertIsNone(
+                            ManualRecoveryContinuationService._identity_from_document(
+                                legacy_tv_evidence
+                            ),
+                            (
+                                "legacy evidence without an exact identity snapshot "
+                                "must request a new analysis"
+                            ),
+                        )
+                        self.assertIn("Episode 1", plan_section.value["target"])
+                        analysis_target = plan_section.value["target"]
+
+                    provider_calls_before_summary = provider.calls
+                    services = self._manual_services(environment, provider)
+                    recovery, api = self._recovery_api(environment, services)
+                    self.addCleanup(self._close_manual_services, services)
+                    checkpoint = recovery._checkpoint_service.get(
+                        run.items[0].task_item_id, task_id=run.task_id
+                    )
+                    status, preparation = api_request(
+                        api,
+                        f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                        "/recovery/prepare-summary",
+                        method="POST",
+                        body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                        token="operator-token",
+                    )
+                    self.assertEqual(201, status, f"{preparation}")
+                    self.assertEqual(provider_calls_before_summary, provider.calls)
+                    summary = services["previews"].get(preparation["preview_id"])
+                    summary_target = summary.items[0].plan["destination"]["path"]
+                    self.assertEqual(analysis_target, summary_target)
+                    self.assertIn("Episode 1", summary_target)
+                    self.assertTrue(tv_source.exists())
+                    self.assertEqual(
+                        (),
+                        tuple(
+                            value
+                            for value in Path(environment["target_root"]).rglob("*")
+                            if value.is_file()
+                        ),
+                    )
+
+                    status, admitted = api_request(
+                        api,
+                        f"/api/v1/manual-recovery-preparations/"
+                        f"{preparation['preparation_id']}/confirm",
+                        method="POST",
+                        body={
+                            "itemIds": [summary.items[0].item_id],
+                            "confirmation": True,
+                        },
+                        token="operator-token",
+                    )
+                    self.assertEqual(202, status, f"{admitted}")
+                    self.assertTrue(tv_source.exists())
+                    self._run_worker(environment, provider)
+                    physical_target = Path(environment["target_root"]) / summary_target
+                    self.assertTrue(physical_target.is_file(), str(physical_target))
+                    self.assertIn("Episode 1", physical_target.name)
+                    self.assertFalse(tv_source.exists())
 
     def test_recovery_prepare_summary_reuses_durable_identity_with_saved_metadata_decision(self):
         """A saved Metadata decision must not force a live Provider lookup.

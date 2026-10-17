@@ -2063,7 +2063,9 @@ describe("selected run lifecycle controls", () => {
     expect(
       await screen.findByRole("button", { name: "核对本次确认的持久状态" }),
     ).toBeVisible();
-    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      1,
+    );
 
     await user.click(
       screen.getByRole("button", { name: "核对本次确认的持久状态" }),
@@ -2074,7 +2076,9 @@ describe("selected run lifecycle controls", () => {
       await screen.findByRole("button", { name: "查看关联执行结果" }),
     ).toBeVisible();
     // No second execute was ever issued.
-    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      1,
+    );
   });
 
   it("restores the durable paused remaining-scope summary and admitted execution", async () => {

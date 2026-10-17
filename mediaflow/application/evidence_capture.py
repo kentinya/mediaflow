@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from mediaflow.domain.manual_safety import redact_evidence_text
+from mediaflow.domain.manual_safety import contains_manual_secret, redact_evidence_text
 from mediaflow.domain.media_evidence import (
     EVIDENCE_SECTION_NAMES,
     EvidenceSection,
@@ -25,6 +27,9 @@ _MAX_ITEM_TEXT = 256
 _MAX_ERROR = 1000
 _MAX_ITEMS = 64
 _MAX_SCORE_COMPONENTS = 16
+_MAX_EXECUTION_IDENTITY_TEXT = 4096
+_MAX_EXECUTION_IDENTITY_ITEMS = 256
+_MAX_EXECUTION_IDENTITY_BYTES = 131072
 
 PREVIEW_CONFLICT_NEXT_ACTION = (
     "this analysis-only finding is not execution authority; run the explicit real "
@@ -87,6 +92,11 @@ def build_pipeline_evidence(
         configuration_snapshot_digest=getattr(task, "configuration_snapshot_digest", None),
         outcome=outcome,
         sections=sections,
+        execution_identity=_execution_identity_document(
+            strategy.metadata.identity
+            if strategy is not None and strategy.metadata is not None
+            else None
+        ),
         warnings=warnings,
         error=_safe_error(error),
         truncated=truncated,
@@ -252,15 +262,32 @@ def _metadata_section(strategy) -> EvidenceSection:
         "year": identity.year if identity else None,
         "season": identity.season if identity else None,
         "episode": identity.episode if identity else None,
-        "episodes": _bounded_items(identity.episodes if identity else ()),
+        "episodes": _bounded_numbers(identity.episodes if identity else ()),
+        "episodeTitle": _bounded(identity.episode_title if identity else None, _MAX_ITEM_TEXT),
+        "episodeMetadata": _bounded_episode_metadata(identity.episode_metadata if identity else ()),
         # The classification-relevant identity facets are persisted so a
         # completed re-analysis can be reused for a same-page summary without a
         # second Provider lookup while still classifying identically.
         "genres": _bounded_items(identity.genres if identity else ()),
         "countries": _bounded_items(identity.countries if identity else ()),
         "languages": _bounded_items(identity.languages if identity else ()),
+        "keywords": _bounded_items(identity.keywords if identity else ()),
+        "alternativeTitles": _bounded_items(identity.alternative_titles if identity else ()),
+        "translatedTitles": _bounded_items(identity.translated_titles if identity else ()),
+        "releaseDate": _bounded(identity.release_date if identity else None, _MAX_ITEM_TEXT),
+        "canonicalReleaseDate": _bounded(
+            identity.canonical_release_date if identity else None, _MAX_ITEM_TEXT
+        ),
+        "regionalReleaseDate": _bounded(
+            identity.regional_release_date if identity else None, _MAX_ITEM_TEXT
+        ),
+        "overview": _bounded(identity.overview if identity else None, _MAX_TEXT),
+        "externalIds": _bounded_external_ids(identity.external_ids if identity else ()),
+        "posterPath": _bounded(identity.poster_path if identity else None, _MAX_ITEM_TEXT),
+        "backdropPath": _bounded(identity.backdrop_path if identity else None, _MAX_ITEM_TEXT),
         "confidence": identity.confidence if identity else None,
         "matchedBy": _bounded(identity.matched_by if identity else None),
+        "identityRecognitionTypeId": _bounded(identity.recognition_type_id if identity else None),
         "matchStatus": _bounded(match.status.value) if match else None,
         "matchReasons": _bounded_items(match.reasons if match else ()),
         "matchWarnings": _bounded_items(match.warnings if match else ()),
@@ -338,13 +365,189 @@ def _metadata_section(strategy) -> EvidenceSection:
         tuple(items),
         tuple(_bounded(item, _MAX_ITEM_TEXT) for item in _bounded_tuple(value["matchReasons"])),
         truncated=(
-            _was_truncated((match.candidate_scores if match else (),))
+            _was_truncated(
+                (
+                    identity.episodes if identity else (),
+                    identity.episode_metadata if identity else (),
+                    identity.genres if identity else (),
+                    identity.countries if identity else (),
+                    identity.languages if identity else (),
+                    identity.keywords if identity else (),
+                    identity.alternative_titles if identity else (),
+                    identity.translated_titles if identity else (),
+                    identity.external_ids if identity else (),
+                    match.candidate_scores if match else (),
+                )
+            )
             or any(
                 len(getattr(score, "components", ())) > _MAX_SCORE_COMPONENTS
                 for score in _bounded_tuple(match.candidate_scores if match else ())
             )
         ),
     )
+
+
+def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
+    """Capture a bounded normalized identity separate from display evidence.
+
+    Values outside this snapshot's explicit size/type limits are not clipped:
+    they make the identity unavailable for deterministic plan reuse instead.
+    This avoids treating a display projection as a complete provider identity.
+    """
+
+    if identity is None:
+        return None
+
+    def exact_text(value: Any, *, optional: bool = False) -> str | None:
+        if value is None and optional:
+            return None
+        if not isinstance(value, str) or (not optional and not value):
+            raise ValueError("identity text is missing")
+        if len(value) > _MAX_EXECUTION_IDENTITY_TEXT or contains_manual_secret(value):
+            raise ValueError("identity text is outside the safe persistence bound")
+        return value
+
+    def exact_texts(values: Any) -> list[str]:
+        if not isinstance(values, (list, tuple)) or len(values) > _MAX_EXECUTION_IDENTITY_ITEMS:
+            raise ValueError("identity list is outside the safe persistence bound")
+        result = []
+        for value in values:
+            normalized = exact_text(value)
+            assert normalized is not None
+            result.append(normalized)
+        return result
+
+    try:
+        external_ids = []
+        if (
+            not isinstance(identity.external_ids, (list, tuple))
+            or len(identity.external_ids) > _MAX_EXECUTION_IDENTITY_ITEMS
+        ):
+            return None
+        for provider, provider_id in identity.external_ids:
+            external_ids.append(
+                {
+                    "provider": exact_text(provider),
+                    "providerId": exact_text(provider_id),
+                }
+            )
+
+        episodes = list(identity.episodes)
+        if len(episodes) > _MAX_EXECUTION_IDENTITY_ITEMS or any(
+            not isinstance(value, int) or isinstance(value, bool) for value in episodes
+        ):
+            return None
+
+        episode_metadata = []
+        if (
+            not isinstance(identity.episode_metadata, (list, tuple))
+            or len(identity.episode_metadata) > _MAX_EXECUTION_IDENTITY_ITEMS
+        ):
+            return None
+        for episode in identity.episode_metadata:
+            if not isinstance(episode.episode, int) or isinstance(episode.episode, bool):
+                return None
+            episode_metadata.append(
+                {
+                    "episode": episode.episode,
+                    "title": exact_text(episode.title),
+                    "airDate": exact_text(episode.air_date, optional=True),
+                    "overview": exact_text(episode.overview, optional=True),
+                }
+            )
+
+        confidence = identity.confidence
+        if confidence is not None and (
+            not isinstance(confidence, (int, float))
+            or isinstance(confidence, bool)
+            or not math.isfinite(confidence)
+        ):
+            return None
+        document = {
+            "version": 1,
+            "provider": exact_text(identity.provider),
+            "providerId": exact_text(identity.provider_id),
+            "mediaType": exact_text(identity.media_type.value),
+            "title": exact_text(identity.title),
+            "originalTitle": exact_text(identity.original_title, optional=True),
+            "year": identity.year,
+            "season": identity.season,
+            "episode": identity.episode,
+            "episodes": episodes,
+            "episodeTitle": exact_text(identity.episode_title, optional=True),
+            "episodeMetadata": episode_metadata,
+            "genres": exact_texts(identity.genres),
+            "countries": exact_texts(identity.countries),
+            "languages": exact_texts(identity.languages),
+            "keywords": exact_texts(identity.keywords),
+            "alternativeTitles": exact_texts(identity.alternative_titles),
+            "translatedTitles": exact_texts(identity.translated_titles),
+            "releaseDate": exact_text(identity.release_date, optional=True),
+            "canonicalReleaseDate": exact_text(identity.canonical_release_date, optional=True),
+            "regionalReleaseDate": exact_text(identity.regional_release_date, optional=True),
+            "overview": exact_text(identity.overview, optional=True),
+            "externalIds": external_ids,
+            "posterPath": exact_text(identity.poster_path, optional=True),
+            "backdropPath": exact_text(identity.backdrop_path, optional=True),
+            "confidence": confidence,
+            "matchedBy": exact_text(identity.matched_by, optional=True),
+            "recognitionTypeId": exact_text(identity.recognition_type_id, optional=True),
+        }
+        encoded = json.dumps(
+            document, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded) > _MAX_EXECUTION_IDENTITY_BYTES:
+            return None
+        # The standard evidence redactor must leave this execution snapshot
+        # byte-for-byte intact or it is not safe to reuse.
+        if redact_evidence_text(encoded.decode("utf-8")) != encoded.decode("utf-8"):
+            return None
+        return document
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _bounded_episode_metadata(values: Any) -> list[dict[str, Any]]:
+    if values is None:
+        return []
+    return [
+        {
+            "episode": getattr(item, "episode", None),
+            "title": _bounded(getattr(item, "title", None), _MAX_ITEM_TEXT),
+            "airDate": _bounded(getattr(item, "air_date", None), _MAX_ITEM_TEXT),
+            "overview": _bounded(getattr(item, "overview", None), _MAX_TEXT),
+        }
+        for item in list(values)[:_MAX_ITEMS]
+    ]
+
+
+def _bounded_external_ids(values: Any) -> list[dict[str, str]]:
+    if values is None:
+        return []
+    result = []
+    for item in list(values)[:_MAX_ITEMS]:
+        try:
+            provider, provider_id = item
+        except (TypeError, ValueError):
+            continue
+        if isinstance(provider, str) and isinstance(provider_id, str):
+            result.append(
+                {
+                    "provider": _bounded(provider, 128) or "",
+                    "providerId": _bounded(provider_id, _MAX_ITEM_TEXT) or "",
+                }
+            )
+    return result
+
+
+def _bounded_numbers(values: Any, limit: int = _MAX_ITEMS) -> list[int]:
+    if values is None:
+        return []
+    return [
+        item
+        for item in list(values)[:limit]
+        if isinstance(item, int) and not isinstance(item, bool)
+    ]
 
 
 def _policies_section(strategy) -> EvidenceSection:

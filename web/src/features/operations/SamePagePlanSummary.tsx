@@ -175,7 +175,9 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
                 }
                 onClick={props.onConfirm}
               >
-                {props.busy ? "正在受理…" : confirmLabel(activeSelection.length)}
+                {props.busy
+                  ? "正在受理…"
+                  : confirmLabel(activeSelection.length)}
               </button>
             )}
           </div>

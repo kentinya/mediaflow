@@ -1433,8 +1433,7 @@ function RunDetailPanel({
   // restored summary therefore never admits or executes anything.
   const effectiveRemainingScope =
     remainingScope ??
-    (durableRecoveryPreviewId !== null &&
-    remainingAdmittedExecutionId === null
+    (durableRecoveryPreviewId !== null && remainingAdmittedExecutionId === null
       ? { previewId: durableRecoveryPreviewId, intentVersion: 0 }
       : null);
   const admittedRemainingExecutionId =
@@ -1769,37 +1768,41 @@ function RunDetailPanel({
                   />
                 </div>
               )}
-              {remainingMessage !== null && effectiveRemainingScope === null && (
-                <StatusBanner variant="info" title="剩余范围继续状态">
-                  <p>{remainingMessage}</p>
-                  {remainingSubmitted !== null && (
-                    <div className="mf-actions">
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        disabled={remainingBusy}
-                        onClick={() => void reconcileRemainingScope()}
-                      >
-                        {remainingBusy ? "正在核对…" : "核对本次确认的持久状态"}
-                      </button>
-                    </div>
-                  )}
-                  {admittedRemainingExecutionId !== null && (
-                    <div className="mf-actions">
-                      <button
-                        type="button"
-                        className="mf-button mf-button-secondary"
-                        onClick={() =>
-                          onOpenRecoveryExecution(
-                            admittedRemainingExecutionId,
-                          )
-                        }
-                      >
-                        查看关联执行结果
-                      </button>
-                    </div>
-                  )}                </StatusBanner>
-              )}
+              {remainingMessage !== null &&
+                effectiveRemainingScope === null && (
+                  <StatusBanner variant="info" title="剩余范围继续状态">
+                    <p>{remainingMessage}</p>
+                    {remainingSubmitted !== null && (
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          disabled={remainingBusy}
+                          onClick={() => void reconcileRemainingScope()}
+                        >
+                          {remainingBusy
+                            ? "正在核对…"
+                            : "核对本次确认的持久状态"}
+                        </button>
+                      </div>
+                    )}
+                    {admittedRemainingExecutionId !== null && (
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() =>
+                            onOpenRecoveryExecution(
+                              admittedRemainingExecutionId,
+                            )
+                          }
+                        >
+                          查看关联执行结果
+                        </button>
+                      </div>
+                    )}{" "}
+                  </StatusBanner>
+                )}
               <RunDetailTabs
                 runId={run.runId}
                 progress={run.progress}

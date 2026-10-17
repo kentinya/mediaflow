@@ -10,6 +10,7 @@ return to the original Organize journey after reload.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -33,9 +34,12 @@ from mediaflow.domain.manual_recovery import (
     ManualRecoveryPreparation,
     ManualRecoveryPreparationStatus,
 )
-from mediaflow.domain.metadata import MediaIdentity, MediaType
+from mediaflow.domain.manual_safety import contains_manual_secret
+from mediaflow.domain.metadata import EpisodeIdentity, MediaIdentity, MediaType
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
+
+_MAX_EXECUTION_IDENTITY_ITEMS = 256
 
 
 class ManualRecoveryContinuationError(ManualExecutionError):
@@ -527,9 +531,7 @@ class ManualRecoveryContinuationService:
         # reviewed fact about this exact source under this pin.  Reading it back
         # lets the summary reuse the plan without a second live Provider lookup;
         # it is only ever applied when it still matches the pinned policy.
-        reuse_analysis_identity = self._reusable_analysis_identity(
-            analysis_item.item_id, analysis_result
-        )
+        reuse_analysis_identity = self._reusable_analysis_identity(analysis_item.item_id)
         analysis_checkpoint = self._checkpoint_service.get(
             analysis_item.item_id, task_id=analysis_task.task_id
         )
@@ -825,14 +827,14 @@ class ManualRecoveryContinuationService:
             for item in executions[0].items
         )
 
-    def _reusable_analysis_identity(self, analysis_item_id: str, analysis_result):
+    def _reusable_analysis_identity(self, analysis_item_id: str):
         """The durable identity one completed linked re-analysis resolved, if any.
 
-        Preference order is the completed attempt's bounded pipeline evidence
-        metadata section for the same item (the richest reviewed fact, including
-        the classification-relevant facets), then the exact persisted Result
-        identity.  A malformed or absent identity simply returns ``None`` so the
-        caller blocks for a fresh analysis instead of inventing one.
+        Reuse only the complete normalized domain identity captured for the
+        completed analysis. The operator-facing metadata section is bounded and
+        may omit facets, while legacy Results do not retain enough identity to
+        reproduce a plan. A missing or malformed snapshot returns ``None`` so
+        the caller requires a fresh Worker analysis.
         """
 
         reader = getattr(self._repository, "list_evidence_for_item", None)
@@ -842,37 +844,49 @@ class ManualRecoveryContinuationService:
             except Exception:
                 evidence = ()
             for value in evidence:
-                section = getattr(value, "section", None)
-                if not callable(section):
-                    continue
-                metadata = section("metadata")
-                if metadata is None or not bool(getattr(metadata, "available", False)):
-                    continue
-                document = getattr(metadata, "value", None)
+                document = getattr(value, "execution_identity", None)
                 identity = self._identity_from_document(document)
                 if identity is not None:
                     return identity
-        if analysis_result is not None:
-            identity = self._identity_from_result(analysis_result)
-            if identity is not None:
-                return identity
         return None
 
     @staticmethod
-    def _identity_from_result(result):
-        provider = getattr(result, "provider", None)
-        provider_id = getattr(result, "provider_id", None)
-        recognition_type = getattr(result, "recognition_type", None)
-        media_type = getattr(result, "media_type", None)
-        title = getattr(result, "title", None)
-        year = getattr(result, "year", None)
-        return ManualRecoveryContinuationService._build_identity(
-            provider, provider_id, media_type, title, year, recognition_type
-        )
-
-    @staticmethod
     def _identity_from_document(document):
-        if not isinstance(document, dict):
+        required = {
+            "version",
+            "provider",
+            "providerId",
+            "mediaType",
+            "title",
+            "originalTitle",
+            "year",
+            "season",
+            "episode",
+            "episodes",
+            "episodeTitle",
+            "episodeMetadata",
+            "genres",
+            "countries",
+            "languages",
+            "keywords",
+            "alternativeTitles",
+            "translatedTitles",
+            "releaseDate",
+            "canonicalReleaseDate",
+            "regionalReleaseDate",
+            "overview",
+            "externalIds",
+            "posterPath",
+            "backdropPath",
+            "confidence",
+            "matchedBy",
+            "recognitionTypeId",
+        }
+        if (
+            not isinstance(document, dict)
+            or document.get("version") != 1
+            or not required.issubset(document)
+        ):
             return None
         return ManualRecoveryContinuationService._build_identity(
             document.get("provider"),
@@ -888,6 +902,21 @@ class ManualRecoveryContinuationService:
             season=document.get("season"),
             episode=document.get("episode"),
             episodes=document.get("episodes"),
+            episode_title=document.get("episodeTitle"),
+            episode_metadata=document.get("episodeMetadata"),
+            keywords=document.get("keywords"),
+            alternative_titles=document.get("alternativeTitles"),
+            translated_titles=document.get("translatedTitles"),
+            release_date=document.get("releaseDate"),
+            canonical_release_date=document.get("canonicalReleaseDate"),
+            regional_release_date=document.get("regionalReleaseDate"),
+            overview=document.get("overview"),
+            external_ids=document.get("externalIds"),
+            poster_path=document.get("posterPath"),
+            backdrop_path=document.get("backdropPath"),
+            confidence=document.get("confidence"),
+            matched_by=document.get("matchedBy"),
+            identity_recognition_type=document.get("identityRecognitionTypeId"),
         )
 
     @staticmethod
@@ -906,6 +935,21 @@ class ManualRecoveryContinuationService:
         season=None,
         episode=None,
         episodes=None,
+        episode_title=None,
+        episode_metadata=None,
+        keywords=None,
+        alternative_titles=None,
+        translated_titles=None,
+        release_date=None,
+        canonical_release_date=None,
+        regional_release_date=None,
+        overview=None,
+        external_ids=None,
+        poster_path=None,
+        backdrop_path=None,
+        confidence=None,
+        matched_by=None,
+        identity_recognition_type=None,
     ):
         if not all(isinstance(value, str) and value for value in (provider, provider_id, title)):
             return None
@@ -913,34 +957,170 @@ class ManualRecoveryContinuationService:
             return None
 
         def _text_tuple(value):
-            if not isinstance(value, (list, tuple)):
-                return ()
-            return tuple(item for item in value if isinstance(item, str) and item)
+            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+                raise ValueError("execution identity text list is invalid")
+            return tuple(_required_text(item) for item in value)
 
         def _int(value):
             return value if isinstance(value, int) and not isinstance(value, bool) else None
 
+        def _nullable_int(value):
+            if value is None:
+                return None
+            normalized = _int(value)
+            if normalized is None:
+                raise ValueError("execution identity integer field is invalid")
+            return normalized
+
+        def _optional_text(value):
+            if value is None:
+                return None
+            if not isinstance(value, str) or len(value) > 4096 or contains_manual_secret(value):
+                raise ValueError("execution identity text field is invalid")
+            return value
+
+        def _required_text(value):
+            normalized = _optional_text(value)
+            if normalized is None or not normalized:
+                raise ValueError("execution identity required text field is missing")
+            return normalized
+
+        def _episode_tuple(value):
+            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+                raise ValueError("execution identity episode list is invalid")
+            result = []
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError("execution identity episode item is invalid")
+                number = _int(item.get("episode"))
+                title_value = item.get("title")
+                if number is None:
+                    raise ValueError("execution identity episode item is incomplete")
+                air_date = item.get("airDate")
+                overview_value = item.get("overview")
+                title_value = _required_text(title_value)
+                air_date = _optional_text(air_date)
+                overview_value = _optional_text(overview_value)
+                result.append(
+                    EpisodeIdentity(
+                        number,
+                        title_value,
+                        air_date,
+                        overview_value,
+                    )
+                )
+            return tuple(result)
+
+        def _number_tuple(value):
+            if (
+                not isinstance(value, (list, tuple))
+                or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS
+                or any(not isinstance(item, int) or isinstance(item, bool) for item in value)
+            ):
+                raise ValueError("execution identity episode numbers are invalid")
+            return tuple(value)
+
+        def _external_id_tuple(value):
+            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+                raise ValueError("execution identity external ids are invalid")
+            result = []
+            for item in value:
+                if not isinstance(item, dict):
+                    raise ValueError("execution identity external id is invalid")
+                external_provider = item.get("provider")
+                external_id = item.get("providerId")
+                external_provider = _required_text(external_provider)
+                external_id = _required_text(external_id)
+                result.append((external_provider, external_id))
+            return tuple(result)
+
+        try:
+            normalized_provider = _required_text(provider)
+            normalized_provider_id = _required_text(provider_id)
+            normalized_title = _required_text(title)
+            normalized_media_type_text = _required_text(media_type)
+            normalized_media_type = MediaType(normalized_media_type_text)
+        except ValueError:
+            return None
+        # Old TV evidence without a concrete episode name is incomplete for
+        # deterministic episode naming. Require the episode detail bundle and
+        # let the caller request a fresh Worker analysis instead of querying a
+        # Provider synchronously while rebuilding the summary.
+        try:
+            normalized_year = _nullable_int(year)
+            normalized_season = _nullable_int(season)
+            normalized_episode = _nullable_int(episode)
+            normalized_original_title = _optional_text(original_title)
+            normalized_episode_title = _optional_text(episode_title)
+            normalized_episode_metadata = _episode_tuple(episode_metadata)
+            normalized_episodes = _number_tuple(episodes)
+            normalized_genres = _text_tuple(genres)
+            normalized_countries = _text_tuple(countries)
+            normalized_languages = _text_tuple(languages)
+            normalized_keywords = _text_tuple(keywords)
+            normalized_alternative_titles = _text_tuple(alternative_titles)
+            normalized_translated_titles = _text_tuple(translated_titles)
+            normalized_external_ids = _external_id_tuple(external_ids)
+            normalized_release_date = _optional_text(release_date)
+            normalized_canonical_release_date = _optional_text(canonical_release_date)
+            normalized_regional_release_date = _optional_text(regional_release_date)
+            normalized_overview = _optional_text(overview)
+            normalized_poster_path = _optional_text(poster_path)
+            normalized_backdrop_path = _optional_text(backdrop_path)
+            normalized_matched_by = _optional_text(matched_by)
+            normalized_identity_recognition_type = _optional_text(identity_recognition_type)
+            normalized_confidence = confidence
+            if normalized_confidence is not None and (
+                not isinstance(normalized_confidence, (int, float))
+                or isinstance(normalized_confidence, bool)
+                or not math.isfinite(normalized_confidence)
+            ):
+                raise ValueError("execution identity confidence is invalid")
+        except (TypeError, ValueError):
+            return None
+        if normalized_media_type is MediaType.TV and (
+            normalized_season is None
+            or normalized_episode is None
+            or not normalized_episode_title
+            or not any(value.episode == normalized_episode for value in normalized_episode_metadata)
+        ):
+            return None
+
         try:
             return MediaIdentity(
-                provider=provider,
-                provider_id=provider_id,
-                media_type=MediaType(media_type),
-                title=title,
-                original_title=original_title if isinstance(original_title, str) else None,
-                year=_int(year),
-                season=_int(season),
-                episode=_int(episode),
-                episodes=tuple(
-                    value
-                    for value in (episodes or ())
-                    if isinstance(value, int) and not isinstance(value, bool)
-                ),
-                genres=_text_tuple(genres),
-                countries=_text_tuple(countries),
-                languages=_text_tuple(languages),
+                provider=normalized_provider,
+                provider_id=normalized_provider_id,
+                media_type=normalized_media_type,
+                title=normalized_title,
+                original_title=normalized_original_title,
+                year=normalized_year,
+                season=normalized_season,
+                episode=normalized_episode,
+                episodes=normalized_episodes,
+                genres=normalized_genres,
+                countries=normalized_countries,
+                languages=normalized_languages,
+                episode_title=normalized_episode_title,
+                keywords=normalized_keywords,
+                alternative_titles=normalized_alternative_titles,
+                translated_titles=normalized_translated_titles,
+                release_date=normalized_release_date,
+                canonical_release_date=normalized_canonical_release_date,
+                regional_release_date=normalized_regional_release_date,
+                overview=normalized_overview,
+                external_ids=normalized_external_ids,
+                poster_path=normalized_poster_path,
+                backdrop_path=normalized_backdrop_path,
+                confidence=normalized_confidence,
+                matched_by=normalized_matched_by,
                 recognition_type_id=(
-                    recognition_type if isinstance(recognition_type, str) else None
+                    normalized_identity_recognition_type
+                    if normalized_identity_recognition_type is not None
+                    else recognition_type
+                    if isinstance(recognition_type, str)
+                    else None
                 ),
+                episode_metadata=normalized_episode_metadata,
             )
         except ValueError:
             return None
