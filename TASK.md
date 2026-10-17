@@ -544,8 +544,12 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
   为 schema48，导致 `test_resource_library_pipeline.test_scan_cli_needs_no_path_or_metadata_token`
   报 “runtime database schema is newer”；在 Task Base 干净 checkout 中该用例 PASS，干净候选全量
   2488/OK，判定为环境既有失败，非本 Task 回归，交 B 判断。
-- Docker 恢复浏览器证明：脚本已实现并自检通过，但需从已提交候选构建镜像（`git archive HEAD`）；
-  本报告草稿阶段尚未执行，最终 checkpoint 后补跑并回填结果。
+- Docker 恢复浏览器证明：`.venv/bin/python scripts/docker_task_center_recovery_browser_proof.py
+  --image mediaflow:task45.3-recovery`（需 `MEDIAFLOW_SMOKE_TEMP_DIR` 指向 Docker 可挂载目录）
+  → **通过**：真实镜像/API/SQLite/常驻 Worker，识别决定→分析→同页摘要→精确确认→真实 MOVE；
+  确认前 `sourceExists=True, targetExists=False`，确认后 `False/True`；`prepare-summary` 1 次、
+  `confirm` 1 次、旧 `manual-recovery-links/execute` 0 次。证据：
+  `/tmp/mediaflow-task45-3-docker-recovery-proof/{matrix.json,evidence.json,*.png}`。
 
 ### 决定
 
