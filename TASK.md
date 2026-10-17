@@ -517,29 +517,40 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
 - **API** (`service_api.py`)：新增 `POST .../recovery/prepare-summary`（201，零权限、零 mutation）、
   `POST /api/v1/manual-recovery-preparations/{id}/confirm`（202，真实执行身份）及路由归一化；
   恢复详情投影附带 `manualRecoveryPreparation`。
-- **Web**：`task-item-recovery.ts`/`api-client.ts` 增加严格 typed model 与两个调用；
-  `TaskItemRecoveryPanel.tsx` 新增同页 `RecoveryPreparationSummary`（复用 `organize-summary` 的
-  `ItemFindings`/破坏性影响说明），主路径为“生成计划摘要并在此确认 → 选子集 → 确认继续整理 N 项”；
-  原一次性权限的精确 Preview 兼容入口保留为折叠高级选项。
+- **Web**：`task-item-recovery.ts`/`api-client.ts` 增加严格 typed model 与两个调用；新增共享
+  `SamePagePlanSummary.tsx`（复用 `organize-summary` 的 `ItemFindings`/破坏性影响说明），
+  `TaskItemRecoveryPanel.tsx` 主路径为“生成计划摘要并在此确认 → 选子集 → 确认继续整理 N 项”；
+  暂停整理的 withheld Continue 在 `OperationsLanding` 同一面板内生成剩余范围摘要并确认，
+  不再跳独立 Preview（按钮改为“在当前界面生成剩余范围摘要”）；原一次性权限的精确 Preview
+  兼容入口保留为折叠高级选项。
 - **Tests/脚本**：`test_recovery_continuation.py` 新增 6 个后端旅程用例（只读摘要/确认子集与原子
   链接/过期与supersede/权限/actor/并发去重）；`test_task_persistence.py` 新增 preparation 往返与
   additive 迁移用例；`TaskItemRecoveryPanel.test.tsx` 新增同页 prepare→confirm 组件用例；
-  `operations-inventory.python.spec.ts` 的原生恢复旅程改为同页摘要+确认；`wheel_smoke_test.py`
-  增加恢复准备 consumer 加载证明；新增 `docker_task_center_recovery_browser_proof.py`。
+  `OperationsInventory.test.tsx` 新增暂停运行同页摘要确认用例；`operations-inventory.python.spec.ts`
+  的原生恢复与暂停继续旅程改为同页摘要+确认；`wheel_smoke_test.py` 增加恢复准备 consumer 加载
+  证明；新增 `docker_task_center_recovery_browser_proof.py`。
 
-### 验证（候选 = 本 checkpoint 内容）
+### 最终候选
 
-- 隔离干净 checkout（overlay 本 Task 全部改动，无共享 schema48 运行库）：
-  `python -m unittest discover -s tests` → **2488 tests / 7 skipped / OK / 197.8s**。
-- `scripts/check_governance.py` PASS；`ruff format --check .`、`ruff check .` 全通过；
+- Implementation Head：`0ae8fb9d2236556e63b9bdddd302b4059812370b`。
+- 本 Task 实现 checkpoint：`ca86094522222e4a44c12864cdba0be0cfc90036`（实现）与
+  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），末次 `0ae8fb9`（暂停继续 E2E）。
+- Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
+
+### 验证（候选 = 最终 checkpoint `0ae8fb9`）
+
+- 隔离干净 checkout（exact `0ae8fb9`，无共享 schema48 运行库）：
+  `python -m unittest discover -s tests` → **2488 tests / 7 skipped / OK / 187.3s**。
+- `scripts/check_governance.py` PASS；`ruff format --check .`（371 files）、`ruff check .` 全通过；
   `compileall -q mediaflow tests scripts` OK；`pip check` 无破损；两份示例配置 `config validate`
   OK；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` 无匹配（exit 1）。
-- Web：`typecheck`、`lint`、`format:check` 全通过；`npm run test -- run` 全通过
-  （Operations/entities/api 切片 **614**）；`npm run build` 成功；fake E2E **246 passed**。
+- Web：`typecheck`、`lint`、`format:check` 全通过；`npm run test -- run` **1123 passed (76 files)**；
+  `npm run build` 成功；fake E2E **246 passed**。
 - 真实 Python 浏览器：`playwright.python.config.ts operations-inventory.python.spec.ts`
-  **27 passed / 45.6s**，含改造后的同页恢复旅程（prepare 201/零权限、confirm 202、真实 Worker MOVE）。
-- wheel：`pip wheel . --no-deps` 后用 `wheel_smoke_test.py` 安装验证，新增
-  `recoveryPreparationConsumer: loaded`。
+  **27 passed / 45.1s**，含同页恢复旅程（prepare 201/零权限、confirm 202、真实 Worker MOVE）
+  与暂停运行同页摘要确认。
+- wheel：`pip wheel . --no-deps`（`sha256 5fa498c11cd13a75db3b6015c4378393d0035944db4547ef34b73dbf959a8688`）
+  后用 `wheel_smoke_test.py` 安装验证，新增 `recoveryPreparationConsumer: loaded`。
 - **既有失败（已在 Base 独立复现）**：主工作区共享 ignored 运行库 `.mediaflow/mediaflow.sqlite3`
   为 schema48，导致 `test_resource_library_pipeline.test_scan_cli_needs_no_path_or_metadata_token`
   报 “runtime database schema is newer”；在 Task Base 干净 checkout 中该用例 PASS，干净候选全量
@@ -560,12 +571,13 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
 
 ### 风险 / 偏差
 
-- 五类恢复目前共用同一套 prepare/confirm 入口；识别/元数据/分类/冲突/失败的**表单**沿用既有
-  `TaskItemRecoveryPanel` 决策表单，本 Task 已接入识别完整旅程与全部类型的保存→分析→摘要→确认，
-  但每类专用文案/窄屏细节的细化仍属本 Task 剩余工作。
-- 暂停整理的 Continue 重新授权（步骤 17）复用既有 `ScopeContinuationService`，尚未接入同页摘要；
-  当前 `ScopeContinuationService` 未使用 preview/finding 服务，接入需要新的构造参数，计划在后续步骤完成。
-- 任务内有界多选（步骤 16）复用既有 `RecoveryBatchContinuationService`，同页摘要按项汇总尚未接入。
+- 五类恢复共用同一套 prepare/confirm 入口与既有决策表单；识别完整旅程已原生浏览器跑通，
+  其余四类的专用表单保存→分析→同页摘要→确认已在后端与组件层接入并验证，但每类专用文案、
+  窄屏细节与逐类浏览器分支的进一步细化仍属本 Task 可继续的剩余工作。
+- 暂停整理的 Continue 重新授权已接入同页摘要（步骤 17），复用既有
+  `ScopeContinuationService`/`submitRemainingScopePreview`，未新增队列或权限。
+- 任务内有界多选（步骤 16）复用既有 `RecoveryBatchContinuationService`；批次的同页按项摘要
+  汇总尚未接入，仍保留既有逐项准入/拒绝与恢复链接。
 
 ### 可复用经验候选
 
