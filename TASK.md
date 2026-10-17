@@ -532,10 +532,13 @@ pin、Planner、`ManualOrganizeExecutionService.begin_web_execution` 与原子�
 
 ### 最终候选
 
-- Implementation Head：`3d8fdbf308b34a81497849e7568481d64a2195ae`。
+- Implementation Head：`41aebbcd58649a206d237c8034c1a160ba4d7f2f`。
+- 可执行候选（全部运行时门禁在此验证）：`0ae8fb9d2236556e63b9bdddd302b4059812370b`。
+  自该 SHA 起仅追加 `TASK.md` 报告/状态（`3d8fdbf`→`d9ba016`→`41aebbc`）；
+  `git diff 0ae8fb9 41aebbcd -- mediaflow web/src web/tests pyproject.toml Dockerfile compose.yaml`
+  为空，故按 workflow 复用已验证的运行时证据。
 - 本 Task 实现 checkpoint：`ca86094522222e4a44c12864cdba0be0cfc90036`（实现）与
-  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），`0ae8fb9`（暂停继续 E2E），
-  末次 `3d8fdbf`（报告）。`ca860945..3d8fdbf` 无 `mediaflow/`/`web/src/` 字节变化。
+  `a507bda0665a4b8f6a8b2b4e7ac1ee925c7db805`（Docker 证明+报告），`0ae8fb9`（暂停继续 E2E）。
 - Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
 - 证据索引：`.git/validation-evidence/3d8fdbf308b34a81497849e7568481d64a2195ae/developer-45.3/`
   （`INDEX.md` 与 `docker-recovery/` 原始日志/矩阵/截图；仅本地可达，未推送）。
