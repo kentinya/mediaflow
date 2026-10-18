@@ -847,14 +847,15 @@ def assert_v2_manual_organize(
     if status != 410 or refused.get("error", {}).get("code") != "standalone_scan_retired":
         raise RuntimeError("standalone Scan did not refuse before creating work")
     discovery_code = r"""
-import json, os
+import os
 from mediaflow.application.scanner import StorageScanner
-from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.final_cli import _configuration
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
-with open(os.environ['MEDIAFLOW_CONFIG'], encoding='utf-8') as stream:
-    runtime = load_runtime_configuration(json.load(stream))
+runtime = _configuration(os.environ['MEDIAFLOW_CONFIG'])
+library = runtime.resource_libraries[0]
 with SQLiteFileIndexRepository(runtime.database_path) as index:
-    result = StorageScanner(runtime.create_storages(), index).scan(runtime.resource_libraries[0])
+    storages = runtime.create_storages(storage_ids={library.storage_id})
+    result = StorageScanner(storages, index).scan(library)
     if result.status.value != 'completed':
         raise RuntimeError('shared fixture discovery failed')
 """
