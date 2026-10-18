@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: NOT SET
 Working Branch: slice/45-scope-pending
-Development Authorization: CONTRACT REVISED BY A; B RECHECKED TASK45.3; DEVELOPER CORRECTION AUTHORIZED
+Development Authorization: CONTRACT REVISED BY A; B RECHECKS TASK45.3 BEFORE CONTINUING
 Risk: High
 Final Test Level: T4
-Next Action: DEVELOPER CORRECTS TASK45.3 PER B REVIEW 8
+Next Action: B RECHECKS TASK45.3 AGAINST THE CLARIFIED CONTRACT
 ```
 
 ## Authority and baseline
@@ -45,6 +45,12 @@ B 仍须先定义合法 Task；本次不创建 Developer Task、不导入冻结�
 说明；不得把“手动移动”硬编码为所有附件的恢复动作。策略允许跳过、重命名、覆盖确认、重新
 分析或其他既有动作时，只展示该策略实际允许的动作；策略不允许安全继续时，展示原因和核查/补正
 路径。未知效果仍只能核查，不得给出暗示状态已知的移动或重放指引。
+
+例如主文件的固定 OrganizePolicy 为 `MOVE`，附件发生目标冲突，而主文件已成功并验证完成时，
+附件结果应显示具体冲突名，并给出“有冲突：<具体冲突名>，请修正后再进行‘移动’操作”这类
+以主文件策略动作标签为准的下一步。该提示不代表系统会自动重放主文件，也不取得附件 mutation
+许可；它只告诉用户修正冲突后应按既有策略处理该附件。其他主文件策略必须显示其实际动作标签，
+不能统一写成“手动移动”。
 
 ## Suspended work preservation
 
