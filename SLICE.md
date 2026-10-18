@@ -1,40 +1,47 @@
-# Slice 45 — V2 Task Center, Recovery and FileIndex Retirement
+# Slice 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 
 ```text
 Slice ID: 45
-Name: V2 Task Center, Recovery and FileIndex Retirement
+Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: USER-AUTHORIZED MAIN INTEGRATION AND A WORKFLOW GOVERNANCE
+Development Authorization: USER-AUTHORIZED A CONTRACT REVISION; B PLANS IN COMMITTED SCOPE
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS RO-7; COMPLETE ALL OUTCOMES BEFORE SLICE FINAL
+Next Action: B PLANS RO-7 / RO-8; COMPLETE ALL OUTCOMES BEFORE SLICE FINAL
 ```
 
 ## Current authority and progress
 
 本 Contract 保留 Slice44 closure 的不可变 Base；首次授权/修订/整合的详细记录保留于
-`479518e4aff0419da82c667bef6f127936774cec:SLICE.md`。本次仅合并现行约定并调整测试责任，
-不改变 Required Outcomes、Surfaces、安全、延期或产品验收含义，也不是 A Final Review。
+`479518e4aff0419da82c667bef6f127936774cec:SLICE.md`。用户进一步明确要求独立 Preview 产品
+按 Scan 的首次部署方式完整退役；本次 A 实质修订新增 RO-8 / S-10 / AC-8，替换此前保留
+独立 diagnostic/scheduled Preview 产品的义务，保留共享零变更分析和固定计划能力。
+原 Slice ID/Base/ACTIVE、45.4 的已审范围与 PASS/验证例外保持；不是实现声明或 A Final Review。
 
 - 在 main 继续；用户授权过 main/Slice45 整合，双方非冲突工作保留、冲突采用 Slice45。
 - Scan 按首次部署不存在处理，含定义绑定模式和退役兼容层；不要求旧 Scan/V1 迁移或历史兼容。
 - FileIndex 完全退出纳入同一 Slice 的 RO-7，须以一个连贯 Task 完成，不能提前关闭 Slice。
+- 独立 Preview 的 Web/API/CLI/Job/调度/执行/续跑与专用持久化/兼容层按首次部署不存在处理，
+  详见 [Preview 退役设计](docs/preview-retirement-spec.md)。共享分析、计划摘要、Rules/配置/
+  授权前校验及 `organize` 不执行模式保留，不把旧 Preview 输入自动转换为整理。
 - 主文件验证完成即保留主项成功；附件异常独立记录原因/来源/目标/步骤，指引来自实际固定
   OrganizePolicy。未知效果只核查，不新增附件-only 自动恢复或为附件重放主文件。
 - 已合并 Slice43 页面、Run once、指标和设置消费不是45保留/验收前提；可清理45必需耦合，
   自动化页重新设计留到45后，不主动恢复43后续开发。共享支持流程的权限/pin/结果/审计保持。
 - Task45.1–45.4 已 B PASS；45.4 reviewed Head 为 `479518e4aff0419da82c667bef6f127936774cec`，
-  按用户当轮指令仅审实现、未核验全部 T4 证据。RO-7 仍未交付，未进行 Slice-final 或 A 验收。
-- 自本次流程修订起 Developer 只跑新增/修改及直接受影响测试，B 负责全量和最终验收；旧的
+  按用户当轮指令仅审实现、未核验全部 T4 证据。RO-7、RO-8 未交付，无活动实现 Task，
+  B 在 A 提交后核对新范围再规划；未进行 Slice-final 或 A 验收，不倒改45.4 Goal/Base/PASS。
+- 现行测试分工为 Developer 只跑新增/修改及直接受影响测试，B 负责全量和最终验收；旧的
   Developer 全量分配由 B 承接。此前接受/例外不重写，不倒记完整验证。
 
 ### Suspended work preservation
 
-Slice43 保持 PLANNED / `Development Hold: FROZEN BY USER`；只有 Scan 模式删除选入45。
+Slice43 保持 PLANNED / `Development Hold: FROZEN BY USER`；Scan 模式删除和 RO-7/RO-8 必需
+依赖清理选入45，其余自动化工作区重设计仍延期。
 原 Base `853973dbbf8289fa2ad40657033e94e870a690e4`，冻结 Contract
 `ed974e0df8b263f631bfe48b524da461013d8780`，精确 Task/审查快照
 `c539429c2c3aaeaab4842b87d3c858e77106fed1`，均保留于 `frozen/slice-43-2026-10-15`。
@@ -49,6 +56,7 @@ Slice43 保持 PLANNED / `Development Hold: FROZEN BY USER`；只有 Scan 模式
 跨任务的待处理工作，并完成明确、低摩擦、安全的恢复，无需独立 Scan/Preview 页面、
 CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢复的完整用户旅程。
 CLI 文件列表、文件页和媒体库页共用实时 Storage 浏览，文件目录索引及相关运行依赖完全退出。
+独立 Preview 产品及其运行/调度/专用兼容机制退出，分析与摘要确认统一由支持的整理流程完成。
 
 最终页面/旅程规范：[任务中心最终方案](docs/task-center-page-spec.md)。
 九张参考图统一位于 `docs/pics/任务中心-标签名.png`，其结构、层级及风格适用；
@@ -59,13 +67,15 @@ CLI 文件列表、文件页和媒体库页共用实时 Storage 浏览，文件�
 - V2-OPS-001–008 的既有统一工作、结果、权限及恢复基线，按 V2-OPS-009–012 的显式
   TARGET 产品修订实现新的入口、九标签、同页摘要与跨任务类型视图。
 - V2-UX-001–003、V2-AUTH-001–003、V2-SAFE-001、V2-MIG-001–003。
+- V2-OPS-013；REQ-ORG-004/011、REQ-SCHED-001、REQ-WEB-004 的独立 Preview 产品形式按显式修订退役，
+  完整零变更分析、解释、精确计划和执行权限分离不降低。
 - V2-FILES-005/006；REQ-SCAN-004、REQ-ORG-012、REQ-WEB-003、REQ-SAFE-009 等旧 FileIndex 义务
   按本次明确 V2 修订替换；精确来源、稳定性、结果持久化和安全不变量保留。
 - UX-001–010，REQ-GEN-*，REQ-ORG-*，REQ-RECOVERY-*，REQ-TASK-*，
   REQ-SAFE-*，REQ-RESULT-* 与适用的 Storage/Library/Recognition/Metadata 要求。
 - REQ-SCAN-001 的独立手动扫描产品入口被当前 V2 修订取代；内部扫描、过滤、稳定性、
   SourceIdentity 保留。独立 Scan 存量兼容按上方未上线修订取消，其他受支持任务历史语义
-  保留。通用 DryRun 和 Rules 测试不整体退役。
+  保留。DryRun 的零变更能力和 Rules 测试不整体退役；独立 Preview 产品按 RO-8 移除。
 - Slice42 的“全局 Review 列表延期”不限制本次明确选择的跨任务分类列表；跨任务批量
   mutation 仍不在本 Slice。闭合 Slice 的交付事实和原有接受证据不重写。
 
@@ -81,7 +91,7 @@ CLI 文件列表、文件页和媒体库页共用实时 Storage 浏览，文件�
 任务数和文件数分开，重叠视角说明清楚，普通排队不自动算作需要人工处理。
 历史名称/范围、进度、主文件/附件及未知数据真实可解释。Job/Task 仅按持久关联去重，
 排队及 pre-Task 失败可见，仍受支持的诊断和普通文件维护/传输历史不丢失或改写为整理。
-退役独立 Scan 不要求专用历史兼容，不得因此删除或改写其他工作记录。
+退役 Scan/独立 Preview 不要求专用历史兼容，不得因此删除或改写其他工作记录。
 
 ### RO-2 — 新建整理与同页计划摘要确认
 
@@ -171,7 +181,7 @@ Web/API/Worker 使用同一应用行为、权限、固定来源/计划和恢复�
 队列、配置或恢复引擎。必要持久化变更保留原版本、结果、历史模式和来源身份。
 任务运行状态、文件处置、待处理问题与效果确定性分开表达。
 
-九页面、创建→摘要→确认→执行、各类恢复、独立 Scan 退役及其他受支持任务的历史路径
+九页面、创建→摘要→确认→执行、各类恢复、Scan/独立 Preview 退役及其他受支持任务的历史路径
 通过自动化和原生浏览器验证。
 CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，不宣称实现。
 
@@ -199,6 +209,30 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
 旧入口薄拒绝并指向库级浏览/任务中心。不自动清空、drop 或重建现存运行数据库/媒体。
 完整旅程、边界和验收见上述设计，默认只读 CLI 不触发数据库初始化/升级。
 
+### RO-8 — 独立 Preview 产品首次部署移除与分析能力统一
+
+采用 RO-5 相同的首次部署标准：移除独立 Preview 的 V1/V2 页面/路由/导航/动作、API/别名、
+CLI 注册/帮助（含 preview、batch preview、jobs submit preview）、Job/Task/command、
+定时配置/调度、Worker dispatch、执行/重试/继续及专用模型/仓储/schema/装配/死代码。
+独立 diagnostic/scheduled/definition-bound Preview 不是保留例外；不保留退役页/410/提示/
+专用 guard、隐藏别名或兼容执行器。旧输入在正常认证和共享支持类型校验下走普通
+not-found/参数/不支持类型错误，在发现/Provider/准入/许可前停止，不自动转为整理。
+
+整理创建/Files/恢复保留同页分析→精确计划摘要→选择就绪子集→明确确认→实际执行。
+`organize` 不带 --execute 的完整零媒体变更分析保留；Rules、配置完整流程检查及 Automation
+授权前校验复用共享分析/计划服务，保留原候选配置/精确定义和权限边界。长分析使用现有
+Task/Worker，不建立另一套分析队列或执行引擎，不要求用户管理独立 Preview 工作。
+
+内部固定计划、来源/配置 pin、版本、附件/冲突/能力证据和确认/恢复关联按整理职责保存，
+不能随产品删除丢失，也不能改名后继续保留独立产品生命周期。分析只留下 findings/未就绪，
+不制造正式 WAITING_CONFIRM/Review/Conflict/Recovery 待办，不取得单次/无人值守权限。
+来源/计划变化重验、原子准入、精确确认、有效许可、逐项结果与成功/未知效果非重放保持。
+
+不建设旧 Preview 停止/接管、迁移、历史页面/API/取消/导出或 V1 parity 兼容，不自动清空/
+drop/重建现存媒体或运行库；fresh 环境无独立 Preview 专用 schema。支持版本的普通整理
+分析/执行数据正常重开/重启/恢复。允许清理已合并43的必要 Preview 依赖，不扩展其页面/
+Run once/指标/设置重设计。详细旅程、实际依赖及验收见 Preview 退役设计。
+
 ## Required Surfaces
 
 | Surface | 必需结果 |
@@ -212,6 +246,7 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
 | S-7 Scan 首次部署移除及内部依赖收敛 | 独立及定义绑定 Scan 产品/兼容层不存在，旧输入普通报错；其他功能所需发现/稳定性/计划保留 |
 | S-8 CLI/Web 实时文件列表 | files list 与文件页/媒体库页共享库级 live browse，只读、不存文件记录、同边界/分页/错误 |
 | S-9 无 FileIndex 的运行链 | 新库/装配/API/Worker/整理/恢复/结果和现有共享消费者不依赖索引，无索引产品或后台写入 |
+| S-10 无独立 Preview 的分析与整理链 | Web/CLI/API/Job/调度/Worker 无独立产品或兼容层；共享分析/计划、Rules/配置/授权校验与精确确认可用 |
 
 ## Product Experience / UX Constraints
 
@@ -240,9 +275,10 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
 ## Explicitly Deferred
 
 - Slice43 自动化页、原生编辑/Run once、指标与全局设置消费的重新设计实现留到 Slice45 完成后。
-  已合并43代码不是本 Slice 必须保留或验收的前提；可清理 RO-5/RO-7 必需的耦合，不主动重做页面。
+  已合并43代码不是本 Slice 必须保留或验收的前提；可清理 RO-5/RO-7/RO-8 必需耦合，不主动重做页面。
   scan-only/scan-and-plan 产品/模式专用路径删除仍属 RO-5，不能以43冻结为由保留。
-- 整体 DryRun 退役、Rules 测试删除、其他诊断命令或 Provider/身份/配置体系重设计。
+- 零变更分析/DryRun 能力和 Rules 测试删除、无关诊断命令或 Provider/身份/配置体系重设计；
+  此延期不再保留独立 Preview 产品，后者已明确选入 RO-8。
 - 跨任务批量 mutation、批量覆盖、历史删除/保留策略、任意旧结果 Reprocess、通用回滚、
   不确定 mutation 自动重放、V1 UI 全面退役。
 - 新 Storage/Metadata Provider、Upload/Download、MediaLibrary Organize、新调度/并行执行引擎。
@@ -276,6 +312,11 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
   变更。新库/生产装配和所有支持的处理消费者不再包含/调用 FileIndex，不保留全局目录替身、
   索引同步/reprocess/兼容引擎；无索引仍完成稳定观察→摘要确认→执行→恢复/重开。
   不要求旧 FileIndex 生产迁移或历史兼容，不清空现存运行库/媒体；其他任务持久结果和安全保持。
+- AC-8：独立 Preview 在 Web/API/CLI/Job/定时/Worker/重试/继续及 fresh 专用 schema 中不存在，
+  无退役页/410/提示/别名/专用拒绝或兼容执行层。旧输入普通报错且零发现/Provider/准入/许可，
+  不转成整理。无独立产品仍完成真实完整分析→同页摘要→精确确认→Worker执行→恢复/重开；
+  Rules/配置/Automation 授权校验和 CLI 不执行模式可用，分析不造正式执行待办或权限。
+  不建设旧 Preview/V1 parity、迁移/停止/历史兼容，不清空媒体/运行数据，现有安全和结果保持。
 
 ## Final Validation Expectations
 
@@ -298,8 +339,12 @@ Final Test Level 为 **T4，执行负责人 B**。Developer 仅执行 Task 指�
   无Active/权限/Storage故障；重复浏览零文件目录/观察/Task/Result/Provider/Hash/媒体变更。
 - 无 FileIndex 产品/仓储/schema/装配/后台同步或 no-op/更名替身；所有支持消费者在实际
   wheel/Docker 中完成无索引整理/恢复/重开，保留精确来源、pin、授权、结果和非重放。
+- 无独立 Preview 注册/路由/类型/定时/dispatch/继续/专用 schema 或兼容层；旧输入普通拒绝且
+  零发现/Provider/准入/许可。真实整理/恢复、CLI不执行、Rules/配置/授权校验在无独立产品的
+  wheel/Docker/常驻Worker中可用；analysis-only finding 不造执行待办，未确认零 mutation/权限。
+  精确计划/子集/来源变化、合法旧 pin、混合结果、丢响应/重复准入和非重放按真实链路验证。
 - 对受影响的共享 schema 验证 fresh/reopen、支持版本迁移和失败原子性；首次部署不要求
-  旧 Scan/FileIndex 生产迁移，不清空或重建现存媒体/运行库。
+  旧 Scan/Preview/FileIndex 生产迁移，不清空或重建现存媒体/运行库。
 - 隔离 Local/fake/local-server fixture、假 Provider；分析零 mutation、实际权限/锁/fence/
   RBAC/secret/未知效果非重放。完整 wheel/安装消费者/production Docker/restart/release-security
   与候选源码及实际 served assets 一致；不以 mock、标签或打印SHA代替真实运行边界。
@@ -309,7 +354,7 @@ B 记录实际结果、必要日志/截图/产物身份和未提供外部门禁�
 
 ## Closure Packet
 
-Not submitted. RO-7 remains incomplete; no Slice-final validation or closure is claimed.
+Not submitted. RO-7 and RO-8 remain incomplete; no Slice-final validation or closure is claimed.
 
 ## A Final Review
 

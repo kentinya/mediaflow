@@ -69,6 +69,10 @@ Active；不为列举自动创建业务配置、任务、文件目录数据库�
 
 当前实际依赖需在同一个完整退出业务单元中收敛：
 
+下表列的是当前代码依赖。独立 Preview 产品另按同 Slice RO-8 的
+[Preview 退役设计](preview-retirement-spec.md) 完整退出；RO-7 不为它新建索引兼容或修复服务。
+需要保留的是整理/恢复/配置/授权校验的共享分析和精确计划证据，不是独立 Preview 生命周期。
+
 | 当前依赖 | TARGET 行为 |
 |---|---|
 | `files list` → FileCatalog → SQLiteFileIndex；show/stats 和 `/files`、`/file-index` 索引接口 | list 改为共享库级 live browse；索引产品接口/命令删除或薄拒绝 |

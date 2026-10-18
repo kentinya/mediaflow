@@ -479,8 +479,9 @@ infer links from labels/times, count pending automatically as human attention, o
 Recovery uses existing decisions/checkpoints/continuations, retaining siblings/history and immutable
 pins. Save/analysis grants no mutation; confirmation binds exact sources/plans/subset/effect scope.
 Material change needs a fresh summary. Unknown submissions reconcile, never automatically resubmit.
-No second queue, lifecycle, configuration or recovery engine; internal Preview records may remain
-without forcing a separate operator page. General DryRun/Rules diagnostics stay supported.
+No second queue, lifecycle, configuration or recovery engine. Exact internal organizing analysis/plan
+records remain under their real responsibilities; the standalone Preview product exits under
+V2-OPS-013 below. Organizing DryRun and shared Rules/configuration checks stay supported.
 
 Scan is absent on first deployment, including definition modes and dedicated compatibility guards:
 ordinary route/argument/shared type validation rejects before discovery/admission/authority. Shared
@@ -501,6 +502,32 @@ a no-op repository. Exact source/plan/pin/observation/results/locks remain bound
 reopen/recovery cannot replay known or uncertain effects. Fresh deployments have no index schema;
 no old-index migration/dual-write/API compatibility and no automatic clear/drop/rebuild of user data.
 Necessary shared Automation coupling may be cleaned without preserving43 UI or resuming its redesign.
+
+## TARGET — Standalone Preview retirement and shared analysis (Slice45)
+
+[The Preview retirement design](preview-retirement-spec.md) owns `V2-OPS-013` / RO-8. Use the Scan
+first-deployment standard: no standalone Preview Web/V1/API/CLI/aliases/help, Job/Task/command,
+scheduled/definition-bound dispatch/retry/continuation, exclusive schema/services/repositories,
+composition or compatibility/retirement layer. Old inputs ordinarily reject under normal auth and
+shared supported-type validation before Storage/Provider/admission/authority; no conversion to Organize.
+
+Shared organizing preparation/analysis -> immutable source/configuration/plan/version evidence ->
+same-page summary -> exact explicit authority/admission -> existing Worker/OrganizerExecutor/Result.
+CLI organize without --execute and Rules/configuration/Automation preflight reuse real planning.
+Preserve current candidate/definition/scope/permission boundaries, elapsed stability, findings,
+attachments, capabilities and source revalidation. Analysis grants no permission and creates no
+formal execution waiting/recovery backlog. Plan publication, pins/claims/fences and non-replay remain.
+
+Some baseline Preview storage/services currently serve shared exact plans and recovery/authority.
+Consolidate those responsibilities into existing organizing/Task/plan data before removing independent
+product lifecycle and exclusive persistence; no blind table deletion, renamed product or second engine.
+The queued Preview analysis-only behavior must survive in shared analysis; removing the old command
+is not permission to convert scheduled Preview into execution or grant automatic authority.
+
+No old Preview migration/takeover/history/cancel/export/V1-parity framework; no runtime/media clear or
+automatic rebuild. Fresh deployments contain no independent Preview schema, while supported organizing
+work reopens and recovers safely. Current descriptions below remain implementation baseline until
+this TARGET passes. Necessary merged43 coupling cleanup is allowed; its broader redesign stays frozen.
 
 ## Manual organize
 
@@ -590,13 +617,14 @@ replayed.
 
 The remaining43 workspace/Run once/metrics/settings redesign stays frozen; its Contract is preserved
 at `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-Only Scan-mode removal and required index coupling cleanup belong to 45. Merged 43 code and historical
+Scan-mode removal and required index/standalone-Preview coupling cleanup belong to 45. Merged 43 code and historical
 43.2 B PASS do not require preserving that UI, resume43.3 or constitute A acceptance.
 
 [V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain the
 full target: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused
 publication, not another queue/config store. Manual Run once uses complete bounded live discovery
-and separate exact Preview/one-shot intent; min(definition ceiling,100) bounds primaries, incomplete/
+and shared exact analysis/plan-summary evidence plus separate one-shot intent under V2-OPS-013;
+min(definition ceiling,100) bounds primaries, incomplete/
 overflow refuses a first-N prefix, schedule due state/grants do not become manual authority.
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 

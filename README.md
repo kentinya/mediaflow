@@ -76,12 +76,26 @@ Task-scoped sources/results/audit remain durable. No existing data/media is auto
 
 Standalone Scan and scan-only/scan-and-plan modes have been removed from the current implementation;
 old inputs receive ordinary not-found/argument errors. Shared internal discovery, filters, genuine
-stability observations, diagnostic Preview/DryRun and supported scheduled Preview remain.
+stability observations and zero-mutation planning remain. Independent Preview is still in the
+baseline implementation and is selected for complete retirement by the target below.
+
+### Slice45 target: standalone Preview removal
+
+[The Preview retirement design](docs/preview-retirement-spec.md) selects the same first-deployment
+absence standard as Scan: remove independent Preview pages/API/CLI/Jobs/schedules/dispatch/continuation,
+exclusive persistence/composition and compatibility layers. Old inputs use ordinary not-found or
+unsupported-argument/type errors; no retirement page/410, automatic conversion or old production
+migration/history/takeover framework. This is TARGET, not implemented or accepted behavior.
+
+Organizing keeps same-page analysis, exact plan summary and separate explicit confirmation.
+`mediaflow organize` without `--execute`, Rules/configuration checks and Automation authorization
+preflight retain shared zero-media-mutation analysis. Analysis grants no execution permission or
+formal execution backlog. Exact plans/pins/results/audit stay durable; no existing data/media is cleared.
 
 ### Baseline command reference
 
 Use `mediaflow --help` and `mediaflow <command> --help` for the complete current argument reference.
-Common workflows:
+Common baseline workflows (the independent Preview commands below are pending removal under Slice45):
 
 ```bash
 mediaflow config validate

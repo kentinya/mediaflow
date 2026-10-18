@@ -221,11 +221,12 @@ schema 与无消费者代码。不保留墓碑页、410、退役说明/新整理
 自动化页面、Run once、统计和全局设置消费继续冻结，不导入或宣称交付未接受的 Slice43 实现。
 
 后续 main 合并及用户同日最新决定以上方根 Contract 为准：已合并的 Slice43 页面和 Run once
-实现不是 Slice45 必须保留或验收的前提。Scan/FileIndex 删除可清理其必要耦合；不为旧自动化页
+实现不是 Slice45 必须保留或验收的前提。Scan/FileIndex/独立 Preview 删除可清理其必要耦合；不为旧自动化页
 增加兼容或恢复义务。自动化页留到 Slice45 完成后重新设计实现，当前不展开无关页面重做。
 
 保留其他支持功能实际需要的 Scanner、Storage list/stat、资源发现、过滤、临时排除、真实稳定
-观察与零变更计划，以及 diagnostic Preview/DryRun、Rules 测试和受支持的 scheduled Preview。
+观察与零变更计划、整理 DryRun、Rules/配置/授权前校验。此前保留独立 diagnostic/scheduled
+Preview 产品的安排已由下方第 8 节的完整退役修订取代；必要共享分析语义仍保留。
 按真实消费者判断，不按 scan/preview 名称盲删。整理内部有界完成真实经过时间/大小/指纹观察，
 不要求用户先跑 Scan，不放宽稳定性政策。原生失败说明提供当前支持的补正/重观测动作。
 
@@ -245,7 +246,20 @@ FileIndex 的专用产品、运行依赖、全局目录仓储/schema、同步/�
 完整使用方式、三入口边界、Automation 共享依赖与验证见
 [FileIndex 退役设计](file-index-retirement-spec.md)，验收为 V2-FILES-005/006 和 Contract RO-7。
 
-## 8. 实现约束与验收依据
+## 8. 独立 Preview 按 Scan 相同方式退役（Slice45 TARGET）
+
+按 [Preview 退役设计](preview-retirement-spec.md)、V2-OPS-013 与 Contract RO-8 完整退出独立
+Preview 页面/API/CLI/Job/Task/定时/Worker/重试/继续和专用持久化/装配，包括 diagnostic/
+scheduled/definition-bound 独立产品。旧输入普通 not-found/参数/类型错误，不保留退役页/410/
+提示/专用 guard/兼容执行器，不自动转为整理，不建设旧任务停止/接管、迁移、历史或 V1 parity。
+
+新建整理/Files/恢复继续同页分析→摘要→选择就绪子集→明确确认；CLI organize 不执行模式
+和 Rules/配置/Automation 授权前校验复用共享分析。内部精确计划/pin/版本/附件/恢复关联按整理
+职责持久化，长分析使用现有 Task/Worker；不以改名保留独立产品或新增队列/执行引擎。
+准备只留 findings/未就绪，不产生正式执行待办或执行权限；权限、来源/计划重验、原子准入、
+逐项结果和成功/未知效果非重放保持。不清空现有媒体/运行数据，支持工作正常重开/恢复。
+
+## 9. 实现约束与验收依据
 
 前端共用 Shell、列表/筛选/分页和返回上下文组件，用各视图配置及专用表单组织九页；
 Python 应用层负责当前允许动作、恢复分类和共享编排，Repository 提供完整授权总体上的一致查询。
@@ -262,5 +276,7 @@ DryRun、忽略或未知结果改写成整理成功。API 与 Web 使用相同�
 真实执行→重启恢复，确保诊断/自动整理等支持功能不依赖被删模式或获得隐式许可。
 新增三入口实时列表一致/零记录、全运行链无 FileIndex、新建 schema/包/镜像无索引及
 无索引真实稳定观察/确认/恢复验证；同样不要求旧 FileIndex 生产兼容矩阵。
+新增无独立 Preview 入口/类型/专用 schema/兼容层、普通错误与零工作/权限；实际无独立产品的
+整理/恢复/CLI不执行/Rules/配置/授权校验和生产 Worker 可用，不要求旧 Preview 生产兼容矩阵。
 实际测试分工和证据执行遵循 SLICE.md 与 B 的 Task，
 不能以概念图或文档状态代替已运行证明。

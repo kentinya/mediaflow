@@ -326,6 +326,8 @@ preparation and do not fabricate execution recovery work.
 
 Automatic organization is the only supported definition mode in current code; removed Scan intents
 cannot be reinterpreted as execution permission. Diagnostic/supported scheduled Preview stays separate.
+This is the implementation baseline. Slice45's Preview-retirement TARGET below removes that independent
+product and carries necessary analysis/authorization checks into shared organizing behavior.
 The remaining native Automation workspace, Run once, metrics and engine-settings redesign is frozen
 under 43; merged code presence and historical B PASS do not confer current acceptance or resume it.
 [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain
@@ -397,6 +399,23 @@ products/consumers/schema/sync/repair/stand-ins. Browse/refresh/page creates no 
 work/authority, Provider/Hash or media effects; explicit work retains exact evidence/results/audit.
 Old indexed inputs offer library browsing/Task Center guidance, no compatibility engine or data clear.
 No-index real stability→summary→confirmation→execution→recovery/reopen is required before acceptance.
+
+### TARGET — 独立 Preview 首次部署退出与分析统一（Slice45）
+
+[Preview 退役设计](preview-retirement-spec.md)、`V2-OPS-013` 和 RO-8 将独立 Preview 产品按
+Scan 相同的首次部署标准移除：独立 V1/V2 页面、CLI/API、Job/Task/定时/Worker/继续路径、
+专用持久化和运行装配均不存在。旧输入普通 not-found/参数/不支持类型错误，无退役页/410/
+提示/兼容执行器或自动转成整理；不建设旧 Preview 停止/接管、迁移、历史或 V1 parity 服务。
+
+操作者在整理创建/Files 或原任务恢复界面显式分析，直接检查当前计划摘要和逐项原因，选择
+合法就绪子集后明确确认。CLI organize 不带 --execute 继续显示完整零媒体变更分析。
+未就绪或发现冲突留在准备界面，不制造正式执行待办或单次/无人值守权限；需要修正时在原
+界面补充决定并重新分析。来源/计划变化需更新摘要和意图，成功/未知效果不得重放。
+
+Rules、配置检查和 Automation 授权前校验复用共享分析/精确计划，并保持原候选配置/定义/
+权限边界；无需用户管理独立 Preview Task。支持工作的计划/pin/结果/审计和正常重启恢复
+保留，不清空媒体/运行库；只清理必要 Automation 耦合，不恢复冻结工作区重设计。
+这是新增 TARGET，不把 Task45.4 Scan PASS 当成 Preview 退役验收。
 
 ## V1 and post-V1 boundary
 

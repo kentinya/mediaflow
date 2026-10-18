@@ -8,10 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — remains **ACTIVE** on main,
+Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — remains **ACTIVE** on main,
 with immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` and A Implementation Head NOT SET.
 [SLICE.md](../SLICE.md) owns current scope; [TASK.md](../TASK.md) owns implementation/review status.
-Complete FileIndex retirement and shared CLI/Web live listing remain pending; no Slice delivery,
+Complete FileIndex retirement/shared CLI/Web live listing (RO-7) and standalone Preview retirement
+(RO-8, same first-deployment standard as Scan) remain pending. Preview's dedicated compatibility,
+old-work migration/takeover/history are not required; organizing analysis/plans and shared checks stay.
+Task45.4 Scan PASS remains its existing reviewed result and disclosed validation exception; no Slice delivery,
 final validation or closure is claimed. Shared discovery/stability, exact work evidence, permissions,
 results/audit and non-replay remain required; no existing media/runtime data is cleared.
 
