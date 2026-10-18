@@ -574,7 +574,9 @@ describe("V2 manual Organize journey", () => {
     expect(screen.getByText(/预览不会修改文件/)).toBeVisible();
     expect(screen.getByText("移动")).toBeVisible();
     expect(
-      screen.getByText("此方案不会替换或删除文件，整理后会保留来源媒体。"),
+      screen.getByText(
+        "此精确方案会把来源移动到目标；整理成功后来源位置不再保留原文件。",
+      ),
     ).toBeVisible();
     expect(screen.queryByText(/this exact plan/)).toBeNull();
     const executeButton = await screen.findByRole("button", {
@@ -752,7 +754,7 @@ describe("V2 manual Organize journey", () => {
           sourceCleanupRequired: false,
           statement: "this exact plan replaces and deletes nothing",
         },
-        expectedStatement: "此方案不会替换或删除文件，整理后会保留来源媒体。",
+        expectedStatement: "此精确方案会把来源复制到目标，来源媒体保留。",
         requiresOverwrite: false,
         requiresCleanup: false,
       },
@@ -764,7 +766,8 @@ describe("V2 manual Organize journey", () => {
           statement:
             "this exact plan would replace an existing destination file",
         },
-        expectedStatement: "此精确方案会替换已有目标文件；需要明确授权覆盖。",
+        expectedStatement:
+          "此精确方案会把来源复制到目标，来源媒体保留。另外，会替换已有目标文件，需要明确授权覆盖。",
         requiresOverwrite: true,
         requiresCleanup: false,
       },
@@ -777,7 +780,7 @@ describe("V2 manual Organize journey", () => {
             "this exact plan would delete the emptied source directories",
         },
         expectedStatement:
-          "此精确方案会在整理后删除已清空的来源目录；需要明确授权来源清理。",
+          "此精确方案会把来源复制到目标，来源媒体保留。另外，会删除整理后为空的来源目录，需要明确授权来源清理。",
         requiresOverwrite: false,
         requiresCleanup: true,
       },
@@ -790,7 +793,7 @@ describe("V2 manual Organize journey", () => {
             "this exact plan would replace an existing destination file and delete the emptied source directories",
         },
         expectedStatement:
-          "此精确方案会替换已有目标文件，并在整理后删除已清空的来源目录；需要分别明确授权。",
+          "此精确方案会把来源复制到目标，来源媒体保留。另外，会替换已有目标文件，需要明确授权覆盖；会删除整理后为空的来源目录，需要明确授权来源清理。",
         requiresOverwrite: true,
         requiresCleanup: true,
       },

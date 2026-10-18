@@ -349,6 +349,7 @@ class ManualOrganizeExecutionService:
         confirmation: bool,
         allow_overwrite: bool = False,
         allow_source_cleanup: bool = False,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         """Serve one meaningful Web Execute action with server-held authority.
 
@@ -379,6 +380,7 @@ class ManualOrganizeExecutionService:
                 actor=actor,
                 permission=permission,
                 confirmation=True,
+                preparation_id=preparation_id,
             )
         except ManualExecutionError as error:
             existing = self._existing_admitted_execution(authority, error)
@@ -564,6 +566,7 @@ class ManualOrganizeExecutionService:
         actor: str,
         permission: str = "execute_manual_organize",
         confirmation: bool,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         """Consume exact authority and persist the admitted execution only.
 
@@ -573,6 +576,10 @@ class ManualOrganizeExecutionService:
         execution, Task scope, item outcomes and Storage fences.  What this
         boundary deliberately never does is invoke ``OrganizerExecutor``: the
         resident Processing Worker owns that part of the boundary.
+
+        ``preparation_id`` links one non-authorizing recovery summary to the
+        exact execution its confirmation admitted, inside the same atomic
+        admission transaction.
         """
 
         return self.execute(
@@ -581,6 +588,7 @@ class ManualOrganizeExecutionService:
             permission=permission,
             confirmation=confirmation,
             admit_only=True,
+            preparation_id=preparation_id,
         )
 
     def _with_definition_origin(self, display, *, intent):
@@ -700,6 +708,7 @@ class ManualOrganizeExecutionService:
         permission: str = "execute_manual_organize",
         confirmation: bool,
         admit_only: bool = False,
+        preparation_id: str | None = None,
     ) -> ManualExecution:
         if not isinstance(admit_only, bool):
             raise ManualExecutionError(
@@ -850,14 +859,16 @@ class ManualOrganizeExecutionService:
             plans=plan_by_item,
             runtime=runtime,
         )
-        # A definition-bound Run once records its immutable definition origin in
-        # the same admission transaction, so Automation history and Operations
-        # reach the same durable run without a dummy Job or a read-time guess
-        # from today's Active configuration.  The link is resolved from the
-        # durable discovery this intent came from; an ordinary Files run simply
-        # has no origin.
-        display = self._with_definition_origin(display, intent=intent)
-        admitted = admit(authority, execution, execution_items, locks, now, display=display)
+        admitted = admit(
+            authority,
+            execution,
+            execution_items,
+            locks,
+            now,
+            display=display,
+            preparation_id=preparation_id,
+            checkpoint_projector=self._checkpoint_service._project,
+        )
         if admit_only:
             # The durable execution is committed and waiting for the resident
             # Processing Worker; this boundary never calls OrganizerExecutor.
@@ -1768,11 +1779,17 @@ class ManualOrganizeExecutionService:
     def document(self, execution_id: str) -> dict[str, object]:
         value = self.get(execution_id)
         document = value.document()
+        results = {
+            result.item_id: result for result in self._repository.list_results(value.task_id)
+        }
         reconciliation_by_item = {
             item.item_id: self._file_index_reconciliation(value, item) for item in value.items
         }
         for item in document["items"]:
             task_item_id = item["taskItemId"]
+            result = results.get(task_item_id)
+            item["primaryCompleted"] = result.primary_completed if result else False
+            item["attachmentResults"] = list(result.attachment_results) if result else []
             try:
                 checkpoint = self._checkpoint_service.get(task_item_id, task_id=value.task_id)
             except (LookupError, ValueError):
@@ -1795,8 +1812,8 @@ class ManualOrganizeExecutionService:
             "no further action is required"
         ),
         "no_matching_occurrence": (
-            "refresh or rescan this ResourceLibrary, then repeat the bounded FileIndex "
-            "reconciliation against the durable Result"
+            "inspect the durable Result and live source/target in Files; the historical "
+            "index association cannot authorize a new operation or replay this Result"
         ),
         "attention_required": (
             "inspect the current FileIndex occurrence and repeat the bounded reconciliation; "
@@ -2643,6 +2660,8 @@ class ManualOrganizeExecutionService:
                         AttachmentType(value["type"]),
                         operation,
                         str(value.get("suffix", "")),
+                        value.get("language"),
+                        value.get("blockedReason"),
                     )
                 )
             except (KeyError, TypeError, ValueError) as error:
@@ -2844,24 +2863,8 @@ class ManualOrganizeExecutionService:
                     "overwrite authority is not present for this reviewed plan",
                     code="overwrite_authority_required",
                 )
-            for attachment in plan.attachment_plans:
-                attachment_source = storages[attachment.source.storage_id]
-                attachment_target = storages[attachment.destination.storage_id]
-                if not attachment_source.exists(attachment.source.path):
-                    raise ManualExecutionError(
-                        "a reviewed attachment source no longer exists",
-                        code="attachment_source_missing",
-                        next_action="refresh the sidecar set and request a fresh Preview",
-                    )
-                if (
-                    attachment_target.exists(attachment.destination.path)
-                    and not plan.overwrite_authorized
-                ):
-                    raise ManualExecutionError(
-                        "a reviewed attachment destination changed before admission",
-                        code="destination_changed",
-                        next_action="inspect the destination and request a fresh Preview",
-                    )
+            # Attachment runtime failures are independent warnings after primary verification.
+            # Their exact paths/operation remain bound by the reviewed plan and Executor checks.
             if plan.source_directory_cleanup.mode is not DirectoryCleanupMode.NONE:
                 if not authority.allow_source_cleanup:
                     raise ManualExecutionError(
@@ -3400,15 +3403,17 @@ class ManualOrganizeExecutionService:
 
     @staticmethod
     def _item_stage(result):
-        if result.status is ExecutionStatus.SUCCESS:
-            return "completed"
-        if result.status is ExecutionStatus.SKIPPED:
-            return "skipped"
         if result.effect_certainty in {
             ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
             ExecutionEffectCertainty.UNKNOWN,
         }:
             return "uncertain_effects"
+        if result.primary_completed and result.status is ExecutionStatus.PARTIAL:
+            return "primary_completed_with_warnings"
+        if result.status is ExecutionStatus.SUCCESS:
+            return "completed"
+        if result.status is ExecutionStatus.SKIPPED:
+            return "skipped"
         return "failed"
 
     @staticmethod
@@ -3419,6 +3424,11 @@ class ManualOrganizeExecutionService:
 
     @staticmethod
     def _next_action(result):
+        if result.primary_completed and result.attachment_results:
+            return (
+                "primary verified complete; inspect per-attachment guidance; "
+                "never replay the primary"
+            )
         if result.status is ExecutionStatus.SUCCESS:
             return "inspect the verified Result; no recovery replay is required"
         if result.status is ExecutionStatus.SKIPPED:
@@ -3476,6 +3486,8 @@ class ManualOrganizeExecutionService:
             source_occurrence_id=source_occurrence_id,
             source_fingerprint=source_fingerprint,
             source_fingerprint_state=source_fingerprint_state,
+            primary_completed=result.primary_completed,
+            attachment_results=result.attachment_results,
         )
 
     def _effects(self, item, plan, result):
@@ -3483,6 +3495,7 @@ class ManualOrganizeExecutionService:
         certainty = result.effect_certainty.value
         verified = result.effect_certainty is ExecutionEffectCertainty.VERIFIED_COMPLETE
         attachment_by_source = {value.source.path: value for value in plan.attachment_plans}
+        outcome_by_source = {value["source_path"]: value for value in result.attachment_results}
         for operation in result.completed_operations:
             source_path = plan.source_location.path if plan.source_location else plan.source
             destination_path = (
@@ -3490,13 +3503,23 @@ class ManualOrganizeExecutionService:
             )
             details: dict[str, object] = {}
             action = operation
+            operation_verified = verified or (
+                result.primary_completed and operation == plan.operation.value
+            )
             if operation.startswith("ATTACHMENT:"):
                 parts = operation.split(":", 2)
                 attachment = attachment_by_source.get(parts[2]) if len(parts) == 3 else None
+                if attachment is None and len(parts) == 3:
+                    attachment = attachment_by_source.get(parts[2].rsplit(":", 1)[0])
                 if attachment is not None:
                     source_path = attachment.source.path
                     destination_path = attachment.destination.path
                     details["attachmentType"] = attachment.attachment_type.value
+                    outcome = outcome_by_source.get(attachment.source.path)
+                    if outcome is not None:
+                        operation_verified = outcome["effect_certainty"] == "verified_complete"
+                        details["attachmentStatus"] = outcome["status"]
+                        details["attachmentReason"] = outcome["reason"]
             elif operation == "CREATE_DIRECTORY" and result.created_directories:
                 destination_path = result.created_directories[
                     min(len(values), len(result.created_directories) - 1)
@@ -3511,8 +3534,8 @@ class ManualOrganizeExecutionService:
                     source_path,
                     plan.target_storage_id,
                     destination_path,
-                    verified,
-                    certainty,
+                    operation_verified,
+                    "verified_complete" if operation_verified else certainty,
                     details,
                     self._clock(),
                 )
@@ -3609,6 +3632,10 @@ class ManualOrganizeExecutionService:
             status = ManualExecutionStatus.PARTIAL_SUCCESS
             action = "investigate uncertain effects through each Processing Checkpoint"
             completed = True
+        elif any(value.status is ManualExecutionItemStatus.PARTIAL for value in items):
+            status = ManualExecutionStatus.PARTIAL_SUCCESS
+            action = "inspect independent partial outcomes; do not replay verified primary files"
+            completed = True
         elif failures == len(items):
             status = ManualExecutionStatus.FAILED
             action = "inspect pre-mutation failures and request fresh Previews"
@@ -3648,6 +3675,8 @@ class ManualOrganizeExecutionService:
             status = PersistentTaskStatus.RUNNING
         elif failed_items == 0:
             status = PersistentTaskStatus.COMPLETED
+        elif any(value.status is ManualExecutionItemStatus.PARTIAL for value in items):
+            status = PersistentTaskStatus.PARTIAL_SUCCESS
         elif failed_items == len(items):
             status = PersistentTaskStatus.FAILED
         else:

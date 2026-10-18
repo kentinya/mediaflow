@@ -10,6 +10,7 @@
 
 import { RULE_FAMILIES } from "../../entities/rules/rules-workspace";
 import {
+  isSafeOperationsSourceScope,
   parseOperationsReturnContext,
   operationsReturnContextFromSearch,
 } from "./operations-return";
@@ -40,11 +41,11 @@ const destinationData = [
   },
   {
     id: "operations",
-    label: "Operations",
+    label: "任务中心",
     path: "/operations",
-    title: "Operations | MediaFlow",
+    title: "任务中心 | MediaFlow",
     availability: "implemented" as const,
-    description: "Tasks, Jobs and Worker workspace for daily operations.",
+    description: "查看任务、运行、恢复状态和 Worker 工作情况。",
   },
   {
     id: "review",
@@ -147,19 +148,19 @@ const childDestinationData = [
   },
   {
     id: "operations-scan-new",
-    label: "Start Scan",
+    label: "扫描已退役",
     path: "/operations/scan/new",
-    title: "Start Scan | MediaFlow",
+    title: "扫描已退役 | MediaFlow",
     availability: "implemented" as const,
-    description: "Submit a bounded server-bound Scan admission.",
+    description: "独立扫描已退役，请新建整理。",
   },
   {
     id: "operations-scan-detail",
-    label: "Scan detail",
+    label: "扫描已退役",
     path: "/operations/scan/$taskId",
-    title: "Scan detail | MediaFlow",
+    title: "扫描已退役 | MediaFlow",
     availability: "implemented" as const,
-    description: "Bounded scan document, progress and per-item findings.",
+    description: "独立扫描已退役，请新建整理。",
     dynamicPrefix: "/operations/scan/" as const,
   },
   {
@@ -483,8 +484,8 @@ export const shellDestinations: readonly ShellDestination[] = [
   },
   {
     id: "operations",
-    label: "操作与任务",
-    ariaLabel: "Operations",
+    label: "任务中心",
+    ariaLabel: "任务中心",
     path: "/operations",
     icon: "operations",
     isActive: (pathname) =>
@@ -614,6 +615,12 @@ const DELIVERY_STATUS_FILTER_TOKEN = /^[a-z][a-z0-9-]{0,31}$/;
 const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 /** A run-inventory cursor URL may carry only the bounded cursor alphabet. */
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
+/** The nine closed task-center view tokens. */
+const RUN_VIEW_TOKEN =
+  /^(?:all|running|attention|ended|recognition|metadata|classification|conflict|failure)$/;
+/** The five closed recovery problem tokens. */
+const RUN_PROBLEM_TOKEN =
+  /^(?:recognition|metadata|classification|conflict|failure)$/;
 /** The bounded Files live-directory grammar `returnPath` may carry. */
 const RETURN_PATH_TOKEN =
   // eslint-disable-next-line no-control-regex
@@ -844,7 +851,30 @@ export function allowlistedDestinationSearch(
     setSafe(allowed, "q", current.get("q"));
     setSafe(allowed, "from", current.get("from"));
     setSafe(allowed, "to", current.get("to"));
+    const source = current.get("source");
+    if (source !== null && isSafeOperationsSourceScope(source)) {
+      setSafe(allowed, "source", source);
+    }
     setSafe(allowed, "run", current.get("run"));
+    // The selected recovery problem run and its closed problem type survive
+    // a reconnect so the exact Task/type file list reopens.  The view and
+    // problem tokens are closed grammars, never arbitrary state.
+    setSafe(allowed, "problemRun", current.get("problemRun"));
+    // The chosen file-list type of an attention row is a closed grammar too,
+    // so a reconnect reopens exactly the Task/type list the operator chose.
+    setFilterToken(
+      allowed,
+      "problemType",
+      current.get("problemType"),
+      RUN_PROBLEM_TOKEN,
+    );
+    setFilterToken(allowed, "view", current.get("view"), RUN_VIEW_TOKEN);
+    setFilterToken(
+      allowed,
+      "problem",
+      current.get("problem"),
+      RUN_PROBLEM_TOKEN,
+    );
     // The attention facet travels only as its one literal `true` value, so a
     // reconnect restores exactly the facet the card applied — never a value
     // the backend would reject.
@@ -855,6 +885,16 @@ export function allowlistedDestinationSearch(
     const direction = current.get("dir");
     if (direction === "forward" || direction === "backward") {
       allowed.set("dir", direction);
+    }
+    setFilterToken(
+      allowed,
+      "problemCursor",
+      current.get("problemCursor"),
+      CURSOR_TOKEN,
+    );
+    const problemDirection = current.get("problemDir");
+    if (problemDirection === "forward" || problemDirection === "backward") {
+      allowed.set("problemDir", problemDirection);
     }
     // The manual Scan/Preview scope selector carries one closed scope kind and
     // one bounded configured library identity, exactly like the retired
@@ -911,19 +951,15 @@ export function allowlistedDestinationSearch(
     if (path === "/operations/tasks/$taskId") {
       // The Task detail additionally owns the run detail context (tab,
       // filters, cursors, inspected item) that its tabs restore on
-      // reconnect.
+      // reconnect. A task-center-originated file evidence link also keeps its
+      // bounded return context so the durable evidence page has a direct path
+      // back to the exact filtered Task/type problem list after reconnect.
+      setJourneyOperationsContext(allowed, current);
       setRunDetailTokens(allowed, current);
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/scan/new") {
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setSafe(allowed, "scopeKind", current.get("scopeKind"));
-    setSafe(allowed, "fileId", current.get("fileId"));
-    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
+  if (path === "/operations/scan/new") return null;
   if (path === "/operations/preview/new") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
@@ -935,12 +971,16 @@ export function allowlistedDestinationSearch(
   if (path === "/operations/organize/new") {
     // The manual Organize entry carries only its bounded scope parameters
     // plus the preserved task-center return context of the journey it starts.
+    // The in-context creation workspace (RO-2) additionally carries the exact
+    // admitted preparation identity so a refresh/reconnect continues the same
+    // durable record without admitting work.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setSafe(allowed, "scopeKind", current.get("scopeKind"));
     setSafe(allowed, "fileId", current.get("fileId"));
     setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    setJourneyOperationsContext(allowed, current);
+    setSafe(allowed, "discoveryId", current.get("discoveryId"));
+    setJourneyReturnContexts(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (

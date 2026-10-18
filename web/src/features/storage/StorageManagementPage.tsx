@@ -547,7 +547,9 @@ function StorageMoreMenu({
     ignoreToggleRef.current = true;
     detailsRef.current?.removeAttribute("open");
     setOpen(false);
-    requestAnimationFrame(() => summaryRef.current?.focus());
+    // Restore before starting another action. A delayed frame can steal focus
+    // from the copy drawer (or its input) after the authority read completes.
+    summaryRef.current?.focus();
   }, []);
 
   return (

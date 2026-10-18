@@ -144,6 +144,33 @@ def is_continuable_task_command(command: object) -> bool:
     return isinstance(command, str) and command in CONTINUABLE_TASK_COMMANDS
 
 
+def require_supported_scan_origin(repository, task: PersistentTask) -> None:
+    """Reject independent Scan before continuation admission or adapter construction."""
+    if task.command != "scan":
+        return
+    from mediaflow.application.automation import persisted_definition_origin
+
+    origin = continuation_origin(repository, task)
+    reader = getattr(repository, "get_job_for_task", None)
+    job = reader(origin.task_id) if callable(reader) else None
+    persisted = repository.get_job(job.job_id) if job is not None else None
+    if (
+        persisted is None
+        or persisted != job
+        or not persisted_definition_origin(repository, job)
+        or job.task_id != origin.task_id
+        or job.command is not AutomationCommand.SCAN
+        or job.configuration_snapshot_id != origin.configuration_snapshot_id
+        or job.configuration_snapshot_digest != origin.configuration_snapshot_digest
+    ):
+        raise ScopeContinuationError(
+            ScopeContinuationReason.COMMAND_NOT_CONTINUABLE,
+            "standalone_scan_retired: independent Scan cannot continue",
+            durable_state="unchanged; no work created and no discovery performed",
+            next_action="在任务中心新建整理并生成摘要。",
+        )
+
+
 def continuation_origin(repository, task: PersistentTask) -> PersistentTask:
     """Resolve a continuation Task's root only through exact persisted links.
 
@@ -284,6 +311,14 @@ def continuation_obstacle(
       item budget has no remaining scope left to queue.
     """
 
+    try:
+        require_supported_scan_origin(repository, task)
+    except (ScopeContinuationError, ValueError):
+        return (
+            ScopeContinuationReason.COMMAND_NOT_CONTINUABLE,
+            "standalone_scan_retired: independent Scan cannot continue",
+            "在任务中心新建整理并生成摘要。",
+        )
     if task.status is not PersistentTaskStatus.PAUSED:
         return (
             ScopeContinuationReason.TASK_NOT_PAUSED,
@@ -595,6 +630,7 @@ class ScopeContinuationService:
                 next_action="refresh the Task and continue it only while it is durably paused",
                 current_version=task.updated_at.isoformat(),
             )
+        require_supported_scan_origin(self._repository, task)
         if not is_continuable_task_command(task.command):
             raise ScopeContinuationError(
                 ScopeContinuationReason.COMMAND_NOT_CONTINUABLE,
@@ -703,6 +739,7 @@ class ScopeContinuationService:
             or task.configuration_snapshot_digest != continuation.configuration_snapshot_digest
         ):
             raise ValueError("scope continuation source Task scope or pin changed")
+        require_supported_scan_origin(self._repository, task)
         if not is_continuable_task_command(task.command):
             raise ValueError("scope continuation command is not supported")
         self._require_live_obstacle(task, exclude_job_id=job_id)

@@ -1492,7 +1492,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                first_schedule = IntervalSchedule("first", AutomationCommand.SCAN, 60)
+                first_schedule = IntervalSchedule("first", AutomationCommand.PREVIEW, 60)
                 second_schedule = IntervalSchedule("first", AutomationCommand.PREVIEW, 30)
                 current = [
                     SchedulerConfigurationSnapshot(
@@ -2588,7 +2588,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertIsNotNone(current)
                 self.assertEqual(current.revision_id, second_id)
 
-    def test_worker_continues_pinned_scan_when_current_active_is_unhealthy(self) -> None:
+    def test_worker_continues_pinned_preview_when_current_active_is_unhealthy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source_root = root / "source"
@@ -2625,7 +2625,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     task_repository,
                     configuration_snapshot_id=first.revision_id,
                     configuration_snapshot_digest=first.digest,
-                ).submit("scan")
+                ).submit("preview")
                 second_document = json.loads(json.dumps(document))
                 second_document["historyPath"] = str(root / "second-history.jsonl")
                 second_draft = service.import_draft(second_document, actor="tester")
@@ -2653,11 +2653,14 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 configuration_repository._connection.commit()
 
             output, error = io.StringIO(), io.StringIO()
-            status = final_main(
-                ["--config", str(config), "worker", "run-next"],
-                stdout=output,
-                stderr=error,
-            )
+            # Empty Local source: configure a synthetic credential so Preview can
+            # construct its Provider without making any external request.
+            with patch.dict("os.environ", {"TMDB_ACCESS_TOKEN": "fake-preview-test"}):
+                status = final_main(
+                    ["--config", str(config), "worker", "run-next"],
+                    stdout=output,
+                    stderr=error,
+                )
             self.assertEqual(status, 0, error.getvalue())
             with SQLiteTaskRepository(runtime) as repository:
                 completed_job = repository.get_job(old_job.job_id)
@@ -2977,7 +2980,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
                 current = [("first", "digest-first")]
-                schedule = IntervalSchedule("test", AutomationCommand.SCAN, 1)
+                schedule = IntervalSchedule("test", AutomationCommand.PREVIEW, 1)
                 scheduler = IntervalScheduler(
                     repository,
                     (schedule,),
@@ -2997,7 +3000,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                schedule = IntervalSchedule("test", AutomationCommand.SCAN, 60)
+                schedule = IntervalSchedule("test", AutomationCommand.PREVIEW, 60)
                 current = [
                     SchedulerConfigurationSnapshot("revision-a", "digest-a", (schedule,), 10)
                 ]

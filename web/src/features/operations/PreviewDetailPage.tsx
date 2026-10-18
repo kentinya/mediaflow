@@ -627,6 +627,17 @@ export function PreviewDetailPage() {
                           ? ` · ${attachment.operation}`
                           : ""}
                         {attachment.filename ? ` · ${attachment.filename}` : ""}
+                        {attachment.source && (
+                          <p>
+                            {attachment.source.storageId}:
+                            {attachment.source.path} →{" "}
+                            {attachment.destination?.storageId}:
+                            {attachment.destination?.path}
+                          </p>
+                        )}
+                        {attachment.nextAction && (
+                          <p>{attachment.nextAction}</p>
+                        )}
                       </li>
                     ))}
                   </ul>

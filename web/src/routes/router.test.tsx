@@ -65,9 +65,10 @@ describe("retired Library routes", () => {
     expect(
       await screen.findByRole("heading", { name: "新建整理任务" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "返回操作与任务" }),
-    ).toHaveAttribute("href", "/ui-v2/operations");
+    expect(screen.getByRole("link", { name: "返回任务中心" })).toHaveAttribute(
+      "href",
+      "/ui-v2/operations",
+    );
     expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
   });
 });

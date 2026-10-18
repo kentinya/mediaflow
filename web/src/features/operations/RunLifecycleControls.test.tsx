@@ -323,7 +323,7 @@ describe("RunLifecycleControls", () => {
       screen.queryByRole("button", { name: "继续剩余范围" }),
     ).not.toBeInTheDocument();
     const recovery = screen.getByRole("button", {
-      name: "查看剩余范围的精确预览",
+      name: "在当前界面生成剩余范围摘要",
     });
     expect(recovery).toBeEnabled();
     await user.click(recovery);
@@ -352,7 +352,7 @@ describe("RunLifecycleControls", () => {
     // backend did not publish.
     expect(screen.getByText(/the pinned revision is gone/)).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "查看剩余范围的精确预览" }),
+      screen.queryByRole("button", { name: "在当前界面生成剩余范围摘要" }),
     ).not.toBeInTheDocument();
   });
 
@@ -385,7 +385,7 @@ describe("RunLifecycleControls", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "查看剩余范围的精确预览" }),
+      screen.getByRole("button", { name: "在当前界面生成剩余范围摘要" }),
     ).toBeDisabled();
   });
 });

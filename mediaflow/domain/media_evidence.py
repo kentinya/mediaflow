@@ -16,6 +16,14 @@ from typing import Any
 
 from mediaflow.domain.manual_safety import redact_evidence_value
 
+# Execution identities are persisted as exact plan inputs. A single provider
+# text field may be larger than the operator-facing evidence projection, while
+# the complete document remains bounded independently.
+EXECUTION_IDENTITY_TEXT_LIMIT = 131_072
+EXECUTION_IDENTITY_ITEM_LIMIT = 256
+EXECUTION_IDENTITY_BYTE_LIMIT = 131_072
+EXECUTION_IDENTITY_SIZE_LIMIT_REASON = "identity_exceeds_supported_size"
+
 EVIDENCE_SECTION_NAMES = (
     "parse",
     "recognition",
@@ -58,7 +66,7 @@ def unavailable_section(reason: str = "legacy evidence was not captured") -> Evi
 
 @dataclass(frozen=True)
 class PipelineEvidence:
-    """Immutable captured evidence for one TaskItem attempt."""
+    """Immutable captured evidence and normalized identity for one TaskItem attempt."""
 
     evidence_id: str
     task_id: str
@@ -74,6 +82,11 @@ class PipelineEvidence:
     warnings: tuple[str, ...] = ()
     error: str | None = None
     truncated: bool = False
+    # This is an internal, normalized domain snapshot used to reproduce a
+    # later plan. It is kept separate from the bounded operator-facing
+    # metadata section, which is intentionally not a lossless execution input.
+    execution_identity: Mapping[str, Any] | None = None
+    execution_identity_unavailable_reason: str | None = None
 
     def section(self, name: str) -> EvidenceSection:
         return self.sections.get(name, unavailable_section())
@@ -91,6 +104,10 @@ class PipelineEvidence:
             "configurationSnapshotDigest": self.configuration_snapshot_digest,
             "outcome": self.outcome,
             "sections": {name: self.section(name).document() for name in EVIDENCE_SECTION_NAMES},
+            "executionIdentity": (
+                dict(self.execution_identity) if self.execution_identity is not None else None
+            ),
+            "executionIdentityUnavailableReason": self.execution_identity_unavailable_reason,
             "warnings": list(self.warnings),
             "error": self.error,
             "truncated": self.truncated,
@@ -131,6 +148,17 @@ def evidence_from_document(
         configuration_snapshot_digest=document.get("configurationSnapshotDigest"),
         outcome=str(document["outcome"]),
         sections=sections,
+        execution_identity=(
+            dict(document["executionIdentity"])
+            if isinstance(document.get("executionIdentity"), Mapping)
+            else None
+        ),
+        execution_identity_unavailable_reason=(
+            EXECUTION_IDENTITY_SIZE_LIMIT_REASON
+            if document.get("executionIdentityUnavailableReason")
+            == EXECUTION_IDENTITY_SIZE_LIMIT_REASON
+            else None
+        ),
         warnings=tuple(str(item) for item in document.get("warnings", ())),
         error=document.get("error"),
         truncated=bool(document.get("truncated")),

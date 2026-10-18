@@ -21,11 +21,10 @@ import { TaskListPage } from "../features/operations/TaskListPage";
 import { TaskDetailPage } from "../features/operations/TaskDetailPage";
 import { JobListPage } from "../features/operations/JobListPage";
 import { JobDetailPage } from "../features/operations/JobDetailPage";
-import { ScanNewPage } from "../features/operations/ScanNewPage";
-import { ScanDetailPage } from "../features/operations/ScanDetailPage";
+import { ScanRetiredPage } from "../features/operations/ScanRetiredPage";
 import { PreviewNewPage } from "../features/operations/PreviewNewPage";
 import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
-import { OrganizeNewPage } from "../features/operations/OrganizeNewPage";
+import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { OrganizePreviewPage } from "../features/operations/OrganizePreviewPage";
@@ -165,13 +164,13 @@ const jobDetailRoute = createRoute({
 const scanNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/scan/new",
-  component: ScanNewPage,
+  component: ScanRetiredPage,
 });
 
 const scanDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/scan/$taskId",
-  component: ScanDetailPage,
+  component: ScanRetiredPage,
 });
 
 const previewNewRoute = createRoute({
@@ -189,7 +188,7 @@ const previewDetailRoute = createRoute({
 const organizeNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/organize/new",
-  component: OrganizeNewPage,
+  component: OrganizeCreationPage,
 });
 
 const organizeIntentRoute = createRoute({

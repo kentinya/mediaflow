@@ -1,3 +1,5 @@
+import { normalizeAttachmentResults, type AttachmentResult } from "./task";
+
 /**
  * Frontend-owned bounded manual Organize models.
  *
@@ -299,6 +301,19 @@ export interface OrganizeMetadataReferenceModel {
   readonly year: number | null;
 }
 
+/**
+ * One bounded, source-grounded identity the backend will accept for an item's
+ * choice. It is exactly the authority a save re-validates against, never a
+ * free-form provider payload the operator could invent.
+ */
+export interface OrganizeAllowedMetadataIdentityModel {
+  readonly provider: string | null;
+  readonly providerId: string | null;
+  readonly mediaType: string | null;
+  readonly title: string | null;
+  readonly year: number | null;
+}
+
 export interface OrganizeChoiceModel {
   readonly recognitionTypeId: string | null;
   readonly metadata: OrganizeMetadataReferenceModel | null;
@@ -323,6 +338,12 @@ export interface OrganizeIntentItemModel {
   readonly occurrenceState: string | null;
   readonly scanStatus: string | null;
   readonly choice: OrganizeChoiceModel;
+  /**
+   * The bounded, source-grounded identities this item's choice may select. An
+   * empty list means no identity option is currently grounded, so only the
+   * RecognitionType can be changed here.
+   */
+  readonly allowedMetadataIdentities: readonly OrganizeAllowedMetadataIdentityModel[];
 }
 
 export interface OrganizeIntentModel {
@@ -371,6 +392,8 @@ export interface OrganizeExecutionEffectModel {
 }
 
 export interface OrganizeExecutionItemModel {
+  readonly primaryCompleted?: boolean;
+  readonly attachmentResults?: readonly AttachmentResult[];
   readonly itemId: string;
   readonly taskId: string | null;
   readonly taskItemId: string | null;
@@ -707,7 +730,30 @@ function normalizeIntentItem(value: unknown): OrganizeIntentItemModel {
     occurrenceState: optionalText(rawSource, "occurrenceState"),
     scanStatus: optionalText(rawSource, "scanStatus"),
     choice: normalizeChoice(source["choice"]),
+    allowedMetadataIdentities: normalizeAllowedIdentities(
+      source["allowedMetadataIdentities"],
+    ),
   };
+}
+
+function normalizeAllowedIdentities(
+  value: unknown,
+): OrganizeAllowedMetadataIdentityModel[] {
+  // The bounded identity options are additive: a legacy projection that
+  // predates them simply offers no identity correction on this page.
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 20)
+    return fail("allowedMetadataIdentities");
+  return value.map((item) => {
+    const source = readRecord(item, "item.allowedMetadataIdentities[]");
+    return {
+      provider: optionalText(source, "provider"),
+      providerId: optionalText(source, "providerId"),
+      mediaType: optionalText(source, "mediaType"),
+      title: optionalText(source, "title"),
+      year: optionalNumber(source["year"], "allowedMetadataIdentities.year"),
+    };
+  });
 }
 
 export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
@@ -1008,6 +1054,11 @@ function normalizeExecutionItem(value: unknown): OrganizeExecutionItemModel {
     itemId: text(source, "itemId"),
     taskId: optionalText(source, "taskId"),
     taskItemId: optionalText(source, "taskItemId"),
+    primaryCompleted:
+      source["primaryCompleted"] === undefined
+        ? false
+        : flag(source, "primaryCompleted"),
+    attachmentResults: normalizeAttachmentResults(source["attachmentResults"]),
     status,
     stage: optionalText(source, "stage"),
     resultId: optionalText(source, "resultId"),

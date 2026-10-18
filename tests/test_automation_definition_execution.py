@@ -2238,7 +2238,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             self.assertFalse(first.exists())
             self.assertTrue(second.exists())
 
-    def test_intra_item_permission_loss_after_attachment_stops_primary_without_replay(
+    def test_intra_item_permission_loss_after_primary_stops_attachments_without_replay(
         self,
     ) -> None:
         definition = _definition(
@@ -2320,8 +2320,8 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                     def assert_live(self, claimed_job, claimed_definition):
                         self.boundary_calls += 1
-                        # CREATE_DIRECTORY and both attachment cross-storage boundaries
-                        # pass, then the primary mutation re-reads current permission
+                        # CREATE_DIRECTORY and both primary cross-storage boundaries
+                        # pass, then the attachment mutation re-reads current permission
                         # and fails.
                         if self.boundary_calls == 4:
                             permission.allowed = False
@@ -2361,8 +2361,10 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 result = repository.list_results_for_item(item.item_id)[0]
                 self.assertEqual(result.status, TaskItemStatus.PARTIAL.value)
                 self.assertEqual(result.retry_category, "unattended_authority")
-                self.assertIn("ATTACHMENT", ";".join(result.completed_operations))
-                self.assertNotIn("PRIMARY", result.completed_operations[-1])
+                self.assertIn("MOVE", result.completed_operations)
+                self.assertNotIn("ATTACHMENT", ";".join(result.completed_operations))
+                self.assertTrue(result.primary_completed)
+                self.assertEqual(result.attachment_results[0]["reason"], "authority_refused")
                 checkpoint = ProcessingCheckpointService(repository).get(item.item_id)
                 self.assertEqual(checkpoint.error_category.value, "unattended_authority")
                 self.assertEqual(checkpoint.effect_certainty.value, "verified_complete")
@@ -2385,9 +2387,8 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 self.assertIsNone(worker.run_next())
 
-            self.assertTrue(media.exists())
-            self.assertEqual(b"media", media.read_bytes())
-            self.assertFalse(subtitle.exists())
+            self.assertFalse(media.exists())
+            self.assertEqual(b"english", subtitle.read_bytes())
             target_subtitle = (
                 root
                 / "target"
@@ -2397,9 +2398,8 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 / "Alpha Movie (2024)"
                 / "Alpha Movie (2024).en.srt"
             )
-            self.assertTrue(target_subtitle.exists())
-            self.assertEqual(b"english", target_subtitle.read_bytes())
-            self.assertFalse(
+            self.assertFalse(target_subtitle.exists())
+            self.assertTrue(
                 any(
                     "Alpha Movie (2024).mkv" in path.name
                     for path in (root / "target").rglob("*.mkv")

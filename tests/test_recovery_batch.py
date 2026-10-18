@@ -666,6 +666,68 @@ class RecoveryBatchTests(unittest.TestCase):
                 target_before,
             )
 
+    def test_batch_child_exposes_its_current_durable_same_page_summary(self) -> None:
+        """R3: the batch detail carries each child's independent durable summary.
+
+        A child that already has a non-authorizing plan summary exposes it on
+        the batch projection so the operator can aggregate the ready subset in
+        the task's own interface.  The summary carries no execution authority.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            provider = DetailCountingProvider(
+                candidates=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = helper._complete_analysis_for_summary(environment, provider)
+            services = helper._manual_services(environment, provider)
+            recovery, api = helper._recovery_api(environment, services)
+            self.addCleanup(helper._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            status, batch = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/recovery/continue-batch",
+                method="POST",
+                body={
+                    "items": [
+                        {
+                            "itemId": run.items[0].task_item_id,
+                            "expectedCheckpointVersion": checkpoint.checkpoint_version,
+                        }
+                    ]
+                },
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{batch}")
+            status, detail = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/recovery-batches/{batch['batch_id']}",
+                token="operator-token",
+            )
+            self.assertEqual(200, status, f"{detail}")
+            child = detail["items"][0]
+            self.assertEqual(
+                preparation["preparation_id"],
+                child["manualRecoveryPreparation"]["preparation_id"],
+            )
+            self.assertEqual(
+                preparation["preview_id"], child["manualRecoveryPreparation"]["preview_id"]
+            )
+            self.assertFalse(child["manualRecoveryPreparation"]["hasExecutionAuthority"])
+            self.assertIsNone(child["manualRecoveryPreparation"]["execution_id"])
+
     def test_failed_item_batch_admits_request_and_links_child_in_one_write(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = _RecoveryContinuationTests()

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   OPERATIONS_RETURN_KEY,
+  isSafeOperationsSourceScope,
   operationsLandingSearch,
   operationsReturnContextFromSearch,
   operationsReturnSearch,
@@ -9,6 +10,12 @@ import {
 } from "./operations-return";
 
 describe("operations return context", () => {
+  it("shares a bounded source-scope grammar and rejects control characters", () => {
+    expect(isSafeOperationsSourceScope("Movies/alpha")).toBe(true);
+    expect(isSafeOperationsSourceScope("Movies/\u001falpha")).toBe(false);
+    expect(isSafeOperationsSourceScope("Movies/alpha\u007f")).toBe(false);
+  });
+
   it("reads only the bounded serialized context", () => {
     expect(
       readOperationsReturnContext({
@@ -35,6 +42,9 @@ describe("operations return context", () => {
       "status=../../dashboard",
       "returnOps=q=x",
       "attention=1&dir=aside",
+      "source=Movies%2F..%2Fprivate",
+      "source=https%3A%2F%2Fmedia.example",
+      "source=token%3Dsecret",
     ];
     for (const value of hostile) {
       // Out-of-grammar serialization degrades to "not Operations-originated";
@@ -62,7 +72,8 @@ describe("operations return context", () => {
   it("re-validates every preserved key through the published grammar", () => {
     const parsed = parseOperationsReturnContext(
       "status=waiting_confirm&command=manual_organize_execute&q=%E7%9F%A9%E9%98%B5" +
-        "&from=2026-01-01&to=2026-02-01T10:00:00Z&attention=true" +
+        "&from=2026-01-01&to=2026-02-01T10:00:00Z&source=Movies%2F%E7%94%B5%E5%BD%B1&attention=true" +
+        "&view=failure&problemRun=task-9&problemType=metadata&problemCursor=p2&problemDir=forward" +
         "&cursor=abc123&dir=backward&run=run-1&tab=items&istat=success" +
         "&rkind=result&item=item-1&icur=x&rcur=y&idir=forward&rdir=bogus",
     );
@@ -71,6 +82,12 @@ describe("operations return context", () => {
     expect(parsed["q"]).toBe("矩阵");
     expect(parsed["from"]).toBe("2026-01-01");
     expect(parsed["attention"]).toBe(true);
+    expect(parsed["source"]).toBe("Movies/电影");
+    expect(parsed["view"]).toBe("failure");
+    expect(parsed["problemRun"]).toBe("task-9");
+    expect(parsed["problemType"]).toBe("metadata");
+    expect(parsed["problemCursor"]).toBe("p2");
+    expect(parsed["problemDir"]).toBe("forward");
     expect(parsed["cursor"]).toBe("abc123");
     expect(parsed["dir"]).toBe("backward");
     expect(parsed["run"]).toBe("run-1");
@@ -115,13 +132,18 @@ describe("operations return context", () => {
       status: "failed",
       attention: true,
       q: "long title",
+      source: "Movies/alpha",
+      problemRun: "task-9",
+      problemType: "metadata",
+      problemCursor: "page-2",
+      problemDir: "backward",
       run: "selected-1",
       cursor: "abc",
       dir: "forward",
       [OPERATIONS_RETURN_KEY]: "q=never-nested",
     });
     expect(context).toBe(
-      "status=failed&attention=true&q=long+title&run=selected-1&cursor=abc&dir=forward",
+      "status=failed&attention=true&q=long+title&source=Movies%2Falpha&problemRun=task-9&problemType=metadata&problemCursor=page-2&problemDir=backward&run=selected-1&cursor=abc&dir=forward",
     );
     expect(
       readOperationsReturnContext({ [OPERATIONS_RETURN_KEY]: context }),
@@ -130,6 +152,10 @@ describe("operations return context", () => {
     expect(roundTrip["status"]).toBe("failed");
     expect(roundTrip["attention"]).toBe(true);
     expect(roundTrip["q"]).toBe("long title");
+    expect(roundTrip["source"]).toBe("Movies/alpha");
+    expect(roundTrip["problemRun"]).toBe("task-9");
+    expect(roundTrip["problemType"]).toBe("metadata");
+    expect(roundTrip["problemCursor"]).toBe("page-2");
     expect(roundTrip[OPERATIONS_RETURN_KEY]).toBeUndefined();
   });
 

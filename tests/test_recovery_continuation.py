@@ -14,11 +14,13 @@ from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
+from mediaflow.application.evidence_capture import _execution_identity_document
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_recovery_continuation import (
+    ManualRecoveryContinuationError,
     ManualRecoveryContinuationService,
 )
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -35,11 +37,15 @@ from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.classification_review import ClassificationReviewStatus
 from mediaflow.domain.library import ResourceLibrary
+from mediaflow.domain.manual_organize import ManualChoice
+from mediaflow.domain.media_evidence import PipelineEvidence
 from mediaflow.domain.metadata import (
     CandidateMatchResult,
     CandidateMatchStatus,
     CandidateScore,
+    EpisodeIdentity,
     MediaCandidate,
+    MediaIdentity,
     MediaType,
     MetadataError,
     MetadataErrorCode,
@@ -175,7 +181,56 @@ class PhaseCandidatesProvider(DetailCountingProvider):
 
     def search_tv(self, query, policy=None, **kwargs):
         self.tv_queries.append((query.title_candidate, query.year))
+        self.calls += 1
         return self.search_candidates
+
+
+class EpisodeCountingProvider(DetailCountingProvider):
+    """Fake TV provider with a real episode title and observable call count."""
+
+    def __init__(self, candidate):
+        super().__init__((candidate,))
+        self.season_requests = []
+
+    def get_tv(self, provider_id, policy=None, **kwargs):
+        self.calls += 1
+        candidate = self._by_id(provider_id)
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            candidate.title,
+            candidate.original_title,
+            candidate.year,
+            genres=candidate.genres,
+            countries=candidate.countries,
+            languages=candidate.languages,
+            keywords=candidate.keywords,
+            alternative_titles=("Corrected Alternate",),
+            translated_titles=("正确",),
+            release_date="2024-01-02",
+            canonical_release_date="2024-01-02",
+            regional_release_date="2024-01-03",
+            overview="A complete normalized provider identity.",
+            external_ids=(("imdb", "tt1234567"),),
+            poster_path="/posters/tv-42.jpg",
+            backdrop_path="/backdrops/tv-42.jpg",
+            confidence=98.5,
+            matched_by="candidate_matcher",
+            recognition_type_id="B",
+        )
+
+    def get_season(self, provider_id, season, policy=None, **kwargs):
+        self.calls += 1
+        self.season_requests.append((provider_id, season))
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.TV,
+            "Season 1",
+            season=season,
+            episode_metadata=(EpisodeIdentity(1, "Episode 1", "2024-01-10", "Episode overview"),),
+        )
 
 
 class RecoveryContinuationTests(unittest.TestCase):
@@ -388,6 +443,9 @@ class RecoveryContinuationTests(unittest.TestCase):
             task_repository,
             catalog,
             configuration_service=configuration_service,
+            storage_factory=lambda runtime, storage_ids: runtime.create_storages(
+                storage_ids=storage_ids
+            ),
         )
         previews = ManualOrganizePreviewService(
             task_repository,
@@ -494,24 +552,60 @@ class RecoveryContinuationTests(unittest.TestCase):
         self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
         return storage_construction
 
-    def _fail_manual_organize(self, environment, provider, *, executor=None, source_subdir="C"):
+    def _fail_manual_organize(
+        self,
+        environment,
+        provider,
+        *,
+        executor=None,
+        source_subdir="C",
+        choice: ManualChoice | None = None,
+    ):
         """Run a real manual organize that fails at the executor for the one source."""
-        records = self._scan_manual_source(environment, source_subdir=source_subdir)
+        source_name = Path(environment["source_file"]).name
+        records = self._scan_manual_source(
+            environment, names=(source_name,), source_subdir=source_subdir
+        )
         record = records[0]
         services = self._manual_services(
             environment,
             provider,
-            executor=executor or SelectiveManualExecutor("Correct.2024.mkv"),
+            executor=executor or SelectiveManualExecutor(source_name),
         )
         with SQLiteTaskRepository(environment["database"]):
-            preview = services["previews"].create_current(
-                scope_kind="file",
-                actor="operator",
-                file_id=record.file_id,
-                resource_library_id=record.resource_library_id,
-                occurrence_id=record.occurrence_id,
-                fingerprint=record.fingerprint,
-            )
+            if choice is None:
+                preview = services["previews"].create_current(
+                    scope_kind="file",
+                    actor="operator",
+                    file_id=record.file_id,
+                    resource_library_id=record.resource_library_id,
+                    occurrence_id=record.occurrence_id,
+                    fingerprint=record.fingerprint,
+                )
+            else:
+                intent = services["previews"].admit_storage_paths(
+                    resource_library_id=record.resource_library_id,
+                    relative_paths=(record.path.removeprefix("Media/"),),
+                    actor="operator",
+                )
+                changed = services["intents"].update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    choice,
+                    expected_version=intent.version,
+                    expected_item_version=intent.items[0].version,
+                    actor="operator",
+                )
+                preview = services["previews"].create(
+                    intent.intent_id,
+                    expected_version=changed.version,
+                    expected_item_versions={item.item_id: item.version for item in changed.items},
+                    snapshot_id=changed.snapshot_id,
+                    snapshot_digest=changed.snapshot_digest,
+                    actor="operator",
+                    source_scope="file",
+                    source_scope_id=record.file_id,
+                )
             item = preview.items[0]
             authority = services["execution"].authorize(
                 preview.preview_id,
@@ -836,8 +930,9 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertEqual("recovery_request_active", refused["error"]["code"])
             self._assert_no_link_authority_or_mutation(environment, run, 1)
 
-            # (b) The single re-analysis ended waiting on a human decision, so no
-            # completed linked analysis exists and no authority is issued.
+            # (b) The single re-analysis ended waiting on a human decision. The
+            # refusal names that durable linked blocker so the operator can
+            # resolve it instead of receiving a generic re-analysis loop.
             provider.replace(
                 search=(
                     MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
@@ -861,7 +956,13 @@ class RecoveryContinuationTests(unittest.TestCase):
             )
             status, refused = self._authorize_continuation(api, run, checkpoint.checkpoint_version)
             self.assertEqual(409, status)
-            self.assertEqual("analysis_not_completed", refused["error"]["code"])
+            self.assertEqual("review_pending", refused["error"]["code"])
+            self.assertEqual("metadata", refused["error"]["details"]["blockerKind"])
+            self.assertEqual(
+                "resolve the blocker on the linked TaskItem, continue that item's safe analysis, "
+                "then return here",
+                refused["error"]["details"]["nextAction"],
+            )
             self._assert_no_link_authority_or_mutation(environment, run, 1)
             self._close_manual_services(services)
 
@@ -1629,6 +1730,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                     repository.get_item(source_item.item_id).status,
                     TaskItemStatus.PENDING,
                 )
+                failed_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(failed_overview)
+                assert failed_overview is not None
+                self.assertTrue(failed_overview.attention)
+                self.assertEqual(("failure",), failed_overview.problem_types)
             history = Path(environment["root"] / "history.jsonl")
             self.assertNotIn("provider exception marker", history.read_text(encoding="utf-8"))
 
@@ -1648,6 +1754,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                     actor="operator",
                 )
                 self.assertNotEqual(second.request_id, admitted.request_id)
+                accepted_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(accepted_overview)
+                assert accepted_overview is not None
+                self.assertTrue(accepted_overview.attention)
+                self.assertEqual((), accepted_overview.problem_types)
             self._continue(environment, source_task, source_item)
             self._run_worker(
                 environment,
@@ -1664,6 +1775,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                 )
                 requests = repository.list_recovery_requests(source_item.item_id)
                 self.assertEqual(len(requests), 2)
+                completed_overview = repository.operations_run(source_task.task_id)
+                self.assertIsNotNone(completed_overview)
+                assert completed_overview is not None
+                self.assertTrue(completed_overview.attention)
+                self.assertEqual((), completed_overview.problem_types)
 
     def test_zero_mutation_falsified_through_real_seams_and_tree_snapshot(self) -> None:
         def tree_snapshot(root: Path) -> tuple[tuple[str, int, int], ...]:
@@ -1929,6 +2045,17 @@ class RecoveryContinuationTests(unittest.TestCase):
                 source_before = repository.get_item(run.items[0].task_item_id)
                 self.assertIsNotNone(source_before)
                 self.assertEqual(TaskItemStatus.PENDING.value, source_before.status.value)
+                source_overview = repository.operations_run(run.task_id)
+                self.assertIsNotNone(source_overview)
+                assert source_overview is not None
+                self.assertTrue(source_overview.attention)
+                self.assertEqual((), source_overview.problem_types)
+                self.assertEqual(
+                    0,
+                    dict(source_overview.problem_file_counts).get("failure"),
+                    "a completed analysis continuation remains a generic safe next step, "
+                    "not a technical failure",
+                )
 
             # The completed DryRun unlocks one exact continued execution authority.
             continued_services = self._manual_services(environment, provider)
@@ -2007,6 +2134,11 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertEqual(link["source_task_id"], run.task_id)
             self.assertEqual(link["source_item_id"], run.items[0].task_item_id)
             self.assertEqual(link["analysis_task_id"], continuation.new_task_id)
+            authorized_overview = continued_services["task_repository"].operations_run(run.task_id)
+            self.assertIsNotNone(authorized_overview)
+            assert authorized_overview is not None
+            self.assertTrue(authorized_overview.attention)
+            self.assertEqual((), authorized_overview.problem_types)
 
             self.assertTrue(environment["source_file"].exists())
             status, item_before_execution = api_request(
@@ -2070,6 +2202,11 @@ class RecoveryContinuationTests(unittest.TestCase):
             self.assertIsNotNone(persisted_link)
             self.assertEqual("consumed", persisted_link.status.value)
             self.assertEqual(completed["execution_id"], persisted_link.execution_id)
+            consumed_overview = continued_services["task_repository"].operations_run(run.task_id)
+            self.assertIsNotNone(consumed_overview)
+            assert consumed_overview is not None
+            self.assertFalse(consumed_overview.attention)
+            self.assertEqual((), consumed_overview.problem_types)
             with SQLiteTaskRepository(environment["database"]) as repository:
                 authorization = repository.get_manual_execution_authorization(
                     link["authorization_id"]
@@ -2114,6 +2251,10 @@ class RecoveryContinuationTests(unittest.TestCase):
                 review = repository.get_metadata_review_for_item(linked.item_id)
                 assert review is not None
                 self.assertEqual(MetadataReviewStatus.PENDING, review.status)
+                failure_window = repository.operations_runs_window(view="failure")
+                metadata_window = repository.operations_runs_window(view="metadata")
+                self.assertNotIn(run.task_id, {row.task_id for row in failure_window.page})
+                self.assertIn(analysis.task_id, {row.task_id for row in metadata_window.page})
 
             # Persistence-only decision saved on the linked analysis item.
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -2122,6 +2263,20 @@ class RecoveryContinuationTests(unittest.TestCase):
                 assert resolved is not None
                 self.assertEqual(MetadataReviewStatus.RESOLVED, resolved.status)
                 self.assertEqual("42", resolved.selected_provider_id)
+                # Immediately after saving the decision the child item waits
+                # for the next admission. No new technical failure happened,
+                # so the original source must NOT reappear under Failure while
+                # its own generic safe-continuation attention stays.
+                resolved_item = repository.get_item(linked.item_id)
+                assert resolved_item is not None
+                self.assertEqual(TaskItemStatus.PENDING, resolved_item.status)
+                self.assertEqual("metadata_resolved", resolved_item.stage)
+                saved_failure = repository.operations_runs_window(view="failure")
+                saved_metadata = repository.operations_runs_window(view="metadata")
+                self.assertNotIn(run.task_id, {row.task_id for row in saved_failure.page})
+                self.assertNotIn(analysis.task_id, {row.task_id for row in saved_metadata.page})
+                saved_attention = repository.operations_runs_window(view="attention")
+                self.assertIn(run.task_id, {row.task_id for row in saved_attention.page})
 
             services = self._manual_services(environment, provider)
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -2154,6 +2309,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                 run,
                 expected_destination=results[-1].destination_path,
             )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                attention_window = repository.operations_runs_window(view="attention")
+                self.assertEqual(0, attention_window.total)
 
     def test_manual_recovery_re_analysis_consumes_recognition_decision_saved_on_linked_item(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2552,6 +2710,1121 @@ class RecoveryContinuationTests(unittest.TestCase):
                 expected_destination=results[-1].destination_path,
                 collision=collision,
             )
+
+    def _complete_analysis_for_summary(self, environment, provider):
+        """Drive one original manual failure to a completed linked re-analysis."""
+        services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            submission = self._admit_and_continue(services, run, repository)
+        self._close_manual_services(services)
+        self._run_worker(environment, provider)
+        self._completed_continuation_item(
+            environment, submission.job.job_id, RecoveryContinuationStatus.COMPLETED
+        )
+        return run
+
+    def test_recovery_confirmed_execution_clears_attention_after_real_worker(self):
+        """A confirmed recovery clears the current problem once the real Worker succeeds.
+
+        The same-page journey's durable preparation -> execution -> TaskItem/Result
+        chain is the read authority for the current problem list.  Before the
+        Worker runs the run is still in attention; after the real MOVE completes
+        with a verified effect the source item leaves the problem list and the
+        media is actually moved by OrganizerExecutor.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            # Before confirmation the run is still an outstanding problem.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                before = repository.operations_run(run.task_id)
+                assert before is not None
+                self.assertTrue(before.attention)
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            # Admission alone is not success: the source is untouched and the
+            # problem is still outstanding until the real Worker outcome.
+            self.assertTrue(environment["source_file"].exists())
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                queued = repository.operations_run(run.task_id)
+                assert queued is not None
+                self.assertTrue(queued.attention)
+            # The real resident Worker claims and runs the admitted execution.
+            services["execution"].run_admitted(
+                admitted["executionId"], worker_id="recovery-e2e-worker"
+            )
+            self._close_manual_services(services)
+            self.assertFalse(environment["source_file"].exists())
+            target_files = tuple(Path(environment["target_root"]).rglob("*.mkv"))
+            self.assertEqual(1, len(target_files))
+            # The confirmed follow-up is a durable success, so the source item
+            # no longer occupies the current problem list.
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                after = repository.operations_run(run.task_id)
+                assert after is not None
+                self.assertFalse(after.attention)
+                self.assertEqual((), after.problem_types)
+
+    def test_recovery_confirmed_execution_re_failure_keeps_both_failures_without_replay(self):
+        """A confirmed recovery that fails again keeps both failures and never replays.
+
+        The confirmed subset is admitted and the real Worker runs it.  If the
+        execution fails again, the new failure is recorded independently while
+        the original failure history is preserved, the admitted execution is
+        never automatically retried, and the source item remains an outstanding
+        problem with its own next step.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(
+                environment,
+                provider,
+                executor=SelectiveManualExecutor("Correct.2024.mkv"),
+            )
+            recovery, api = self._recovery_api(environment, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_results_before = len(repository.list_results(admitted["taskId"]))
+            # The real Worker runs the admitted subset; the failure executor
+            # fails this exact source again before any Storage mutation.
+            services["execution"].run_admitted(
+                admitted["executionId"], worker_id="recovery-refail-worker"
+            )
+            self._close_manual_services(services)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation_results_after = repository.list_results(admitted["taskId"])
+                # The re-failure is recorded on the continuation execution's own
+                # Task while the original failure history is retained on the
+                # source Task: neither overwrites the other.
+                self.assertGreater(len(continuation_results_after), continuation_results_before)
+                failures = tuple(
+                    value
+                    for value in continuation_results_after
+                    if value.status.lower() == "failed"
+                )
+                self.assertGreaterEqual(len(failures), 1)
+                original_results = repository.list_results(run.task_id)
+                self.assertGreaterEqual(len(original_results), 1)
+                # A re-failure is never automatically retried: the confirmed
+                # summary stays confirmed with its linked execution and no new
+                # authority is minted.
+                persisted = repository.get_manual_recovery_preparation(
+                    preparation["preparation_id"]
+                )
+                assert persisted is not None
+                self.assertEqual("confirmed", persisted.status.value)
+                self.assertEqual(admitted["executionId"], persisted.execution_id)
+                active = tuple(
+                    value
+                    for value in repository.list_manual_execution_authorizations(limit=50)
+                    if value.status.value == "active"
+                )
+                self.assertEqual((), active)
+
+    def test_recovery_prepare_summary_is_read_only_and_durable(self):
+        """Prepare publishes a durable, authority-free summary with zero mutation."""
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                executions_before = len(
+                    repository.list_manual_executions_for_task_item(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual("prepared", preparation["status"])
+            self.assertIsNone(preparation["authorization_id"])
+            self.assertIsNone(preparation["execution_id"])
+            self.assertFalse(preparation["hasExecutionAuthority"])
+            # Zero mutation, zero authority, zero new execution.
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    executions_before,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+                self.assertIsNone(
+                    repository.get_manual_recovery_link_by_source(
+                        run.task_id, run.items[0].task_item_id
+                    )
+                )
+            # The summary survives a fresh repository handle and a new service.
+            reopened = self._manual_services(environment, provider)
+            self.addCleanup(self._close_manual_services, reopened)
+            rediscovery, _api = self._recovery_api(environment, reopened)
+            durable = rediscovery.discovery_for_preparation(run.task_id, run.items[0].task_item_id)
+            assert durable is not None
+            self.assertEqual(preparation["preparation_id"], durable["preparation_id"])
+            self.assertEqual(preparation["preview_id"], durable["preview_id"])
+
+    def test_recovery_prepare_summary_reuses_analysis_without_provider_lookup(self):
+        """Preparing the summary adds no Provider search or detail round-trip.
+
+        The completed linked re-analysis already resolved this source's identity
+        under the pinned policy.  The summary consumes that durable identity
+        instead of re-running the analysis chain inside the HTTP request.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            searches_before = len(provider.movie_queries)
+            details_before = len(provider.movie_details)
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual(searches_before, len(provider.movie_queries))
+            self.assertEqual(details_before, len(provider.movie_details))
+            preview = services["previews"].get(preparation["preview_id"])
+            self.assertEqual("previewed", preview.items[0].status.value)
+            self.assertIsNotNone(preview.items[0].plan)
+
+    def test_tv_episode_identity_survives_durable_summary_rebuild(self):
+        """The durable analysis identity preserves per-episode naming inputs."""
+
+        for missing_strategy in ("omit_token", "error"):
+            with self.subTest(missing_strategy=missing_strategy):
+                with tempfile.TemporaryDirectory() as directory:
+
+                    def configure_tv(document):
+                        for policy in document["namingPolicies"]:
+                            if policy["id"] == "B":
+                                policy["missingVariableStrategy"] = missing_strategy
+
+                    environment = self._environment(
+                        directory,
+                        source_subdir="电视剧",
+                        document_patch=configure_tv,
+                    )
+                    source_file = Path(environment["source_file"])
+                    tv_source = source_file.with_name("Correct.S01E01.2024.mkv")
+                    source_file.rename(tv_source)
+                    environment["source_file"] = tv_source
+                    environment["storage_path"] = "Media/电视剧/Correct.S01E01.2024.mkv"
+                    environment["display_source"] = str(tv_source)
+                    provider = EpisodeCountingProvider(
+                        MediaCandidate(
+                            "tmdb",
+                            "tv-42",
+                            MediaType.TV,
+                            "Correct",
+                            year=2024,
+                            genres=("Drama",),
+                            countries=("JP",),
+                            languages=("ja",),
+                            keywords=("mystery",),
+                        )
+                    )
+                    services, run, _record, first_preview = self._fail_manual_organize(
+                        environment,
+                        provider,
+                        executor=SelectiveManualExecutor("Correct.S01E01.2024.mkv"),
+                        source_subdir="电视剧",
+                        choice=ManualChoice("B", None, "B", "B", "B"),
+                    )
+                    first_target = first_preview.items[0].plan["destination"]["path"]
+                    self.assertIn("Episode 1", first_target)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        submission = self._admit_and_continue(services, run, repository)
+                    self._close_manual_services(services)
+                    self._run_worker(environment, provider)
+                    continuation, analysis_item = self._completed_continuation_item(
+                        environment,
+                        submission.job.job_id,
+                        RecoveryContinuationStatus.COMPLETED,
+                    )
+                    self.assertIsNotNone(analysis_item)
+                    assert analysis_item is not None
+                    self.assertIsNotNone(continuation.new_result_id)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        analysis_evidence = repository.list_evidence_for_item(
+                            analysis_item.item_id, limit=16
+                        )
+                        metadata_section = analysis_evidence[0].section("metadata")
+                        plan_section = analysis_evidence[0].section("plan")
+                        self.assertTrue(metadata_section.available)
+                        self.assertTrue(plan_section.available)
+                        assert metadata_section.value is not None
+                        assert plan_section.value is not None
+                        self.assertEqual("Episode 1", metadata_section.value.get("episodeTitle"))
+                        self.assertEqual(
+                            "Episode 1",
+                            metadata_section.value["episodeMetadata"][0]["title"],
+                        )
+                        self.assertEqual(("mystery",), tuple(metadata_section.value["keywords"]))
+                        durable_identity = (
+                            ManualRecoveryContinuationService._identity_from_document(
+                                analysis_evidence[0].execution_identity
+                            )
+                        )
+                        self.assertIsNotNone(durable_identity)
+                        assert durable_identity is not None
+                        self.assertEqual(("mystery",), durable_identity.keywords)
+                        self.assertEqual(
+                            ("Corrected Alternate",), durable_identity.alternative_titles
+                        )
+                        self.assertEqual(("正确",), durable_identity.translated_titles)
+                        self.assertEqual(("Drama",), durable_identity.genres)
+                        self.assertEqual(("JP",), durable_identity.countries)
+                        self.assertEqual(("ja",), durable_identity.languages)
+                        self.assertEqual(("imdb", "tt1234567"), durable_identity.external_ids[0])
+                        self.assertEqual(
+                            "Episode overview", durable_identity.episode_metadata[0].overview
+                        )
+                        self.assertEqual("Episode 1", durable_identity.episode_title)
+                        self.assertEqual("Episode 1", durable_identity.episode_metadata[0].title)
+                        self.assertIsNone(
+                            ManualRecoveryContinuationService._identity_from_document(
+                                metadata_section.value
+                            ),
+                            "bounded operator evidence is not a plan identity snapshot",
+                        )
+                        legacy_tv_evidence = dict(metadata_section.value)
+                        self.assertIsNone(
+                            ManualRecoveryContinuationService._identity_from_document(
+                                legacy_tv_evidence
+                            ),
+                            (
+                                "legacy evidence without an exact identity snapshot "
+                                "must request a new analysis"
+                            ),
+                        )
+                        self.assertIn("Episode 1", plan_section.value["target"])
+                        analysis_target = plan_section.value["target"]
+
+                    provider_calls_before_summary = provider.calls
+                    services = self._manual_services(environment, provider)
+                    recovery, api = self._recovery_api(environment, services)
+                    self.addCleanup(self._close_manual_services, services)
+                    checkpoint = recovery._checkpoint_service.get(
+                        run.items[0].task_item_id, task_id=run.task_id
+                    )
+                    status, preparation = api_request(
+                        api,
+                        f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                        "/recovery/prepare-summary",
+                        method="POST",
+                        body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                        token="operator-token",
+                    )
+                    self.assertEqual(201, status, f"{preparation}")
+                    self.assertEqual(provider_calls_before_summary, provider.calls)
+                    summary = services["previews"].get(preparation["preview_id"])
+                    summary_target = summary.items[0].plan["destination"]["path"]
+                    self.assertEqual(analysis_target, summary_target)
+                    self.assertIn("Episode 1", summary_target)
+                    self.assertTrue(tv_source.exists())
+                    self.assertEqual(
+                        (),
+                        tuple(
+                            value
+                            for value in Path(environment["target_root"]).rglob("*")
+                            if value.is_file()
+                        ),
+                    )
+
+                    status, admitted = api_request(
+                        api,
+                        f"/api/v1/manual-recovery-preparations/"
+                        f"{preparation['preparation_id']}/confirm",
+                        method="POST",
+                        body={
+                            "itemIds": [summary.items[0].item_id],
+                            "confirmation": True,
+                        },
+                        token="operator-token",
+                    )
+                    self.assertEqual(202, status, f"{admitted}")
+                    self.assertTrue(tv_source.exists())
+                    self._run_worker(environment, provider)
+                    physical_target = Path(environment["target_root"]) / summary_target
+                    self.assertTrue(physical_target.is_file(), str(physical_target))
+                    self.assertIn("Episode 1", physical_target.name)
+                    self.assertFalse(tv_source.exists())
+
+    def test_long_overview_survives_durable_summary_and_classification(self):
+        """Long accepted overviews remain complete plan inputs after DB reopen."""
+
+        marker = "tailmarker"
+        lengths = (3900, 5200, 4096, 4097)
+        for overview_length in lengths:
+            with self.subTest(overview_length=overview_length):
+                with tempfile.TemporaryDirectory() as directory:
+
+                    def configure_overview_classification(document):
+                        for policy in document["classificationPolicies"]:
+                            if policy["id"] == "A":
+                                policy["rules"].insert(
+                                    0,
+                                    {
+                                        "id": "overview-tail-marker",
+                                        "priority": 150,
+                                        "conditions": {
+                                            "mediaType": ["movie"],
+                                            "keywords": [marker],
+                                        },
+                                        "result": {
+                                            "mediaLibraryId": "movies",
+                                            "library": "Movies",
+                                            "path": ["Overview Tail"],
+                                        },
+                                    },
+                                )
+
+                    overview = "x" * (overview_length - len(marker)) + marker
+                    environment = self._environment(
+                        directory, document_patch=configure_overview_classification
+                    )
+                    provider = DetailCountingProvider(
+                        (
+                            MediaCandidate(
+                                "tmdb",
+                                "42",
+                                MediaType.MOVIE,
+                                "Correct",
+                                year=2024,
+                                overview=overview,
+                            ),
+                        )
+                    )
+                    services, run, _record, first_preview = self._fail_manual_organize(
+                        environment,
+                        provider,
+                        executor=SelectiveManualExecutor("Correct.2024.mkv"),
+                        choice=ManualChoice("A", None, "A", "A", "A"),
+                    )
+                    analysis_target = first_preview.items[0].plan["destination"]["path"]
+                    self.assertIn("Overview Tail", analysis_target)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        submission = self._admit_and_continue(services, run, repository)
+                    self._close_manual_services(services)
+                    self._run_worker(environment, provider)
+                    continuation, analysis_item = self._completed_continuation_item(
+                        environment,
+                        submission.job.job_id,
+                        RecoveryContinuationStatus.COMPLETED,
+                    )
+                    self.assertIsNotNone(analysis_item)
+                    assert analysis_item is not None
+                    self.assertIsNotNone(continuation.new_result_id)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        analysis_evidence = repository.list_evidence_for_item(
+                            analysis_item.item_id, limit=16
+                        )
+                        self.assertTrue(analysis_evidence)
+                        execution_identity = analysis_evidence[0].execution_identity
+                        self.assertIsNotNone(execution_identity)
+                        assert execution_identity is not None
+                        self.assertEqual(overview, execution_identity["overview"])
+                        rebuilt = ManualRecoveryContinuationService._identity_from_document(
+                            execution_identity
+                        )
+                        self.assertIsNotNone(rebuilt)
+                        assert rebuilt is not None
+                        self.assertEqual(overview, rebuilt.overview)
+
+                    services = self._manual_services(environment, provider)
+                    recovery, api = self._recovery_api(environment, services)
+                    self.addCleanup(self._close_manual_services, services)
+                    checkpoint = recovery._checkpoint_service.get(
+                        run.items[0].task_item_id, task_id=run.task_id
+                    )
+                    provider_calls_before_summary = provider.calls
+                    status, preparation = api_request(
+                        api,
+                        f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                        "/recovery/prepare-summary",
+                        method="POST",
+                        body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                        token="operator-token",
+                    )
+                    self.assertEqual(201, status, f"{preparation}")
+                    self.assertEqual(provider_calls_before_summary, provider.calls)
+                    summary = services["previews"].get(preparation["preview_id"])
+                    summary_target = summary.items[0].plan["destination"]["path"]
+                    self.assertEqual(analysis_target, summary_target)
+                    self.assertIn("Overview Tail", summary_target)
+                    self.assertTrue(environment["source_file"].exists())
+                    self.assertEqual(
+                        (),
+                        tuple(
+                            value
+                            for value in Path(environment["target_root"]).rglob("*")
+                            if value.is_file()
+                        ),
+                    )
+
+                    self._close_manual_services(services)
+                    services = self._manual_services(environment, provider)
+                    recovery, api = self._recovery_api(environment, services)
+                    with SQLiteTaskRepository(environment["database"]) as repository:
+                        durable = repository.get_current_manual_recovery_preparation(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                        self.assertIsNotNone(durable)
+                        assert durable is not None
+                        self.assertEqual(preparation["preparation_id"], durable.preparation_id)
+                    preview = services["previews"].get(preparation["preview_id"])
+                    status, admitted = api_request(
+                        api,
+                        f"/api/v1/manual-recovery-preparations/"
+                        f"{preparation['preparation_id']}/confirm",
+                        method="POST",
+                        body={"itemIds": [preview.items[0].item_id], "confirmation": True},
+                        token="operator-token",
+                    )
+                    self.assertEqual(202, status, f"{admitted}")
+                    self.assertTrue(environment["source_file"].exists())
+                    self._close_manual_services(services)
+                    self._run_worker(environment, provider)
+                    physical_target = Path(environment["target_root"]) / summary_target
+                    self.assertTrue(physical_target.is_file(), str(physical_target))
+                    self.assertFalse(environment["source_file"].exists())
+
+    def test_oversized_identity_explains_why_reanalysis_cannot_repair_summary(self):
+        """An over-limit identity gives a usable correction instead of a loop."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            task, item = self._seed_failed_item(environment)
+            identity, unavailable_reason = _execution_identity_document(
+                MediaIdentity(
+                    "tmdb",
+                    "42",
+                    MediaType.MOVIE,
+                    "Correct",
+                    year=2024,
+                    overview="x" * 132_000,
+                )
+            )
+            self.assertIsNone(identity)
+            self.assertEqual("identity_exceeds_supported_size", unavailable_reason)
+            evidence = PipelineEvidence(
+                evidence_id=f"{item.item_id}:size-limit",
+                task_id=task.task_id,
+                item_id=item.item_id,
+                attempts=1,
+                source_storage_id=item.storage_id,
+                source_path=item.source_path,
+                captured_at=datetime.now(UTC),
+                configuration_snapshot_id=task.configuration_snapshot_id,
+                configuration_snapshot_digest=task.configuration_snapshot_digest,
+                outcome="completed",
+                sections={},
+                execution_identity=identity,
+                execution_identity_unavailable_reason=unavailable_reason,
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                repository.append_evidence(evidence)
+                persisted = repository.list_evidence_for_item(item.item_id, limit=1)[0]
+                self.assertIsNone(persisted.execution_identity)
+                self.assertEqual(
+                    unavailable_reason, persisted.execution_identity_unavailable_reason
+                )
+                service = ManualRecoveryContinuationService(
+                    repository,
+                    intent_service=None,
+                    preview_service=None,
+                    execution_service=Mock(),
+                    checkpoint_service=Mock(),
+                )
+                with self.assertRaises(ManualRecoveryContinuationError) as raised:
+                    service._reusable_analysis_identity(item.item_id)
+            self.assertEqual("analysis_identity_unsupported", raised.exception.code)
+            next_action = raised.exception.next_action
+            self.assertIn("different Metadata candidate", next_action)
+            self.assertIn("repeating the same identity will not", next_action)
+
+    def test_recovery_prepare_summary_reuses_durable_identity_with_saved_metadata_decision(self):
+        """A saved Metadata decision must not force a live Provider lookup.
+
+        The operator resolves the ambiguous re-analysis candidate, the next
+        re-analysis completes under that exact decision, and the same-page
+        summary must consume the durable identity the completed analysis
+        resolved instead of running the decision through a fresh Provider
+        search/detail inside the HTTP request.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = PhaseCandidatesProvider(
+                (
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            provider.replace(
+                search=(MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            provider.replace(
+                search=(
+                    MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),
+                    MediaCandidate("tmdb", "43", MediaType.MOVIE, "Correct", year=2024),
+                )
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider, expected_code=1)
+            _continuation, analysis = self._completed_continuation_item(
+                environment, submission.job.job_id, RecoveryContinuationStatus.FAILED
+            )
+            assert analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                linked = repository.get_item(analysis.item_id)
+                assert linked is not None
+                self.assertEqual(TaskItemStatus.WAITING_METADATA, linked.status)
+                review = repository.get_metadata_review_for_item(linked.item_id)
+                assert review is not None
+                MetadataReviewService(repository).resolve(review.review_id, 1, actor="operator")
+                resolved = repository.get_metadata_review_for_item(linked.item_id)
+                assert resolved is not None
+                self.assertEqual("42", resolved.selected_provider_id)
+
+            services = self._manual_services(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                resubmission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            self._run_worker(environment, provider)
+            _retried, retried_analysis = self._completed_continuation_item(
+                environment, resubmission.job.job_id, RecoveryContinuationStatus.COMPLETED
+            )
+            assert retried_analysis is not None
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                retried_item = repository.get_item(retried_analysis.item_id)
+                assert retried_item is not None
+                self.assertEqual(TaskItemStatus.DRY_RUN, retried_item.status)
+
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            searches_before = len(provider.movie_queries)
+            details_before = len(provider.movie_details)
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            self.assertEqual(searches_before, len(provider.movie_queries))
+            self.assertEqual(details_before, len(provider.movie_details))
+            preview = services["previews"].get(preparation["preview_id"])
+            self.assertEqual("previewed", preview.items[0].status.value)
+            self.assertIsNotNone(preview.items[0].plan)
+            self.assertIn("tmdbid-42", preview.items[0].plan["destination"]["path"])
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_recovery_confirm_prepared_admits_exact_subset_and_links_summary(self):
+        """Confirmation admits the exact subset and links the summary atomically."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            status, admitted = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            self.assertEqual([ready_item_id], admitted["selectedItemIds"])
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                persisted = repository.get_manual_recovery_preparation(
+                    preparation["preparation_id"]
+                )
+                assert persisted is not None
+                self.assertEqual("confirmed", persisted.status.value)
+                self.assertEqual(admitted["executionId"], persisted.execution_id)
+                self.assertIsNotNone(persisted.authorization_id)
+            # A repeated confirmation resolves to the same durable execution.
+            status, repeated = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{repeated}")
+            self.assertEqual(admitted["executionId"], repeated["executionId"])
+
+    def test_recovery_prepare_summary_supersedes_previous_and_rejects_stale_checkpoint(self):
+        """A fresh summary supersedes the old one; a stale checkpoint is refused."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, first = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            status, second = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            self.assertNotEqual(first["preparation_id"], second["preparation_id"])
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                superseded = repository.get_manual_recovery_preparation(first["preparation_id"])
+                assert superseded is not None
+                self.assertEqual("superseded", superseded.status.value)
+                current = repository.get_current_manual_recovery_preparation(
+                    run.task_id, run.items[0].task_item_id
+                )
+                assert current is not None
+                self.assertEqual(second["preparation_id"], current.preparation_id)
+            # Confirming the superseded summary is refused; the current one is not.
+            status, refused = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{first['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            # A stale checkpoint version is refused before any work is created.
+            status, stale = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": "0" * 64},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{stale}")
+            self.assertEqual("stale_checkpoint", stale["error"]["code"])
+
+    def test_recovery_prepare_summary_requires_write_permission(self):
+        """A read-only principal cannot prepare a plan summary."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, denied = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="viewer-token",
+            )
+            self.assertEqual(403, status, f"{denied}")
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_recovery_confirm_rejects_other_actor_and_confirmation_without_flag(self):
+        """Only the preparing actor may confirm, and only with confirmation=true."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            confirm_path = (
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm"
+            )
+            # confirmation must be exactly true.
+            status, refused = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": False},
+                token="operator-token",
+            )
+            self.assertEqual(400, status, f"{refused}")
+            # A read-only principal cannot confirm at all.
+            status, denied = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [run.items[0].task_item_id], "confirmation": True},
+                token="viewer-token",
+            )
+            self.assertEqual(403, status, f"{denied}")
+            # A different write principal is refused because the summary is not
+            # theirs, and no execution is admitted.
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_recovery_confirm_concurrently_admits_one_execution(self):
+        """Two concurrent confirmations of the same summary admit at most one."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status)
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+
+            def confirm():
+                return api_request(
+                    api,
+                    f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                    method="POST",
+                    body={"itemIds": [ready_item_id], "confirmation": True},
+                    token="operator-token",
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = [
+                    future.result() for future in (pool.submit(confirm), pool.submit(confirm))
+                ]
+            accepted = [value for value in outcomes if value[0] == 202]
+            self.assertGreaterEqual(len(accepted), 1, f"{outcomes}")
+            execution_ids = {value[1]["executionId"] for value in accepted}
+            self.assertEqual(1, len(execution_ids), f"{outcomes}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    1,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+
+    def test_recovery_confirm_refuses_different_or_partial_selection(self):
+        """A repeat confirmation of a *different* selection is never folded in.
+
+        Only an exactly equivalent repeat may resolve to the already-admitted
+        execution; a different, extra, empty, duplicate or malformed selection
+        is a different submission and must be refused with its own reason.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            confirm_path = (
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm"
+            )
+            status, admitted = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{admitted}")
+            execution_id = admitted["executionId"]
+            # Exactly equivalent repeat still resolves to the same execution.
+            status, repeated = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(202, status, f"{repeated}")
+            self.assertEqual(execution_id, repeated["executionId"])
+            # A different selection is refused and returns no execution.
+            status, refused = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={"itemIds": ["never-reviewed-item"], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            self.assertEqual("confirmation_mismatch", refused["error"]["code"])
+            # A different destructive permission is also a different submission.
+            status, refused_permission = api_request(
+                api,
+                confirm_path,
+                method="POST",
+                body={
+                    "itemIds": [ready_item_id],
+                    "confirmation": True,
+                    "allowOverwrite": True,
+                },
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused_permission}")
+            self.assertEqual("confirmation_mismatch", refused_permission["error"]["code"])
+            # An empty or duplicate selection is refused before any admission.
+            for body in (
+                {"itemIds": [], "confirmation": True},
+                {"itemIds": [ready_item_id, ready_item_id], "confirmation": True},
+            ):
+                status, malformed = api_request(
+                    api, confirm_path, method="POST", body=body, token="operator-token"
+                )
+                self.assertEqual(400, status, f"{malformed}")
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    1,
+                    len(
+                        repository.list_manual_executions_for_task_item(
+                            run.task_id, run.items[0].task_item_id
+                        )
+                    ),
+                )
+
+    def test_recovery_confirm_reruns_checkpoint_fence_inside_atomic_admission(self):
+        """A checkpoint change after preflight is still refused inside the transaction.
+
+        The HTTP preflight reads the item's checkpoint; a concurrent decision
+        can then move the item before the atomic admission begins.  The
+        admission must re-project the same bounded checkpoint while holding its
+        write transaction, so the stale summary can never create an execution.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            run = self._complete_analysis_for_summary(environment, provider)
+            services = self._manual_services(environment, provider)
+            recovery, api = self._recovery_api(environment, services)
+            self.addCleanup(self._close_manual_services, services)
+            checkpoint = recovery._checkpoint_service.get(
+                run.items[0].task_item_id, task_id=run.task_id
+            )
+            status, preparation = api_request(
+                api,
+                f"/api/v1/tasks/{run.task_id}/items/{run.items[0].task_item_id}"
+                "/recovery/prepare-summary",
+                method="POST",
+                body={"expectedCheckpointVersion": checkpoint.checkpoint_version},
+                token="operator-token",
+            )
+            self.assertEqual(201, status, f"{preparation}")
+            preview = services["previews"].get(preparation["preview_id"])
+            ready_item_id = preview.items[0].item_id
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                executions_before = len(
+                    repository.list_manual_executions_for_intent(preview.intent_id, limit=100)
+                )
+            # The preflight has already passed; change the original item's
+            # checkpoint before the atomic admission runs.
+            with SQLiteTaskRepository(environment["database"]) as mutator:
+                item = mutator.get_item(run.items[0].task_item_id)
+                assert item is not None
+                mutator.upsert_item(
+                    replace(item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+                )
+            status, refused = api_request(
+                api,
+                f"/api/v1/manual-recovery-preparations/{preparation['preparation_id']}/confirm",
+                method="POST",
+                body={"itemIds": [ready_item_id], "confirmation": True},
+                token="operator-token",
+            )
+            self.assertEqual(409, status, f"{refused}")
+            self.assertIn(
+                refused["error"]["code"], {"stale_checkpoint", "item_stale", "preview_stale"}
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(
+                    executions_before,
+                    len(repository.list_manual_executions_for_intent(preview.intent_id, limit=100)),
+                )
+                active_authorizations = tuple(
+                    value
+                    for value in repository.list_manual_execution_authorizations(limit=50)
+                    if value.status.value == "active"
+                )
+                self.assertEqual((), active_authorizations)
 
 
 def _ambiguous_identification() -> MetadataIdentificationResult:

@@ -102,7 +102,7 @@ class AutomationJobFencingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("scan")
+                service.submit("preview")
                 first = repository.claim_next_job(NOW - timedelta(hours=2))
                 first_token = first.claim_token
                 requeued = service.requeue_stale(first.job_id, age_seconds=3600)
@@ -464,7 +464,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_heartbeat_refresh_controls_stale_age_and_token_is_api_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                AutomationJobService(repository).submit("scan")
+                AutomationJobService(repository).submit("preview")
                 claimed = repository.claim_next_job(NOW - timedelta(hours=2))
                 self.assertEqual(
                     len(repository.list_stale_running_jobs(NOW - timedelta(hours=1))), 1

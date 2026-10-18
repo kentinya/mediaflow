@@ -42,7 +42,7 @@ describe("normalizeManualPreview", () => {
       overwriteRequired: false,
       sourceCleanupRequired: false,
       statement:
-        "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+        "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file",
     });
     expect(model.items[0]?.targetPath).toBe(
       "Movies/Movies/Anime/One (2001)/One (2001).mkv",

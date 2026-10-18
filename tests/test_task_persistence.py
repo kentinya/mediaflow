@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from mediaflow.application.task_runtime import PersistentTaskCoordinator, TaskLockError
-from mediaflow.domain.scanner import FileChange
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTaskItem,
@@ -21,7 +20,6 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
 
@@ -225,81 +223,21 @@ class PersistentTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not running"):
                 coordinator.begin_item(task.task_id, "s", "r", "later.mkv", "later.mkv")
 
-    def test_production_scan_uses_persistent_file_index_and_task_cli(self) -> None:
+    def test_retired_scan_creates_no_persistent_task_or_file_index(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            incoming = root / "Incoming" / "电影"
-            incoming.mkdir(parents=True)
-            (root / "Target").mkdir()
-            media = incoming / "Movie.2025.mkv"
-            media.write_bytes(b"movie")
-            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-            document["storages"][0]["rootPath"] = str(root)
-            document["storages"][1]["rootPath"] = str(root / "Target")
-            document["resourceLibraries"][0]["storagePath"] = "Incoming"
-            document["resourceLibraries"][0]["displayRootPath"] = str(root / "Incoming")
-            database = root / "state" / "runtime.sqlite3"
-            document["persistence"] = {"databasePath": str(database)}
-            document["historyPath"] = str(root / "state" / "history.jsonl")
-            config = root / "config.json"
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-
-            first_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
+            config = root / "absent.json"
+            errors = io.StringIO()
+            self.assertNotEqual(
                 0,
                 final_main(
                     ["--config", str(config), "scan"],
-                    stdout=first_output,
-                    stderr=errors,
-                ),
-                errors.getvalue(),
-            )
-            with SQLiteFileIndexRepository(database) as index:
-                record = index.find_by_path(
-                    "source-storage", "source", "Incoming/电影/Movie.2025.mkv"
-                )
-                self.assertIsNotNone(record)
-                assert record is not None
-                self.assertEqual(record.change, FileChange.NEW)
-
-            second_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "scan"],
-                    stdout=second_output,
-                    stderr=errors,
-                ),
-                errors.getvalue(),
-            )
-            with SQLiteFileIndexRepository(database) as index:
-                record = index.find_by_path(
-                    "source-storage", "source", "Incoming/电影/Movie.2025.mkv"
-                )
-                assert record is not None
-                self.assertEqual(record.change, FileChange.UNCHANGED)
-
-            tasks_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "tasks", "list"],
-                    stdout=tasks_output,
+                    stdout=io.StringIO(),
                     stderr=errors,
                 ),
             )
-            self.assertIn("TASKS", tasks_output.getvalue())
-            first_task_id = first_output.getvalue().split("Task ID: ", 1)[1].splitlines()[0]
-            show_output = io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "tasks", "show", first_task_id],
-                    stdout=show_output,
-                    stderr=errors,
-                ),
-            )
-            self.assertIn("Incoming/电影/Movie.2025.mkv", show_output.getvalue())
+            self.assertIn("standalone_scan_retired", errors.getvalue())
+            self.assertEqual([], list(root.iterdir()))
 
 
 class Schema34To35UpgradeTests(unittest.TestCase):
@@ -963,7 +901,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 48)
+                self.assertEqual(SCHEMA_VERSION, 47)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1140,7 +1078,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 48)
+                self.assertEqual(SCHEMA_VERSION, 47)
                 # The pre-existing admitted intent survived the additive upgrade.
                 intent = repository.get_manual_intent("intent-base")
                 self.assertIsNotNone(intent)
@@ -1321,173 +1259,133 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
         )
 
 
-class Schema45To46DefinitionOriginUpgradeTests(unittest.TestCase):
-    """The additive 45 -> 46 definition-origin upgrade preserves prior facts.
+class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
+    def test_preparation_round_trips_and_supersedes_without_authority(self) -> None:
+        """A prepared summary persists, supersedes and never invents authority."""
 
-    Schema 46 adds one nullable ``media_discoveries.definition_origin_json`` and
-    the matching nullable ``operations_run_display`` origin columns.  A
-    prior-schema database therefore gains the columns without changing any
-    existing row's identity, and a legacy discovery simply has no definition
-    origin: reads never backfill one and never invent a definition link.
-    """
-
-    @staticmethod
-    def _rewind_to_schema45(database: Path) -> None:
-        with SQLiteTaskRepository(database) as repository:
-            connection = repository._connection
-            connection.execute("ALTER TABLE media_discoveries DROP COLUMN definition_origin_json")
-            for column in ("origin_definition_id", "origin_definition_name", "origin_kind"):
-                connection.execute(f"ALTER TABLE operations_run_display DROP COLUMN {column}")
-            connection.execute("INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)", (45,))
-            connection.commit()
-
-    def test_schema45_upgrades_additively_without_inventing_a_definition_origin(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "schema-45.sqlite3")
-            # Seed one real admitted discovery under the current shape, then
-            # rewind to the genuine schema-45 shape so the additive DDL is
-            # exercised over a database that still holds durable work.
-            with SQLiteTaskRepository(database) as repository:
-                Schema44To45DiscoveryUpgradeTests._assert_discovery_round_trip(repository)
-            self._rewind_to_schema45(database)
-
-            with sqlite3.connect(database) as connection:
-                self.assertEqual(
-                    45,
-                    connection.execute(
-                        "SELECT version FROM schema_version WHERE component='runtime'"
-                    ).fetchone()[0],
-                )
-                discovery_columns = {
-                    row[1]
-                    for row in connection.execute("PRAGMA table_info(media_discoveries)").fetchall()
-                }
-                display_columns = {
-                    row[1]
-                    for row in connection.execute(
-                        "PRAGMA table_info(operations_run_display)"
-                    ).fetchall()
-                }
-            self.assertNotIn("definition_origin_json", discovery_columns)
-            self.assertNotIn("origin_definition_id", display_columns)
-
-            with SQLiteTaskRepository(database) as repository:
-                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                discovery_columns = {
-                    row[1]
-                    for row in repository._connection.execute(
-                        "PRAGMA table_info(media_discoveries)"
-                    ).fetchall()
-                }
-                display_columns = {
-                    row[1]
-                    for row in repository._connection.execute(
-                        "PRAGMA table_info(operations_run_display)"
-                    ).fetchall()
-                }
-                self.assertIn("definition_origin_json", discovery_columns)
-                self.assertLessEqual(
-                    {"origin_definition_id", "origin_definition_name", "origin_kind"},
-                    display_columns,
-                )
-                # The pre-existing admission survived and simply carries no
-                # definition origin: nothing is backfilled or guessed.
-                stored = repository.get_media_discovery("discovery-round-trip")
-                self.assertIsNotNone(stored)
-                self.assertIsNone(stored.definition_origin)
-                # The definition-origin lookups are usable and honestly empty.
-                self.assertIsNone(
-                    repository.find_open_definition_run_once(
-                        actor="operator",
-                        definition_id="nightly",
-                        definition_fingerprint="a" * 64,
-                        snapshot_id="snap",
-                        snapshot_digest="digest",
-                    )
-                )
-                self.assertEqual((), repository.list_definition_run_once_discoveries("nightly"))
-
-    def test_a_recorded_definition_origin_round_trips_after_the_upgrade(self) -> None:
-        from mediaflow.domain.media_discovery import (
-            DefinitionRunOnceOrigin,
-            DiscoveryBudgets,
-            DiscoveryCounters,
-            DiscoveryEntryKind,
-            DiscoveryIncompleteReason,
-            DiscoveryProgress,
-            DiscoveryScopeEntry,
-            DiscoveryStatus,
-            MediaDiscovery,
+        from mediaflow.domain.manual_recovery import (
+            ManualRecoveryPreparation,
+            ManualRecoveryPreparationStatus,
         )
 
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "schema-45-origin.sqlite3")
-            self._rewind_to_schema45(database)
-            now = datetime(2026, 10, 4, tzinfo=UTC)
-            origin = DefinitionRunOnceOrigin(
-                "nightly",
-                "Nightly",
-                "a" * 64,
-                "revision-1",
-                3,
-                "b" * 64,
-                "library-base",
-                "Movies",
-                10,
-                10,
-                "automatic-organization",
-                "11111111-1111-4111-8111-111111111111",
-            )
-            discovery = MediaDiscovery(
-                "discovery-run-once",
-                "operator",
-                "library-base",
-                "storage-base",
-                "revision-1",
-                "b" * 64,
-                DiscoveryStatus.QUEUED,
-                1,
-                DiscoveryBudgets(),
-                DiscoveryProgress(
-                    "queued",
-                    (DiscoveryScopeEntry("Movies", DiscoveryEntryKind.DIRECTORY),),
-                    DiscoveryCounters(),
-                    DiscoveryIncompleteReason.NONE,
-                    (),
-                    (),
-                ),
-                now,
-                now,
-                admission_request_id="11111111-1111-4111-8111-111111111111",
-                definition_origin=origin,
-            )
+            database = Path(directory, "preparations.sqlite3")
+            now = datetime(2026, 10, 17, tzinfo=UTC)
             with SQLiteTaskRepository(database) as repository:
-                repository.create_media_discovery(discovery)
-                stored = repository.get_media_discovery("discovery-run-once")
-                self.assertIsNotNone(stored)
-                self.assertEqual(origin, stored.definition_origin)
-                # The durable definition-origin lookups find exactly this run.
-                self.assertEqual(
-                    "discovery-run-once",
-                    repository.find_open_definition_run_once(
-                        actor="operator",
-                        definition_id="nightly",
-                        definition_fingerprint="a" * 64,
-                        snapshot_id="revision-1",
-                        snapshot_digest="b" * 64,
-                    ).discovery_id,
+                repository.create_manual_intent_with_audit(
+                    _manual_intent("intent-1"),
+                    _manual_items("intent-1"),
+                    _manual_audit("intent-1"),
                 )
-                self.assertEqual(
-                    ("discovery-run-once",),
-                    tuple(
-                        value.discovery_id
-                        for value in repository.list_definition_run_once_discoveries("nightly")
-                    ),
+                task_id, item_id = self._source_task_and_item(repository)
+                preparation = ManualRecoveryPreparation(
+                    "prep-1",
+                    task_id,
+                    item_id,
+                    "continuation-1",
+                    "analysis-task-1",
+                    "analysis-result-1",
+                    "intent-1",
+                    "preview-1",
+                    1,
+                    "b" * 64,
+                    "c" * 64,
+                    "snap-1",
+                    "digest-1",
+                    "operator",
+                    ManualRecoveryPreparationStatus.PREPARED,
+                    now,
+                    now,
                 )
-                # A different definition identity is never matched.
-                self.assertEqual((), repository.list_definition_run_once_discoveries("other"))
+                repository.create_manual_recovery_preparation(preparation)
+                stored = repository.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                assert stored.authorization_id is None
+                assert stored.execution_id is None
+                assert stored.intent_version == 1
+                assert stored.status is ManualRecoveryPreparationStatus.PREPARED
+                assert repository.get_current_manual_recovery_preparation(task_id, item_id)
+                assert repository.list_manual_recovery_preparations(task_id, item_id)
+
+                # A prepared summary must not claim execution authority.
+                with self.assertRaises(ValueError):
+                    repository.create_manual_recovery_preparation(
+                        replace(preparation, preparation_id="prep-bad", authorization_id="a")
+                    )
+
+                superseded = repository.supersede_manual_recovery_preparation("prep-1", now=now)
+                assert superseded.status is ManualRecoveryPreparationStatus.SUPERSEDED
+                assert repository.get_current_manual_recovery_preparation(task_id, item_id) is None
+
+            # Reopening preserves the exact record; the historical row is intact.
+            with SQLiteTaskRepository(database) as reopened:
+                stored = reopened.get_manual_recovery_preparation("prep-1")
+                assert stored is not None
+                assert stored.status is ManualRecoveryPreparationStatus.SUPERSEDED
+                assert stored.authorization_id is None
+
+    def _source_task_and_item(self, repository):
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+        from mediaflow.domain.task_persistence import TaskItemStatus
+
+        coordinator = PersistentTaskCoordinator(repository, repository)
+        task = coordinator.create(
+            "manual_organize",
+            execute_authorized=False,
+            item_limit=1,
+            configuration_snapshot_id="snap-1",
+            configuration_snapshot_digest="digest-1",
+            require_configuration_snapshot=True,
+        )
+        item = coordinator.begin_item(
+            task.task_id, "source", "source", "Media/One.2001.mkv", "Media/One.2001.mkv"
+        )
+        repository.upsert_item(replace(item, status=TaskItemStatus.FAILED, stage="failed"))
+        repository.release(item.storage_id, item.source_path, item.task_id)
+        return task.task_id, item.item_id
+
+
+class Schema45ToManualRecoveryPreparationUpgradeTests(unittest.TestCase):
+    """The additive preparation table appears without touching prior facts."""
+
+    def test_reopening_adds_the_preparation_table_and_preserves_prior_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "schema-preparation.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                repository.create_manual_intent_with_audit(
+                    _manual_intent("intent-base"),
+                    _manual_items("intent-base"),
+                    _manual_audit("intent-base"),
+                )
+                connection = repository._connection
+                connection.execute("DROP INDEX IF EXISTS manual_recovery_preparations_source")
+                connection.execute("DROP TABLE IF EXISTS manual_recovery_preparations")
+                connection.commit()
+            with sqlite3.connect(database) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'manual_recovery_preparation%'"
+                    ).fetchall()
+                }
+            self.assertEqual(tables, set())
+
+            with SQLiteTaskRepository(database) as repository:
+                tables = {
+                    row[0]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name LIKE 'manual_recovery_preparation%'"
+                    ).fetchall()
+                }
+                self.assertIn("manual_recovery_preparations", tables)
+                # The pre-existing admitted intent is unchanged and has no
+                # fabricated summary.
+                intent = repository.get_manual_intent("intent-base")
+                assert intent is not None
+                self.assertEqual(intent.intent_id, "intent-base")
+                self.assertEqual(repository.list_manual_recovery_preparations("task", "item"), ())
 
 
 def _manual_intent(intent_id: str):

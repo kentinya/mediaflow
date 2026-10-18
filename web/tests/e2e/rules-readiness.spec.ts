@@ -542,9 +542,10 @@ test.describe("Rules reference-aligned workspace presentation", () => {
       await expect(drawer).toBeVisible();
       // Section titles are real `legend` elements, so a same-named select
       // option elsewhere in the form cannot satisfy (or hide) the check.
-      const sectionTitles = await drawer.locator("legend").allTextContents();
       for (const section of family.section)
-        expect(sectionTitles).toContain(section);
+        await expect(
+          drawer.getByRole("group", { name: section, exact: true }),
+        ).toBeVisible();
       if (family.switch)
         await expect(
           drawer.getByRole("switch", { name: "启用" }),

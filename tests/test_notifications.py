@@ -343,7 +343,7 @@ class NotificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 publisher = NotificationPublisher(repository, definitions)
-                AutomationJobService(repository).submit("scan")
+                AutomationJobService(repository).submit("preview")
                 finished = AutomationWorker(
                     repository, lambda job, cancelled: "task-1", publisher
                 ).run_next()

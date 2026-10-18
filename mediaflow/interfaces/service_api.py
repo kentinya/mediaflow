@@ -51,7 +51,7 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
-from mediaflow.application.manual_scan import ManualScanError, ManualScanService
+from mediaflow.application.manual_scan import ManualScanError
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -64,7 +64,6 @@ from mediaflow.application.notification_delivery import (
 )
 from mediaflow.application.operations_lifecycle import (
     OperationsLifecycleConflict,
-    TaskExecutionPath,
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
@@ -77,7 +76,6 @@ from mediaflow.application.operations_lifecycle import (
     manual_execution_plan_evidence_operator,
     manual_intent_operator_document,
     manual_preview_operator_document,
-    manual_scan_operator_document,
     manual_step_error_document,
     require_cancellable,
     run_item_evidence_document,
@@ -157,7 +155,6 @@ from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
     ProcessingDisposition,
 )
-from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
 from mediaflow.domain.manual_organize import (
@@ -184,12 +181,13 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
 )
 from mediaflow.domain.operations_run import (
-    ATTENTION_RUN_STATUSES,
     DISCOVERY_COMMAND_LABEL,
+    RECOVERY_PROBLEM_TYPES,
     RUN_DISPOSITIONS,
     RUN_RECORD_KINDS,
     OperationsRunRecord,
     OperationsRunStatus,
+    OperationsRunView,
     known_command_label,
 )
 from mediaflow.domain.organizer import ConflictStrategy
@@ -331,7 +329,6 @@ class _ApiRuntimeBinding:
     #: transfer can only ever resolve MediaLibrary endpoints and one kind's
     #: manifest, evidence or claim can never be exchanged with the other.
     direct_media_transfers: DirectFileTransferService | None = None
-    manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
     #: The saved Automation Task Definitions of this exact Active revision and a
     #: checker that proves one mutation-authorized Task still holds its live
@@ -392,7 +389,6 @@ class MediaFlowApi:
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
         manual_recovery_service: ManualRecoveryContinuationService | None = None,
-        manual_scan_service: ManualScanService | None = None,
         media_discovery_service=None,
         automation_run_once_service=None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
@@ -431,7 +427,6 @@ class MediaFlowApi:
         self._storage_adapters = dict(storage_adapters or {})
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
-        self._manual_scans_override = manual_scan_service
         self._maximum_active_jobs_override = maximum_active_jobs
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and self._file_catalog is not None:
@@ -463,6 +458,7 @@ class MediaFlowApi:
                 repository,
                 self._manual_intents,
                 configuration_service=configuration_service,
+                preview_service=self._manual_previews,
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
                 ),
@@ -1611,6 +1607,42 @@ class MediaFlowApi:
             # Current-source Preview is the same persisted manual Preview
             # projection.  Keep concise API aliases on one application path.
             parts[2] = "manual-previews"
+        scan_route = parts[:3] == ["api", "v1", "scans"] or parts[:4] == [
+            "api",
+            "v1",
+            "operations",
+            "scans",
+        ]
+        if scan_route:
+            permission = (
+                ApiPermission.READ
+                if method == "GET"
+                else ApiPermission.CANCEL_JOB
+                if parts[-1] == "cancel"
+                else ApiPermission.SUBMIT_DRY_RUN
+            )
+            self._require(principal, permission)
+            raise ManualScanError(
+                "standalone_scan_retired",
+                "独立扫描已退役；未创建工作，也未执行发现。",
+                status=410,
+                durable_state="no_task_created",
+                retry_safe=False,
+                next_action="在任务中心新建整理并生成摘要。",
+            )
+        job_submission = None
+        if parts == ["api", "v1", "jobs"] and method == "POST":
+            job_submission = self._document(environ)
+            if job_submission.get("command") == "scan":
+                self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+                raise ManualScanError(
+                    "standalone_scan_retired",
+                    "独立扫描已退役；未创建工作，也未执行发现。",
+                    status=410,
+                    durable_state="no_task_created",
+                    retry_safe=False,
+                    next_action="在任务中心新建整理并生成摘要。",
+                )
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -1681,132 +1713,6 @@ class MediaFlowApi:
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             return self._manual_action_matrix(start_response, environ, principal, binding)
-        if parts == ["api", "v1", "operations", "scans"] and method == "POST":
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "server-bound manual Scan")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                    details={
-                        "durableState": "no_task_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Task repository, then retry"
-                        ),
-                    },
-                )
-            scan = binding.manual_scans.admit_current_document(
-                self._document(environ), actor=principal.principal_id
-            )
-            return self._response(
-                start_response,
-                202,
-                manual_scan_operator_document(
-                    {
-                        **scan.document(),
-                        "taskId": scan.task_id,
-                        "scopeKind": scan.scope_kind.value,
-                        "scopeId": scan.scope_id,
-                        "resourceLibraryId": scan.resource_library_id,
-                        "fileId": scan.file_id,
-                        "storageId": scan.storage_id,
-                        "sourcePath": scan.source_path,
-                        "sourceOccurrenceId": scan.source_occurrence_id,
-                        "sourceFingerprint": scan.source_fingerprint,
-                    },
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
-        if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "scans"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            try:
-                limit, cursor = self._manual_scan_detail_page(environ)
-            except ValueError:
-                # A Scan detail cursor is read-only continuation state. If a
-                # browser resumes with an expired or malformed cursor, safely
-                # restart this collection at page one while continuing to
-                # reject unsupported query fields and invalid page limits.
-                values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-                if (
-                    set(values).issubset({"itemLimit", "itemCursor"})
-                    and len(values.get("itemCursor", [])) == 1
-                ):
-                    limit = self._parse_bounded_limit(
-                        values.get("itemLimit", ["100"])[0], "manual Scan item"
-                    )
-                    cursor = None
-                else:
-                    raise
-            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
-            before = (
-                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
-            )
-            value = binding.manual_scans.detail_document(
-                parts[4], limit=limit, after=after, before=before
-            )
-            items = value.get("items", [])
-            has_previous = bool(value.pop("_has_previous_items", False))
-            has_next = bool(value.pop("_has_next_items", False))
-            value["itemLimit"] = value.pop("item_limit", limit)
-            value["itemsTruncated"] = bool(value.pop("items_truncated", False)) or has_next
-            value["nextItemCursor"] = self._manual_scan_cursor(
-                items, direction=CursorDirection.NEXT
-            )
-            value["previousItemCursor"] = self._manual_scan_cursor(
-                items, direction=CursorDirection.PREVIOUS
-            )
-            if not has_previous:
-                value["previousItemCursor"] = None
-            if not has_next:
-                value["nextItemCursor"] = None
-            return self._response(
-                start_response,
-                200,
-                manual_scan_operator_document(
-                    value,
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "scans"]
-            and parts[5] == "cancel"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "server-bound Scan cancellation")
-            self._require_empty_body(environ, "server-bound Scan cancellation")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            scan = binding.manual_scans.cancel(parts[4])
-            return self._response(
-                start_response,
-                200,
-                manual_scan_operator_document(
-                    scan.document(),
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
         if parts == ["api", "v1", "operations", "previews"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             if self._manual_previews is None or not callable(
@@ -2127,11 +2033,18 @@ class MediaFlowApi:
                 value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                )
                 value["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryAnalysisReady"] = (
+                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                )
             else:
                 value["manualRecoveryAvailable"] = False
+                value["manualRecoveryAnalysisReady"] = False
             return self._response(start_response, 200, redact_manual_value(value))
         if (
             len(parts) == 7
@@ -2543,11 +2456,18 @@ class MediaFlowApi:
                 recovery["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
                 )
+                recovery["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                )
                 recovery["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
                 )
+                recovery["manualRecoveryAnalysisReady"] = (
+                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                )
             else:
                 recovery["manualRecoveryAvailable"] = False
+                recovery["manualRecoveryAnalysisReady"] = False
             return self._response(
                 start_response,
                 200,
@@ -2763,142 +2683,35 @@ class MediaFlowApi:
             )
         if (
             len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "automation", "task-definitions"]
-            and parts[6] == "run-once"
-            and method in {"GET", "POST"}
+            and parts[:5] == ["api", "v1", "operations", "organize", "discoveries"]
+            and parts[6] == "analyze"
+            and method == "POST"
         ):
-            # Definition-bound Run once on the V2 operator surface.  The POST
-            # admits (or reconciles) one durable discovery derived from the
-            # *published definition's own* ResourceLibrary/sub-scope; the GET
-            # reads it back.  Neither the browser nor the URL supplies the
-            # manifest, so no file picker and no hand-selected subset is
-            # involved, and no execution authority is created here.
-            return self._automation_run_once_projection(
-                parts[5], method, environ, start_response, principal
-            )
-        if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
-            and method == "GET"
-        ):
-            # The bounded list of this principal's own definition-bound Run
-            # once admissions, so a reload or reconnect restores every durable
-            # run without re-walking sources.
-            self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "automation Run once list")
-            service = getattr(self, "_automation_run_once", None)
+            # Re-enter the durable analysis stage after an operator correction
+            # on the linked intent.  This records one versioned request only;
+            # the resident Worker re-runs the complete zero-mutation analysis
+            # under the same pinned configuration and links a new exact
+            # Preview.  It grants no execution authority.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "operations organize discovery analysis")
+            service = getattr(self, "_media_discovery", None)
             if service is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "definition Run once is unavailable",
+                return self._discovery_unavailable(start_response)
+            document = self._document(environ)
+            if set(document) != {"expectedVersion"}:
+                raise ValueError(
+                    "operations organize discovery analysis requires only expectedVersion"
                 )
-            values = service.list(actor=principal.principal_id, limit=50)
-            items = []
-            for value in values:
-                if value.definition_origin is None:
-                    continue
-                items.append(service.document(value))
+            try:
+                value = service.request_analysis(
+                    parts[5],
+                    actor=principal.principal_id,
+                    expected_version=document["expectedVersion"],
+                )
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
             return self._response(
-                start_response,
-                200,
-                {
-                    "journey": "automation-run-once",
-                    "items": items,
-                    "total": len(items),
-                    "limit": 50,
-                    "sideEffects": "none",
-                },
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
-            and method == "GET"
-        ):
-            return self._automation_run_once_detail_projection(
-                parts[5], None, method, environ, start_response, principal
-            )
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "run-once"
-            and method == "POST"
-            and parts[6] in {"pause", "cancel", "resume", "finalize"}
-        ):
-            return self._automation_run_once_detail_projection(
-                parts[5], parts[6], method, environ, start_response, principal
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] == "automation"
-            and parts[4] == "preview-analyses"
-            and method == "GET"
-        ):
-            # Reconcile one lost durable-analysis response by the client's own
-            # request identity.  A proved absence is a bounded 404, never a
-            # guessed latest analysis; the read is principal-scoped and creates
-            # no work and no Draft.
-            self._require(principal, ApiPermission.READ)
-            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(query) == {"admissionRequestId"} and len(query["admissionRequestId"]) == 1:
-                analysis_service = getattr(self, "_preview_analyses", None)
-                if analysis_service is None:
-                    return self._error(
-                        start_response,
-                        503,
-                        "service_unavailable",
-                        "durable preview analysis service is unavailable",
-                    )
-                try:
-                    reconciled = analysis_service.find_by_request_id(
-                        actor=principal.principal_id,
-                        admission_request_id=query["admissionRequestId"][0],
-                    )
-                except PreviewAnalysisError as error:
-                    return self._preview_analysis_error(start_response, error)
-                if reconciled is None:
-                    return self._error(
-                        start_response,
-                        404,
-                        "preview_analysis_request_not_found",
-                        "no exact analysis was admitted for this request identity",
-                        details={
-                            "durableState": "unknown",
-                            "sideEffects": "none",
-                            "retrySafe": True,
-                            "nextAction": (
-                                "the response was lost before admission was proved; reload the "
-                                "exact context and request the analysis again with a new "
-                                "request identity"
-                            ),
-                        },
-                    )
-                return self._response(
-                    start_response, 200, self._preview_analysis_document(reconciled)
-                )
-            raise ValueError("automation preview analysis collection query does not accept fields")
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "preview-analyses"
-            and method == "GET"
-        ):
-            return self._preview_analysis_detail_projection(
-                parts[5], None, method, environ, start_response, principal
-            )
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "preview-analyses"
-            and method == "POST"
-            and parts[6] in {"pause", "cancel", "resume"}
-        ):
-            return self._preview_analysis_detail_projection(
-                parts[5], parts[6], method, environ, start_response, principal
+                start_response, 200, self._discovery_document(value, principal, binding)
             )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -6133,91 +5946,6 @@ class MediaFlowApi:
             response["consumption"] = self._system_settings.consumption_evidence()
             return self._response(start_response, 200, response)
 
-        if parts == ["api", "v1", "scans"] and method == "POST":
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "manual Scan")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                    details={
-                        "durableState": "no_task_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Task repository, then retry"
-                        ),
-                    },
-                )
-            scan = binding.manual_scans.admit_document(
-                self._document(environ), actor=principal.principal_id
-            )
-            return self._response(
-                start_response,
-                202,
-                {
-                    **scan.document(),
-                    "task_id": scan.task_id,
-                    "scope_kind": scan.scope_kind.value,
-                    "resource_library_id": scan.resource_library_id,
-                    "file_id": scan.file_id,
-                    "source_occurrence_id": scan.source_occurrence_id,
-                    "source_fingerprint": scan.source_fingerprint,
-                },
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "scans"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            limit, cursor = self._manual_scan_detail_page(environ)
-            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
-            before = (
-                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
-            )
-            value = binding.manual_scans.detail_document(
-                parts[3], limit=limit, after=after, before=before
-            )
-            items = value.get("items", [])
-            has_previous = bool(value.pop("_has_previous_items", False))
-            has_next = bool(value.pop("_has_next_items", False))
-            value["previous_item_cursor"] = None
-            value["next_item_cursor"] = None
-            # The manual Scan service already bounds item pages.  Cursor links use the same
-            # signed task-item cursor contract as the generic Task detail surface.
-            if has_previous:
-                value["previous_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.PREVIOUS
-                )
-            if has_next:
-                value["next_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.NEXT
-                )
-            return self._response(start_response, 200, value)
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "scans"]
-            and parts[4] == "cancel"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "manual Scan cancellation")
-            self._require_empty_body(environ, "manual Scan cancellation")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            scan = binding.manual_scans.cancel(parts[3])
-            return self._response(start_response, 200, scan.document())
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -6536,16 +6264,22 @@ class MediaFlowApi:
             if not isinstance(document, dict) or set(document) not in (
                 {"paths"},
                 {"paths", "requestId"},
+                {"paths", "autoPrepare"},
+                {"paths", "requestId", "autoPrepare"},
             ):
                 raise ValueError("Files discovery admission accepts only bounded relative paths")
             if not isinstance(document["paths"], list):
                 raise ValueError("Files discovery admission paths must be an array")
+            auto_prepare = document.get("autoPrepare", False)
+            if not isinstance(auto_prepare, bool):
+                raise ValueError("Files discovery autoPrepare flag must be boolean")
             try:
                 discovery = discovery_service.admit(
                     resource_library_id=parts[3],
                     relative_paths=document["paths"],
                     actor=principal.principal_id,
                     admission_request_id=document.get("requestId"),
+                    auto_prepare=auto_prepare,
                 )
             except DiscoveryError as error:
                 return self._discovery_step_error(start_response, error)
@@ -7873,6 +7607,9 @@ class MediaFlowApi:
                 value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryPreparation"] = (
+                    self._manual_recovery.discovery_for_preparation(parts[3], parts[5])
+                )
             return self._response(start_response, 200, value)
         if (
             len(parts) == 7
@@ -8029,6 +7766,101 @@ class MediaFlowApi:
                 },
             )
         if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "prepare-summary"]
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery plan summary preparation")
+            document = self._document(environ)
+            if set(document) != {"expectedCheckpointVersion"}:
+                raise ValueError(
+                    "manual recovery plan summary preparation requires only "
+                    "expectedCheckpointVersion"
+                )
+            expected = document["expectedCheckpointVersion"]
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            preparation = self._manual_recovery.prepare_summary(
+                parts[3],
+                parts[5],
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+            )
+            return self._response(
+                start_response,
+                201,
+                redact_manual_value(
+                    {
+                        **preparation.document(),
+                        "hasExecutionAuthority": False,
+                        "sideEffects": "none",
+                        "executionMode": "not_authorized_yet",
+                    }
+                ),
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
+            and parts[4] == "confirm"
+            and method == "POST"
+        ):
+            self._require_manual_execution(principal)
+            if self._manual_recovery is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual recovery continuation service is unavailable",
+                )
+            self._require_empty_query(environ, "manual recovery plan summary confirmation")
+            document = self._document(environ)
+            allowed = {"itemIds", "confirmation", "allowOverwrite", "allowSourceCleanup"}
+            if set(document).difference(allowed):
+                raise ValueError("manual recovery plan summary confirmation fields are invalid")
+            if not {"itemIds", "confirmation"}.issubset(document):
+                raise ValueError(
+                    "manual recovery plan summary confirmation requires itemIds and confirmation"
+                )
+            if document["confirmation"] is not True:
+                raise ValueError(
+                    "manual recovery plan summary confirmation requires confirmation=true"
+                )
+            item_ids = document["itemIds"]
+            if not isinstance(item_ids, list) or not item_ids:
+                raise ValueError("manual recovery plan summary confirmation requires itemIds")
+            execution = self._manual_recovery.confirm_prepared(
+                parts[3],
+                item_ids=item_ids,
+                actor=principal.principal_id,
+                permission=ApiPermission.EXECUTE_MANUAL_ORGANIZE.value,
+                confirmation=True,
+                allow_overwrite=bool(document.get("allowOverwrite", False)),
+                allow_source_cleanup=bool(document.get("allowSourceCleanup", False)),
+            )
+            return self._response(
+                start_response,
+                202,
+                {
+                    "executionId": execution.execution_id,
+                    "taskId": execution.task_id,
+                    "status": execution.status.value,
+                    "selectedItemIds": list(execution.selected_item_ids),
+                    "nextAction": execution.next_action,
+                    "executionPath": "/api/v1/manual-executions/" + execution.execution_id,
+                    "sideEffects": "execution_admitted",
+                },
+            )
+        if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "manual-recovery-links"]
             and parts[4] == "execute"
@@ -8088,7 +7920,7 @@ class MediaFlowApi:
                 start_response,
                 202,
                 {
-                    **batch.document(),
+                    **self._recovery_batch_document(batch),
                     "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
@@ -8104,14 +7936,14 @@ class MediaFlowApi:
             batch = self._repository.get_recovery_batch(parts[5])
             if batch.source_task_id != parts[3]:
                 raise LookupError("Task recovery batch was not found")
-            return self._response(start_response, 200, batch.document())
+            return self._response(start_response, 200, self._recovery_batch_document(batch))
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "recovery batch")
             return self._response(
                 start_response,
                 200,
-                self._repository.get_recovery_batch(parts[3]).document(),
+                self._recovery_batch_document(self._repository.get_recovery_batch(parts[3])),
             )
         if (
             len(parts) == 5
@@ -8132,7 +7964,7 @@ class MediaFlowApi:
                 start_response,
                 202,
                 {
-                    **batch.document(),
+                    **self._recovery_batch_document(batch),
                     "executionMode": "dry_run",
                     "sideEffects": "none",
                 },
@@ -8348,35 +8180,6 @@ class MediaFlowApi:
                 if self._manual_execution is not None
                 else None
             )
-            manual_scan = None
-            if binding is not None and binding.manual_scans is not None:
-                try:
-                    scan_after = (
-                        item_cursor.position
-                        if item_cursor and item_cursor.direction is CursorDirection.NEXT
-                        else None
-                    )
-                    scan_before = (
-                        item_cursor.position
-                        if item_cursor and item_cursor.direction is CursorDirection.PREVIOUS
-                        else None
-                    )
-                    manual_scan = binding.manual_scans.detail_document(
-                        task.task_id,
-                        limit=item_limit,
-                        after=scan_after,
-                        before=scan_before,
-                    )
-                    manual_scan.pop("_has_previous_items", None)
-                    manual_scan.pop("_has_next_items", None)
-                    if operations_projection:
-                        manual_scan = manual_scan_operator_document(
-                            manual_scan,
-                            cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                        )
-                except ManualScanError as error:
-                    if error.code != "task_not_found":
-                        raise
             return self._response(
                 start_response,
                 200,
@@ -8388,7 +8191,6 @@ class MediaFlowApi:
                         for item in result_page
                     ],
                     "manualExecutionDiscovery": manual_discovery,
-                    "manualScan": manual_scan,
                     "recovery_batches": [
                         batch.document()
                         for batch in (
@@ -8760,7 +8562,7 @@ class MediaFlowApi:
                 )
             if method == "POST":
                 self._require_empty_query(environ, "job submission")
-                document = self._document(environ)
+                document = job_submission if job_submission is not None else self._document(environ)
                 forbidden = {
                     "overwrite",
                     "delete",
@@ -9077,6 +8879,15 @@ class MediaFlowApi:
 
         def unavailable_for(key: str, destination: str, reason: str, next_action: str):
             authorized = authorized_for(key)
+            if key == "scan":
+                return self._readiness_entry(
+                    ready=False,
+                    condition="standalone_scan_retired" if authorized else "unauthorized",
+                    durable_state="standalone Scan is retired; no work was created",
+                    next_action="prepare a new organize summary in the task center",
+                    recovery_destination="/ui-v2/operations/organize/new",
+                    authorized=authorized,
+                )
             return self._readiness_entry(
                 ready=False,
                 condition="unauthorized" if not authorized else reason,
@@ -9182,7 +8993,6 @@ class MediaFlowApi:
         )
         manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
         activate = ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
-        dry_run = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
 
@@ -9304,15 +9114,11 @@ class MediaFlowApi:
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
-        scan_permission = permission(dry_run, "/ui-v2/operations/scans/new", "Scan")
-        scan = scan_permission or self._readiness_entry(
-            ready=bool(enabled_resources),
-            condition="ready" if enabled_resources else "missing",
-            durable_state="ResourceLibrary scan scope available"
-            if enabled_resources
-            else "no enabled ResourceLibrary",
-            next_action="add an enabled ResourceLibrary",
-            recovery_destination="/ui-v2/resourcelib/files",
+        scan = unavailable_for(
+            "scan",
+            "/ui-v2/operations/organize/new",
+            "standalone_scan_retired",
+            "prepare a new organize summary in the task center",
         )
         preview_permission = permission(preview, "/ui-v2/operations/preview/new", "Preview")
         preview_entry = preview_permission or self._readiness_entry(
@@ -9946,13 +9752,7 @@ class MediaFlowApi:
         if (
             snapshot_id == current.snapshot_id
             and digest == current.snapshot_digest
-            and (
-                runtime is None
-                or (
-                    current.files_browser is not None
-                    and (self._file_index is None or current.manual_scans is not None)
-                )
-            )
+            and (runtime is None or (current.files_browser is not None))
         ):
             return current
         if runtime is None or refreshed_status is None:
@@ -10043,24 +9843,6 @@ class MediaFlowApi:
             # evidence or claim can never be exchanged with the other's.
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
             direct_media_transfers = DirectFileTransferService(direct_files=direct_media_files)
-        manual_scans = self._manual_scans_override
-        if (
-            manual_scans is None
-            and runtime_configuration is not None
-            and self._file_index is not None
-        ):
-            manual_scans = ManualScanService(
-                self._repository,
-                self._file_index,
-                runtime_configuration=runtime_configuration,
-                storage_factory=lambda storage_ids=None, configuration=runtime_configuration: (
-                    configuration.create_storages(
-                        external=self._storage_adapters, storage_ids=storage_ids
-                    )
-                ),
-                configuration_snapshot_id=snapshot_id,
-                configuration_snapshot_digest=snapshot_digest,
-            )
         runtime_settings = None
         if runtime_configuration is not None:
             retry = runtime_configuration.workflow_retry_policy
@@ -10135,7 +9917,6 @@ class MediaFlowApi:
             direct_media_files,
             direct_transfers,
             direct_media_transfers,
-            manual_scans,
             runtime_settings,
             tuple(getattr(runtime_configuration, "automation_task_definitions", ())),
             (
@@ -10203,7 +9984,7 @@ class MediaFlowApi:
                 return "/api/v1/operations/runs"
             if len(parts) == 5:
                 return "/api/v1/operations/runs/{id}"
-            if len(parts) == 6 and parts[5] in {"items", "records", "export"}:
+            if len(parts) == 6 and parts[5] in {"items", "records", "export", "problem-items"}:
                 return f"/api/v1/operations/runs/{{id}}/{parts[5]}"
             if len(parts) == 7 and parts[5] == "items":
                 return "/api/v1/operations/runs/{id}/items/{itemId}"
@@ -10377,9 +10158,22 @@ class MediaFlowApi:
             len(parts) == 8
             and parts[:3] == ["api", "v1", "tasks"]
             and parts[4] == "items"
+            and parts[6:8] == ["recovery", "prepare-summary"]
+        ):
+            return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/prepare-summary"
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
             and parts[6:8] == ["recovery", "authorize-organize"]
         ):
             return "/api/v1/tasks/{task_id}/items/{item_id}/recovery/authorize-organize"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "manual-recovery-preparations"]
+            and parts[4] == "confirm"
+        ):
+            return "/api/v1/manual-recovery-preparations/{id}/confirm"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"]:
             return "/api/v1/recovery-batches/{id}"
         if (
@@ -10817,19 +10611,6 @@ class MediaFlowApi:
 
         task = service.require(task_id)
         require_cancellable(task)
-        context = service.execution_context(task)
-        if context.path is TaskExecutionPath.MANUAL_SCAN:
-            # The manual Scan service owns the cooperative cancellation: claim it
-            # atomically for the observed version, then let the service mark its
-            # own bounded state and cancel any in-process token.
-            service.claim_manual_scan_cancellation(task_id, expected_version=expected_version)
-            if binding is not None and binding.manual_scans is not None:
-                try:
-                    binding.manual_scans.cancel(task_id)
-                except ManualScanError as error:
-                    if error.code != "task_not_found":
-                        raise
-            return service.require(task_id)
         return service.cancel(task_id, expected_version=expected_version)
 
     @staticmethod
@@ -11048,40 +10829,6 @@ class MediaFlowApi:
             else None,
         )
 
-    @staticmethod
-    def _manual_scan_detail_page(
-        environ: dict,
-    ) -> tuple[int, DecodedCursor | None]:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"itemLimit", "itemCursor"}
-        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("manual Scan detail query accepts itemLimit and itemCursor")
-        raw_cursor = values.get("itemCursor")
-        return (
-            MediaFlowApi._parse_bounded_limit(
-                values.get("itemLimit", ["100"])[0], "manual Scan item"
-            ),
-            decode_directional_cursor(raw_cursor[0], "task_items") if raw_cursor else None,
-        )
-
-    @staticmethod
-    def _manual_scan_cursor(items, *, direction: CursorDirection) -> str | None:
-        if not items:
-            return None
-        item = items[0] if direction is CursorDirection.PREVIOUS else items[-1]
-        if not isinstance(item, dict):
-            return None
-        raw_timestamp = item.get("createdAt")
-        record_id = item.get("itemId")
-        if not isinstance(raw_timestamp, str) or not isinstance(record_id, str):
-            return None
-        return encode_cursor(
-            "task_items",
-            datetime.fromisoformat(raw_timestamp),
-            record_id,
-            direction,
-        )
-
     def _manual_action_matrix(
         self,
         start_response: Callable,
@@ -11121,14 +10868,12 @@ class MediaFlowApi:
         if raw_kind == "file" and not isinstance(resource_library_id, str):
             raise ValueError("manual action matrix resourceLibraryId is required for file scope")
 
-        can_scan = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         can_execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
         configuration_snapshot_id = getattr(binding, "snapshot_id", None)
         # Determine runtime readiness: the binding has a snapshot_id when a
         # configuration has been activated and loaded.
         runtime_ready = bool(configuration_snapshot_id)
-        scan_service_ready = callable(getattr(binding.manual_scans, "admit_current_document", None))
         preview_service_ready = callable(
             getattr(self._manual_previews, "create_current_from_index", None)
         )
@@ -11147,7 +10892,6 @@ class MediaFlowApi:
                 "nextAction": "restore the admitted execution services, then refresh",
             }
         )
-        scan_available = can_scan and runtime_ready and scan_service_ready
         preview_available = can_preview and runtime_ready and preview_service_ready
         organize_available = (
             can_execute
@@ -11157,20 +10901,6 @@ class MediaFlowApi:
             and preview_intent_ready
             and execution_service_ready
             and bool(organize_worker["ready"])
-        )
-        scan_reason = (
-            None
-            if scan_available
-            else (
-                "the connected API principal does not hold the submit_dry_run permission "
-                "required for Scan"
-                if not can_scan
-                else "the Active runtime is unavailable for Scan"
-                if not runtime_ready
-                else "the manual Scan service is unavailable"
-                if not scan_service_ready
-                else "Scan is unavailable"
-            )
         )
         preview_reason = (
             None
@@ -11239,10 +10969,9 @@ class MediaFlowApi:
         source: dict[str, object] = {}
         selection_required = raw_kind is None
         if raw_kind is None:
-            scan_available = False
             preview_available = False
             organize_available = False
-            scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+
             preview_reason = "select an exact ResourceLibrary scope before running a Preview"
             organize_reason = "select an exact scope before organizing"
         elif raw_kind == "file":
@@ -11251,10 +10980,9 @@ class MediaFlowApi:
             # Check ResourceLibrary availability.
             rl_info = rl_map.get(resource_library_id)
             if rl_info is None or not rl_info.get("enabled", False):
-                scan_available = False
                 preview_available = False
                 organize_available = False
-                scan_reason = "the configured ResourceLibrary is not available"
+
                 preview_reason = "the configured ResourceLibrary is not available"
                 organize_reason = "the configured ResourceLibrary is not available"
             else:
@@ -11270,10 +10998,9 @@ class MediaFlowApi:
                             record = candidate
                             break
                 if record is None:
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the current FileIndex source was not found"
+
                     preview_reason = "the current FileIndex source was not found"
                     organize_reason = "the current FileIndex source was not found"
                 elif (
@@ -11282,10 +11009,9 @@ class MediaFlowApi:
                     or not getattr(record, "occurrence_id", None)
                     or not getattr(record, "fingerprint", None)
                 ):
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the FileIndex source is not a verified ready current occurrence"
+
                     preview_reason = (
                         "the FileIndex source is not a verified ready current occurrence"
                     )
@@ -11318,19 +11044,18 @@ class MediaFlowApi:
                 # Bounded discovery: the operator has not selected an exact
                 # ResourceLibrary yet, so nothing is actionable.
                 selection_required = True
-                scan_available = False
+
                 preview_available = False
                 organize_available = False
-                scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+
                 preview_reason = "select an exact ResourceLibrary scope before running a Preview"
                 organize_reason = "select an exact ResourceLibrary scope before organizing"
             else:
                 rl_info = rl_map.get(resource_library_id)
                 if rl_info is None or not rl_info.get("enabled", False):
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the configured ResourceLibrary is not available"
+
                     preview_reason = "the configured ResourceLibrary is not available"
                     organize_reason = "the configured ResourceLibrary is not available"
                 else:
@@ -11362,14 +11087,12 @@ class MediaFlowApi:
                     },
                     "actions": {
                         "scan": {
-                            "available": scan_available,
-                            "reason": scan_reason,
+                            "available": False,
+                            "reason": "独立扫描已退役；请新建整理。",
                             "method": "POST",
                             "path": "/api/v1/operations/scans",
-                            "nextAction": (
-                                "submit a bounded Scan" if scan_available else scan_reason
-                            ),
-                            "modes": [mode.value for mode in ScanMode],
+                            "nextAction": "在任务中心新建整理并生成摘要。",
+                            "modes": [],
                         },
                         "preview": {
                             "available": preview_available,
@@ -11438,6 +11161,7 @@ class MediaFlowApi:
             "tasks": "task_id",
             "jobs": "job_id",
             "run_items": "item_id",
+            "run_problem_items": "item_id",
             "run_records": "record_id",
             "task_items": "item_id",
             "task_results": "result_id",
@@ -11919,6 +11643,7 @@ class MediaFlowApi:
                 "sourceOccurrenceId",
                 "fingerprint",
                 "sourceFingerprint",
+                "storageFingerprint",
                 "snapshotId",
                 "snapshotDigest",
             }
@@ -11938,6 +11663,7 @@ class MediaFlowApi:
                 "sourceOccurrenceId",
                 "fingerprint",
                 "sourceFingerprint",
+                "storageFingerprint",
                 "snapshotId",
                 "snapshotDigest",
             }
@@ -12841,6 +12567,11 @@ class MediaFlowApi:
         next_action = self._discovery_next_action(
             discovery, terminal=terminal, frozen=frozen, worker_ready=worker["ready"]
         )
+        analysis_available, analysis_refusal, analysis_next_action, analysis_pending = (
+            self._media_discovery.analysis_availability(discovery)
+            if self._media_discovery is not None
+            else (False, "discovery_not_preparation", None, False)
+        )
         document: dict[str, object] = {
             "journey": "discovery",
             "discoveryId": discovery.discovery_id,
@@ -12888,6 +12619,9 @@ class MediaFlowApi:
             # its request actually became.  It is the client's own value and
             # reveals nothing about the server, the pin or the Storage path.
             "admissionRequestId": discovery.admission_request_id,
+            "autoPrepare": discovery.auto_prepare,
+            "prepared": discovery.prepared,
+            "previewId": discovery.preview_id,
             "intentId": discovery.intent_id,
             "frozen": frozen,
             "frozenAt": (
@@ -12981,6 +12715,28 @@ class MediaFlowApi:
                         "discovery_budget_limited" if material_refusal is not None else None
                     ),
                 },
+                "prepare": {
+                    # A full preparation that already linked its read-only plan
+                    # summary can re-run the analysis after an operator
+                    # correction on its linked intent.  Availability is the
+                    # exact same predicate ``request_analysis`` enforces, so an
+                    # advertised action can never disagree with the real
+                    # admission.  It never grants execution authority.
+                    "available": can_manage and analysis_available,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}/analyze"
+                    ),
+                    "requiresVersion": True,
+                    "sideEffects": "none",
+                    "durableOutcome": (
+                        "the resident Worker re-runs the complete zero-mutation analysis "
+                        "under the same pinned configuration and links a new exact Preview"
+                    ),
+                    "reason": analysis_refusal,
+                    "nextAction": analysis_next_action,
+                    "pendingReason": ("discovery_analysis_pending" if analysis_pending else None),
+                },
             },
             "nextAction": next_action,
             "failure": discovery.error,
@@ -13041,6 +12797,21 @@ class MediaFlowApi:
 
     @staticmethod
     def _discovery_next_action(discovery, *, terminal: bool, frozen: bool, worker_ready: bool):
+        if discovery.auto_prepare:
+            if discovery.preview_id is not None:
+                return (
+                    "open the linked exact plan summary, review it and explicitly confirm the "
+                    "ready subset to organize"
+                )
+            if discovery.status is DiscoveryStatus.ANALYZING:
+                if not worker_ready:
+                    return "start or repair the resident Processing Worker so the analysis can run"
+                return "the resident Processing Worker is running the complete analysis"
+            if discovery.terminal and discovery_material_refusal(discovery.progress) is not None:
+                return (
+                    "the selected scope exceeded a discovery budget; narrow the scope and start "
+                    "a new preparation instead of freezing this incomplete subset"
+                )
         if frozen:
             return "open the linked manual intent to review choices and create an exact Preview"
         if discovery.status is DiscoveryStatus.CANCELLED:
@@ -13159,6 +12930,11 @@ class MediaFlowApi:
         ready_items = [item for item in items if item.get("status") == "ready"]
         manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         execute_permitted = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
+        # The bounded, source-grounded identity options per item.  These are
+        # exactly the authorities a save re-validates against, so an ordinary
+        # operator can make a legal identity correction without inventing a
+        # provider payload or falling back to the standalone intent editor.
+        self._attach_allowed_metadata_identities(document, items, intent)
         choice_reason = self._organize_unavailable_reason(
             manage_permitted,
             ApiPermission.MANAGE_MANUAL_ORGANIZE,
@@ -13231,6 +13007,64 @@ class MediaFlowApi:
             },
         }
         document["limits"] = {"intentMaxItems": self._organize_intent_limit()}
+        return document
+
+    def _recovery_batch_document(self, batch) -> dict:
+        """Bound one batch and attach each child's durable same-page summary.
+
+        A batch child that reached a completed linked analysis can be prepared
+        into the same non-authorizing plan summary the per-item journey uses.
+        The batch projection exposes each child's *current durable* preparation
+        (identity, status, ready/not-ready and the linked execution) so the
+        operator can aggregate the independent summaries in the task's own
+        interface, select exactly the ready subset and confirm only those.  It
+        creates nothing, mints no authority and never guesses a summary from a
+        child's status; a child with no preparation simply has none.
+        """
+
+        document = batch.document()
+        recovery = getattr(self, "_manual_recovery", None)
+        if recovery is None:
+            return document
+        items = document.get("items")
+        if not isinstance(items, list):
+            return document
+        for child in items:
+            if not isinstance(child, dict):
+                continue
+            source_item_id = child.get("source_item_id")
+            if not isinstance(source_item_id, str) or not source_item_id:
+                continue
+            try:
+                preparation = recovery.discovery_for_preparation(
+                    batch.source_task_id, source_item_id
+                )
+            except Exception:
+                preparation = None
+            if preparation is not None:
+                child["manualRecoveryPreparation"] = preparation
+            try:
+                checkpoint = self._checkpoint_service.get(
+                    source_item_id, task_id=batch.source_task_id
+                )
+            except Exception:
+                checkpoint = None
+            if checkpoint is not None:
+                # The current durable checkpoint version lets the batch
+                # interface prepare this child's own summary without guessing
+                # the version the operator selected before the analysis ran.
+                child["currentCheckpointVersion"] = checkpoint.checkpoint_version
+                child["recoveryContinuationStatus"] = (
+                    checkpoint.recovery_continuation.status.value
+                    if checkpoint.recovery_continuation is not None
+                    else None
+                )
+            try:
+                child["manualRecoveryAvailable"] = recovery.supports_source_item(
+                    batch.source_task_id, source_item_id
+                )
+            except Exception:
+                child["manualRecoveryAvailable"] = False
         return document
 
     def _organize_preview_document(self, preview, principal: ResolvedApiPrincipal) -> dict:
@@ -13343,7 +13177,9 @@ class MediaFlowApi:
             durable_state = "completed"
         elif status == "partial_success":
             next_action = (
-                "inspect each failed item and use Review & Recovery; uncertain effects are "
+                "主文件已完成的项无需重放；请按逐附件结果核查或补正，效果未知仅核查。"
+                if any(item.get("primaryCompleted") for item in document.get("items", []))
+                else "inspect each failed item and use Review & Recovery; uncertain effects are "
                 "never replayed automatically"
             )
             durable_state = "partially_completed"
@@ -13404,6 +13240,46 @@ class MediaFlowApi:
         }
         return document
 
+    def _attach_allowed_metadata_identities(self, document, items, intent) -> None:
+        """Publish each intent item's bounded source-grounded identity options.
+
+        The values are read from the same durable authority the choice save
+        validates against, so the page can offer a real, legal identity
+        correction without exposing a provider payload or widening the choice.
+        A read never creates work and never calls a Provider.
+        """
+
+        service = self._manual_intents
+        lister = getattr(service, "allowed_metadata_identities", None)
+        if service is None or not callable(lister):
+            return
+        raw_items = document.get("items")
+        if not isinstance(raw_items, list):
+            return
+        by_id = {item.item_id: item for item in intent.items}
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("itemId")
+            model = by_id.get(item_id)
+            if model is None:
+                continue
+            try:
+                identities = lister(model, intent)
+            except Exception:  # noqa: BLE001 - a read must not fail the document
+                identities = ()
+            item["allowedMetadataIdentities"] = [
+                {
+                    "provider": value.get("provider"),
+                    "providerId": value.get("providerId"),
+                    "mediaType": value.get("mediaType"),
+                    "title": value.get("title"),
+                    "year": value.get("year"),
+                }
+                for value in identities
+                if isinstance(value, dict)
+            ]
+
     def _organize_unavailable_reason(
         self, permitted: bool, permission: ApiPermission, message: str
     ) -> str | None:
@@ -13433,6 +13309,7 @@ class MediaFlowApi:
             "plan",
             "planFingerprint",
             "sourceFingerprint",
+            "storageFingerprint",
             "definitionFingerprint",
             "definitionCurrentFingerprint",
             "configurationRevisionDigest",
@@ -14001,6 +13878,8 @@ class MediaFlowApi:
             return self._operations_run_item_evidence(
                 parts[4], parts[6], environ, start_response, principal
             )
+        if len(parts) == 6 and parts[5] == "problem-items":
+            return self._operations_run_problem_items(parts[4], environ, start_response, principal)
         return self._error(start_response, 404, "not_found", "route was not found")
 
     @classmethod
@@ -14014,13 +13893,44 @@ class MediaFlowApi:
         """
 
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"limit", "cursor", "status", "command", "q", "from", "to", "attention"}
+        allowed = {
+            "limit",
+            "cursor",
+            "status",
+            "command",
+            "q",
+            "from",
+            "to",
+            "attention",
+            "view",
+            "problem",
+            "source",
+        }
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
             raise ValueError(
                 "operations runs query accepts limit, cursor, status, command, q, from, to, "
-                "and attention once"
+                "attention, view, problem, and source once"
             )
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["50"])[0], "run")
+        raw_view = values.get("view", ["all"])[0]
+        if raw_view in {"", "all"}:
+            view = None
+        elif raw_view in {item.value for item in OperationsRunView}:
+            view = raw_view
+        else:
+            raise ValueError("operations run view filter is invalid")
+        raw_problem = values.get("problem", [""])[0]
+        if raw_problem in {"", "all"}:
+            problem_type = None
+        elif raw_problem in set(RECOVERY_PROBLEM_TYPES):
+            problem_type = raw_problem
+        else:
+            raise ValueError("operations run problem filter is invalid")
+        if view in RECOVERY_PROBLEM_TYPES and problem_type is not None and problem_type != view:
+            # A recovery view already owns its problem type; a contradicting
+            # explicit problem is a rejected filter, never a silently
+            # different population.
+            raise ValueError("operations run problem filter contradicts the view")
         raw_status = values.get("status", [""])[0]
         if raw_status in {"", "all"}:
             status = None
@@ -14035,6 +13945,19 @@ class MediaFlowApi:
             attention = True
         else:
             raise ValueError("operations run attention filter is invalid")
+        # A recovery view always applies its own problem filter server-side;
+        # the standalone `problem` parameter lets the operator narrow a
+        # lifecycle view without inventing a client-side filter.
+        if view in RECOVERY_PROBLEM_TYPES:
+            problem_type = view
+        raw_source = values.get("source", [""])[0]
+        source = None if raw_source in {"", "all"} else raw_source
+        if source is not None and (
+            len(source) > 512
+            or source != source.strip()
+            or any(ord(character) < 32 or ord(character) == 127 for character in source)
+        ):
+            raise ValueError("operations run source filter is invalid")
         raw_command = values.get("command", [""])[0]
         command = None if raw_command in {"", "all"} else raw_command
         if command is not None and not _TASK_COMMAND_FILTER.fullmatch(command):
@@ -14053,6 +13976,9 @@ class MediaFlowApi:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         raw_cursor = values.get("cursor")
         cursor = (
@@ -14071,6 +13997,9 @@ class MediaFlowApi:
             "command": command,
             "search": search,
             "attention": attention,
+            "view": view,
+            "problem": problem_type,
+            "source": source,
             "created_after": created_after,
             "created_before": created_before,
             "scope": scope,
@@ -14115,6 +14044,9 @@ class MediaFlowApi:
         created_after: datetime | None,
         created_before: datetime | None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> str:
         """Deterministic cursor scope binding filters and the reading principal.
 
@@ -14123,14 +14055,18 @@ class MediaFlowApi:
         replay recovers as an invalid cursor, never as a silently different
         page.  The digest hides the identity from the cursor payload itself.
         Every submitted population filter — including the overlapping
-        attention facet — is bound the same way, so a cursor minted for one
-        filter state is refused as soon as any filter differs.
+        attention facet, the selected view and the recovery problem type — is
+        bound the same way, so a cursor minted for one filter state is refused
+        as soon as any filter differs.
         """
 
         parts = [
             f"principal={principal_id}",
             f"status={status or 'all'}",
             f"attention={'true' if attention else 'false'}",
+            f"view={view or 'all'}",
+            f"problem={problem_type or 'all'}",
+            f"source={source or 'all'}",
             f"command={command or 'all'}",
             f"q={search or ''}",
             f"from={created_after.isoformat() if created_after else ''}",
@@ -14172,6 +14108,9 @@ class MediaFlowApi:
             "created_after": query["created_after"],
             "created_before": query["created_before"],
             "attention": query["attention"],
+            "view": query["view"],
+            "problem_type": query["problem"],
+            "source": query["source"],
         }
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
             window = repository.operations_runs_window(before=cursor.position, **arguments)
@@ -14183,14 +14122,16 @@ class MediaFlowApi:
         has_next = bool(window.has_next)
         has_previous = bool(window.has_previous)
         scope: str = query["scope"]
-        # The attention count is the overlapping facet over the same filtered
-        # population — never a mutually exclusive terminal state.  With the
-        # attention facet applied, the page *is* that overlapping population,
-        # so the card keeps showing exactly the count it filters to.
-        attention_count = sum(
-            count
-            for value, count in window.status_counts.items()
-            if value in {item.value for item in ATTENTION_RUN_STATUSES}
+        # The current-problem facet is the exact same derived fact the page
+        # rows carry: with the attention facet applied, the page *is* that
+        # overlapping population, so the card keeps showing exactly the count
+        # it filters to.
+        attention_count = window.attention_count
+        raw_summary = getattr(window, "summary", None)
+        summary = (
+            self._public_operations_run_summary(raw_summary)
+            if isinstance(raw_summary, dict)
+            else {"available": False}
         )
         return self._response(
             start_response,
@@ -14202,12 +14143,16 @@ class MediaFlowApi:
                 "command": query["command"],
                 "q": query["search"],
                 "attention": bool(query["attention"]),
+                "view": query["view"],
+                "problem": query["problem"],
+                "source": bounded_identity_path(query["source"]),
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
                 "total": window.total,
                 "truncated": has_next,
                 "status_counts": window.status_counts,
                 "attention_count": attention_count,
+                "summary": summary,
                 "population": (
                     "unified job/task run inventory, deduplicated by explicit task linkage"
                 ),
@@ -14218,6 +14163,53 @@ class MediaFlowApi:
                 "next_cursor": self._run_page_cursor(page, has_next, CursorDirection.NEXT, scope),
             },
         )
+
+    @staticmethod
+    def _operations_run_summary(repository) -> dict[str, object]:
+        """The complete-authorized-population summary of the nine views (RO-1).
+
+        Read from one repository read snapshot over the whole authorized
+        population, never from the browser's current page, so the summary
+        cards and the view counts stay truthful while the operator filters and
+        pages.  A repository without the summary read publishes an explicit
+        unavailable summary instead of fabricated zeros.
+        """
+
+        reader = getattr(repository, "operations_run_summary", None)
+        if not callable(reader):
+            return {"available": False}
+        summary = reader()
+        return MediaFlowApi._public_operations_run_summary(summary)
+
+    @staticmethod
+    def _public_operations_run_summary(summary: dict[str, object]) -> dict[str, object]:
+        """Redact bounded source options before publishing snapshot statistics."""
+
+        summary = dict(summary)
+        # The source options are published through the same bounded identity
+        # boundary as the run rows: a legacy absolute host/adapter root, a
+        # private endpoint or a credential-shaped scope never reaches the
+        # public document.  Redacted markers are omitted because they cannot
+        # be submitted as a useful exact source filter and could conflate
+        # unrelated private locations.
+        raw_sources = summary.get("sources")
+        if isinstance(raw_sources, list):
+            sources: list[dict[str, str]] = []
+            redacted = False
+            for entry in raw_sources:
+                if not isinstance(entry, dict):
+                    redacted = True
+                    continue
+                value = bounded_identity_path(entry.get("value"))
+                label = bounded_identity_path(entry.get("label"))
+                if value in (None, "[redacted-path]") or label in (None, "[redacted-path]"):
+                    redacted = True
+                    continue
+                sources.append({"value": value, "label": label})
+            summary["sources"] = sources
+            if redacted:
+                summary["sources_truncated"] = True
+        return summary
 
     def _operations_run_overview(
         self, run_id: str, start_response: Callable, principal: ResolvedApiPrincipal
@@ -14493,6 +14485,40 @@ class MediaFlowApi:
         )
 
     @classmethod
+    def _run_problem_items_scope(cls, principal_id: str, overview, problem: str) -> str:
+        """Deterministic cursor scope for one problem-type file list."""
+
+        return (
+            f"principal={principal_id};run={overview.run_id};"
+            f"task={overview.task_id or '-'};problem={problem}"
+        )
+
+    @classmethod
+    def _run_problem_items_query(
+        cls, environ: dict, principal_id: str, overview
+    ) -> tuple[int, str, DecodedCursor | None, str]:
+        """Bounded problem-file page state plus its filter-bound cursor."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "problem"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("run problem item query accepts limit, cursor, and problem once")
+        limit = MediaFlowApi._parse_bounded_limit(
+            values.get("limit", ["20"])[0], "run problem item"
+        )
+        problem = values.get("problem", [""])[0]
+        if problem not in RECOVERY_PROBLEM_TYPES:
+            raise ValueError("run problem item type is invalid")
+        scope = cls._run_problem_items_scope(principal_id, overview, problem)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(raw_cursor[0], "run_problem_items", expected_scope=scope)
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return limit, problem, cursor, scope
+
+    @classmethod
     def _run_records_scope(cls, principal_id: str, overview, kind: str | None) -> str:
         """Deterministic cursor scope binding principal, run/task/job and kind."""
 
@@ -14657,6 +14683,109 @@ class MediaFlowApi:
                 ),
                 "next_cursor": self._page_cursor(
                     "run_items",
+                    window.page,
+                    window.has_next,
+                    CursorDirection.NEXT,
+                    scope=scope,
+                ),
+                "sideEffects": "none",
+            },
+        )
+
+    def _operations_run_problem_items(
+        self, run_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """One problem-type-filtered file page of a recovery list entry (RO-3).
+
+        The recovery row leads to the exact Task/type file list, server-
+        filtered and server-paged on the same durable predicate the list view
+        uses.  A Task with no linked Task (a pre-Task admission) reports honest
+        item unavailability instead of an empty success, and a file carrying
+        several problems still appears once per type.
+        """
+
+        repository = self._repository
+        if repository is None or not callable(
+            getattr(repository, "operations_run_problem_items_window", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "run problem items are unavailable for this runtime",
+            )
+        overview, progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        limit, problem, cursor, scope = self._run_problem_items_query(
+            environ, principal.principal_id, overview
+        )
+        task_id = overview.task_id
+        if task_id is None:
+            return self._response(
+                start_response,
+                200,
+                {
+                    "run_id": overview.run_id,
+                    "task_id": None,
+                    "problem": problem,
+                    "limit": limit,
+                    "items": [],
+                    "total": 0,
+                    "matching_total": 0,
+                    "dispositions": {key: 0 for key in RUN_DISPOSITIONS},
+                    "uncertain_success": 0,
+                    "truncated": False,
+                    "previous_cursor": None,
+                    "next_cursor": None,
+                    "unavailable": (
+                        progress.unavailable_reason
+                        if progress is not None and progress.unavailable_reason
+                        else "this run has no linked Task yet"
+                    ),
+                    "sideEffects": "none",
+                },
+            )
+        window = repository.operations_run_problem_items_window(
+            task_id,
+            problem,
+            limit=limit,
+            after=cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None,
+            before=(
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            ),
+        )
+        items = [
+            self._task_item_document(
+                item,
+                bounded=True,
+                checkpoint=self._checkpoint_service.summary(item.item_id, task_id=task_id),
+            )
+            for item in window.page
+        ]
+        return self._response(
+            start_response,
+            200,
+            {
+                "run_id": overview.run_id,
+                "task_id": task_id,
+                "problem": problem,
+                "limit": limit,
+                "items": items,
+                "total": window.total,
+                "matching_total": window.matching_total,
+                "dispositions": dict(window.dispositions),
+                "uncertain_success": window.uncertain_success,
+                "truncated": window.has_next,
+                "previous_cursor": self._page_cursor(
+                    "run_problem_items",
+                    window.page,
+                    window.has_previous,
+                    CursorDirection.PREVIOUS,
+                    scope=scope,
+                ),
+                "next_cursor": self._page_cursor(
+                    "run_problem_items",
                     window.page,
                     window.has_next,
                     CursorDirection.NEXT,
@@ -14931,8 +15060,15 @@ class MediaFlowApi:
             "total_items": overview.total_items,
             "completed_items": overview.completed_items,
             "failed_items": overview.failed_items,
+            "processed_items": overview.processed_items,
+            "current_stage": overview.current_stage,
             "pause_requested": overview.pause_requested,
             "attention": overview.attention,
+            "problem_types": list(overview.problem_types),
+            "problem_file_counts": dict(overview.problem_file_counts),
+            "attention_reason": overview.attention_reason,
+            "attention_failure_category": overview.attention_failure_category,
+            "attention_failure_next_action": overview.attention_failure_next_action,
             "configuration_snapshot_id": overview.configuration_snapshot_id,
             "worker_id": overview.worker_id,
             # The durable *manual* definition origin of a deliberate Run once,
@@ -19744,6 +19880,8 @@ class MediaFlowApi:
             document["uncertainEffects"] = list(result.uncertain_effects)
             document["completedOperations"] = list(result.completed_operations)
             document["attachmentCount"] = result.attachment_count
+            document["primaryCompleted"] = result.primary_completed
+            document["attachmentResults"] = list(result.attachment_results)
         if relevance is not None:
             document["relevance"] = relevance
             document["current"] = relevance == "current"
@@ -19841,6 +19979,7 @@ class MediaFlowApi:
             404: "Not Found",
             405: "Method Not Allowed",
             409: "Conflict",
+            410: "Gone",
             413: "Payload Too Large",
             422: "Unprocessable Entity",
             500: "Internal Server Error",

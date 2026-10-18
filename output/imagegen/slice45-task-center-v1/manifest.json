@@ -1,0 +1,97 @@
+{
+  "count": 9,
+  "images": [
+    {
+      "tab": "全部任务",
+      "file": "../../../docs/pics/任务中心-全部任务.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1494331,
+      "sha256": "249e0fe6a8caf6adbc144caf5177d91b4b5d9042674f92a57b40d8b35acb1b5b",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "01-all-tasks.png"
+    },
+    {
+      "tab": "进行中",
+      "file": "../../../docs/pics/任务中心-进行中.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1492656,
+      "sha256": "434c58424f614dc852e5a1fadfa202f186f770f7c60aa9a834d883c292978830",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "02-running.png"
+    },
+    {
+      "tab": "需要处理",
+      "file": "../../../docs/pics/任务中心-需要处理.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1546286,
+      "sha256": "d24d3ef7bfad368291161572ffd27d449a0d9c388879aed62ccaacf80b1a447c",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "03-needs-attention.png"
+    },
+    {
+      "tab": "已结束",
+      "file": "../../../docs/pics/任务中心-已结束.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1496587,
+      "sha256": "f9a0a8adbebc62151f86a0efa3e62dcf5d5806454b895beee82023032596543e",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "04-ended.png"
+    },
+    {
+      "tab": "识别恢复",
+      "file": "../../../docs/pics/任务中心-识别恢复.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1344726,
+      "sha256": "efbad30d641b4f59b1084ca293680915f95de6d29332223c753cd659c29b9f97",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "05-recognition-recovery.png"
+    },
+    {
+      "tab": "元数据恢复",
+      "file": "../../../docs/pics/任务中心-元数据恢复.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1480568,
+      "sha256": "8a46bf99f39e11396e655c965615163c4bf35b891c30abfcced3fdd606f6cf6b",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "06-metadata-recovery.png"
+    },
+    {
+      "tab": "分类恢复",
+      "file": "../../../docs/pics/任务中心-分类恢复.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1334296,
+      "sha256": "545c4c24d4ee0127faf9c2d4dd53d09b34b2e96109160d9ab85131b2359862dc",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "07-classification-recovery.png"
+    },
+    {
+      "tab": "冲突处理",
+      "file": "../../../docs/pics/任务中心-冲突处理.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1488989,
+      "sha256": "bef4f91b75a9d74be0150f0a8fdb9203925f1ea2bc3741528a8fc1c0c703c36d",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "08-conflict-handling.png"
+    },
+    {
+      "tab": "失败恢复",
+      "file": "../../../docs/pics/任务中心-失败恢复.png",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 1483153,
+      "sha256": "811974929982c4d091d3e5eb3dc4fd4a8b32932b23700f7e824dd8ea45065b4d",
+      "visual_review": "inspected generated image; selected tab, all nine labels, page-specific task rows and no independent scan/preview creation",
+      "original_file": "09-failure-recovery.png"
+    }
+  ],
+  "canonical_directory": "docs/pics",
+  "purpose": "Slice45 TARGET reference composition/style; sample data is not runtime authority"
+}

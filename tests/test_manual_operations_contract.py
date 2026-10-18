@@ -41,7 +41,6 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
-from mediaflow.application.manual_scan import ManualScanService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.scanner import StorageScanner
@@ -221,16 +220,6 @@ class ManualOperationsContractTests(unittest.TestCase):
                     providers=MetadataProviderRegistry((provider,)),
                     storages={"source": source, "target": target},
                 )
-                scans = ManualScanService(
-                    repository,
-                    index,
-                    resource_libraries=(library,),
-                    storages={"source": source},
-                    configuration_snapshot_id=SNAPSHOT_ID,
-                    configuration_snapshot_digest=SNAPSHOT_DIGEST,
-                    clock=scan_clock,
-                    start_async=False,
-                )
                 execution = ManualOrganizeExecutionService(
                     repository,
                     previews,
@@ -277,14 +266,12 @@ class ManualOperationsContractTests(unittest.TestCase):
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
-                    manual_scan_service=scans,
                     manual_execution_service=execution,
                     worker_service=worker_service,
                 )
                 yield SimpleNamespace(
                     api=api,
                     repository=repository,
-                    scans=scans,
                     previews=previews,
                     execution=execution,
                     organize_worker=organize_worker,
@@ -313,58 +300,6 @@ class ManualOperationsContractTests(unittest.TestCase):
             query="scopeKind=resourceLibrary",
         )
         self.assertEqual(200, status)
-
-        status, scan_admission = _request(
-            api,
-            "/api/v1/operations/scans",
-            method="POST",
-            body={
-                "scopeKind": "file",
-                "fileId": file_id,
-                "resourceLibraryId": "library",
-                "mode": "incremental",
-            },
-        )
-        self.assertEqual(202, status)
-        # Drive the admitted discovery deterministically instead of racing a worker thread.
-        value.scans.run(scan_admission["taskId"])
-        status, scan_detail = _request(
-            api,
-            f"/api/v1/operations/scans/{scan_admission['taskId']}",
-            query="itemLimit=1",
-        )
-        self.assertEqual(200, status)
-
-        # A ResourceLibrary-scoped Scan of the two indexed sources exercises the
-        # deterministic paging window (one item per page with a next cursor).
-        status, scan_library_admission = _request(
-            api,
-            "/api/v1/operations/scans",
-            method="POST",
-            body={
-                "scopeKind": "resourceLibrary",
-                "resourceLibraryId": "library",
-                "mode": "full",
-            },
-        )
-        self.assertEqual(202, status)
-        value.scans.run(scan_library_admission["taskId"])
-        status, scan_library_detail = _request(
-            api,
-            f"/api/v1/operations/scans/{scan_library_admission['taskId']}",
-            query="itemLimit=1",
-        )
-        self.assertEqual(200, status)
-        # Which sibling source lands on one page window depends on the durable
-        # per-item ordering (created_at, item_id) produced by concurrent
-        # discovery, which is not part of the API contract. The fixture keeps
-        # the real page-window shape, counts and cursors but replaces the
-        # page-window source label with a canonical placeholder so the golden
-        # comparison is reproducible; the exact-file document below still
-        # carries the real, deterministic operator-facing source identity.
-        scan_library_detail["items"] = [
-            {**item, "sourcePath": "<page-item-path>"} for item in scan_library_detail["items"]
-        ]
 
         # The current server-bound Preview contract derives SourceIdentity from
         # live Storage: the browser submits only the ResourceLibrary identity
@@ -469,9 +404,6 @@ class ManualOperationsContractTests(unittest.TestCase):
         return {
             "actionMatrix": action_matrix,
             "resourceLibraryDiscovery": discovery_matrix,
-            "scanAdmission": scan_admission,
-            "scanDetail": scan_detail,
-            "scanLibraryDetail": scan_library_detail,
             "previewAdmission": preview_admission,
             "previewDetail": preview_detail,
             "previewList": preview_list,
@@ -519,18 +451,6 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertIsNone(_DIGEST_SHAPE.search(serialized))
         # The recognizable operator-facing evidence is preserved.
         self.assertIn("One.2001.mkv", serialized)
-        scan_detail = captured["scanDetail"]
-        self.assertEqual("completed", scan_detail["status"])
-        self.assertTrue(scan_detail["items"])
-        self.assertEqual("incremental", scan_detail["mode"])
-        self.assertIs(scan_detail["actions"]["cancel"]["available"], False)
-        paged = captured["scanLibraryDetail"]
-        self.assertEqual("resourceLibrary", paged["scopeKind"])
-        self.assertEqual(1, paged["itemLimit"])
-        self.assertEqual(1, len(paged["items"]))
-        self.assertIs(paged["itemsTruncated"], True)
-        self.assertIsInstance(paged["nextItemCursor"], str)
-        self.assertIs(paged["actions"]["cancel"]["available"], False)
         preview_detail = captured["previewDetail"]
         self.assertTrue(preview_detail["zeroMutation"])
         self.assertEqual("file", preview_detail["scope"]["scopeKind"])
@@ -566,7 +486,7 @@ class ManualOperationsContractTests(unittest.TestCase):
             [item["resourceLibraryId"] for item in matrix["resourceLibraries"]],
         )
         self.assertTrue(matrix["resourceLibraries"][0]["enabled"])
-        self.assertEqual(["full", "incremental"], matrix["actions"]["scan"]["modes"])
+        self.assertEqual([], matrix["actions"]["scan"]["modes"])
 
     def test_unknown_scope_kind_fails_closed(self) -> None:
         with self.fixture() as value:

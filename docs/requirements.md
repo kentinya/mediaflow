@@ -34,12 +34,81 @@ retain only automatic organization and clarified that the two other Automation m
 unwanted. `REQ-SCHED-001/002`, §自动整理 and §定时任务 below reflect that change; `V2-AUTO-009` records its
 V2 acceptance. Remove scan-only/scan-and-plan mode values/aliases and definition-bound publication,
 scheduling/admission/execution paths, without a conversion feature or compatible old-mode executor.
-Unsupported old configuration/work fails closed through existing correction/removal/cancel guidance;
-recorded intent, pins, results and audits remain historical data, never executable authority or
-automatic organization. Standalone Scan/Preview/DryRun and automatic organization's internal analysis
-stages remain required. This is an explicit product change, not a Task-local deferral or delivery
-claim; prior V1 meanings and accepted release evidence remain in Git and are not retroactively
-re-reviewed. All other stable requirement meanings and safety invariants remain unchanged.
+The 2026-10-18 first-deployment amendment below supersedes old Scan-mode compatibility obligations;
+unsupported mode values use ordinary validation, never automatic organizing authority. Supported-work
+intent, pins, results and audits remain intact. That amendment did not retire standalone
+Scan/Preview/DryRun; the subsequent
+2026-10-15 amendment below now supersedes standalone Scan and selected Web Preview-entry obligations.
+Internal discovery/planning and zero-mutation guarantees remain required. This is an explicit product
+change, not a Task-local deferral or delivery claim; prior V1 meanings and accepted release evidence
+remain in Git and are not retroactively re-reviewed. All other stable requirement meanings and
+safety invariants remain unchanged.
+
+**Explicit product amendment — 2026-10-15, task center (TARGET):** the user selected nine sibling
+task-center lists, including cross-Task Recognition/Metadata/Classification/conflict/failure recovery,
+and complete retirement of the standalone Scan product across its Web/API/CLI admission and executable
+paths. This supersedes the standalone manual Scan-entry meaning of `REQ-SCAN-001` for the current V2
+program; shared internal discovery, filtering, stability and supported-work historical evidence remain
+required, subject to the prelaunch standalone-Scan compatibility amendment below.
+Organization creation and recovery first show an exact plan summary in the current interface and
+then require explicit execution confirmation; no independent Preview page/action is a mandatory or
+alternative organization step. `UX-006`, `REQ-ORG-003/004/008/011`, per-item recovery and all safety
+invariants retain their zero-mutation calculation, exact-plan and separate-authority meanings.
+General diagnostic DryRun/Preview and Rules tests are not retired. Cross-Task recovery lists are now
+selected; cross-Task bulk mutation remains deferred. Prior V1/closed-Slice evidence stays historical.
+Stable acceptance is `V2-OPS-009`–`V2-OPS-012`; [the final page specification](task-center-page-spec.md)
+and root Contract define the selected journey. These are TARGET requirements, not delivered behavior.
+
+**Explicit product amendment — 2026-10-18, Scan never existed / first deployment (TARGET):**
+the user confirmed that the service has not launched and selected a fresh-deployment product with no
+Scan compatibility obligation, including V1. Remove standalone Scan pages/routes/navigation, API aliases,
+CLI registration/help, supported-work type entries, scheduling/execution/retry/continuation branches,
+dedicated readiness/action projections, models/services/repositories/schema and unused exclusive code.
+Do not retain retirement pages, 410 errors, guidance, specialized Scan guards, hidden aliases, old-work
+settlement/takeover, migration/conversion or dedicated history/detail/cancel/export compatibility.
+Missing URLs use ordinary not-found under normal authentication; old CLI commands use ordinary unknown-
+command/argument errors; unsupported submitted work uses shared supported-type validation. Reject before
+discovery, admission or execution-authority creation; never reinterpret Scan as organization.
+
+Removal of scan-only/scan-and-plan definition-mode values, aliases, defaults and their exclusive
+publication/scheduling/admission/dispatch/continuation branches is now part of Slice45's V2-OPS-011.
+This is a narrow user-authorized exception to frozen Slice43; its remaining workspace, Run once,
+metrics and engine-settings consumption stay frozen, without importing its unaccepted implementation.
+Keep shared discovery/filtering/real elapsed stability, zero-mutation planning, general diagnostic
+Preview/DryRun/Rules tests and supported scheduled Preview where actually consumed. Do not erase shared
+capabilities by identifier matching. Removing a mode default never grants implicit mutation authority.
+
+No old Scan migration, V1 parity or historical compatibility matrix is required. First deployment does
+not authorize clearing/rebuilding media, runtime databases or user files, or rewriting Git history;
+supported Tasks still require same-version restart/reopen/recovery, exact sources/plans/pins, Results,
+audit, permissions/fencing and completed/uncertain-effect non-replay. This is not global V1 UI removal.
+The FileIndex amendment below remains a separate complete unit in the same Slice. Frozen V1 meanings
+and accepted closure facts stay historical; no implementation or acceptance is claimed here.
+
+**Explicit product amendment — 2026-10-18, complete FileIndex retirement in Slice45 (TARGET):**
+the user expanded the current Slice to remove FileIndex completely and make `mediaflow files list`
+use the same library-scoped live Storage application behavior as the ResourceLibrary Files and
+MediaLibrary pages. List/navigation/refresh/paging only display bounded live entries: no file catalog,
+discovery observation, Task/Job/Result, execution authority, Provider call or media mutation is created.
+Configuration may be read; explicit later organization/maintenance retains its durable safety evidence.
+
+For current V2 this supersedes the global durable-index and New/Modified/Unchanged/Missing catalog
+obligation of `REQ-SCAN-004`, FileIndex result synchronization in `REQ-ORG-012`, and the FileIndex
+display/sync exceptions in `REQ-SAFE-009` and indexed portions of `REQ-WEB-003`. Stable IDs and frozen
+V1/accepted facts remain historical. `REQ-SCAN-006` still distinguishes actual source occurrences and
+processing outcomes through exact work-scoped evidence; it does not require a global index.
+All FileIndex products, runtime consumers, repositories/stand-ins, dedicated schema, sync/reprocess/
+repair paths and dead code exit; no hidden or renamed global file catalog replaces them.
+Shared internal discovery/filtering/real stability, Task/Result/pin/audit/locks/permission and unknown-
+effect non-replay remain. Existing Automation consumers must lose the shared dependency without
+implementing frozen Slice43 business features or importing its branch.
+
+The service is prelaunch: no old FileIndex database migration, dual write, historical FileID/API
+compatibility or takeover framework is required. Do not clear/rebuild existing runtime databases or
+media to implement retirement. Fresh supported deployments and supported-work reopen/safety are
+verified. Stable acceptance is `V2-FILES-005/006`; the selected CLI, journey and full boundary are in
+[file-index-retirement-spec.md](file-index-retirement-spec.md). This is TARGET authorization, not a
+claim that current indexed CLI/runtime code has already been removed.
 
 `REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
 and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
@@ -154,9 +223,9 @@ supplies the journey-level interpretation.
 | REQ-SCAN-001 | REQUIRED | Scanning supports manual, full, incremental and scheduled modes and only discovers candidates. | §资源扫描; §增量扫描 | A scan never organizes or mutates media and proceeds to recognition/planning as separate stages. |
 | REQ-SCAN-002 | REQUIRED | Filters cover extension, directory, name, size, glob and regex; extensions and ignore patterns are configurable. | §文件过滤; §默认忽略文件 | Temporary/download files and user exclusions are rejected predictably before processing. |
 | REQ-SCAN-003 | REQUIRED | Stability checks exclude actively downloaded, copied or written files using configurable age, modification and stable-size rules. | §文件稳定性检测 | An unstable file cannot enter organization until it satisfies policy. |
-| REQ-SCAN-004 | REQUIRED | Scanned files have a durable index and stable identity with New, Modified, Unchanged and Missing reconciliation. | §数据索引; §增量扫描; §文件状态 | Incremental scans reprocess only appropriate files and do not fabricate deletion from an incomplete scan. |
+| REQ-SCAN-004 | REQUIRED | V1 scanned files have a durable index and stable identity with New, Modified, Unchanged and Missing reconciliation; the explicit current V2 FileIndex-retirement amendment replaces this catalog obligation. | §数据索引; §增量扫描; §文件状态; V2-FILES-005/006 | V1 incremental meaning remains historical. Current V2 lists read live Storage without recording files; exact source/stability evidence is scoped to explicit work and incomplete discovery never authorizes execution. |
 | REQ-SCAN-005 | REQUIRED | Scan concurrency, cancellation and per-library isolation are bounded. | Engineering derivation from §并发控制 and §任务操作 | Cancelling or failing one scope preserves already durable observations and does not mutate media. |
-| REQ-SCAN-006 | REQUIRED | Scan/discovery state and media-processing disposition are orthogonal, and a current source occurrence can be distinguished from a different file later appearing at the same Storage/path. | §数据索引; §文件状态; §整理结果记录; Engineering derivation from §增量扫描 | COPY or Skip may leave a READY source with an organized/skipped disposition; MOVE may make it Missing. Prior results do not permanently suppress a new file at the same path, and explicit Reprocess remains possible. |
+| REQ-SCAN-006 | REQUIRED | Discovery/stability evidence and media-processing outcomes are orthogonal, and an exact work source can be distinguished from a different file later appearing at the same Storage/path. | §数据索引; §文件状态; §整理结果记录; V2-FILES-006 | COPY/Skip may leave the physical source; MOVE may remove it. Task/Result outcomes remain independent. Prior results never permanently suppress a new occurrence at the same path. Current V2 uses explicit work-scoped evidence and live sources, with safe new organization/recovery rather than global catalog disposition or FileIndex Reprocess. |
 
 ## Parser requirements
 
@@ -228,7 +297,7 @@ supplies the journey-level interpretation.
 | REQ-ORG-009 | REQUIRED | Unsupported HardLink/SoftLink or transfer behavior fails unless a user-configured fallback explicitly permits another operation. | §HardLink / SoftLink; §高风险文件操作保护 | No silent fallback to Copy or Move is possible. |
 | REQ-ORG-010 | REQUIRED | Optional source-directory cleanup is bounded, never removes unknown files and is disabled by default. | §空目录处理; §高风险文件操作保护 | Cleanup occurs only after verified eligible organization and cannot escape the source library boundary. |
 | REQ-ORG-011 | REQUIRED | Preview/DryRun records inspectable findings and plans but does not create a mandatory execution-blocker backlog; formal Conflict/Review/Recovery state is created only by an explicit Organize attempt. | §安全预览; §Dry Run 整理预演; Engineering derivation from §任务状态 | Preview answers what would happen with zero mutation and no execution authority. Historical Preview-created blockers remain auditable, but new Preview behavior does not require the user to resolve them. |
-| REQ-ORG-012 | REQUIRED | Every terminal Organize item result automatically synchronizes its known processing disposition and bounded outcome feedback to FileIndex after OrganizerExecutor processing. | §整理结果记录; §文件状态; §文件列表 | Successful, skipped, failed and uncertain outcomes remain independently represented; a FileIndex synchronization failure never authorizes replay of a completed or uncertain Storage mutation. |
+| REQ-ORG-012 | REQUIRED | Organize item outcomes remain durable and independent; V1 FileIndex synchronization is superseded in current V2 by the explicit complete-retirement amendment. | §整理结果记录; §文件状态; §文件列表; V2-FILES-006 | Persist Task/Result/step/effect and audit evidence without any FileIndex synchronization or repair. Failed persistence/display never authorizes replay of a completed or uncertain Storage mutation. |
 
 ## Attachment requirements
 
@@ -331,7 +400,7 @@ the release contract, not a new media-processing engine.
 |---|---|---|---|---|
 | REQ-WEB-001 | REQUIRED | Web UI is the primary V1 management surface for setup, configuration, daily work, review, recovery and explicit execution. | §最终管理界面; §第一阶段 MVP / UI | Required journeys are discoverable and complete without CLI-only knowledge. |
 | REQ-WEB-002 | REQUIRED | Dashboard shows bounded Storage/library, file, waiting/review, Task, success/failure and recent-error summaries. | §Dashboard | Counts link to the underlying actionable scope and do not expose secrets. |
-| REQ-WEB-003 | REQUIRED | Files support bounded list, search/filter and detail including source/library, recognition, metadata, policies, target, result/history, errors and available actions. Its physical entries come from Storage and may include bounded FileIndex-derived business-status feedback. | §文件列表; §搜索与筛选; §媒体详情 | Users can answer what, why, outcome and next action without manual joins or raw logs, while FileIndex remains display feedback rather than physical-source or execution authority. |
+| REQ-WEB-003 | REQUIRED | Files provide bounded live library-scoped entries and applicable actions; processing explanations/results remain on supported Task/Result surfaces. The current V2 amendment retires FileIndex catalog/detail and display feedback. | §文件列表; §搜索与筛选; §媒体详情; V2-FILES-005/006 | CLI and both library pages share live Storage reads without recording a file catalog. Users inspect processing outcomes through native task journeys; live membership never depends on recognition, metadata or historical results. |
 | REQ-WEB-004 | REQUIRED | Web manages Storage, libraries, the V1 TMDB Provider reference/policy, RecognitionTypes/policies, Automation Task Definitions/schedules, Tasks, manual identity correction and DryRun. | §第一阶段 MVP / UI; §配置管理; §自动化对象与生命周期边界 | Each management surface uses the same validation, permission, audit and safety contract as API; arbitrary Provider switching is not a V1 capability. |
 | REQ-WEB-005 | REQUIRED | Task, review, conflict and recovery actions use explicit confirmation and never execute merely by viewing a page. | §任务操作; §人工元数据识别; §冲突策略; §人工整理 | Read paths are side-effect free and write actions show resulting durable state. |
 | REQ-WEB-006 | REQUIRED | System/configuration status is bounded, permission-aware and secret-free, and distinguishes unavailable data from false success. | §Dashboard; §系统设置; §可操作错误与恢复 | Status views do not contact media services or expose paths/options beyond the user's authority. |
@@ -347,7 +416,7 @@ the release contract, not a new media-processing engine.
 | REQ-SAFE-006 | REQUIRED | Security audit records important configuration, manual decision, overwrite/delete and cancellation actions with actor, before/after, time and result. | §审计日志 | Audit is durable, bounded and secret-free. |
 | REQ-SAFE-007 | REQUIRED | Automated tests and isolated acceptance use fakes/local services or explicit dedicated test roots and never production media or credentials. | Engineering derivation from §安全要求 and §高风险文件操作保护 | Verification cannot mutate an unapproved user library or leak private configuration. |
 | REQ-SAFE-008 | REQUIRED | Persistent scheduled execution authority is bound to one Automation Task Definition and its permitted source/run scope, is independently revocable and does not imply Overwrite, Delete, cleanup or broader file authority. | §V1 Scheduled Unattended Organization 授权; §高风险文件操作保护 | OrganizerExecutor validates current authority and the pinned valid plan before every not-yet-performed mutation; invalid or excessive authority fails closed and is audited. |
-| REQ-SAFE-009 | REQUIRED | FileIndex may be used by the Files surface only for bounded business-status/recognition feedback and by the completed Organize path for result synchronization; it is not a source, path, Preview or execution authority. | §文件列表; §安全预览; §整理结果记录 | Browsing, selection, configuration and Preview remain Storage/ResourceLibrary-authoritative, and index-sync failure cannot replay media mutation. |
+| REQ-SAFE-009 | REQUIRED | Current V2 retires the former FileIndex display/synchronization exceptions under the explicit amendment; source/plan/execution authority remains library/live-Storage and exact work evidence. | §文件列表; §安全预览; §整理结果记录; V2-FILES-005/006 | Browsing records no catalog; explicit work keeps confined exact sources, immutable pins and durable outcomes without an index or renamed stand-in. Result/display failure never replays media mutation. |
 
 ## Explicit post-V1 product scope
 
@@ -645,7 +714,7 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 #### **V2 操作与任务工作区（CURRENT；Slice 42 PASS / CLOSED）**
 
 本节记录 A 于 2026-10-06 验收的 CURRENT 事实，不改变下方冻结的 V1 需求及此前 Slice 的验收事实。
-`docs/pics/操作与任务.png` 只定义业务关系、页面组成与视觉风格，其中名称、数量、日期、路径、
+该闭合 Slice 的原始参考图保留在其 Git 检查点；参考中的名称、数量、日期、路径、
 海报、进度与剩余时间均不是实际数据或固定验收样本。稳定 V2 要求见 `V2-OPS-001` 至
 `V2-OPS-008`；当前范围与验收以 `SLICE.md` 为准。
 
@@ -671,6 +740,29 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 全局 Review 收件箱、跨任务批量审核、任务历史删除/保留策略、无限整库手工整理、任意历史
 Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确定 mutation 自动重放仍未交付。
 已退役的文件级重新识别、metadata rematch、re-plan 与 recognition retry-pending 接口不恢复。
+
+#### **V2 任务中心重构（TARGET；Slice45）**
+
+用户确认 [任务中心最终方案](task-center-page-spec.md) 及其九张 `docs/pics/任务中心-标签名.png`
+参考图。九个横向标签是全部任务、进行中、需要处理、已结束、识别恢复、元数据恢复、分类恢复、
+冲突处理和失败恢复；各页独立查询真实授权总体，恢复页按任务聚合并显示本类型的待处理文件数。
+同一任务可属于多个视图，不新建九套任务或恢复模型。
+
+新建仅提供真实整理，在当前界面先显示来源、完整性、主文件/附件、就绪子集、操作、目标与
+冲突/破坏性影响摘要，可展开逐项检查，然后明确确认精确范围。恢复流程也在当前处理界面
+显示新摘要并确认继续；取消独立 Preview 产品页面与强制跳转，内部零变更分析、固定计划、
+权限、版本和 OrganizerExecutor 边界不变。未就绪/未选择项状态独立，摘要本身不制造正式
+执行阻塞待办，不把未知效果或未执行项算成功，不自动重放成功/忽略/不确定项。
+
+Scan 产品按 2026-10-18 首次部署修订视为从未存在：独立入口及 scan-only/scan-and-plan 定义模式、
+专属执行/重试/继续和退役兼容层删除，旧输入走普通 not-found/参数/不支持类型错误。必要共享
+发现/过滤/真实稳定性/计划保留，原流程自行完成观察，不再要求先运行 Scan。
+不建设旧 Scan/V1 parity、停止/接管、迁移或专用历史兼容；其他受支持工作的
+历史意图、结果和审计保持。此修订不授权清空媒体或运行数据。用户随后将 FileIndex 完全退出
+加入同一 Slice：CLI/两种库页共用只读 live Storage 列表，取消目录索引、专用接口/仓储/schema/
+同步修复及全部运行依赖，见 V2-FILES-005/006 与退役设计；不建设旧索引生产兼容。
+整体 DryRun、Rules 测试与冻结 Slice43 的自动化业务工作区不在此次退役范围。
+这些是明确的 TARGET 产品修订；上方 CURRENT Slice42 和下方冻结 V1 事实不因此改写为已交付。
 
 #### **安全预览与直接文件命令**
 
@@ -3484,6 +3576,9 @@ Token=******
 至少包括已知的处理结论、整理 disposition、实际 effect 和需要的恢复信息。FileIndex 同步失败
 不得覆盖 Result，也不得触发已完成或不确定 Storage mutation 的自动重放。
 
+上段为冻结 V1 同步定义。当前 V2 按 2026-10-18 明确修订完全退役 FileIndex，同步及同步修复
+不再执行；Task/Result、逐项已完成步骤、效果确定性和审计持久化义务保留，仍禁止错误重放。
+
 支持：
 
 ```Plain Text
@@ -3965,6 +4060,9 @@ ConfigVersion
 
 ### **数据索引**
 
+本节记录冻结 V1 定义。当前 V2 以 V2-FILES-005/006 与本文 FileIndex 退役修订取代：
+不建立全局文件索引，列表只读 live Storage；显式工作自己的精确来源、观察、结果和审计继续持久化。
+
 所有扫描过的文件建立索引。
 
 建议：
@@ -4003,6 +4101,9 @@ UpdatedAt
 ```
 
 ### **增量扫描**
+
+以下全局 New/Modified/Unchanged/Missing 索引产品语义为 V1 历史；当前 V2 不维护该目录。
+内部有界发现、真实稳定性、来源变化和任务去重/非重放安全继续按本次修订成立。
 
 扫描时判断：
 
@@ -4112,6 +4213,10 @@ TMDB等Provider信息
 
 最近更新时间
 ```
+
+当前 V2 TARGET：`mediaflow files list`、文件页和媒体库页共用所选库的实时有界 Storage 列表，
+不记录文件目录；索引 CLI/API/页面/同步完全退役，详情见退役设计。下文是尚待该修订替换的
+已接受实现基线，不能作为继续保留 FileIndex 的新范围授权。
 
 当前实现基线：认证 Web/API 的 **Files** 提供配置 Storage 的有界真实目录/文件浏览，**FileIndex**
 CLI/Web/API 提供有界索引列表、单项详情和统计；两者都使用 Storage-relative identity，Files

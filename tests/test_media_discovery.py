@@ -53,6 +53,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.in_memory_storage import InMemoryStorage
+from tests.storage_fixtures import PagedMemoryStorage
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -333,14 +334,11 @@ class _DiscoveryFixture(unittest.TestCase):
         if metadata_query_type is not None:
             for policy in document.get("metadataPolicies", []):
                 policy["mediaQueryType"] = metadata_query_type
-        if source_storage is not None:
-            # A provider-neutral Storage double (for example the in-memory
-            # long-path fixture) replaces only the source adapter; the real
-            # managed configuration, SQLite persistence and API stay exactly
-            # the ones the production journey uses.
-            source = _RecordingStorage(source_storage)
-        else:
-            source = _RecordingStorage(LocalStorage("source", self.source_root))
+        source = _RecordingStorage(
+            source_storage
+            if source_storage is not None
+            else LocalStorage("source", self.source_root)
+        )
         target = _RecordingStorage(LocalStorage("target", self.target_root))
         storages = {"source": source, "target": target}
         if second_library:
@@ -377,6 +375,7 @@ class _DiscoveryFixture(unittest.TestCase):
                 intents,
                 configuration=runtime,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
+                preview_service=previews,
                 storages=dict(storages),
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
@@ -3484,10 +3483,13 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
         path = (
             "Long/" + "/".join(("d" + str(index) + "x" * 197) for index in range(6)) + "/Film.mkv"
         )
+        # This is a provider-neutral path projection regression. macOS Local
+        # cannot create a >1024-byte physical path; keep the exact logical path
+        # in Storage while exercising the real Worker, SQLite and API below.
+        source = PagedMemoryStorage("source", read_only=False)
+        source.add_file(path, size=512, modified_at=self.clock() - timedelta(hours=1))
         self.assertGreater(len(path), 1024)
-        self._require_long_path_fixture_support(path)
-        self.media(path)
-        with self.journey() as value:
+        with self.journey(source_storage=source) as value:
             _, admitted = self.request(
                 value,
                 "/api/v1/resource-libraries/library/files/discoveries",
@@ -3511,6 +3513,9 @@ class A44BlockingDefectRegressions(_DiscoveryFixture):
             )
             self.assertEqual(200, status, detail)
             self.assertEqual(settled["sources"][0]["path"], detail["sources"][0]["path"])
+            self.assertEqual(path, detail["sources"][0]["path"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_a_legal_long_relative_path_is_readable_end_to_end_in_memory(self) -> None:
         """A44-9 (platform-independent): exact >1024 path through real layers.

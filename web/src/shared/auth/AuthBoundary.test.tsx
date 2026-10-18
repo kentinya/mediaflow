@@ -91,7 +91,7 @@ describe("AuthBoundary", () => {
     // from the shell navigation. The boundary records the newest supported
     // route instead of keeping the stale MediaLibrary intention, and returns to
     // the connection boundary.
-    await user.click(screen.getByRole("link", { name: "Operations" }));
+    await user.click(screen.getByRole("link", { name: "任务中心" }));
     expect(await screen.findByLabelText("API token")).toBeVisible();
     expect(authStore.getIntendedPath()).toBe("/operations");
 

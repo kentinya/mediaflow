@@ -28,6 +28,9 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
+  executeOrganizePreview,
+  fetchOrganizeAdmissionOutcome,
+  fetchOrganizePreviewDetail,
   mutateLifecycle,
   submitRemainingScopePreview,
   type LifecycleMutationResult,
@@ -35,18 +38,25 @@ import {
   type RunOverviewRead,
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { isSafeOperationsSourceScope } from "../../shared/navigation/operations-return";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
+  RUN_PROBLEM_LABELS,
+  RUN_PROBLEM_TYPES,
   RUN_STATUSES,
+  RUN_CURRENT_STAGE_LABELS,
   RUN_STATUS_LABELS,
-  RUN_STATUS_FILTERS,
   RUN_TRIGGER_LABELS,
+  RUN_VIEWS,
+  RUN_VIEW_LABELS,
   TERMINAL_RUN_STATUSES,
-  isAttentionRun,
+  isRecoveryView,
   type RunInventoryPage,
+  type RunProblemType,
   type RunStatus,
   type RunSummary,
+  type RunView,
 } from "../../entities/operations/run";
 import {
   runInventoryQueryOptions,
@@ -55,6 +65,8 @@ import {
 } from "./run-query";
 import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
 import { RunDetailTabs } from "./RunDetailTabs";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
+import { ProblemFilePanel } from "./ProblemFilePanel";
 import {
   readRunDetailState,
   runDetailStateSearch,
@@ -88,6 +100,7 @@ const RUN_PAGE_LIMIT = 20;
 interface RunListFilters {
   readonly status: string;
   readonly command: string;
+  readonly source: string;
   readonly q: string;
   readonly from: string;
   readonly to: string;
@@ -100,6 +113,31 @@ interface RunPageState {
   readonly cursor: string | null;
   readonly direction: "forward" | "backward";
 }
+
+interface ProblemPageState {
+  readonly cursor: string | null;
+  readonly direction: "forward" | "backward";
+}
+
+const RUN_VIEW_DESCRIPTIONS: Readonly<Record<RunView, string>> = {
+  all: "查看授权范围内的任务与 Job、实际阶段和已处理进度；业务名称和范围来自受理时保存的记录。",
+  running: "查看当前阶段和已处理进度；未知阶段或计数会明确显示不可用。",
+  attention: "查看仍待跟进的决定、修复或后续步骤，并进入对应文件证据。",
+  ended: "核对每项运行的结果摘要、失败数量和结束状态。",
+  recognition: "识别尚未确定时，核对候选或识别规则，再打开对应文件记录。",
+  metadata: "媒体身份仍待确认或补正；核对标题、年份和候选后查看文件记录。",
+  classification: "目标媒体库或相对路径尚未确定；检查分类策略和来源范围。",
+  conflict: "目标位置存在冲突；查看冲突文件和已配置的处理策略。",
+  failure: "处理失败或结果仍需调查；先查看文件证据和明确的安全下一步。",
+};
+
+const RECOVERY_VIEW_EXPLANATIONS: Readonly<Record<RunProblemType, string>> = {
+  recognition: "识别仍有待核对项；打开文件记录查看候选与识别依据。",
+  metadata: "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
+  classification: "目标媒体库或路径仍未确定；打开文件记录查看分类状态。",
+  conflict: "目标位置有冲突待处理；打开文件记录核对冲突和策略。",
+  failure: "存在失败或不确定结果；打开文件记录查看证据与下一步。",
+};
 
 const STATUS_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
 const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
@@ -134,6 +172,7 @@ function readAttentionFacet(search: Record<string, unknown>): boolean {
 function readFilters(search: Record<string, unknown>): RunListFilters {
   const status = readSafeSearchValue(search, "status");
   const command = readSafeSearchValue(search, "command");
+  const source = readSafeSearchValue(search, "source");
   const q = readSafeSearchValue(search, "q");
   const from = readSafeSearchValue(search, "from");
   const to = readSafeSearchValue(search, "to");
@@ -145,6 +184,10 @@ function readFilters(search: Record<string, unknown>): RunListFilters {
     command:
       command && (command === "all" || COMMAND_TOKEN.test(command))
         ? command
+        : "all",
+    source:
+      source === "" || isSafeOperationsSourceScope(source)
+        ? source || "all"
         : "all",
     q: q.length <= 128 ? q : "",
     from: from && DATE_TOKEN.test(from) ? from : "",
@@ -173,7 +216,76 @@ function readPageState(search: Record<string, unknown>): RunPageState {
   };
 }
 
+function readProblemPageState(
+  search: Record<string, unknown>,
+): ProblemPageState {
+  const cursor = readSafeSearchValue(search, "problemCursor");
+  const direction = readSafeSearchValue(search, "problemDir");
+  if (direction !== "" && direction !== "forward" && direction !== "backward") {
+    return { cursor: null, direction: "forward" };
+  }
+  if (cursor !== "" && !CURSOR_TOKEN.test(cursor)) {
+    return { cursor: null, direction: "forward" };
+  }
+  return {
+    cursor: cursor === "" ? null : cursor,
+    direction: direction === "backward" ? "backward" : "forward",
+  };
+}
+
 type RunSearchValue = string | boolean;
+
+/** A safe default filter state (no narrowing). */
+function defaultFilters(): RunListFilters {
+  return {
+    status: "all",
+    command: "all",
+    source: "all",
+    q: "",
+    from: "",
+    to: "",
+    attention: false,
+  };
+}
+
+/**
+ * The submitted view. The router's default search parser may deliver the
+ * literal as a string; anything outside the nine modelled views falls back to
+ * the unfiltered `全部任务` view instead of being replayed against the server.
+ */
+function readView(search: Record<string, unknown>): RunView {
+  const value = readSafeSearchValue(search, "view");
+  return (RUN_VIEWS as readonly string[]).includes(value)
+    ? (value as RunView)
+    : "all";
+}
+
+/**
+ * The submitted recovery problem type. A recovery view owns its own problem
+ * predicate; this explicit value only narrows a lifecycle view. An
+ * out-of-contract value reads as no problem filter.
+ */
+function readProblem(search: Record<string, unknown>): RunProblemType | null {
+  const value = readSafeSearchValue(search, "problem");
+  return (RUN_PROBLEM_TYPES as readonly string[]).includes(value)
+    ? (value as RunProblemType)
+    : null;
+}
+
+/**
+ * The chosen problem-file type of an explicit problem location. A recovery
+ * view owns its own problem type; a lifecycle view (notably the overlapping
+ * attention view) needs the operator's explicit type because one Task may
+ * carry several at once. An out-of-contract value reads as no choice.
+ */
+function readProblemType(
+  search: Record<string, unknown>,
+): RunProblemType | null {
+  const value = readSafeSearchValue(search, "problemType");
+  return (RUN_PROBLEM_TYPES as readonly string[]).includes(value)
+    ? (value as RunProblemType)
+    : null;
+}
 
 function filtersToSearch(
   filters: RunListFilters,
@@ -181,6 +293,7 @@ function filtersToSearch(
   const search: Record<string, RunSearchValue> = {};
   if (filters.status !== "all") search["status"] = filters.status;
   if (filters.command !== "all") search["command"] = filters.command;
+  if (filters.source !== "all") search["source"] = filters.source;
   if (filters.q) search["q"] = filters.q;
   if (filters.from) search["from"] = filters.from;
   if (filters.to) search["to"] = filters.to;
@@ -189,6 +302,24 @@ function filtersToSearch(
   // `attention=%22true%22`, which the reconnect allowlist and an operator
   // reading the address bar would not recognise as the facet.
   if (filters.attention) search["attention"] = true;
+  return search;
+}
+
+/**
+ * The complete URL search of one list state: the submitted filters, the
+ * selected view and the explicit problem narrowing (only meaningful outside a
+ * recovery view, which already owns its own problem predicate).
+ */
+function listStateSearch(
+  filters: RunListFilters,
+  view: RunView,
+  problem: RunProblemType | null,
+): Record<string, RunSearchValue> {
+  const search = filtersToSearch(filters);
+  if (view !== "all") search["view"] = view;
+  if (problem !== null && !isRecoveryView(view)) {
+    search["problem"] = problem;
+  }
   return search;
 }
 
@@ -202,6 +333,7 @@ function isFiltered(filters: RunListFilters): boolean {
     filters.attention ||
     filters.status !== "all" ||
     filters.command !== "all" ||
+    filters.source !== "all" ||
     filters.q !== "" ||
     filters.from !== "" ||
     filters.to !== ""
@@ -216,13 +348,6 @@ function commandLabelOf(run: RunSummary): string {
   // An unknown legacy command stays honest: show the recorded identity
   // bounded, never a guessed business meaning.
   return run.command ?? "未知操作";
-}
-
-function runIdentityOf(run: RunSummary): string {
-  // The run identity is the admission identity for a Job-backed run (so an
-  // admission keeps its visible identity after acquiring a Task) and the Task
-  // identity for a standalone Task.
-  return run.runId;
 }
 
 function detailLinkOf(run: RunSummary): string | null {
@@ -246,11 +371,23 @@ export function OperationsLanding() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const navigate = useNavigate();
   const filters = readFilters(searchParams);
+  const view = readView(searchParams);
+  const problem = readProblem(searchParams);
   const chosenLibraryId = readSafeSearchValue(
     searchParams,
     "resourceLibraryId",
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
+  const problemRunId = readSafeSearchValue(searchParams, "problemRun");
+  const chosenProblemType = readProblemType(searchParams);
+  const problemPage = readProblemPageState(searchParams);
+  // A recovery view owns its problem type. The overlapping attention view has
+  // no single type: it uses the operator's explicit choice, so a Task that
+  // carries several current problems never guesses one and never leaves the
+  // locate action dead.
+  const problemFileType: RunProblemType | null = isRecoveryView(view)
+    ? view
+    : chosenProblemType;
   // The selected run's detail view (tab/filters/cursors/inspected item) lives
   // in the URL for the same reconnect reasons as the list state itself.
   const detailState = readRunDetailState(searchParams);
@@ -292,10 +429,13 @@ export function OperationsLanding() {
     runInventoryQueryOptions(token, {
       status: effectiveStatus as RunStatus | null,
       command: effectiveCommand,
+      source: filters.source === "all" ? null : filters.source,
       q: filters.q || null,
       from: filters.from || null,
       to: filters.to || null,
       attention: filters.attention ? true : null,
+      view: view === "all" ? null : view,
+      problem: view !== "all" && !isRecoveryView(view) ? problem : null,
       limit: RUN_PAGE_LIMIT,
       cursor,
     }),
@@ -303,7 +443,7 @@ export function OperationsLanding() {
 
   /** The full current list state (filters, page and selection) as URL search. */
   const listSearch = (runId?: string): Record<string, RunSearchValue> => {
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -319,13 +459,26 @@ export function OperationsLanding() {
     // for the previous population is never carried into a new one.
     void navigate({
       to: "/operations",
-      search: filtersToSearch({ ...filters, ...next }),
+      search: listStateSearch({ ...filters, ...next }, view, problem),
+      replace: true,
+    });
+  };
+
+  /** Switch to one of the nine sibling views, always from the first page. */
+  const selectView = (next: RunView) => {
+    void navigate({
+      to: "/operations",
+      search: listStateSearch(filters, next, null),
       replace: true,
     });
   };
 
   const resetFilters = () => {
-    void navigate({ to: "/operations", search: {}, replace: true });
+    void navigate({
+      to: "/operations",
+      search: listStateSearch(defaultFilters(), view, null),
+      replace: true,
+    });
   };
 
   const selectRun = (runId: string) => {
@@ -340,10 +493,72 @@ export function OperationsLanding() {
   };
 
   const closeRun = () => {
-    void navigate({ to: "/operations", search: listSearch(), replace: true });
+    const search = listSearch();
+    if (problemRunId !== "") search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view))
+      search["problemType"] = chosenProblemType;
+    if (problemPage.cursor !== null) {
+      search["problemCursor"] = problemPage.cursor;
+      search["problemDir"] = problemPage.direction;
+    }
+    void navigate({ to: "/operations", search, replace: true });
     // A closed selection drops its overview cache so a later selection of
     // the same run starts from a fresh bounded read.
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
+  };
+
+  /**
+   * Open the exact Task/type problem file list of one recovery or attention
+   * row. A recovery view already names its own type; an attention row passes
+   * the operator's explicit choice so a multi-type Task never guesses one.
+   */
+  const openProblemRun = (runId: string, type: RunProblemType | null) => {
+    const search = listSearch();
+    search["problemRun"] = runId;
+    if (type !== null) {
+      search["problemType"] = type;
+    }
+    void navigate({ to: "/operations", search, replace: false });
+  };
+
+  const closeProblemRun = () => {
+    void navigate({ to: "/operations", search: listSearch(), replace: true });
+  };
+
+  const turnProblemPage = (
+    nextCursor: string,
+    nextDirection: "forward" | "backward",
+  ) => {
+    const search = listSearch();
+    search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      search["problemType"] = chosenProblemType;
+    }
+    search["problemCursor"] = nextCursor;
+    search["problemDir"] = nextDirection;
+    void navigate({ to: "/operations", search, replace: true });
+  };
+
+  const openProblemItemEvidence = (taskId: string, itemId: string) => {
+    const returnSearch = listSearch();
+    returnSearch["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view)) {
+      returnSearch["problemType"] = chosenProblemType;
+    }
+    if (problemPage.cursor !== null) {
+      returnSearch["problemCursor"] = problemPage.cursor;
+      returnSearch["problemDir"] = problemPage.direction;
+    }
+    void navigate({
+      to: "/operations",
+      search: {
+        ...returnSearch,
+        run: taskId,
+        ...runDetailStateSearch(
+          readRunDetailState({ tab: "detail", item: itemId }),
+        ),
+      },
+    });
   };
 
   /** Move one server page by replacing the URL (no extra history entries). */
@@ -351,7 +566,7 @@ export function OperationsLanding() {
     nextCursor: string,
     nextDirection: "forward" | "backward",
   ) => {
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     search["cursor"] = nextCursor;
     search["dir"] = nextDirection;
     if (selectedId !== "") {
@@ -367,7 +582,7 @@ export function OperationsLanding() {
     if (selectedId === "") {
       return;
     }
-    const search = filtersToSearch(filters);
+    const search = listStateSearch(filters, view, problem);
     if (cursor !== null) {
       search["cursor"] = cursor;
       search["dir"] = direction;
@@ -415,137 +630,165 @@ export function OperationsLanding() {
   return (
     <div className="mf-dashboard mf-operations-inventory">
       <header className="mf-dashboard-head">
-        <h2>操作与任务</h2>
+        <div>
+          <h2>任务中心</h2>
+          <p className="mf-dashboard-meta">
+            跟踪整理进度，集中处理问题，查看每个文件的结果。
+          </p>
+        </div>
         <RefreshControl onRefresh={refreshAll} refreshing={anyFetching} />
       </header>
-      <AuthorizedReadBoundary
-        query={query}
-        unavailableTitle="操作与任务暂不可用"
-      >
+      <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
         {({ isFetching, refresh }) => (
           <>
             {page !== null && (
-              <CountCards page={page} onCard={applyFilters} filters={filters} />
+              <ViewSummary page={page} view={view} onSelectView={selectView} />
             )}
-            <div
-              className={
-                selectedId !== ""
-                  ? "mf-run-layout mf-run-has-detail"
-                  : "mf-run-layout"
-              }
-            >
-              <div className="mf-run-main">
-                <section
-                  className="mf-count-section mf-run-filters"
-                  aria-label="运行筛选"
-                >
-                  <form
-                    className="mf-run-filter-bar"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      applyFilters({ q: searchDraft.trim() });
-                    }}
+            <div className="mf-task-center-panel">
+              <ViewNavigation view={view} onSelectView={selectView} />
+              <div
+                className={
+                  selectedId !== ""
+                    ? "mf-run-layout mf-run-has-detail"
+                    : "mf-run-layout"
+                }
+              >
+                <div className="mf-run-main">
+                  <section
+                    className="mf-count-section mf-run-filters"
+                    aria-label="运行筛选"
                   >
-                    <label htmlFor="run-search">搜索</label>
-                    <input
-                      id="run-search"
-                      type="search"
-                      value={searchDraft}
-                      maxLength={128}
-                      placeholder="按业务名称或范围搜索"
-                      onChange={(event) => setSearchDraft(event.target.value)}
-                    />
-                    <button
-                      type="submit"
-                      className="mf-button mf-button-secondary"
+                    <form
+                      className="mf-run-filter-bar"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        applyFilters({ q: searchDraft.trim() });
+                      }}
                     >
-                      搜索
-                    </button>
-                    <label htmlFor="run-status-filter">状态</label>
-                    <select
-                      id="run-status-filter"
-                      value={filters.status}
-                      onChange={(event) =>
-                        applyFilters({ status: event.target.value })
-                      }
-                    >
-                      <option value="all">全部状态</option>
-                      {RUN_STATUSES.map((status) => (
-                        <option key={status} value={status}>
-                          {RUN_STATUS_LABELS[status]}
-                        </option>
-                      ))}
-                    </select>
-                    <label htmlFor="run-command-filter">操作类型</label>
-                    <input
-                      id="run-command-filter"
-                      type="text"
-                      value={filters.command === "all" ? "" : filters.command}
-                      maxLength={64}
-                      placeholder="如 scan、preview"
-                      onChange={(event) =>
-                        applyFilters({
-                          command:
-                            event.target.value === ""
-                              ? "all"
-                              : event.target.value,
-                        })
-                      }
-                    />
-                    <label htmlFor="run-from-filter">创建时间从</label>
-                    <input
-                      id="run-from-filter"
-                      type="date"
-                      value={filters.from.slice(0, 10)}
-                      onChange={(event) =>
-                        applyFilters({
-                          from:
-                            event.target.value === ""
-                              ? ""
-                              : `${event.target.value}T00:00:00Z`,
-                        })
-                      }
-                    />
-                    <label htmlFor="run-to-filter">至</label>
-                    <input
-                      id="run-to-filter"
-                      type="date"
-                      value={filters.to.slice(0, 10)}
-                      onChange={(event) =>
-                        applyFilters({
-                          to:
-                            event.target.value === ""
-                              ? ""
-                              : `${event.target.value}T23:59:59Z`,
-                        })
-                      }
-                    />
-                    {filtered && (
+                      <div className="mf-run-search-field">
+                        <label
+                          htmlFor="run-search"
+                          className="mf-visually-hidden"
+                        >
+                          搜索
+                        </label>
+                        <input
+                          id="run-search"
+                          type="search"
+                          value={searchDraft}
+                          maxLength={128}
+                          placeholder="搜索任务名称、文件或路径"
+                          onChange={(event) =>
+                            setSearchDraft(event.target.value)
+                          }
+                        />
+                      </div>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-source-filter">来源</label>
+                        <select
+                          id="run-source-filter"
+                          value={filters.source}
+                          onChange={(event) =>
+                            applyFilters({
+                              source: event.target.value || "all",
+                            })
+                          }
+                        >
+                          <option value="all">全部来源</option>
+                          {page?.summary.sources.map((sourceOption) => (
+                            <option
+                              key={sourceOption.value}
+                              value={sourceOption.value}
+                            >
+                              {sourceOption.label}
+                            </option>
+                          ))}
+                          {filters.source !== "all" &&
+                            page?.summary.sources.every(
+                              (sourceOption) =>
+                                sourceOption.value !== filters.source,
+                            ) && (
+                              <option value={filters.source}>
+                                {filters.source}
+                              </option>
+                            )}
+                        </select>
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-status-filter">状态</label>
+                        <select
+                          id="run-status-filter"
+                          value={filters.status}
+                          onChange={(event) =>
+                            applyFilters({ status: event.target.value })
+                          }
+                        >
+                          <option value="all">全部状态</option>
+                          {RUN_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {RUN_STATUS_LABELS[status]}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-command-filter">操作类型</label>
+                        <input
+                          id="run-command-filter"
+                          type="text"
+                          value={
+                            filters.command === "all" ? "" : filters.command
+                          }
+                          maxLength={64}
+                          placeholder="如 scan、preview"
+                          onChange={(event) =>
+                            applyFilters({
+                              command:
+                                event.target.value === ""
+                                  ? "all"
+                                  : event.target.value,
+                            })
+                          }
+                        />
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-from-filter">创建时间从</label>
+                        <input
+                          id="run-from-filter"
+                          type="date"
+                          value={filters.from.slice(0, 10)}
+                          onChange={(event) =>
+                            applyFilters({
+                              from:
+                                event.target.value === ""
+                                  ? ""
+                                  : `${event.target.value}T00:00:00Z`,
+                            })
+                          }
+                        />
+                      </span>
+                      <span className="mf-run-filter-field">
+                        <label htmlFor="run-to-filter">至</label>
+                        <input
+                          id="run-to-filter"
+                          type="date"
+                          value={filters.to.slice(0, 10)}
+                          onChange={(event) =>
+                            applyFilters({
+                              to:
+                                event.target.value === ""
+                                  ? ""
+                                  : `${event.target.value}T23:59:59Z`,
+                            })
+                          }
+                        />
+                      </span>
                       <button
-                        type="button"
+                        type="submit"
                         className="mf-button mf-button-secondary"
-                        onClick={resetFilters}
                       >
-                        重置筛选
+                        搜索
                       </button>
-                    )}
-                  </form>
-                </section>
-                {query.data === undefined ? (
-                  <StatusBanner variant="info" title="正在加载运行清单">
-                    <p>正在从 MediaFlow API 读取运行清单。</p>
-                  </StatusBanner>
-                ) : !query.data.ok ? (
-                  <StatusBanner
-                    variant="error"
-                    title={query.data.failure.title}
-                  >
-                    <p>{query.data.failure.nextAction}</p>
-                    <div className="mf-actions">
-                      <RefreshControl
-                        onRefresh={refresh}
-                        refreshing={isFetching}
-                      />
                       {filtered && (
                         <button
                           type="button"
@@ -555,141 +798,144 @@ export function OperationsLanding() {
                           重置筛选
                         </button>
                       )}
-                    </div>
-                  </StatusBanner>
-                ) : page === null ? null : page.items.length === 0 ? (
-                  <StatusBanner
-                    variant="info"
-                    title={filtered ? "没有匹配的运行" : "还没有运行记录"}
-                  >
-                    <p>
-                      {filtered
-                        ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
-                        : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
-                    </p>
-                    {filtered && (
+                    </form>
+                  </section>
+                  {query.data === undefined ? (
+                    <StatusBanner variant="info" title="正在加载运行清单">
+                      <p>正在从 MediaFlow API 读取运行清单。</p>
+                    </StatusBanner>
+                  ) : !query.data.ok ? (
+                    <StatusBanner
+                      variant="error"
+                      title={query.data.failure.title}
+                    >
+                      <p>{query.data.failure.nextAction}</p>
                       <div className="mf-actions">
-                        <button
-                          type="button"
-                          className="mf-button mf-button-secondary"
-                          onClick={resetFilters}
-                        >
-                          重置筛选
-                        </button>
+                        <RefreshControl
+                          onRefresh={refresh}
+                          refreshing={isFetching}
+                        />
+                        {filtered && (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            重置筛选
+                          </button>
+                        )}
                       </div>
-                    )}
-                  </StatusBanner>
-                ) : (
-                  <RunTable
-                    page={page}
-                    selectedId={selectedId}
-                    direction={direction}
-                    onSelect={selectRun}
-                    onForward={() => {
-                      if (page.nextCursor) {
-                        turnPage(page.nextCursor, "forward");
-                      }
-                    }}
-                    onBackward={() => {
-                      if (page.previousCursor) {
-                        turnPage(page.previousCursor, "backward");
-                      }
-                    }}
-                  />
-                )}
-              </div>
-              {selectedId !== "" && (
-                <RunDetailPanel
-                  // A different selected run is a different control object:
-                  // remounting resets the pending/result/reconciliation state
-                  // so a lock or an accepted outcome can never carry over to
-                  // another run's controls.
-                  key={selectedId}
-                  query={overviewQuery}
-                  onClose={closeRun}
-                  detailState={detailState}
-                  onDetailStateChange={applyDetailState}
-                  onOpenPreview={(previewId) =>
-                    void navigate({
-                      to: "/operations/organize/preview/$previewId",
-                      params: { previewId },
-                      search: operationsReturnSearch(
-                        operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                      ),
-                    })
-                  }
-                  onOpenRecoveryPreview={(
-                    previewId,
-                    linkId,
-                    sourceTaskId,
-                    sourceItemId,
-                  ) =>
-                    void navigate({
-                      to: "/operations/organize/preview/$previewId",
-                      params: { previewId },
-                      search: {
-                        recoveryLinkId: linkId,
-                        recoveryTaskId: sourceTaskId,
-                        recoveryItemId: sourceItemId,
-                        ...operationsReturnSearch(
+                    </StatusBanner>
+                  ) : page === null ? null : page.items.length === 0 ? (
+                    <StatusBanner
+                      variant="info"
+                      title={filtered ? "没有匹配的运行" : "还没有运行记录"}
+                    >
+                      <p>
+                        {filtered
+                          ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
+                          : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
+                      </p>
+                      {filtered && (
+                        <div className="mf-actions">
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={resetFilters}
+                          >
+                            重置筛选
+                          </button>
+                        </div>
+                      )}
+                    </StatusBanner>
+                  ) : (
+                    <RunTable
+                      page={page}
+                      selectedId={selectedId}
+                      direction={direction}
+                      view={view}
+                      onSelect={selectRun}
+                      onOpenProblem={openProblemRun}
+                      onForward={() => {
+                        if (page.nextCursor) {
+                          turnPage(page.nextCursor, "forward");
+                        }
+                      }}
+                      onBackward={() => {
+                        if (page.previousCursor) {
+                          turnPage(page.previousCursor, "backward");
+                        }
+                      }}
+                    />
+                  )}
+                </div>
+                {selectedId !== "" && (
+                  <RunDetailPanel
+                    // A different selected run is a different control object:
+                    // remounting resets the pending/result/reconciliation state
+                    // so a lock or an accepted outcome can never carry over to
+                    // another run's controls.
+                    key={selectedId}
+                    query={overviewQuery}
+                    onClose={closeRun}
+                    detailState={detailState}
+                    onDetailStateChange={applyDetailState}
+                    onOpenPreview={(previewId) =>
+                      void navigate({
+                        to: "/operations/organize/preview/$previewId",
+                        params: { previewId },
+                        search: operationsReturnSearch(
                           operationsReturnContextFromSearch({
                             ...listSearch(selectedId),
                             ...runDetailStateSearch(detailState),
                           }),
                         ),
-                      },
-                    })
-                  }
-                  onOpenLinkedAnalysis={(taskId, itemId) =>
-                    void navigate({
-                      to: "/operations/tasks/$taskId",
-                      params: { taskId },
-                      search: {
-                        returnOps: operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                        ...runDetailStateSearch(
-                          readRunDetailState({ tab: "detail", item: itemId }),
+                      })
+                    }
+                    onOpenLinkedAnalysis={(taskId, itemId) =>
+                      void navigate({
+                        to: "/operations/tasks/$taskId",
+                        params: { taskId },
+                        search: {
+                          returnOps: operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(detailState),
+                          }),
+                          ...runDetailStateSearch(
+                            readRunDetailState({ tab: "detail", item: itemId }),
+                          ),
+                        },
+                      })
+                    }
+                    onOpenRecoveryExecution={(executionId) =>
+                      void navigate({
+                        to: "/operations/organize/execution/$executionId",
+                        params: { executionId },
+                        search: operationsReturnSearch(
+                          operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(detailState),
+                          }),
                         ),
-                      },
-                    })
-                  }
-                  onOpenBatchLinkedAnalysis={(taskId, sourceItemId) => {
-                    const returnState = {
-                      ...detailState,
-                      tab: "detail" as const,
-                      evidenceItem: sourceItemId,
-                    };
-                    void navigate({
-                      to: "/operations/tasks/$taskId",
-                      params: { taskId },
-                      search: {
-                        returnOps: operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(returnState),
-                        }),
-                      },
-                    });
-                  }}
-                  onOpenRecoveryExecution={(executionId) =>
-                    void navigate({
-                      to: "/operations/organize/execution/$executionId",
-                      params: { executionId },
-                      search: operationsReturnSearch(
-                        operationsReturnContextFromSearch({
-                          ...listSearch(selectedId),
-                          ...runDetailStateSearch(detailState),
-                        }),
-                      ),
-                    })
-                  }
-                  onSelectRun={selectRun}
-                />
-              )}
+                      })
+                    }
+                    onSelectRun={selectRun}
+                  />
+                )}
+                {selectedId === "" &&
+                  problemRunId !== "" &&
+                  problemFileType !== null && (
+                    <ProblemFilePanel
+                      key={`${problemRunId}:${problemFileType}`}
+                      runId={problemRunId}
+                      problem={problemFileType}
+                      cursor={problemPage.cursor}
+                      onPage={turnProblemPage}
+                      onOpenEvidence={openProblemItemEvidence}
+                      onClose={closeProblemRun}
+                    />
+                  )}
+              </div>
             </div>
             <WorkerReadinessSection query={readinessQuery} />
             <DiscoveryReadbackSection query={discoveriesQuery} />
@@ -708,58 +954,156 @@ export function OperationsLanding() {
   );
 }
 
-function CountCards({
+function ViewSummary({
   page,
-  onCard,
-  filters,
+  view,
+  onSelectView,
 }: {
   readonly page: RunInventoryPage;
-  readonly onCard: (next: Partial<RunListFilters>) => void;
-  readonly filters: RunListFilters;
+  readonly view: RunView;
+  readonly onSelectView: (next: RunView) => void;
 }) {
-  const orderedStatuses = RUN_STATUS_FILTERS.filter(
-    (status) => (page.statusCounts[status] ?? 0) > 0,
-  );
+  const summary = page.summary;
+  if (!summary.available) {
+    return (
+      <section className="mf-count-section" aria-label="任务统计">
+        <StatusBanner variant="info" title="统计暂不可用">
+          <p>后端未提供完整授权总体的统计；列表仍会按服务器筛选和分页显示。</p>
+        </StatusBanner>
+      </section>
+    );
+  }
+  // The recovery views advertise their own problem-file counts; the lifecycle
+  // views advertise the population partitions. Totals are over the full
+  // filtered population, never just the current page.
+  const cards = isRecoveryView(view)
+    ? [
+        {
+          key: "problem-tasks",
+          value: summary.problemTasks[view],
+          label: "待处理任务",
+          target: view,
+        },
+        {
+          key: "problem-files",
+          value: summary.problemFiles[view],
+          label: "涉及文件",
+          target: view,
+        },
+        {
+          key: "all",
+          value: summary.total,
+          label: "任务总数",
+          target: "all" as RunView,
+        },
+        {
+          key: "attention",
+          value: summary.attention,
+          label: "需要处理",
+          target: "attention" as RunView,
+        },
+      ]
+    : [
+        {
+          key: "all",
+          value: summary.total,
+          label: "任务总数",
+          target: "all" as RunView,
+        },
+        {
+          key: "running",
+          value: summary.running,
+          label: "进行中",
+          target: "running" as RunView,
+        },
+        {
+          key: "attention",
+          value: summary.attention,
+          label: "需要处理",
+          target: "attention" as RunView,
+        },
+        {
+          key: "ended",
+          value: summary.ended,
+          label: "已结束",
+          target: "ended" as RunView,
+        },
+      ];
   return (
-    <section className="mf-count-section" aria-label="运行统计">
+    <section
+      className="mf-count-section mf-task-center-summary"
+      aria-label="任务统计"
+    >
       <ul className="mf-count-grid">
-        <li className="mf-count-card">
-          <span className="mf-count-value">{page.total}</span>
-          <span className="mf-count-label">全部运行（当前筛选范围）</span>
-        </li>
-        <li className="mf-count-card">
-          <button
-            type="button"
-            className="mf-card-button"
-            onClick={() => onCard({ attention: !filters.attention })}
-            aria-pressed={filters.attention}
-          >
-            <span className="mf-count-value">{page.attentionCount}</span>
-            <span className="mf-count-label">
-              需要关注（与状态计数重叠，不是独立终态）
-            </span>
-          </button>
-        </li>
-        {orderedStatuses.map((status) => (
-          <li className="mf-count-card" key={status}>
+        {cards.map((card) => (
+          <li className="mf-count-card" key={card.key}>
             <button
               type="button"
               className="mf-card-button"
-              onClick={() => onCard({ status })}
-              aria-pressed={filters.status === status}
+              onClick={() => onSelectView(card.target)}
+              aria-pressed={view === card.target}
             >
-              <span className="mf-count-value">
-                {page.statusCounts[status] ?? 0}
-              </span>
-              <span className="mf-count-label">
-                {RUN_STATUS_LABELS[status]}
-              </span>
+              <span className="mf-count-value">{card.value ?? "不可用"}</span>
+              <span className="mf-count-label">{card.label}</span>
             </button>
           </li>
         ))}
       </ul>
-      <p className="mf-dashboard-meta">{page.population}</p>
+      {summary.attention !== null && summary.attention > 0 && (
+        <p className="mf-task-center-alert" role="status">
+          <span aria-hidden="true">⚠</span>
+          <span>
+            {summary.attention}{" "}
+            个任务需要处理，可按恢复类型集中查看。同一任务可能涉及多种问题。
+          </span>
+        </p>
+      )}
+      <p className="mf-dashboard-meta">
+        统计按当前筛选后的完整总体计算，翻页不改变数字。来源选项来自完整授权总体。
+        任务列表合并授权范围内的 Job 与 Task，并按明确关联去重。
+      </p>
     </section>
+  );
+}
+
+/**
+ * The nine sibling task-center views on one horizontal navigation row.
+ *
+ * Each tab is an independent deep-linkable server query; narrow screens
+ * scroll the row horizontally instead of hiding a recovery view.
+ */
+function ViewNavigation({
+  view,
+  onSelectView,
+}: {
+  readonly view: RunView;
+  readonly onSelectView: (next: RunView) => void;
+}) {
+  return (
+    <div className="mf-run-view-context" aria-label="当前任务视图">
+      <nav className="mf-run-tabs mf-view-tabs" aria-label="任务中心视图">
+        {RUN_VIEWS.map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            aria-current={view === candidate ? "page" : undefined}
+            onFocus={(event) =>
+              event.currentTarget.scrollIntoView?.({
+                block: "nearest",
+                inline: "nearest",
+              })
+            }
+            onClick={() => onSelectView(candidate)}
+          >
+            {RUN_VIEW_LABELS[candidate]}
+          </button>
+        ))}
+      </nav>
+      <div className="mf-run-view-heading">
+        <h3>{RUN_VIEW_LABELS[view]}</h3>
+        <p>{RUN_VIEW_DESCRIPTIONS[view]}</p>
+      </div>
+    </div>
   );
 }
 
@@ -767,17 +1111,26 @@ function RunTable({
   page,
   selectedId,
   direction,
+  view,
   onSelect,
+  onOpenProblem,
   onForward,
   onBackward,
 }: {
   readonly page: RunInventoryPage;
   readonly selectedId: string;
   readonly direction: "forward" | "backward";
+  readonly view: RunView;
   readonly onSelect: (runId: string) => void;
+  readonly onOpenProblem: (runId: string, type: RunProblemType | null) => void;
   readonly onForward: () => void;
   readonly onBackward: () => void;
 }) {
+  const recovery = isRecoveryView(view);
+  const running = view === "running";
+  const showProgress = view === "all" || running;
+  const attention = view === "attention";
+  const ended = view === "ended";
   return (
     <>
       <div className="mf-run-table-wrap" style={{ overflowX: "auto" }}>
@@ -788,9 +1141,15 @@ function RunTable({
               <th>业务名称</th>
               <th>操作类型</th>
               <th>范围</th>
-              <th>触发方式</th>
+              {showProgress && <th>当前阶段</th>}
+              {showProgress && <th>处理进度</th>}
+              {attention && <th>当前问题</th>}
+              {ended && <th>结果摘要</th>}
+              {recovery && <th>问题说明</th>}
               <th>状态</th>
-              <th>创建时间</th>
+              <th>{ended || recovery ? "更新时间" : "触发方式 / 创建时间"}</th>
+              {recovery && <th>涉及文件</th>}
+              {(recovery || attention) && <th>定位</th>}
             </tr>
           </thead>
           <tbody>
@@ -804,28 +1163,17 @@ function RunTable({
                   aria-selected={selected}
                 >
                   <td>
-                    {detail !== null ? (
-                      <button
-                        type="button"
-                        className="mf-run-select"
-                        onClick={() => onSelect(run.runId)}
-                      >
-                        {commandLabelOf(run)}{" "}
-                        <span className="mf-run-identity">
-                          {runIdentityOf(run)}
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="mf-run-select"
-                        onClick={() => onSelect(run.runId)}
-                      >
-                        {commandLabelOf(run)}{" "}
-                        <span className="mf-run-identity">
-                          {runIdentityOf(run)}
-                        </span>
-                      </button>
+                    <button
+                      type="button"
+                      className="mf-run-select"
+                      aria-label={`${run.sourceScope ?? commandLabelOf(run)}，${commandLabelOf(run)}详情`}
+                      onClick={() => onSelect(run.runId)}
+                    >
+                      {run.sourceScope ?? commandLabelOf(run)}
+                    </button>
+                    <span className="mf-run-kind">{commandLabelOf(run)}</span>
+                    {detail === null && (
+                      <span className="mf-run-kind">（无原生详情）</span>
                     )}
                   </td>
                   <td>
@@ -841,21 +1189,135 @@ function RunTable({
                     )}
                   </td>
                   <td>{run.sourceScope ?? "不可用"}</td>
-                  <td>{RUN_TRIGGER_LABELS[run.trigger]}</td>
-                  <td>
+                  {showProgress && (
+                    <td>
+                      {run.currentStage === null
+                        ? "不可用"
+                        : RUN_CURRENT_STAGE_LABELS[run.currentStage]}
+                    </td>
+                  )}
+                  {showProgress && (
+                    <td>
+                      {run.processedItems === null || run.totalItems === null
+                        ? "不可用"
+                        : `${run.processedItems} / ${run.totalItems} 项`}
+                    </td>
+                  )}
+                  {attention && (
+                    <td>
+                      {run.problemTypes.length > 0
+                        ? run.problemTypes
+                            .map((type) => RUN_PROBLEM_LABELS[type])
+                            .join("、")
+                        : run.attentionReason === "run_repair"
+                          ? `运行级修复${run.attentionFailureCategory ? `：${run.attentionFailureCategory}` : ""}`
+                          : "待检查后续步骤"}
+                    </td>
+                  )}
+                  {ended && (
+                    <td>
+                      已处理 {run.processedItems ?? "不可用"} /{" "}
+                      {run.totalItems ?? "不可用"} 项；失败{" "}
+                      {run.failedItems ?? "不可用"} 项
+                    </td>
+                  )}
+                  {recovery && <td>{RECOVERY_VIEW_EXPLANATIONS[view]}</td>}
+                  <td className="mf-run-status-cell">
                     <span
-                      className={
-                        isAttentionRun(run.status)
-                          ? "mf-run-attention"
-                          : undefined
-                      }
+                      className={run.attention ? "mf-run-attention" : undefined}
                     >
                       {RUN_STATUS_LABELS[run.status]}
                     </span>
                     {run.pauseRequested && "（已请求暂停）"}
                     {run.status === "unknown" && "（证据不足）"}
+                    {!running &&
+                      !attention &&
+                      !ended &&
+                      !recovery &&
+                      run.problemTypes.length > 0 && (
+                        <span className="mf-run-kind">
+                          {" "}
+                          {run.problemTypes
+                            .map((problem) => RUN_PROBLEM_LABELS[problem])
+                            .join("、")}
+                        </span>
+                      )}
                   </td>
-                  <td>{formatDate(run.createdAt)}</td>
+                  <td className="mf-run-time-cell">
+                    {ended || recovery
+                      ? formatDate(run.updatedAt)
+                      : `${RUN_TRIGGER_LABELS[run.trigger]} · ${formatDate(run.createdAt)}`}
+                  </td>
+                  {recovery && (
+                    <td>{run.problemFileCounts?.[view] ?? "不可用"} 个文件</td>
+                  )}
+                  {recovery && (
+                    <td>
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        onClick={() => onOpenProblem(run.runId, null)}
+                      >
+                        {view === "failure" ? "查看失败文件" : "查看问题文件"}
+                      </button>
+                    </td>
+                  )}
+                  {attention && (
+                    <td>
+                      {run.problemTypes.length === 0 ? (
+                        // A safe continuation step is not one of the five
+                        // technical types, and a run-level repair has no item
+                        // file list at all. Neither is a dead action: the
+                        // former opens the run's own evidence/next-step
+                        // surface, the latter opens its existing Job detail
+                        // with the structured repair guidance.
+                        run.attentionReason === "run_repair" &&
+                        run.jobId !== null ? (
+                          <Link
+                            className="mf-button mf-button-secondary"
+                            to="/operations/jobs/$jobId"
+                            params={{ jobId: run.jobId }}
+                          >
+                            查看原因与修复指引
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={() => onSelect(run.runId)}
+                          >
+                            查看详情与下一步
+                          </button>
+                        )
+                      ) : run.problemTypes.length === 1 ? (
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() =>
+                            onOpenProblem(run.runId, run.problemTypes[0])
+                          }
+                        >
+                          查看问题文件
+                        </button>
+                      ) : (
+                        // A Task with several current problems offers each
+                        // exact Task/type list: the operator chooses rather
+                        // than the UI guessing one type.
+                        <div className="mf-problem-type-choices">
+                          {run.problemTypes.map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              className="mf-button mf-button-secondary"
+                              onClick={() => onOpenProblem(run.runId, type)}
+                            >
+                              {RUN_PROBLEM_LABELS[type]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -907,9 +1369,7 @@ function RunDetailPanel({
   detailState,
   onDetailStateChange,
   onOpenPreview,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
-  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
 }: {
@@ -919,17 +1379,7 @@ function RunDetailPanel({
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
   /** Route to one freshly admitted exact organize Preview. */
   readonly onOpenPreview: (previewId: string) => void;
-  readonly onOpenRecoveryPreview: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
@@ -945,6 +1395,58 @@ function RunDetailPanel({
   // never cleared by a poll, a cache event or a second submission attempt.
   const [locked, setLocked] = useState(false);
   const [reconciling, setReconciling] = useState(false);
+  // The paused-run remaining-scope continuation is reviewed and confirmed in
+  // this same panel (RO-3/AC-6): a withheld Continue first admits the exact
+  // zero-mutation remaining-scope Preview, and the operator then selects the
+  // ready subset and explicitly confirms it.  No standalone Preview is needed.
+  const [remainingScope, setRemainingScope] = useState<{
+    readonly previewId: string;
+    readonly intentVersion: number;
+  } | null>(null);
+  const [remainingSelection, setRemainingSelection] = useState<
+    readonly string[] | null
+  >(null);
+  const [remainingOverwrite, setRemainingOverwrite] = useState(false);
+  const [remainingCleanup, setRemainingCleanup] = useState(false);
+  const [remainingBusy, setRemainingBusy] = useState(false);
+  const [remainingMessage, setRemainingMessage] = useState<string | null>(null);
+  // The exact remaining-scope admission this page submitted, so a lost
+  // response can be reconciled against *this* request rather than guessed from
+  // the most recent run.
+  const [remainingSubmitted, setRemainingSubmitted] = useState<{
+    readonly previewId: string;
+    readonly itemIds: readonly string[];
+    readonly intentVersion: number;
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  } | null>(null);
+  const [remainingAdmittedExecutionId, setRemainingAdmittedExecutionId] =
+    useState<string | null>(null);
+  // The durable exact-Preview recovery the run overview already exposes is the
+  // read authority for a paused remaining-scope confirmation.  A refresh,
+  // reconnect or restart restores the same summary (no execution yet) or the
+  // already-admitted execution instead of losing it, and never auto-POSTs.
+  const overview = query.data?.ok === true ? query.data.model : null;
+  const durableRecovery = overview?.continuation ?? null;
+  const durableRecoveryPreviewId =
+    durableRecovery?.recoveryKind === "exact_preview"
+      ? durableRecovery.recoveryPreviewId
+      : null;
+  const durableRecoveryExecutionId =
+    durableRecovery?.recoveryKind === "exact_preview"
+      ? durableRecovery.executionId
+      : null;
+  // Derive the effective summary from the durable overview plus the local
+  // submission state; no effect or state sync is needed, and the exact intent
+  // version is resolved from the Preview itself at confirmation time.  A
+  // restored summary therefore never admits or executes anything.
+  const effectiveRemainingScope =
+    remainingScope ??
+    (durableRecoveryPreviewId !== null && remainingAdmittedExecutionId === null
+      ? { previewId: durableRecoveryPreviewId, intentVersion: 0 }
+      : null);
+  const admittedRemainingExecutionId =
+    remainingAdmittedExecutionId ?? durableRecoveryExecutionId;
 
   useEffect(() => {
     const opener =
@@ -1028,9 +1530,9 @@ function RunDetailPanel({
   };
 
   // The native exact-Preview recovery of a withheld Continue (RO-5). It is a
-  // zero-mutation admission: on success the operator is routed to the ordinary
-  // organize Preview review, where one fresh explicit execution intent is still
-  // required. Nothing is executed here.
+  // zero-mutation admission: the exact remaining-scope plan summary is then
+  // reviewed and confirmed inside this panel (RO-3/AC-6). Nothing is executed
+  // by this admission.
   const remainingScopePreview = useMutation({
     mutationFn: (request: { readonly taskId: string }) =>
       submitRemainingScopePreview(token, { taskId: request.taskId }),
@@ -1043,9 +1545,136 @@ function RunDetailPanel({
         }
         return;
       }
-      onOpenPreview(result.model.previewId);
+      setRemainingSelection(null);
+      setRemainingOverwrite(false);
+      setRemainingCleanup(false);
+      setRemainingMessage(
+        "已在当前界面生成剩余范围的零变更计划摘要。检查后选择就绪子集并明确确认继续。",
+      );
+      setRemainingScope({
+        previewId: result.model.previewId,
+        intentVersion: result.model.intentVersion ?? 0,
+      });
     },
   });
+
+  const confirmRemainingScope = async () => {
+    if (
+      effectiveRemainingScope === null ||
+      remainingSelection === null ||
+      remainingSelection.length === 0
+    ) {
+      return;
+    }
+    setRemainingBusy(true);
+    setRemainingMessage(null);
+    try {
+      let intentVersion = effectiveRemainingScope.intentVersion;
+      if (intentVersion <= 0) {
+        // A restored durable summary carries no local intent version; read it
+        // from the exact Preview rather than guessing.  This is a bounded GET.
+        const detail = await fetchOrganizePreviewDetail(
+          token,
+          effectiveRemainingScope.previewId,
+        );
+        if (!detail.ok || detail.model.intentVersion === null) {
+          setRemainingMessage(
+            "无法读取该剩余范围摘要的当前版本；未提交确认。请刷新后重试。 ",
+          );
+          return;
+        }
+        intentVersion = detail.model.intentVersion;
+      }
+      const result = await executeOrganizePreview(token, {
+        previewId: effectiveRemainingScope.previewId,
+        itemIds: remainingSelection,
+        expectedIntentVersion: intentVersion,
+        allowOverwrite: remainingOverwrite,
+        allowSourceCleanup: remainingCleanup,
+      });
+      if (result.ok) {
+        setRemainingScope(null);
+        setRemainingSelection(null);
+        setRemainingSubmitted(null);
+        setRemainingAdmittedExecutionId(result.model.executionId);
+        setRemainingMessage(
+          `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
+        );
+        void query.refetch();
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+        onOpenRecoveryExecution(result.model.executionId);
+      } else {
+        if (isUnknownLifecycleOutcome(result)) {
+          // A lost response must not be described as a proven zero effect.  Keep
+          // the exact submitted admission so the operator can explicitly re-read
+          // whether this request was admitted; never guess from the latest run.
+          setRemainingSubmitted({
+            previewId: effectiveRemainingScope.previewId,
+            itemIds: remainingSelection,
+            intentVersion,
+            allowOverwrite: remainingOverwrite,
+            allowSourceCleanup: remainingCleanup,
+          });
+          setRemainingMessage(
+            "确认响应未送达，暂时无法判断是否已受理。请先核对本次确认的持久状态，再决定是否继续。 ",
+          );
+        } else {
+          setRemainingMessage(
+            `确认未获受理（${result.code}）；没有创建执行，Storage 未被修改。`,
+          );
+        }
+      }
+    } finally {
+      setRemainingBusy(false);
+    }
+  };
+
+  /**
+   * Bounded reconciliation of one lost remaining-scope confirmation.  It reads
+   * only the exact admission this page submitted (the same preview, selection,
+   * version and destructive choices) and never replays a mutation.  A known
+   * admission surfaces the linked execution; an unadmitted answer keeps the
+   * summary available for a deliberate retry.
+   */
+  const reconcileRemainingScope = async () => {
+    if (remainingSubmitted === null) {
+      return;
+    }
+    setRemainingBusy(true);
+    try {
+      const result = await fetchOrganizeAdmissionOutcome(token, {
+        previewId: remainingSubmitted.previewId,
+        itemIds: remainingSubmitted.itemIds,
+        expectedIntentVersion: remainingSubmitted.intentVersion,
+        allowOverwrite: remainingSubmitted.allowOverwrite,
+        allowSourceCleanup: remainingSubmitted.allowSourceCleanup,
+      });
+      if (result.ok && result.model.outcome === "known") {
+        setRemainingSubmitted(null);
+        setRemainingScope(null);
+        setRemainingSelection(null);
+        setRemainingAdmittedExecutionId(result.model.executionId);
+        setRemainingMessage(
+          "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
+        );
+        void query.refetch();
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+      } else if (result.ok && result.model.outcome === "not_admitted") {
+        // The submission did not commit; the same durable summary is safe to
+        // confirm again deliberately.
+        setRemainingSubmitted(null);
+        setRemainingMessage(
+          "本次确认未获受理；已读回同一剩余范围摘要，可重新检查后再次确认。 ",
+        );
+      } else {
+        setRemainingMessage(
+          "尚未读回本次确认的持久状态；保持提交锁定，恢复读取后再检查。 ",
+        );
+      }
+    } finally {
+      setRemainingBusy(false);
+    }
+  };
 
   return (
     <section className="mf-run-detail" aria-label="运行详情">
@@ -1116,15 +1745,80 @@ function RunDetailPanel({
                   }
                 />
               )}
+              {effectiveRemainingScope !== null && (
+                <div className="mf-count-section">
+                  <h4>暂停运行的剩余范围</h4>
+                  {remainingMessage && <p>{remainingMessage}</p>}
+                  {remainingSubmitted !== null && (
+                    <div className="mf-actions">
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        disabled={remainingBusy}
+                        onClick={() => void reconcileRemainingScope()}
+                      >
+                        {remainingBusy ? "正在核对…" : "核对本次确认的持久状态"}
+                      </button>
+                    </div>
+                  )}
+                  <SamePagePlanSummary
+                    token={token}
+                    previewId={effectiveRemainingScope.previewId}
+                    selected={remainingSelection}
+                    onSelected={setRemainingSelection}
+                    allowOverwrite={remainingOverwrite}
+                    onAllowOverwrite={setRemainingOverwrite}
+                    allowCleanup={remainingCleanup}
+                    onAllowCleanup={setRemainingCleanup}
+                    busy={remainingBusy || remainingSubmitted !== null}
+                    onConfirm={() => void confirmRemainingScope()}
+                    heading="剩余范围计划摘要（零变更）"
+                    confirmLabel={(count) => `确认继续整理剩余 ${count} 项`}
+                  />
+                </div>
+              )}
+              {remainingMessage !== null &&
+                effectiveRemainingScope === null && (
+                  <StatusBanner variant="info" title="剩余范围继续状态">
+                    <p>{remainingMessage}</p>
+                    {remainingSubmitted !== null && (
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          disabled={remainingBusy}
+                          onClick={() => void reconcileRemainingScope()}
+                        >
+                          {remainingBusy
+                            ? "正在核对…"
+                            : "核对本次确认的持久状态"}
+                        </button>
+                      </div>
+                    )}
+                    {admittedRemainingExecutionId !== null && (
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() =>
+                            onOpenRecoveryExecution(
+                              admittedRemainingExecutionId,
+                            )
+                          }
+                        >
+                          查看关联执行结果
+                        </button>
+                      </div>
+                    )}{" "}
+                  </StatusBanner>
+                )}
               <RunDetailTabs
                 runId={run.runId}
                 progress={run.progress}
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                onOpenRecoveryPreview={onOpenRecoveryPreview}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
-                onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
                 facts={
                   <RunDetailFacts
@@ -1277,6 +1971,28 @@ function RunDetailFacts({
           </dd>
         </div>
       )}
+      {run.attentionReason === "run_repair" && (
+        <div>
+          <dt>运行级修复</dt>
+          <dd>
+            <p>
+              该运行在任何处理任务创建前失败，保留了可执行的修复/核查证据；
+              它没有逐文件清单，也没有文件计数。
+            </p>
+            {run.attentionFailureCategory !== null && (
+              <p>原因类别：{run.attentionFailureCategory}</p>
+            )}
+            {run.attentionFailureNextAction !== null && (
+              <p>{run.attentionFailureNextAction}</p>
+            )}
+            {run.jobId !== null && (
+              <Link to="/operations/jobs/$jobId" params={{ jobId: run.jobId }}>
+                打开 Job 详情查看完整修复指引
+              </Link>
+            )}
+          </dd>
+        </div>
+      )}
       {detail !== null && run.taskId !== null && (
         <div>
           <dt>更详细证据</dt>
@@ -1409,13 +2125,8 @@ function ManualOperationsSection({
 }) {
   const navigate = useNavigate();
   const matrix = matrixQuery.data?.ok === true ? matrixQuery.data.model : null;
-  const actionable =
-    matrix !== null &&
-    (matrix.actions.scan.available || matrix.actions.preview.available);
-  const backendReason =
-    matrix !== null
-      ? (matrix.actions.scan.reason ?? matrix.actions.preview.reason)
-      : null;
+  const actionable = matrix !== null && matrix.actions.preview.available;
+  const backendReason = matrix !== null ? matrix.actions.preview.reason : null;
   return (
     <section className="mf-count-section">
       <h3>手动操作</h3>
@@ -1476,14 +2187,6 @@ function ManualOperationsSection({
             </p>
           )}
           <nav className="mf-actions" aria-label="手动操作入口">
-            {matrix.actions.scan.available && (
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/scan/new"
-              >
-                发起受限扫描
-              </Link>
-            )}
             {matrix.actions.preview.available && (
               <Link
                 className="mf-button mf-button-secondary"

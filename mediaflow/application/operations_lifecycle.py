@@ -118,7 +118,6 @@ TASK_CANCELLABLE_STATUSES = frozenset(
 )
 # The manual Scan document is a bounded string projection, so its
 # cancellation eligibility is derived from the same durable status set.
-_SCAN_CANCELLABLE_STATUSES = frozenset(status.value for status in TASK_CANCELLABLE_STATUSES)
 
 # The only execution states this Task's backend can truthfully mean.  A
 # persisted Preview record written by another version cannot promote itself
@@ -247,7 +246,6 @@ class TaskExecutionPath(StrEnum):
     OPERATOR_WORKFLOW = "operator_workflow"
     #: The manual Scan service.  It observes its own durable cancellation
     #: request and never observes a Task pause request.
-    MANUAL_SCAN = "manual_scan"
     #: Web-native manual Organize admitted inside one synchronous API request.
     #: It observes neither control, so neither is advertised.
     SYNCHRONOUS_MANUAL_ORGANIZE = "synchronous_manual_organize"
@@ -405,13 +403,23 @@ def summarize_effects(
 # --------------------------------------------------------------------------
 
 
-def bounded_failure_document(value: str | None) -> dict[str, object] | None:
+def bounded_failure_document(
+    value: str | None,
+    *,
+    durable_state: str | None = None,
+    next_action: str | None = None,
+) -> dict[str, object] | None:
     """Return bounded failure evidence and never echo a raw durable error.
 
     A durable error column may hold a legacy or externally written string, so it
     is only decoded when it is this backend's own bounded envelope.  Anything
     else is classified into the same closed set of operator-facing
     explanations; the raw value is never copied into a document, model or DOM.
+
+    ``durable_state`` and ``next_action`` let a caller that already knows the
+    exact durable context override the classified default.  A zero-mutation
+    preparation finding is not a failed execution TaskItem/Result, so it must
+    not claim to be one or point the operator at a review that does not exist.
     """
 
     if not value:
@@ -419,6 +427,10 @@ def bounded_failure_document(value: str | None) -> dict[str, object] | None:
     document = failure_document(value)
     if document is None:
         document = classify_failure(error=value).document()
+    if durable_state is not None:
+        document = {**document, "durableState": durable_state}
+    if next_action is not None:
+        document = {**document, "nextAction": next_action}
     return {
         key: _bounded_evidence_text(item) if isinstance(item, str) else item
         for key, item in document.items()
@@ -741,6 +753,8 @@ def task_result_operator_document(result: PersistentResultRecord) -> dict[str, o
         "uncertain_effects": list(result.uncertain_effects),
         "completed_operations": list(result.completed_operations),
         "attachment_count": result.attachment_count,
+        "primary_completed": result.primary_completed,
+        "attachment_results": _attachment_results_operator(list(result.attachment_results)),
         "retry_attempts": result.retry_attempts,
         "recognition_type": result.recognition_type,
         "provider": result.provider,
@@ -829,177 +843,6 @@ def job_operator_document(job: AutomationJob) -> dict[str, object]:
         "failure_retry_safe": job.failure_retry_safe,
         "failure_next_action": _bounded_evidence_text(job.failure_next_action),
     }
-
-
-_SCAN_PROGRESS_FIELDS = (
-    "directoriesVisited",
-    "filesVisited",
-    "mediaCandidates",
-    "ignored",
-    "unstable",
-    "errors",
-)
-_SCAN_ITEM_LIMIT_MAXIMUM = 100
-
-
-def _bounded_scan_error(value: object) -> dict[str, object] | None:
-    """One bounded per-file Scan discovery error without its host root."""
-
-    if not isinstance(value, dict):
-        return None
-    return {
-        "code": _bounded_evidence_text(value.get("code"), limit=64) or "scan_error",
-        "path": _bounded_location(value.get("path")),
-        "operation": _bounded_evidence_text(value.get("operation"), limit=64),
-    }
-
-
-def _bounded_scan_item(item: dict[str, object]) -> dict[str, object]:
-    """One bounded per-item Scan discovery outcome."""
-
-    return {
-        "itemId": item.get("itemId"),
-        "taskId": item.get("taskId"),
-        "storageId": item.get("storageId"),
-        "resourceLibraryId": item.get("resourceLibraryId"),
-        "sourcePath": _bounded_identity_path(item.get("sourcePath")),
-        "fileId": item.get("fileId"),
-        "status": _bounded_evidence_text(item.get("status"), limit=64),
-        "change": _bounded_evidence_text(item.get("change"), limit=64),
-        "stage": _bounded_evidence_text(item.get("stage"), limit=64),
-        "createdAt": _bounded_evidence_text(item.get("createdAt"), limit=64),
-        "updatedAt": _bounded_evidence_text(item.get("updatedAt"), limit=64),
-        "knownEffects": _bounded_evidence_text(item.get("knownEffects")),
-        "retrySafe": bool(item.get("retrySafe")),
-        "nextAction": _bounded_evidence_text(item.get("nextAction")),
-        "failure": bounded_failure_document(
-            item.get("error") if isinstance(item.get("error"), str) else None
-        ),
-        "sideEffects": "none",
-    }
-
-
-def manual_scan_operator_document(
-    document: dict[str, object], *, cancel_permitted: bool = True
-) -> dict[str, object]:
-    """One bounded manual Scan admission/detail document.
-
-    This is the exact document the V2 Operations workspace reads for both the
-    admission response and the refreshable detail: the Scan's own durable
-    state, progress counters, bounded per-file discovery errors, per-item
-    outcomes and paging window are preserved, while the source occurrence
-    identity, every fingerprint/digest value, the configuration digest and any
-    raw scan error text or absolute host path are not.
-
-    The cancellation control is backend-advertised for the exact durable Scan
-    state and authenticated principal so the workspace never derives
-    eligibility from a status label or a local permission guess.
-    """
-
-    raw_items = document.get("items")
-    items = raw_items if isinstance(raw_items, list) else []
-    raw_errors = document.get("errors")
-    errors = raw_errors if isinstance(raw_errors, list) else []
-    raw_progress = document.get("progress")
-    progress = raw_progress if isinstance(raw_progress, dict) else {}
-    scope_kind = document.get("scopeKind")
-    if scope_kind == "resource_library":
-        scope_kind = "resourceLibrary"
-    task_id = document.get("taskId")
-    status = _bounded_evidence_text(document.get("status"), limit=64)
-    cancellation_requested = bool(document.get("cancellationRequested"))
-    cancellable = (
-        cancel_permitted
-        and isinstance(status, str)
-        and status in _SCAN_CANCELLABLE_STATUSES
-        and not cancellation_requested
-    )
-    cancel_unavailable_reason = (
-        None
-        if cancel_permitted
-        else (
-            "the connected API principal does not hold the cancel_job permission "
-            "required for this control"
-        )
-    )
-    if cancel_unavailable_reason is None and not cancellable:
-        cancel_unavailable_reason = (
-            "cancellation has already been requested for this Scan"
-            if cancellation_requested
-            else "a task in this state no longer accepts a cancellation request"
-        )
-    item_limit = document.get("itemLimit")
-    if isinstance(item_limit, bool) or not isinstance(item_limit, int):
-        item_limit = None
-    else:
-        item_limit = max(1, min(item_limit, _SCAN_ITEM_LIMIT_MAXIMUM))
-    bounded = {
-        "taskId": task_id,
-        "scopeKind": scope_kind,
-        "scopeId": document.get("scopeId"),
-        "resourceLibraryId": document.get("resourceLibraryId"),
-        "fileId": document.get("fileId"),
-        "storageId": document.get("storageId"),
-        "sourcePath": _bounded_identity_path(document.get("sourcePath")),
-        "mode": _bounded_evidence_text(document.get("mode"), limit=64),
-        "status": status,
-        # The immutable revision identity is the pin evidence; the digest is a
-        # fingerprint and stays out of the Operations document.
-        "configurationSnapshotId": document.get("configurationSnapshotId"),
-        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
-        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
-        "cancellationRequested": cancellation_requested,
-        "progress": {
-            field: _bounded_counter(progress.get(field)) for field in _SCAN_PROGRESS_FIELDS
-        },
-        "errors": [
-            error for error in (_bounded_scan_error(value) for value in errors) if error is not None
-        ],
-        "reconciliationComplete": bool(document.get("reconciliationComplete")),
-        "failureStage": _bounded_evidence_text(document.get("failureStage"), limit=64),
-        "knownEffects": _bounded_evidence_text(document.get("knownEffects")),
-        "retrySafe": bool(document.get("retrySafe")),
-        "nextAction": _bounded_evidence_text(document.get("nextAction")),
-        "failure": bounded_failure_document(
-            document.get("error") if isinstance(document.get("error"), str) else None
-        ),
-        "sideEffects": "none",
-        "actions": {
-            "cancel": _action(
-                action="cancel",
-                label="Request cancel",
-                path=(
-                    f"/api/v1/operations/scans/{task_id}/cancel"
-                    if isinstance(task_id, str) and task_id
-                    else "/api/v1/operations/scans"
-                ),
-                available=cancellable,
-                unavailable_reason=cancel_unavailable_reason,
-                durable_outcome=(
-                    "a durable cancellation request is stored; the Scan stops at the next "
-                    "cooperative discovery boundary, an already running Storage read is not "
-                    "interrupted and every recorded item outcome is kept"
-                ),
-                side_effects="none",
-                next_action=(
-                    "request cancellation, then refresh the Scan to read the durable outcome"
-                    if cancellable
-                    else "refresh the Scan; a terminal or already cancelled Scan keeps its "
-                    "recorded item outcomes"
-                ),
-            )
-        },
-        "itemLimit": item_limit,
-        "itemsTruncated": bool(document.get("itemsTruncated")),
-        "nextItemCursor": _bounded_cursor(document.get("nextItemCursor")),
-        "previousItemCursor": _bounded_cursor(document.get("previousItemCursor")),
-        "items": [
-            _bounded_scan_item(item)
-            for item in items[:_SCAN_ITEM_LIMIT_MAXIMUM]
-            if isinstance(item, dict)
-        ],
-    }
-    return _bounded_operator_document(bounded)
 
 
 def scope_continuation_operator_document(continuation: object) -> dict[str, object]:
@@ -1488,8 +1331,37 @@ def _bounded_file_index_reconciliation(value: object) -> dict[str, object] | Non
     }
 
 
+def _attachment_results_operator(value: object) -> list[dict[str, object]]:
+    outcomes = []
+    for item in _as_list(value)[:64]:
+        if not isinstance(item, dict):
+            continue
+        outcomes.append(
+            {
+                "type": _bounded_evidence_text(item.get("type"), limit=64),
+                "language": _bounded_evidence_text(item.get("language"), limit=64),
+                "operation": _bounded_evidence_text(item.get("operation"), limit=64),
+                "action_label": _bounded_evidence_text(item.get("action_label"), limit=64),
+                "status": _bounded_evidence_text(item.get("status"), limit=64),
+                "reason": _bounded_evidence_text(item.get("reason"), limit=64),
+                "effect_certainty": _bounded_evidence_text(item.get("effect_certainty"), limit=64),
+                "source_storage_id": _bounded_identifier(item.get("source_storage_id")),
+                "source_path": _bounded_manual_source_path(item.get("source_path")),
+                "destination_storage_id": _bounded_identifier(item.get("destination_storage_id")),
+                "destination_path": _bounded_manual_source_path(item.get("destination_path")),
+                "completed_operations": _bounded_text_list(
+                    item.get("completed_operations"), limit=4096, maximum=64
+                ),
+                "next_action": _bounded_evidence_text(item.get("next_action"), limit=512),
+            }
+        )
+    return outcomes
+
+
 def _manual_execution_item_operator(item: dict[str, object]) -> dict[str, object]:
     return {
+        "primaryCompleted": item.get("primaryCompleted") is True,
+        "attachmentResults": _attachment_results_operator(item.get("attachmentResults")),
         "itemId": _bounded_identifier(item.get("itemId")),
         "taskItemId": _bounded_identifier(item.get("taskItemId")),
         "taskId": _bounded_identifier(item.get("taskId")),
@@ -1551,7 +1423,12 @@ def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
         "truncated": bool(item.get("truncated")),
         "nextAction": _bounded_evidence_text(item.get("nextAction")),
         "failure": bounded_failure_document(
-            item.get("error") if isinstance(item.get("error"), str) else None
+            item.get("error") if isinstance(item.get("error"), str) else None,
+            durable_state=(
+                "this is a zero-mutation preparation finding; no execution TaskItem or "
+                "Result was created"
+            ),
+            next_action=_bounded_evidence_text(item.get("nextAction")),
         ),
         "sideEffects": "none",
         "zeroMutation": True,
@@ -1625,6 +1502,9 @@ def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, obje
     Only the two authorization booleans and one fixed explanation leave the
     persisted exact executor input, so the operator can see the destructive
     implication without any plan payload, path or fingerprint being published.
+    The explanation also names the reviewed operation's own source semantics:
+    a MOVE that succeeds leaves no source copy, so it must never be described as
+    "preserving the source".
     """
 
     raw_execution = plan.get("executionPlan")
@@ -1633,26 +1513,49 @@ def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, obje
     cleanup = raw_cleanup if isinstance(raw_cleanup, dict) else {}
     overwrite_required = bool(execution.get("overwriteAuthorized"))
     cleanup_required = cleanup.get("mode") not in {None, "", "none"}
+    operation = str(plan.get("operation") or execution.get("operation") or "").upper()
+    if operation == "MOVE":
+        operation_statement = (
+            "this exact plan moves each source to its reviewed target; after a successful "
+            "organize the source location no longer holds the original media file"
+        )
+    elif operation == "COPY":
+        operation_statement = (
+            "this exact plan copies each source to its reviewed target; the original source "
+            "media file is preserved"
+        )
+    elif operation == "LINK":
+        operation_statement = (
+            "this exact plan links each source to its reviewed target; the original source "
+            "media file is preserved"
+        )
+    elif operation in {"NOOP", "SKIP", ""}:
+        operation_statement = (
+            "this exact plan performs no file operation; the source media file is left in place"
+        )
+    else:
+        operation_statement = (
+            "this exact plan applies the reviewed operation to each source; review its "
+            "per-item effect before confirming"
+        )
     if overwrite_required and cleanup_required:
         statement = (
-            "this exact plan would replace an existing destination file and delete the "
-            "emptied source directories; both require separate explicit authority"
+            f"{operation_statement}; it would also replace an existing destination file and "
+            "delete the emptied source directories, and both require separate explicit "
+            "authority"
         )
     elif overwrite_required:
         statement = (
-            "this exact plan would replace an existing destination file; it requires "
-            "separate explicit overwrite authority"
+            f"{operation_statement}; it would also replace an existing destination file and "
+            "requires separate explicit overwrite authority"
         )
     elif cleanup_required:
         statement = (
-            "this exact plan would delete the emptied source directories after organizing; "
-            "it requires separate explicit source-cleanup authority"
+            f"{operation_statement}; it would also delete the emptied source directories and "
+            "requires separate explicit source-cleanup authority"
         )
     else:
-        statement = (
-            "this exact plan replaces and deletes nothing; source media is preserved by the "
-            "reviewed operation"
-        )
+        statement = operation_statement
     return {
         "overwriteRequired": overwrite_required,
         "sourceCleanupRequired": cleanup_required,
@@ -1912,10 +1815,23 @@ def _bounded_attachment_list(value: object) -> list[dict[str, object]]:
                 "operation": _bounded_evidence_text(item.get("operation"), limit=64),
                 "suffix": suffix,
                 "language": _attachment_language(suffix),
+                "blockedReason": _bounded_evidence_text(item.get("blockedReason"), limit=64),
+                "nextAction": _bounded_evidence_text(item.get("nextAction"), limit=512),
                 "filename": _bounded_location(destination.get("path"), segments=1)
                 or _bounded_location(source.get("path"), segments=1),
                 "storageId": _bounded_identifier(destination.get("storageId"))
                 or _bounded_identifier(source.get("storageId")),
+                # The exact reviewed source and destination of this sidecar, so
+                # the operator can see what really moves/links with the main
+                # file.  Both are bounded Storage-relative identities.
+                "source": {
+                    "storageId": _bounded_identifier(source.get("storageId")),
+                    "path": _bounded_manual_source_path(source.get("path")),
+                },
+                "destination": {
+                    "storageId": _bounded_identifier(destination.get("storageId")),
+                    "path": _bounded_manual_source_path(destination.get("path")),
+                },
             }
         )
     return bounded
@@ -2000,20 +1916,6 @@ def _permission_reason(permitted: bool, permission: ApiPermission) -> str | None
     )
 
 
-_MANUAL_SCAN_PAUSE_REASON = (
-    "this Task is executed by the manual Scan service, which observes its durable "
-    "cancellation request at a bounded boundary but never acknowledges a Task pause request"
-)
-_MANUAL_SCAN_PAUSE_NEXT_ACTION = (
-    "cancel this Scan Task to stop it cooperatively, or wait for its bounded discovery to finish"
-)
-_MANUAL_SCAN_CANCEL_OUTCOME = (
-    "a durable cancellation request is stored for the Scan; it reaches cancelled at its next "
-    "bounded boundary and no Storage mutation is involved"
-)
-_MANUAL_SCAN_CANCEL_NEXT_ACTION = (
-    "refresh the Task to read the bounded cancellation outcome and its per-item findings"
-)
 _SYNCHRONOUS_PAUSE_REASON = (
     "this Task is executed synchronously by the manual Organize authorization boundary and "
     "observes no Web pause request"
@@ -2055,11 +1957,6 @@ def task_lifecycle_document(
     cancel_reason = permission_reason
     cancel_next_action = _WORKFLOW_CANCEL_NEXT_ACTION
     cancel_outcome = _WORKFLOW_CANCEL_OUTCOME
-    if execution.path is TaskExecutionPath.MANUAL_SCAN:
-        cancel_outcome = _MANUAL_SCAN_CANCEL_OUTCOME
-        cancel_next_action = _MANUAL_SCAN_CANCEL_NEXT_ACTION
-        if cancel_reason is None and execution.cancellation_requested:
-            cancel_reason = "cancellation is already durably requested for this Scan Task"
     if cancel_reason is None and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
         cancel_reason = _SYNCHRONOUS_CANCEL_REASON
         cancel_next_action = _SYNCHRONOUS_NEXT_ACTION
@@ -2073,9 +1970,6 @@ def task_lifecycle_document(
             permitted
             and cancelable
             and execution.path is not TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE
-            and not (
-                execution.path is TaskExecutionPath.MANUAL_SCAN and execution.cancellation_requested
-            )
         ),
         unavailable_reason=cancel_reason,
         durable_outcome=cancel_outcome,
@@ -2090,10 +1984,7 @@ def task_lifecycle_document(
     pause_next_action = (
         "refresh the Task to see whether the pause was acknowledged at an item boundary"
     )
-    if pause_reason is None and execution.path is TaskExecutionPath.MANUAL_SCAN:
-        pause_reason = _MANUAL_SCAN_PAUSE_REASON
-        pause_next_action = _MANUAL_SCAN_PAUSE_NEXT_ACTION
-    elif pause_reason is None and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
+    if pause_reason is None and execution.path is TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE:
         pause_reason = _SYNCHRONOUS_PAUSE_REASON
         pause_next_action = _SYNCHRONOUS_NEXT_ACTION
     elif pause_reason is None and task.pause_requested:
@@ -2390,21 +2281,7 @@ class TaskLifecycleService:
     def results(self, task_id: str) -> tuple[PersistentResultRecord, ...]:
         return tuple(self._repository.list_results(task_id))
 
-    def manual_scan_task(self, task_id: str):
-        """Return the manual Scan row when that service really owns this Task."""
-
-        reader = getattr(self._repository, "get_manual_scan", None)
-        if not callable(reader):
-            return None
-        return reader(task_id)
-
     def execution_context(self, task: PersistentTask) -> TaskExecutionContext:
-        scan = self.manual_scan_task(task.task_id)
-        if scan is not None:
-            return TaskExecutionContext(
-                TaskExecutionPath.MANUAL_SCAN,
-                bool(getattr(scan, "cancellation_requested", False)),
-            )
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
             return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
         if is_files_worker_task_command(task.command):
@@ -2494,16 +2371,8 @@ class TaskLifecycleService:
         task = self.require(task_id)
         context = self.execution_context(task)
         if context.path is not TaskExecutionPath.OPERATOR_WORKFLOW:
-            reason = (
-                _MANUAL_SCAN_PAUSE_REASON
-                if context.path is TaskExecutionPath.MANUAL_SCAN
-                else _SYNCHRONOUS_PAUSE_REASON
-            )
-            next_action = (
-                _MANUAL_SCAN_PAUSE_NEXT_ACTION
-                if context.path is TaskExecutionPath.MANUAL_SCAN
-                else _SYNCHRONOUS_NEXT_ACTION
-            )
+            reason = _SYNCHRONOUS_PAUSE_REASON
+            next_action = _SYNCHRONOUS_NEXT_ACTION
             raise OperationsLifecycleConflict(
                 "pause_unavailable",
                 reason,
@@ -2556,8 +2425,6 @@ class TaskLifecycleService:
                 next_action=_SYNCHRONOUS_NEXT_ACTION,
                 current_version=task.updated_at.isoformat(),
             )
-        if context.path is TaskExecutionPath.MANUAL_SCAN:
-            return self.claim_manual_scan_cancellation(task_id, expected_version=expected_version)
         updated = self._repository.cancel_task_if_current(
             task_id,
             updated_at=datetime.now(UTC),
@@ -2566,42 +2433,6 @@ class TaskLifecycleService:
         if updated is not None:
             return updated
         raise self._cancel_conflict(task_id, expected_version=expected_version)
-
-    def claim_manual_scan_cancellation(
-        self, task_id: str, *, expected_version: str | None
-    ) -> PersistentTask:
-        """Atomically claim the manual Scan cancellation for the observed version."""
-
-        claimant = getattr(self._repository, "claim_manual_scan_cancellation", None)
-        if not callable(claimant):
-            raise OperationsLifecycleConflict(
-                "cancel_unavailable",
-                "manual Scan cancellation persistence is unavailable",
-                durable_state="the Task keeps its running state",
-                next_action="restore the runtime Task repository, then retry cancellation",
-            )
-        claimed = claimant(
-            task_id,
-            updated_at=datetime.now(UTC),
-            expected_version=expected_version,
-        )
-        if claimed is not None:
-            return self.require(task_id)
-        scan = self.manual_scan_task(task_id)
-        if scan is not None and getattr(scan, "cancellation_requested", False):
-            raise OperationsLifecycleConflict(
-                "already_requested",
-                "cancellation is already durably requested for this Scan Task",
-                durable_state=(
-                    "the Scan reaches cancelled at its own bounded boundary and its per-item "
-                    "findings stay durable"
-                ),
-                next_action=(
-                    "reload the Task and read the bounded cancellation outcome instead of "
-                    "submitting the same request again"
-                ),
-            )
-        raise self._cancel_conflict(task_id)
 
     def _cancel_conflict(
         self, task_id: str, *, expected_version: str | None = None
@@ -3073,7 +2904,6 @@ __all__ = [
     "job_operator_document",
     "manual_action_matrix_operator_document",
     "manual_execution_plan_evidence_operator",
-    "manual_scan_operator_document",
     "require_cancellable",
     "run_accounting_basis",
     "run_item_evidence_document",

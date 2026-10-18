@@ -137,7 +137,7 @@ class OrganizerRollbackTest(unittest.TestCase):
         self.assertEqual(ExecutionStatus.DRY_RUN, result.status)
         self.assertEqual(RollbackStatus.NOT_NEEDED, result.rollback_status)
 
-    def test_copy_attachment_failure_compensates_in_reverse_and_cleans_directory(self):
+    def test_copy_attachment_failure_never_compensates_verified_primary(self):
         with tempfile.TemporaryDirectory() as root:
             for name in ("source.mkv", "first.srt", "second.srt"):
                 Path(root, name).write_bytes(name.encode())
@@ -145,18 +145,14 @@ class OrganizerRollbackTest(unittest.TestCase):
             result = OrganizerExecutor().execute(
                 self._with_attachments(self._plan()), {"local": storage}, execute=True
             )
-            self.assertEqual(ExecutionStatus.FAILED, result.status)
-            self.assertEqual(RollbackStatus.SUCCESS, result.rollback_status)
+            self.assertEqual(ExecutionStatus.PARTIAL, result.status)
+            self.assertEqual(RollbackStatus.NOT_NEEDED, result.rollback_status)
+            self.assertEqual((), result.rollback_steps)
+            self.assertTrue(result.primary_completed)
+            self.assertEqual(Path(root, self._plan().target).read_bytes(), b"source.mkv")
             self.assertEqual(
-                [
-                    "ROLLBACK:ATTACHMENT:subtitle:first.srt",
-                    "DELETE_DIRECTORY",
-                    "DELETE_DIRECTORY",
-                    "DELETE_DIRECTORY",
-                ],
-                [step.action for step in result.rollback_steps],
+                result.attachment_results[0]["effect_certainty"], "attempted_unverified"
             )
-            self.assertFalse(Path(root, "Movies").exists())
             self.assertTrue(Path(root, "first.srt").exists())
 
     def test_same_storage_move_is_restored_after_post_move_failure(self):
@@ -170,7 +166,7 @@ class OrganizerRollbackTest(unittest.TestCase):
             self.assertEqual(b"media", Path(root, "source.mkv").read_bytes())
             self.assertFalse(Path(root, plan.target).exists())
 
-    def test_hard_link_attachment_failure_removes_owned_link(self):
+    def test_hard_link_attachment_failure_keeps_verified_primary_link(self):
         with tempfile.TemporaryDirectory() as root:
             for name in ("source.mkv", "first.srt", "second.srt"):
                 Path(root, name).write_bytes(name.encode())
@@ -182,9 +178,12 @@ class OrganizerRollbackTest(unittest.TestCase):
             result = OrganizerExecutor().execute(
                 self._with_attachments(plan), {"local": storage}, execute=True
             )
-            self.assertEqual(ExecutionStatus.FAILED, result.status)
-            self.assertEqual(RollbackStatus.SUCCESS, result.rollback_status)
-            self.assertFalse(Path(root, "Movies").exists())
+            self.assertEqual(ExecutionStatus.PARTIAL, result.status)
+            self.assertEqual(RollbackStatus.NOT_NEEDED, result.rollback_status)
+            self.assertTrue(result.primary_completed)
+            self.assertEqual(
+                Path(root, "source.mkv").stat().st_ino, Path(root, plan.target).stat().st_ino
+            )
             self.assertTrue(Path(root, "first.srt").exists())
 
     def test_cross_storage_move_restores_deleted_source(self):
@@ -249,15 +248,15 @@ class OrganizerRollbackTest(unittest.TestCase):
             self.assertFalse(Path(target_root, plan.target).exists())
 
     def test_changed_owned_target_is_never_deleted(self):
-        class ChangeBeforeRollback(_FailSecondCopy):
-            def copy(self, source, target, *, overwrite=False):
-                self.calls += 1
-                if self.calls == 2:
-                    Path(self._delegate._root, "Movies/Animation/Film/Film.srt").write_bytes(
-                        b"changed"
-                    )
-                    raise RuntimeError("injected copy failure")
-                return self._delegate.copy(source, target, overwrite=overwrite)
+        class ChangeBeforeRollback(_Delegate):
+            calls = 0
+
+            def stat(self, path):
+                if path.endswith("Film.mkv"):
+                    self.calls += 1
+                    if self.calls == 2:
+                        Path(self._delegate._root, path).write_bytes(b"changed")
+                return self._delegate.stat(path)
 
         with tempfile.TemporaryDirectory() as root:
             for name in ("source.mkv", "first.srt", "second.srt"):
@@ -268,13 +267,24 @@ class OrganizerRollbackTest(unittest.TestCase):
             )
             self.assertEqual(ExecutionStatus.PARTIAL, result.status)
             self.assertEqual(RollbackStatus.PARTIAL, result.rollback_status)
-            self.assertTrue(Path(root, "Movies/Animation/Film/Film.srt").exists())
+            self.assertEqual(Path(root, self._plan().target).read_bytes(), b"changed")
+            self.assertFalse(result.primary_completed)
             self.assertEqual("rollback_safety_error", result.rollback_steps[0].error)
 
     def test_compensation_delete_failure_is_partial(self):
-        class RollbackDeleteFails(_FailSecondCopy):
+        class RollbackDeleteFails(_Delegate):
+            calls = 0
+
+            def stat(self, path):
+                entry = self._delegate.stat(path)
+                if path.endswith("Film.mkv"):
+                    self.calls += 1
+                    if self.calls == 2:
+                        return replace(entry, size=entry.size + 1)
+                return entry
+
             def delete(self, path):
-                if path.endswith("Film.srt"):
+                if path.endswith("Film.mkv"):
                     raise RuntimeError("injected rollback delete failure")
                 return self._delegate.delete(path)
 
@@ -287,7 +297,8 @@ class OrganizerRollbackTest(unittest.TestCase):
             )
             self.assertEqual(ExecutionStatus.PARTIAL, result.status)
             self.assertEqual(RollbackStatus.PARTIAL, result.rollback_status)
-            self.assertTrue(Path(root, "Movies/Animation/Film/Film.srt").exists())
+            self.assertTrue(Path(root, self._plan().target).exists())
+            self.assertFalse(result.primary_completed)
 
     def test_rollback_and_overwrite_is_rejected_before_storage_access(self):
         class Exploding:

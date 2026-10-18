@@ -78,6 +78,88 @@ ATTENTION_RUN_STATUSES = frozenset(
 )
 
 
+class OperationsRunView(StrEnum):
+    """The nine sibling task-center views (RO-1).
+
+    The first four are lifecycle partitions of the whole authorized
+    population; the last five are overlapping cross-Task recovery lists that
+    group one Task per current problem type.  They share one horizontal
+    navigation row and one authoritative query, but each is an independent
+    deep-linkable list.
+    """
+
+    ALL = "all"
+    RUNNING = "running"
+    ATTENTION = "attention"
+    ENDED = "ended"
+    RECOGNITION = "recognition"
+    METADATA = "metadata"
+    CLASSIFICATION = "classification"
+    CONFLICT = "conflict"
+    FAILURE = "failure"
+
+
+#: The four lifecycle views; the remaining views are recovery types.
+RUN_VIEW_LIFECYCLE = frozenset(
+    {
+        OperationsRunView.ALL,
+        OperationsRunView.RUNNING,
+        OperationsRunView.ATTENTION,
+        OperationsRunView.ENDED,
+    }
+)
+
+#: The five cross-Task recovery problem types, in display order.
+RECOVERY_PROBLEM_TYPES: tuple[str, ...] = (
+    "recognition",
+    "metadata",
+    "classification",
+    "conflict",
+    "failure",
+)
+
+#: A view's recovery problem type, or ``None`` for a lifecycle view.
+RUN_VIEW_PROBLEM_TYPE: Mapping[str, str | None] = MappingProxyType(
+    {
+        OperationsRunView.ALL.value: None,
+        OperationsRunView.RUNNING.value: None,
+        OperationsRunView.ATTENTION.value: None,
+        OperationsRunView.ENDED.value: None,
+        OperationsRunView.RECOGNITION.value: "recognition",
+        OperationsRunView.METADATA.value: "metadata",
+        OperationsRunView.CLASSIFICATION.value: "classification",
+        OperationsRunView.CONFLICT.value: "conflict",
+        OperationsRunView.FAILURE.value: "failure",
+    }
+)
+
+#: Chinese business labels for the nine views.
+RUN_VIEW_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "all": "全部任务",
+        "running": "进行中",
+        "attention": "需要处理",
+        "ended": "已结束",
+        "recognition": "识别恢复",
+        "metadata": "元数据恢复",
+        "classification": "分类恢复",
+        "conflict": "冲突处理",
+        "failure": "失败恢复",
+    }
+)
+
+#: Chinese business labels for the five recovery problem types.
+RECOVERY_PROBLEM_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "recognition": "识别问题",
+        "metadata": "元数据问题",
+        "classification": "分类问题",
+        "conflict": "冲突问题",
+        "failure": "失败问题",
+    }
+)
+
+
 def derive_run_status(
     job: AutomationJob | None,
     task: PersistentTask | None,
@@ -253,8 +335,39 @@ class OperationsRunOverview:
     total_items: int | None = None
     completed_items: int | None = None
     failed_items: int | None = None
+    #: Live read-only progress over the exact TaskItem population. The stage
+    #: is a small public bucket, never an arbitrary internal stage string.
+    processed_items: int | None = None
+    current_stage: str | None = None
     pause_requested: bool = False
+    #: The current, real operator-attention facet. It is derived from durable
+    #: evidence (an unresolved decision/repair, safe continuation step or
+    #: investigation), never from a plain status name. Some human steps are
+    #: not one of the five technical recovery types, so attention may be true
+    #: with no problem type.
     attention: bool = False
+    #: The five recovery problem types this Task currently has outstanding
+    #: (recognition/metadata/classification/conflict/failure).  A Task may
+    #: carry several at once; each is derived from the same durable review /
+    #: checkpoint / continuation evidence the recovery lists read.  Empty
+    #: means the Task currently has no outstanding recovery problem.
+    problem_types: tuple[str, ...] = ()
+    #: Distinct affected primary files for each current problem type on this
+    #: exact Task. Attachment steps remain grouped under their primary file.
+    problem_file_counts: tuple[tuple[str, int], ...] = ()
+    #: Why this run is in attention when the reason is not one of the five
+    #: technical problem types.  ``"run_repair"`` marks a Job that failed
+    #: before any Task existed and still carries a structured repair/next
+    #: action; ``"task_problem"`` marks item/review evidence (including a
+    #: pending safe-continuation step).  ``None`` means the run is not in
+    #: attention at all.
+    attention_reason: str | None = None
+    #: Bounded, secret-free run-level repair evidence for a pre-Task failure:
+    #: the stable failure category and the explicit operator next action the
+    #: Job recorded at admission.  Both are ``None`` when the current problem
+    #: lives on a linked Task's items (or there is no current problem).
+    attention_failure_category: str | None = None
+    attention_failure_next_action: str | None = None
     configuration_snapshot_id: str | None = None
     worker_id: str | None = None
     #: The durable *manual definition origin* recorded with the admission, or
@@ -265,15 +378,6 @@ class OperationsRunOverview:
     origin_definition_id: str | None = None
     origin_definition_name: str | None = None
     origin_kind: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "attention", self.status in ATTENTION_RUN_STATUSES)
-
-    @property
-    def manual_definition_origin(self) -> bool:
-        """Whether this run was a deliberate definition-bound Run once."""
-
-        return bool(self.origin_definition_id) and self.trigger is OperationsRunTrigger.MANUAL
 
 
 # -- Selected-run detail: progress, items and operation records (RO-3) -------

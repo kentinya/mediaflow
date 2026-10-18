@@ -56,13 +56,13 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_scan_preview_optional_bounded_limit_and_rbac(self) -> None:
-        status, denied = request(self.api, {"command": "scan"}, token="viewer-token")
+        status, denied = request(self.api, {"command": "preview"}, token="viewer-token")
         self.assertEqual(status, 403)
         self.assertEqual(denied["error"]["code"], "forbidden")
         for document in (
-            {"command": "scan"},
+            {"command": "preview"},
             {"command": "preview", "limit": 1},
-            {"command": "scan", "limit": 10_000},
+            {"command": "preview", "limit": 10_000},
         ):
             with self.subTest(document=document):
                 status, created = request(self.api, document)
@@ -81,24 +81,24 @@ class OperatorJobSubmissionTests(unittest.TestCase):
             {},
             {"command": "organize"},
             {"command": "preview", "execute": False},
-            {"command": "scan", "limit": True},
-            {"command": "scan", "limit": 0},
-            {"command": "scan", "limit": -1},
-            {"command": "scan", "limit": 10_001},
-            {"command": "scan", "path": "/private"},
-            {"command": "scan", "task": "task-1"},
-            {"command": "scan", "actor": "admin"},
-            {"command": "scan", "policy": "A"},
-            {"command": "scan", "storage": "source"},
-            {"command": "scan", "schedule": "nightly"},
-            {"command": "scan", "overwrite": False},
-            {"command": "scan", "delete": False},
+            {"command": "preview", "limit": True},
+            {"command": "preview", "limit": 0},
+            {"command": "preview", "limit": -1},
+            {"command": "preview", "limit": 10_001},
+            {"command": "preview", "path": "/private"},
+            {"command": "preview", "task": "task-1"},
+            {"command": "preview", "actor": "admin"},
+            {"command": "preview", "policy": "A"},
+            {"command": "preview", "storage": "source"},
+            {"command": "preview", "schedule": "nightly"},
+            {"command": "preview", "overwrite": False},
+            {"command": "preview", "delete": False},
         ]
         for document in invalid:
             with self.subTest(document=document):
                 expected = 403 if document.get("command") == "organize" else 400
                 self.assertEqual(request(self.api, document)[0], expected)
-        self.assertEqual(request(self.api, {"command": "scan"}, query="limit=1")[0], 400)
+        self.assertEqual(request(self.api, {"command": "preview"}, query="limit=1")[0], 400)
         self.assertEqual(request(self.api, None, raw_body=b"{")[0], 400)
         self.assertEqual(self.repository.list_jobs(), ())
 
@@ -106,7 +106,7 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         script = APP_JS.decode()
         self.assertIn("Queue Job", script)
         self.assertNotIn("Queue DryRun job", script)
-        self.assertIn("['scan', 'preview', 'organize']", script)
+        self.assertIn("['preview', 'organize']", script)
         self.assertIn("Review Job", script)
         self.assertNotIn("Review DryRun job", script)
         self.assertIn("Confirm queueing", script)

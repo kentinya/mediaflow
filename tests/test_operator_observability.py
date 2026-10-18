@@ -210,7 +210,7 @@ class OperatorObservabilityTests(unittest.TestCase):
                         self.assertEqual(request(api, "/api/v1/notifications", query=query)[0], 400)
 
     def test_schedule_audit_query_is_bounded_and_schedule_list_rejects_queries(self) -> None:
-        schedules = (CronSchedule("nightly", "scan", "* * * * *", "UTC"),)
+        schedules = (CronSchedule("nightly", "preview", "* * * * *", "UTC"),)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 IntervalScheduler(repository, schedules).tick(NOW)
@@ -304,7 +304,7 @@ class OperatorObservabilityTests(unittest.TestCase):
 
     def test_schedule_audit_pages_are_bidirectional_and_schedule_scoped(self) -> None:
         schedules = (
-            CronSchedule("one", "scan", "* * * * *", "UTC"),
+            CronSchedule("one", "preview", "* * * * *", "UTC"),
             CronSchedule("two", "preview", "* * * * *", "UTC"),
         )
         with tempfile.TemporaryDirectory() as directory:

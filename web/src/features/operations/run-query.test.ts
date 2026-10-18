@@ -59,6 +59,7 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     failed_items: 0,
     pause_requested: false,
     attention: false,
+    problem_types: [],
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
@@ -66,36 +67,39 @@ function runDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function summaryDocument(overrides: Record<string, unknown> = {}) {
+  const zero = {
+    recognition: 0,
+    metadata: 0,
+    classification: 0,
+    conflict: 0,
+    failure: 0,
+  };
+  return {
+    available: true,
+    total: 1,
+    running: 1,
+    attention: 0,
+    ended: 0,
+    problem_tasks: zero,
+    problem_files: zero,
+    sources: [],
+    sources_truncated: false,
+    ...overrides,
+  };
+}
+
 function overviewRead(status: RunStatus): RunOverviewRead {
   return {
     ok: true,
-    model: normalizeRunOverview(
-      runDocument({
-        status,
-        attention: [
-          "pending",
-          "paused",
-          "waiting",
-          "partial_success",
-          "failed",
-        ].includes(status),
-      }),
-    ),
+    model: normalizeRunOverview(runDocument({ status })),
   };
 }
 
 function inventoryRead(statuses: readonly RunStatus[]): RunInventoryRead {
   const statusCounts: Record<string, number> = {};
-  let attentionCount = 0;
   for (const status of statuses) {
     statusCounts[status] = (statusCounts[status] ?? 0) + 1;
-    if (
-      ["pending", "paused", "waiting", "partial_success", "failed"].includes(
-        status,
-      )
-    ) {
-      attentionCount += 1;
-    }
   }
   return {
     ok: true,
@@ -105,13 +109,6 @@ function inventoryRead(statuses: readonly RunStatus[]): RunInventoryRead {
           run_id: `task-${index + 1}`,
           task_id: `task-${index + 1}`,
           status,
-          attention: [
-            "pending",
-            "paused",
-            "waiting",
-            "partial_success",
-            "failed",
-          ].includes(status),
         }),
       ),
       limit: 20,
@@ -124,7 +121,23 @@ function inventoryRead(statuses: readonly RunStatus[]): RunInventoryRead {
       total: statuses.length,
       truncated: false,
       status_counts: statusCounts,
-      attention_count: attentionCount,
+      attention_count: 0,
+      view: null,
+      problem: null,
+      summary: summaryDocument({
+        total: statuses.length,
+        running: statuses.filter(
+          (status) =>
+            !["completed", "partial_success", "failed", "cancelled"].includes(
+              status,
+            ),
+        ).length,
+        ended: statuses.filter((status) =>
+          ["completed", "partial_success", "failed", "cancelled"].includes(
+            status,
+          ),
+        ).length,
+      }),
       population: "unified job/task run inventory",
       sideEffects: "none",
       previous_cursor: null,
@@ -138,18 +151,19 @@ describe("run refetch interval", () => {
     expect(runRefetchInterval(undefined)).toBe(false);
     expect(runRefetchInterval(FAILED_READ)).toBe(false);
     expect(runRefetchInterval(FAILED_OVERVIEW_READ)).toBe(false);
+    expect(runRefetchInterval(overviewRead("running"), true)).toBe(false);
   });
 
-  it("polls an inventory page while any listed run is non-terminal", () => {
+  it("keeps a successful visible inventory current after terminal rows", () => {
     expect(runRefetchInterval(inventoryRead(["running", "completed"]))).toBe(
       5_000,
     );
     expect(runRefetchInterval(inventoryRead(["pending"]))).toBe(5_000);
-    expect(runRefetchInterval(inventoryRead(["completed"]))).toBe(false);
+    expect(runRefetchInterval(inventoryRead(["completed"]))).toBe(5_000);
     expect(
       runRefetchInterval(inventoryRead(["completed", "cancelled", "failed"])),
-    ).toBe(false);
-    expect(runRefetchInterval(inventoryRead([]))).toBe(false);
+    ).toBe(5_000);
+    expect(runRefetchInterval(inventoryRead([]))).toBe(5_000);
   });
 
   it("polls the selected overview only while its own state is active", () => {
@@ -173,5 +187,20 @@ describe("run refetch interval", () => {
     // The same shared policy drives both options objects.
     expect(inventory.refetchInterval).toBeTypeOf("function");
     expect(overview.refetchInterval).toBeTypeOf("function");
+    const inventoryPoll = inventory.refetchInterval as (
+      query: unknown,
+    ) => number | false;
+    const overviewPoll = overview.refetchInterval as (
+      query: unknown,
+    ) => number | false;
+    const staleSuccessfulRead = {
+      state: { data: inventoryRead(["completed"]), status: "error" },
+    };
+    expect(inventoryPoll(staleSuccessfulRead)).toBe(false);
+    expect(
+      overviewPoll({
+        state: { data: overviewRead("running"), status: "error" },
+      }),
+    ).toBe(false);
   });
 });

@@ -34,6 +34,7 @@ from mediaflow.application.organizer import OrganizePlanner
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.scan_filters import ObservedSource, StabilityVerdict, stability_verdict
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
@@ -53,6 +54,7 @@ from mediaflow.domain.automation_task_definition_preview import (
 )
 from mediaflow.domain.classification import ClassificationStatus
 from mediaflow.domain.configuration_management import ManagedConfigurationStatus
+from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.manual_safety import safe_manual_error
 from mediaflow.domain.metadata import (
     MediaQueryType,
@@ -694,6 +696,22 @@ class AutomationTaskDefinitionPreviewService:
         ready_seen = 0
         visited_entries = 0
         now = self._clock()
+        previous_observations = {}
+        latest_reader = getattr(
+            self._repository, "get_latest_automation_task_definition_preview", None
+        )
+        latest = latest_reader(definition.definition_id) if callable(latest_reader) else None
+        if (
+            latest is not None
+            and latest.configuration_revision_id == runtime.configuration_snapshot_id
+            and latest.configuration_revision_digest == runtime.configuration_snapshot_digest
+            and latest.definition_fingerprint == definition.definition_fingerprint
+        ):
+            previous_observations = {
+                item.source.path: item.source
+                for item in latest.items
+                if item.source.observed_at is not None
+            }
         pending: deque[tuple[str, int]] = deque([(scope_root, 0)])
         limit = definition.item_limit
 
@@ -726,6 +744,13 @@ class AutomationTaskDefinitionPreviewService:
                         entry.modified_at,
                         stability,
                         scan_status,
+                        now,
+                        self._observed_since(
+                            resource_library, entry, now, previous_observations.get(entry.path)
+                        ),
+                        source_fingerprint(
+                            resource_library.storage_id, resource_library.library_id, entry
+                        ).value,
                     ),
                     "status": status,
                     "next_action": next_action,
@@ -798,7 +823,12 @@ class AutomationTaskDefinitionPreviewService:
                         "excluded",
                     )
                     continue
-                stable, stability = self._stable(resource_library, entry, now)
+                stable, stability = self._stable(
+                    resource_library,
+                    entry,
+                    now,
+                    previous=previous_observations.get(entry.path, _NO_FILE_INDEX_RECORD),
+                )
                 if not stable:
                     counts["unstable"] += 1
                     add_record(
@@ -811,17 +841,6 @@ class AutomationTaskDefinitionPreviewService:
                     continue
                 if ready_seen < limit:
                     counts["selected"] += 1
-                    source = AutomationPreviewSource(
-                        storage.storage_id,
-                        resource_library.library_id,
-                        entry.path,
-                        entry.name,
-                        extension,
-                        entry.size,
-                        entry.modified_at,
-                        stability,
-                        "ready",
-                    )
                     add_record(
                         entry,
                         AutomationTaskDefinitionPreviewItemStatus.PREVIEWED,
@@ -829,7 +848,7 @@ class AutomationTaskDefinitionPreviewService:
                         stability,
                         "ready",
                     )
-                    selected.append(source)
+                    selected.append(records[-1]["source"])
                 else:
                     counts["truncatedByLimit"] += 1
                     add_record(
@@ -853,15 +872,16 @@ class AutomationTaskDefinitionPreviewService:
         }
 
     @staticmethod
-    def _analysis_checkpoint(
-        callback: Callable[[str, int, int, int], None] | None,
-        phase: str,
-        visited_entries: int,
-        analysed_items: int,
-        total_items: int,
-    ) -> None:
-        if callback is not None:
-            callback(phase, visited_entries, analysed_items, total_items)
+    def _observed_since(library, entry, now, previous):
+        fingerprint = source_fingerprint(library.storage_id, library.library_id, entry).value
+        if (
+            previous is not None
+            and previous.size == entry.size
+            and previous.modified_at == entry.modified_at
+            and previous.storage_fingerprint == fingerprint
+        ):
+            return previous.stable_since or previous.observed_at or now
+        return now
 
     def _stable(
         self,
@@ -871,53 +891,50 @@ class AutomationTaskDefinitionPreviewService:
         *,
         previous=_NO_FILE_INDEX_RECORD,
     ) -> tuple[bool, str]:
+        if isinstance(previous, AutomationPreviewSource):
+            observed = source_fingerprint(
+                resource_library.storage_id, resource_library.library_id, entry
+            ).value
+            prior = ObservedSource(
+                previous.path,
+                previous.size,
+                previous.modified_at,
+                previous.storage_fingerprint,
+                previous.observed_at,
+                previous.stable_since,
+            )
+            verdict = stability_verdict(
+                resource_library,
+                entry,
+                now=now,
+                previous=prior,
+                observed_value=observed,
+                stable_since=previous.stable_since,
+            )
+            return verdict is StabilityVerdict.STABLE, verdict.value
         policy = resource_library.stability_policy
         age = max(0.0, (now - entry.modified_at).total_seconds())
         required_age = max(policy.minimum_age_seconds, policy.modified_threshold_seconds)
         if policy.stable_size_duration_seconds > 0:
             if previous is _NO_FILE_INDEX_RECORD:
-                if self._file_index is None:
-                    return False, "unstable_no_history"
-                find_by_path = getattr(self._file_index, "find_by_path", None)
-                if not callable(find_by_path):
-                    return False, "unstable_history_unavailable"
-                try:
-                    previous = find_by_path(
-                        resource_library.storage_id,
-                        resource_library.library_id,
-                        entry.path,
-                    )
-                except Exception:
-                    return False, "unstable_history_unavailable"
+                previous = None
             if previous is None:
                 return False, "unstable_no_history"
             if previous.size != entry.size or previous.modified_at != entry.modified_at:
                 return False, "unstable_changed"
             stable_since = previous.stable_since or previous.last_seen_at
-            stable_duration = (now - stable_since).total_seconds()
-            if stable_duration < policy.stable_size_duration_seconds:
+            if (now - stable_since).total_seconds() < policy.stable_size_duration_seconds:
                 return False, "unstable_size"
         return age >= required_age, "stable" if age >= required_age else "unstable_age"
 
     @staticmethod
     def _stability_next_action(stability: str) -> str:
-        if stability == "unstable_no_history":
+        if stability in {"unstable_no_history", "unstable_changed", "unstable_size"}:
             return (
-                "run a ResourceLibrary scan to record this file, wait for the configured "
-                "stable-size duration, then rerun Preview"
+                "this Preview records the source observation; wait for the configured "
+                "stable-size interval, then explicitly prepare it again under the same pin"
             )
-        if stability == "unstable_history_unavailable":
-            return (
-                "restore durable FileIndex history, run a ResourceLibrary scan, then rerun Preview"
-            )
-        if stability == "unstable_changed":
-            return (
-                "run a ResourceLibrary scan after the file stops changing, wait for the "
-                "configured stable-size duration, then rerun Preview"
-            )
-        if stability == "unstable_size":
-            return "wait for the configured stable-size duration, then rerun Preview"
-        return "wait until the file meets the configured stability policy, then rerun Preview"
+        return "wait until the file meets the configured stability policy, then prepare it again"
 
     def _run_item(
         self,
@@ -1804,7 +1821,7 @@ class AutomationTaskDefinitionPreviewService:
                     item.source.modified_at,
                 ),
                 now,
-                previous=record,
+                previous=item.source if item.source.observed_at is not None else record,
             )
             if current_stability != item.source.stability:
                 return "a plan-affecting source fact changed"

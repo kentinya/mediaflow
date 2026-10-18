@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
-import { operationsLandingSearch } from "../../shared/navigation/operations-return";
+import {
+  operationsLandingSearch,
+  parseOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import { renderApp } from "../../../tests/utils";
+import manualOperationsFixture from "../../entities/operations/__fixtures__/manual-operations.json";
 
 const TOKEN = "operations-inventory-token";
 
@@ -53,11 +57,48 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     total_items: 4,
     completed_items: 1,
     failed_items: 0,
+    processed_items: 2,
+    current_stage: "processing",
     pause_requested: false,
     attention: false,
+    problem_types: [],
+    problem_file_counts: {
+      recognition: 0,
+      metadata: 0,
+      classification: 0,
+      conflict: 0,
+      failure: 0,
+    },
+    attention_reason: null,
+    attention_failure_category: null,
+    attention_failure_next_action: null,
     configuration_snapshot_id: "snap-1",
     worker_id: null,
     sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function summaryDocument(overrides: Record<string, unknown> = {}) {
+  const zero = {
+    recognition: 0,
+    metadata: 0,
+    classification: 0,
+    conflict: 0,
+    failure: 0,
+  };
+  return {
+    available: true,
+    scope: "current_filters",
+    source_options_scope: "authorized_population",
+    total: 1,
+    running: 1,
+    attention: 0,
+    ended: 0,
+    problem_tasks: zero,
+    problem_files: zero,
+    sources: [],
+    sources_truncated: false,
     ...overrides,
   };
 }
@@ -76,6 +117,10 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
     truncated: false,
     status_counts: { running: 1 },
     attention_count: 0,
+    view: null,
+    problem: null,
+    source: null,
+    summary: summaryDocument(),
     population:
       "unified job/task run inventory, deduplicated by explicit task linkage",
     sideEffects: "none",
@@ -104,6 +149,8 @@ function readinessPayload(overrides: Record<string, unknown> = {}) {
 function managementReadinessPayload() {
   return {
     available: true,
+    scope: "current_filters",
+    source_options_scope: "authorized_population",
     infrastructureReady: true,
     asOf: "2026-08-22T12:00:00+00:00",
     sideEffects: "none",
@@ -185,6 +232,7 @@ describe("Operations run inventory landing", () => {
             command_label: "预览",
             status: "pending",
             attention: true,
+            problem_types: ["failure"],
             source_scope: null,
             trigger: "scheduled",
             definition_id: "def-1",
@@ -196,18 +244,39 @@ describe("Operations run inventory landing", () => {
             recognized_command: false,
             status: "failed",
             attention: true,
+            problem_types: ["failure"],
           }),
         ],
         status_counts: { running: 1, pending: 1, failed: 1 },
         attention_count: 2,
         total: 3,
+        summary: summaryDocument({
+          total: 3,
+          running: 2,
+          attention: 2,
+          ended: 1,
+          problem_tasks: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 2,
+          },
+          problem_files: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 2,
+          },
+        }),
       }),
       requested,
     );
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     // Chinese business labels describe operation and state.
     expect((await screen.findAllByText("扫描")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
@@ -216,28 +285,147 @@ describe("Operations run inventory landing", () => {
     expect(screen.getByText(/未识别的历史命令/)).toBeVisible();
     // Missing historical scope evidence is explicitly unavailable.
     expect(screen.getByText("不可用")).toBeVisible();
-    // The attention card labels its overlapping facet semantics.
+    // The nine sibling views are present on one navigation row.
+    expect(screen.getByRole("button", { name: "全部任务" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "需要处理" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "失败恢复" })).toBeVisible();
+    // The summary advertises the whole-population attention count.
     expect(
-      screen.getByText(/需要关注（与状态计数重叠，不是独立终态）/),
+      screen.getAllByRole("button", { name: /需要处理/ }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        /任务列表合并授权范围内的 Job 与 Task，并按明确关联去重/,
+      ),
     ).toBeVisible();
+    expect(screen.queryByText(/unified job\/task run inventory/)).toBeNull();
     // Worker readiness and manual entries stay discoverable.
     expect((await screen.findAllByText(/Worker 就绪/)).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
     expect(
       requested.some((url) => url.includes("/api/v1/operations/runs")),
     ).toBe(true);
   });
 
-  it("submits server filters, applies card filters and resets to the same population", async () => {
+  it("shows stage, result, and recovery guidance in their matching views", async () => {
     const user = userEvent.setup();
-    const requested: string[] = [];
-    stubInventoryJourney(pageDocument({ items: [], total: 0 }), requested);
+    stubInventoryJourney(
+      pageDocument({
+        items: [
+          runDocument(),
+          runDocument({
+            run_id: "task-ended",
+            task_id: "task-ended",
+            source_scope: "Movies/Completed",
+            status: "completed",
+            processed_items: 4,
+            completed_items: 4,
+            updated_at: "2026-08-22T12:08:00+00:00",
+            current_stage: null,
+          }),
+          runDocument({
+            run_id: "task-metadata",
+            task_id: "task-metadata",
+            source_scope: "Movies/Metadata",
+            status: "partial_success",
+            attention: true,
+            problem_types: ["metadata"],
+            problem_file_counts: {
+              recognition: 0,
+              metadata: 1,
+              classification: 0,
+              conflict: 0,
+              failure: 0,
+            },
+            current_stage: null,
+            processed_items: null,
+          }),
+        ],
+        total: 3,
+        status_counts: { running: 1, completed: 1, partial_success: 1 },
+        summary: summaryDocument({
+          total: 3,
+          running: 1,
+          ended: 2,
+          attention: 1,
+        }),
+      }),
+    );
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    const views = await screen.findByRole("navigation", {
+      name: "任务中心视图",
+    });
+    expect(
+      await screen.findByRole("columnheader", { name: "当前阶段" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("columnheader", { name: "处理进度" }),
+    ).toBeVisible();
+    expect(screen.getByText("分析媒体")).toBeVisible();
+    expect(screen.getAllByText("2 / 4 项")).toHaveLength(1);
+
+    await user.click(within(views).getByRole("button", { name: "进行中" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "当前阶段" }),
+    ).toBeVisible();
+    expect(screen.getByText("分析媒体")).toBeVisible();
+    expect(screen.getAllByText("2 / 4 项")).toHaveLength(1);
+
+    await user.click(within(views).getByRole("button", { name: "已结束" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "结果摘要" }),
+    ).toBeVisible();
+    expect(screen.getByText(/已处理 4 \/ 4 项；失败 0 项/)).toBeVisible();
+
+    await user.click(within(views).getByRole("button", { name: "元数据恢复" }));
+    expect(
+      await screen.findByRole("columnheader", { name: "问题说明" }),
+    ).toBeVisible();
+    const table = screen.getByRole("table");
+    const metadataRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Metadata"));
+    expect(metadataRow).toBeDefined();
+    if (metadataRow === undefined) {
+      throw new Error("metadata recovery row was not rendered");
+    }
+    expect(
+      within(metadataRow).getByText(
+        "元数据身份仍待确认或补正；打开文件记录核对当前候选。",
+      ),
+    ).toBeVisible();
+    expect(within(metadataRow).getByText("1 个文件")).toBeVisible();
+    expect(
+      within(metadataRow).getByRole("button", { name: "查看问题文件" }),
+    ).toBeVisible();
+  });
+
+  it("submits server filters, applies card filters and resets to the same population", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubInventoryJourney(
+      pageDocument({
+        items: [],
+        total: 0,
+        summary: summaryDocument({
+          total: 2,
+          running: 1,
+          sources: [
+            { value: "Movies/alpha", label: "Movies/alpha" },
+            { value: "Movies/beta", label: "Movies/beta" },
+          ],
+        }),
+      }),
+      requested,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations");
+
+    await screen.findByRole("heading", { name: "任务中心" });
     await waitFor(() =>
       expect(
         requested.some((url) => url.includes("/api/v1/operations/runs")),
@@ -260,6 +448,13 @@ describe("Operations run inventory landing", () => {
       expect(requested.some((url) => url.includes("status=failed"))).toBe(true),
     );
 
+    await user.selectOptions(screen.getByLabelText("来源"), "Movies/beta");
+    await waitFor(() =>
+      expect(
+        requested.some((url) => url.includes("source=Movies%2Fbeta")),
+      ).toBe(true),
+    );
+
     await user.click(screen.getAllByRole("button", { name: "重置筛选" })[0]!);
     await waitFor(() =>
       expect(
@@ -267,7 +462,8 @@ describe("Operations run inventory landing", () => {
           (url) =>
             url.includes("/api/v1/operations/runs") &&
             !url.includes("status=failed") &&
-            !url.includes("q="),
+            !url.includes("q=") &&
+            !url.includes("source="),
         ),
       ).toBe(true),
     );
@@ -389,7 +585,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
       await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
@@ -416,9 +612,9 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
-      await screen.findByRole("heading", { name: "操作与任务暂不可用" }),
+      await screen.findByRole("heading", { name: "任务中心暂不可用" }),
     ).toBeVisible();
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -430,7 +626,7 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "操作与任务" });
+    await screen.findByRole("heading", { name: "任务中心" });
     expect(
       await screen.findByRole("heading", { name: "Operations unavailable" }),
     ).toBeVisible();
@@ -445,6 +641,7 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-101",
           task_id: "task-101",
+          source_scope: "Movies/Second page",
           status: "completed",
         }),
       ],
@@ -480,11 +677,13 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
-    expect(await screen.findByText("task-001")).toBeVisible();
+    expect((await screen.findAllByText("Movies")).length).toBeGreaterThan(0);
     const forward = screen.getByRole("button", { name: "下一页" });
     expect(forward).toBeEnabled();
     await user.click(forward);
-    expect(await screen.findByText("task-101")).toBeVisible();
+    expect(
+      (await screen.findAllByText("Movies/Second page")).length,
+    ).toBeGreaterThan(0);
     expect(requested.some((url) => url.includes("cursor=next-cursor"))).toBe(
       true,
     );
@@ -497,15 +696,49 @@ describe("Operations run inventory landing", () => {
     expect(screen.getByText(/共 3 条/)).toBeVisible();
   });
 
-  it("applies the attention facet its card advertises and never disables it", async () => {
+  it("switches to the 需要处理 view through the server and never disables it", async () => {
     const user = userEvent.setup();
     const requested: string[] = [];
     const attentionPage = pageDocument({
-      items: [runDocument({ status: "failed", attention: true })],
+      items: [
+        runDocument({
+          status: "failed",
+          attention: true,
+          problem_types: ["failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+        }),
+      ],
       status_counts: { failed: 1 },
       attention_count: 1,
       total: 1,
       attention: true,
+      view: "attention",
+      summary: summaryDocument({
+        total: 2,
+        running: 1,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+      }),
     });
     const fullPage = pageDocument({
       items: [
@@ -513,20 +746,42 @@ describe("Operations run inventory landing", () => {
         runDocument({
           run_id: "task-002",
           task_id: "task-002",
+          source_scope: "Movies/Needs review",
           status: "failed",
           attention: true,
+          problem_types: ["failure"],
         }),
       ],
       status_counts: { running: 1, failed: 1 },
       attention_count: 1,
       total: 2,
+      summary: summaryDocument({
+        total: 2,
+        running: 1,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+      }),
     });
     stubFetch(async (input) => {
       const url = String(input);
       requested.push(url);
       if (url.startsWith("/api/v1/operations/runs")) {
         return jsonResponse(
-          url.includes("attention=true") ? attentionPage : fullPage,
+          url.includes("view=attention") ? attentionPage : fullPage,
         );
       }
       if (url === "/api/v1/workers/readiness") {
@@ -543,61 +798,503 @@ describe("Operations run inventory landing", () => {
     authStore.setToken(TOKEN);
     const { router } = renderApp("/ui-v2/operations");
 
-    const card = await screen.findByRole("button", {
-      name: /需要关注（与状态计数重叠，不是独立终态）/,
-    });
-    // The advertised facet is an operable control, never a disabled label.
-    expect(card).toBeEnabled();
-    expect(card).not.toBeDisabled();
-    expect(card).toHaveAttribute("aria-pressed", "false");
+    const tab = await screen.findByRole("button", { name: "需要处理" });
+    // The advertised view is an operable control, never a disabled label.
+    expect(tab).toBeEnabled();
+    expect(tab).not.toHaveAttribute("aria-current", "page");
 
-    const unfacetedReads = () =>
-      requested.filter(
-        (url) =>
-          url.startsWith("/api/v1/operations/runs?") &&
-          !url.includes("attention=true"),
-      ).length;
-
-    const beforeFacet = unfacetedReads();
-    await user.click(card);
+    await user.click(tab);
     await waitFor(() =>
-      expect(router.history.location.search).toContain("attention=true"),
+      expect(router.history.location.search).toContain("view=attention"),
     );
     await waitFor(() =>
-      expect(requested.some((url) => url.includes("attention=true"))).toBe(
+      expect(requested.some((url) => url.includes("view=attention"))).toBe(
         true,
       ),
     );
-    // The facet becomes its own server-side population read; the unfiltered
-    // read is not repeated while the facet is submitted.
-    expect(unfacetedReads()).toBe(beforeFacet);
-    // The card reads as pressed while its facet is submitted. The count
-    // cards disappear for one render while the facet read is in flight, so
-    // this waits for the re-rendered card instead of reading it synchronously.
+    // The active view reads as the current page.
     expect(
-      await screen.findByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
-      }),
-    ).toHaveAttribute("aria-pressed", "true");
+      await screen.findByRole("button", { name: "需要处理" }),
+    ).toHaveAttribute("aria-current", "page");
     expect(await screen.findByRole("table")).toBeVisible();
 
+    // Switching back to 全部任务 restores the unfiltered population.
+    await user.click(screen.getByRole("button", { name: "全部任务" }));
+    await waitFor(() =>
+      expect(router.history.location.search).not.toContain("view=attention"),
+    );
+    expect(
+      (await screen.findAllByText("Movies/Needs review")).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("opens the exact Task/type problem file list from a recovery row", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    const recoveryPage = pageDocument({
+      items: [
+        runDocument({
+          run_id: "task-002",
+          task_id: "task-002",
+          source_scope: "Movies/Failure",
+          status: "failed",
+          attention: true,
+          problem_types: ["failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 0,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+        }),
+      ],
+      status_counts: { failed: 1 },
+      attention_count: 1,
+      total: 1,
+      view: "failure",
+      problem: "failure",
+      summary: summaryDocument({
+        total: 1,
+        running: 0,
+        attention: 1,
+        ended: 1,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 0,
+          classification: 0,
+          conflict: 0,
+          failure: 21,
+        },
+      }),
+    });
+    const problemItems = {
+      run_id: "task-002",
+      task_id: "task-002",
+      problem: "failure",
+      limit: 20,
+      items: [
+        {
+          item_id: "item-a",
+          task_id: "task-002",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "Movies/a.mkv",
+          status: "failed",
+          stage: "metadata",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          failure: {
+            category: "provider_failure",
+            message: "metadata lookup did not complete",
+            durableState: "failed outcome is durable",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "inspect the Provider and retry metadata analysis",
+          },
+          checkpoint: {
+            status: "failed",
+            stage: "metadata",
+            raw_stage: "metadata",
+            blocker_kind: null,
+            blocker_id: null,
+            effect_certainty: "none",
+            retry_safety: "safe",
+            permitted_action_ids: ["retry"],
+            refusal_reason: null,
+            checkpoint_version: "a".repeat(64),
+            recovery_request: null,
+            recovery_continuation: null,
+          },
+        },
+      ],
+      total: 30,
+      matching_total: 21,
+      dispositions: {
+        pending: 20,
+        active: 0,
+        waiting: 0,
+        success: 2,
+        skipped: 0,
+        failed_partial: 8,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: true,
+      previous_cursor: null,
+      next_cursor: "page-two",
+      sideEffects: "none",
+    };
+    const problemItemsPageTwo = {
+      ...problemItems,
+      items: [
+        {
+          ...problemItems.items[0],
+          item_id: "item-b",
+          source_path: "Movies/b.mkv",
+        },
+      ],
+      truncated: false,
+      previous_cursor: "page-one",
+      next_cursor: null,
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes("/problem-items")) {
+        return jsonResponse(
+          url.includes("cursor=page-two") ? problemItemsPageTwo : problemItems,
+        );
+      }
+      if (url.startsWith("/api/v1/operations/runs")) {
+        return jsonResponse(recoveryPage);
+      }
+      if (url === "/api/v1/workers/readiness") {
+        return jsonResponse(readinessPayload());
+      }
+      if (url === "/api/v1/management/readiness") {
+        return jsonResponse(managementReadinessPayload());
+      }
+      if (url.startsWith("/api/v1/operations/manual-actions")) {
+        return jsonResponse(manualActionsPayload());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?view=failure");
+
+    const table = await screen.findByRole("table");
+    const recoveryRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Failure"));
+    expect(recoveryRow).toBeDefined();
+    if (recoveryRow === undefined) {
+      throw new Error("recovery row was not rendered");
+    }
+    expect(within(recoveryRow).getByText("1 个文件")).toBeVisible();
+    expect(within(recoveryRow).queryByText("21 个文件")).toBeNull();
     await user.click(
-      screen.getByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
+      within(recoveryRow).getByRole("button", { name: "查看失败文件" }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("problemRun=task-002"),
+    );
+    expect(router.history.location.search).toContain("view=failure");
+    const panel = await screen.findByRole("region", { name: "问题文件处理" });
+    expect(within(panel).getByText(/失败问题 — 文件清单/)).toBeVisible();
+    // The exact Task/type file list is server-filtered: only the failure file
+    // appears, with its durable reason and next step.
+    expect(
+      (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    expect(within(panel).getByText(/匹配 21 个文件/)).toBeVisible();
+    expect(within(panel).getByText(/无存储变更/)).toBeVisible();
+    expect(within(panel).getByText(/元数据服务未完成查询/)).toBeVisible();
+    expect(within(panel).getByText(/检查元数据服务状态/)).toBeVisible();
+    expect(within(panel).queryByText("provider_failure")).toBeNull();
+    expect(within(panel).getByText("显式重新检查")).toBeVisible();
+    expect(within(panel).queryByText("retry", { exact: true })).toBeNull();
+    expect(
+      requested.some(
+        (url) =>
+          url.includes("problem-items") && url.includes("problem=failure"),
+      ),
+    ).toBe(true);
+    await user.click(within(panel).getByRole("button", { name: "下一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(router.history.location.search).toContain(
+        "problemCursor=page-two",
+      ),
+    );
+    expect(router.history.location.search).toContain("problemDir=forward");
+    await user.click(within(panel).getByRole("button", { name: "上一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/a\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(router.history.location.search).toContain(
+        "problemCursor=page-one",
+      ),
+    );
+    await user.click(within(panel).getByRole("button", { name: "下一页" }));
+    expect(
+      (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    await user.click(
+      within(panel).getByRole("button", {
+        name: "查看该文件证据与恢复记录",
       }),
     );
     await waitFor(() =>
-      expect(router.history.location.search).not.toContain("attention=true"),
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
     );
-    // Clearing the facet restores the full population (a still-fresh bounded
-    // read may be reused instead of re-fetched), and the card reads as
-    // unpressed again.
-    expect(await screen.findByText("task-002")).toBeVisible();
+    expect(router.history.location.search).toContain("item=item-b");
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "task-002",
+    );
     expect(
-      await screen.findByRole("button", {
-        name: /需要关注（与状态计数重叠，不是独立终态）/,
+      parseOperationsReturnContext(router.history.location.search),
+    ).toMatchObject({
+      view: "failure",
+      problemRun: "task-002",
+      problemCursor: "page-two",
+      problemDir: "forward",
+    });
+  });
+
+  it("opens an exact Task/type file list from a 需要处理 row without a dead action", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    const attentionPage = pageDocument({
+      items: [
+        runDocument({
+          run_id: "task-mixed",
+          task_id: "task-mixed",
+          source_scope: "Movies/Mixed",
+          status: "partial_success",
+          attention: true,
+          problem_types: ["metadata", "failure"],
+          problem_file_counts: {
+            recognition: 0,
+            metadata: 1,
+            classification: 0,
+            conflict: 0,
+            failure: 1,
+          },
+        }),
+        runDocument({
+          run_id: "task-continue",
+          task_id: "task-continue",
+          source_scope: "Movies/Continue",
+          status: "waiting",
+          attention: true,
+          problem_types: [],
+        }),
+      ],
+      status_counts: { partial_success: 1, waiting: 1 },
+      attention_count: 2,
+      total: 2,
+      view: "attention",
+      summary: summaryDocument({
+        total: 2,
+        running: 2,
+        attention: 2,
+        ended: 0,
+        problem_tasks: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
+        problem_files: {
+          recognition: 0,
+          metadata: 1,
+          classification: 0,
+          conflict: 0,
+          failure: 1,
+        },
       }),
-    ).toHaveAttribute("aria-pressed", "false");
+    });
+    const problemItems = {
+      run_id: "task-mixed",
+      task_id: "task-mixed",
+      problem: "metadata",
+      limit: 20,
+      items: [
+        {
+          item_id: "item-meta",
+          task_id: "task-mixed",
+          storage_id: "source",
+          resource_library_id: "movies",
+          source_path: "Movies/meta.mkv",
+          status: "waiting_metadata_correction",
+          stage: "waiting_metadata_correction",
+          attempts: 1,
+          created_at: "2026-08-22T12:00:00+00:00",
+          updated_at: "2026-08-22T12:00:00+00:00",
+          destination_storage_id: null,
+          destination_path: null,
+          execution_status: null,
+          failure: null,
+          checkpoint: null,
+        },
+      ],
+      total: 2,
+      matching_total: 1,
+      dispositions: {
+        pending: 1,
+        active: 0,
+        waiting: 1,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+    };
+    stubFetch(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url.includes("/problem-items")) {
+        return jsonResponse({ ...problemItems, problem: "metadata" });
+      }
+      if (url.startsWith("/api/v1/operations/runs")) {
+        return jsonResponse(attentionPage);
+      }
+      if (url === "/api/v1/workers/readiness") {
+        return jsonResponse(readinessPayload());
+      }
+      if (url === "/api/v1/management/readiness") {
+        return jsonResponse(managementReadinessPayload());
+      }
+      if (url.startsWith("/api/v1/operations/manual-actions")) {
+        return jsonResponse(manualActionsPayload());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?view=attention");
+
+    const table = await screen.findByRole("table");
+    const mixedRow = within(table)
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Mixed"));
+    expect(mixedRow).toBeDefined();
+    if (mixedRow === undefined) {
+      throw new Error("attention row was not rendered");
+    }
+    // A Task with several current problems offers each exact type; no guess.
+    await user.click(
+      within(mixedRow).getByRole("button", { name: "元数据问题" }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("problemRun=task-mixed"),
+    );
+    expect(router.history.location.search).toContain("problemType=metadata");
+    const panel = await screen.findByRole("region", { name: "问题文件处理" });
+    expect(within(panel).getByText(/元数据问题 — 文件清单/)).toBeVisible();
+    expect(
+      (await within(panel).findAllByText(/Movies\/meta\.mkv/)).length,
+    ).toBeGreaterThan(0);
+    expect(
+      requested.some(
+        (url) =>
+          url.includes("problem-items") && url.includes("problem=metadata"),
+      ),
+    ).toBe(true);
+
+    // A pure safe-continuation row opens its own evidence/next-step surface
+    // instead of a fabricated problem-file list.
+    await user.click(
+      within(panel).getByRole("button", { name: "返回任务列表" }),
+    );
+    const continueRow = within(await screen.findByRole("table"))
+      .getAllByRole("row")
+      .find((row) => row.textContent?.includes("Movies/Continue"));
+    expect(continueRow).toBeDefined();
+    if (continueRow === undefined) {
+      throw new Error("continuation row was not rendered");
+    }
+    await user.click(
+      within(continueRow).getByRole("button", {
+        name: "查看详情与下一步",
+      }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("run=task-continue"),
+    );
+    expect(requested.some((url) => url.includes("/problem-items"))).toBe(true);
+  });
+
+  it("renders a run-level repair row with a reachable Job detail action", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubInventoryJourney(
+      pageDocument({
+        items: [
+          runDocument({
+            run_id: "pre-task-repair",
+            run_kind: "job",
+            job_id: "pre-task-repair",
+            task_id: null,
+            command: "preview",
+            command_label: "预览",
+            status: "failed",
+            source_scope: null,
+            total_items: null,
+            completed_items: null,
+            failed_items: null,
+            processed_items: null,
+            current_stage: null,
+            attention: true,
+            problem_types: [],
+            attention_reason: "run_repair",
+            attention_failure_category: "snapshot_digest_mismatch",
+            attention_failure_next_action:
+              "restore the exact saved published revision",
+          }),
+        ],
+        status_counts: { failed: 1 },
+        attention_count: 1,
+        total: 1,
+        view: "attention",
+        summary: summaryDocument({
+          total: 1,
+          running: 0,
+          attention: 1,
+          ended: 1,
+        }),
+      }),
+      requested,
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?view=attention");
+
+    const table = await screen.findByRole("table");
+    const row = within(table)
+      .getAllByRole("row")
+      .find((candidate) =>
+        candidate.textContent?.includes("snapshot_digest_mismatch"),
+      );
+    expect(row).toBeDefined();
+    if (row === undefined) {
+      throw new Error("run-level repair row was not rendered");
+    }
+    // The row explains the run-level repair rather than claiming a file list.
+    expect(
+      within(row).getByText(/运行级修复：snapshot_digest_mismatch/),
+    ).toBeVisible();
+    const action = within(row).getByRole("link", {
+      name: "查看原因与修复指引",
+    });
+    expect(action).toBeVisible();
+    await user.click(action);
+    // The action reaches the existing Job detail, which carries the full
+    // structured repair guidance; it never opens a fabricated file list.
+    expect(
+      requested.some((url) => url.includes("/api/v1/operations/runs")),
+    ).toBe(true);
   });
 
   it("renders an honest scan-error run instead of rejecting the page", async () => {
@@ -605,7 +1302,13 @@ describe("Operations run inventory landing", () => {
     stubInventoryJourney(
       pageDocument({
         items: [
-          runDocument({ total_items: 0, completed_items: 0, failed_items: 1 }),
+          runDocument({
+            total_items: 0,
+            completed_items: 0,
+            processed_items: null,
+            current_stage: null,
+            failed_items: 1,
+          }),
         ],
         status_counts: { completed: 1 },
         attention_count: 0,
@@ -617,11 +1320,11 @@ describe("Operations run inventory landing", () => {
     renderApp("/ui-v2/operations");
 
     expect(await screen.findByRole("table")).toBeVisible();
-    expect(screen.getByText("task-001")).toBeVisible();
+    expect(screen.getAllByText("Movies").length).toBeGreaterThan(0);
     // Legal independent scan errors never read as a malformed document and
     // never read as an empty inventory.
     expect(
-      screen.queryByRole("heading", { name: "操作与任务暂不可用" }),
+      screen.queryByRole("heading", { name: "任务中心暂不可用" }),
     ).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "还没有运行记录" }),
@@ -667,7 +1370,7 @@ describe("Operations run inventory landing", () => {
 
     const before = overviewReads();
     const header = screen
-      .getByRole("heading", { name: "操作与任务" })
+      .getByRole("heading", { name: "任务中心" })
       .closest("header");
     if (header === null) {
       throw new Error("landing header was not rendered");
@@ -850,6 +1553,7 @@ function stubLifecycleJourney(options: {
     attempt: number,
   ) => Response;
   readonly posts: { readonly url: string; readonly body: unknown }[];
+  readonly extraGet?: (url: string) => Response | null;
 }): {
   readonly fetchMock: ReturnType<typeof vi.fn>;
   readonly overviewReads: () => number;
@@ -894,6 +1598,10 @@ function stubLifecycleJourney(options: {
     }
     if (url.startsWith("/api/v1/operations/manual-actions")) {
       return jsonResponse(manualActionsPayload());
+    }
+    const extra = options.extraGet?.(url);
+    if (extra !== undefined && extra !== null) {
+      return extra;
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
@@ -1056,7 +1764,7 @@ describe("selected run lifecycle controls", () => {
       within(controls).queryByRole("button", { name: "继续剩余范围" }),
     ).toBeNull();
     const recovery = within(controls).getByRole("button", {
-      name: "查看剩余范围的精确预览",
+      name: "在当前界面生成剩余范围摘要",
     });
     await user.click(recovery);
 
@@ -1160,5 +1868,254 @@ describe("selected run lifecycle controls", () => {
     expect(returnOps).toContain("status=paused");
     expect(returnOps).toContain("run=task-001");
     expect(posts).toHaveLength(0);
+  });
+
+  it("prepares and confirms the paused remaining scope in the same panel", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-remaining";
+    preview["intentId"] = "intent-remaining";
+    preview["intentVersion"] = 3;
+    preview["executionCandidateItemIds"] = ["item-1"];
+    const items = preview["items"] as Record<string, unknown>[];
+    items[0]!["itemId"] = "item-1";
+    items[0]!["previewItemId"] = "preview-item-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "item-1",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const actions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    actions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-remaining/execute";
+
+    const { fetchMock } = stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction("resume", false, "authority required", {
+            available: true,
+            reason: null,
+            method: "POST",
+            path: "/api/v1/tasks/task-001/remaining-scope-previews",
+            requiresConfirmation: false,
+            sideEffects: "none",
+            durableOutcome: "durable exact Preview",
+            nextAction: "review then authorize",
+          }),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/preview-remaining") ? jsonResponse(preview) : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(preview, 201);
+        }
+        if (url.endsWith("/execute")) {
+          return jsonResponse(
+            {
+              executionId: "execution-remaining",
+              taskId: "task-remaining",
+              status: "admitted",
+              selectedItemIds: ["item-1"],
+              nextAction: "track the durable Worker execution",
+            },
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    expect(fetchMock).toBeDefined();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    const confirm = await within(summary).findByRole("button", {
+      name: /确认继续整理剩余 1 项/,
+    });
+    // The summary is zero-mutation: no execution is admitted before confirm.
+    expect(posts.some((post) => post.url.endsWith("/execute"))).toBe(false);
+    await user.click(confirm);
+    await waitFor(() =>
+      expect(posts.some((post) => post.url.endsWith("/execute"))).toBe(true),
+    );
+    const execute = posts.find((post) => post.url.endsWith("/execute"))!;
+    expect(execute.body).toMatchObject({
+      itemIds: ["item-1"],
+      expectedIntentVersion: 3,
+    });
+  });
+
+  it("reconciles a lost paused remaining-scope confirmation against the exact request", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = JSON.parse(
+      JSON.stringify(
+        (manualOperationsFixture as Record<string, unknown>)[
+          "organizePreviewDetail"
+        ],
+      ),
+    ) as Record<string, unknown>;
+    preview["previewId"] = "preview-remaining";
+    preview["intentId"] = "intent-remaining";
+    preview["intentVersion"] = 3;
+    preview["executionCandidateItemIds"] = ["item-1"];
+    const items = preview["items"] as Record<string, unknown>[];
+    items[0]!["itemId"] = "item-1";
+    items[0]!["previewItemId"] = "preview-item-1";
+    (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+      "item-1",
+    ];
+    (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+    const actions = preview["actions"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    actions["execute"]!["path"] =
+      "/api/v1/operations/organize/previews/preview-remaining/execute";
+
+    let admissionReads = 0;
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction("resume", false, "authority required", {
+            available: true,
+            reason: null,
+            method: "POST",
+            path: "/api/v1/tasks/task-001/remaining-scope-previews",
+            requiresConfirmation: false,
+            sideEffects: "none",
+            durableOutcome: "durable exact Preview",
+            nextAction: "review then authorize",
+          }),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/preview-remaining")
+          ? jsonResponse(preview)
+          : url.includes("/preview-remaining/admission")
+            ? (() => {
+                admissionReads += 1;
+                return jsonResponse({
+                  outcome: "known",
+                  reason: null,
+                  executionId: "execution-remaining",
+                  taskId: "task-remaining",
+                  status: "admitted",
+                  selectedItemIds: ["item-1"],
+                  completedItemCount: 0,
+                  failedItemCount: 0,
+                  sideEffects: "none",
+                  nextAction: "track the durable Worker execution",
+                });
+              })()
+            : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(preview, 201);
+        }
+        if (url.endsWith("/execute")) {
+          // The admission really committed but the response is lost.
+          throw new TypeError("network down");
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    await user.click(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理剩余 1 项/,
+      }),
+    );
+    // The lost response is never described as a proven zero effect; the exact
+    // submission is retained for reconciliation and no automatic retry occurs.
+    expect(
+      await screen.findByRole("button", { name: "核对本次确认的持久状态" }),
+    ).toBeVisible();
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      1,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "核对本次确认的持久状态" }),
+    );
+    // The reconciliation read binds the exact submitted selection and version.
+    await waitFor(() => expect(admissionReads).toBe(1));
+    expect(
+      await screen.findByRole("button", { name: "查看关联执行结果" }),
+    ).toBeVisible();
+    // No second execute was ever issued.
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("restores the durable paused remaining-scope summary and admitted execution", async () => {
+    const posts: { url: string; body: unknown }[] = [];
+    const { fetchMock } = stubLifecycleJourney({
+      posts,
+      overview: {
+        continuation: {
+          continuationId: "preview-recovery",
+          status: "previewed",
+          command: "preview",
+          jobId: null,
+          newTaskId: null,
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          recoveryKind: "exact_preview",
+          recoveryPreviewId: "preview-remaining",
+          executionId: null,
+          nextAction: "review the exact Preview",
+          sideEffects: "none",
+        },
+      },
+      respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    expect(fetchMock).toBeDefined();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?status=paused&run=task-001");
+
+    // The durable summary is restored from the overview read alone; the browser
+    // never re-posts remaining-scope-previews to rebuild a lost summary.
+    const summary = await screen.findByRole("region", { name: "新计划摘要" });
+    expect(summary).toBeVisible();
+    expect(
+      posts.some((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toBe(false);
   });
 });

@@ -28,26 +28,27 @@ export const runInventoryQueryKey = "operations.run-inventory" as const;
 export const RUN_REFETCH_INTERVAL = 5_000;
 
 /**
- * The one shared refetch policy for an inventory page or one run overview.
+ * The shared refetch policy for one inventory page or selected overview.
  *
  * An undefined (not yet loaded) or failed read never schedules a poll; a read
- * reporting any non-terminal run repeats every 5 seconds; a fully terminal
- * read settles to `false`. The selected overview therefore follows the same
- * lifecycle as the list it was selected from instead of freezing at its
- * first render.
+ * every successful inventory read repeats every 5 seconds while visible so
+ * new terminal rows and changed recovery links appear without a write action.
+ * A selected overview follows its own lifecycle and settles when terminal.
  */
 export function runRefetchInterval(
   read: RunInventoryRead | RunOverviewRead | undefined,
+  readFailed = false,
 ): number | false {
-  if (read === undefined || !read.ok) {
+  if (readFailed || read === undefined || !read.ok) {
     return false;
   }
   const model = read.model;
-  const active =
-    "items" in model
-      ? hasActiveRuns(model.items)
-      : !TERMINAL_RUN_STATUSES.includes(model.status);
-  return active ? RUN_REFETCH_INTERVAL : false;
+  if ("items" in model) {
+    return RUN_REFETCH_INTERVAL;
+  }
+  return !TERMINAL_RUN_STATUSES.includes(model.status)
+    ? RUN_REFETCH_INTERVAL
+    : false;
 }
 
 export function runInventoryQueryOptions(
@@ -62,10 +63,11 @@ export function runInventoryQueryOptions(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    // Bounded active-work polling: refetch while visible and something may
-    // still change; a fully terminal page settles. Hidden tabs pause
-    // automatically through refetchIntervalInBackground: false.
-    refetchInterval: (query) => runRefetchInterval(query.state.data),
+    // The visible inventory is a live, bounded view of durable run and
+    // recovery-link changes, including additions after every current row is
+    // terminal. Hidden tabs pause through refetchIntervalInBackground.
+    refetchInterval: (query) =>
+      runRefetchInterval(query.state.data, query.state.status === "error"),
     refetchIntervalInBackground: false,
   });
 }
@@ -83,7 +85,8 @@ export function runOverviewQueryOptions(token: string | null, runId: string) {
     staleTime: 10_000,
     // The selected run follows the same shared policy as the list: it polls
     // only while its own state is still non-terminal.
-    refetchInterval: (query) => runRefetchInterval(query.state.data),
+    refetchInterval: (query) =>
+      runRefetchInterval(query.state.data, query.state.status === "error"),
     refetchIntervalInBackground: false,
   });
 }

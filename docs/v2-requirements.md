@@ -75,7 +75,8 @@ delivery or an implicit dependency. Reference images define business/style, neve
 
 These requirements extend the existing Operations foundation and are delivered within Slice 42's
 accepted boundary. CURRENT behavior and explicit deferrals are documented in Architecture and
-Product Experience. Task-linked recovery is delivered; a standalone global Review inbox is deferred.
+Product Experience. Task-linked recovery is delivered; cross-Task recovery lists were deferred by
+that baseline and are selected separately by the Slice45 TARGET amendment below.
 This factual status update does not change the stable requirement IDs or acceptance meaning below.
 
 | ID | Requirement | Acceptance meaning |
@@ -89,11 +90,63 @@ This factual status update does not change the stable requirement IDs or accepta
 | V2-OPS-007 | Task controls and continuation are backend-authoritative, cooperative and Web-completable for supported paused asynchronous work. | Pause/cancel requests do not undo effects or interrupt in-flight calls. Continue queues the exact remaining safe scope with pins/fences and current authority; no CLI fallback, consumed-token reissue, revoked-grant bypass or successful/uncertain replay. |
 | V2-OPS-008 | Task-linked decisions and single/bounded failed-analysis recovery complete in native V2 with per-item safety. | Recognition, Metadata, Classification and conflict decisions use existing gates; saving decisions does not execute. Exact analysis/Preview and separate execution intent link back to the original item. Mixed selections preserve accepted/refused outcomes; uncertain mutation stays investigation-only and retired retry APIs stay retired. |
 
+## Operations and Tasks redesign — TARGET (Slice 45)
+
+The user-approved 2026-10-15 amendment extends the accepted baseline without claiming implementation.
+The final journey and nine reference images are in [task-center-page-spec.md](task-center-page-spec.md).
+It supersedes the mandatory separate Preview-page realization of `V2-OPS-006/008` and the former
+standalone Scan-entry obligation; exact zero-mutation plans, explicit execution authority and all
+`V2-AUTH-*` / `V2-SAFE-*` requirements remain unchanged. The user-approved 2026-10-18 first-deployment
+amendment treats Scan as never shipped, including definition-bound scan-only/scan-and-plan modes; no
+retirement recognition, old-mode/V1 parity, migration or dedicated historical compatibility layer remains.
+Ordinary not-found/argument/unsupported-type validation replaces special retirement errors. Supported-
+work history, restart/recovery safety and frozen accepted facts remain intact. The FileIndex amendment below adds
+complete retirement and CLI/Web live-list parity to the same Slice45.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-OPS-009 | Task Center provides nine sibling list pages, including cross-Task recovery by problem type. | All/running/attention/ended and Recognition/Metadata/Classification/conflict/failure lists share one horizontal navigation row. Recovery lists group one Task per type with affected-file counts across the complete authorized population; tasks may belong to several views. Queries/counts/paging are server-authoritative, pending membership uses current problems rather than page-only filtering or blanket Pending status, and read/refresh/navigation has no work/Provider/Storage side effects. |
+| V2-OPS-010 | Organization creation first shows an exact plan summary in the current interface and then explicitly confirms its eligible selected scope. | Live ResourceLibrary file/folder selection uses bounded discovery, stability, production policy/planning and attachment behavior. Show source, completeness, ready/unready items, operations, destination, per-item effects/conflicts and destructive impacts. Preparation is zero-mutation and grants no execution authority; confirmation binds exact plans/sources/pins/subset and separately permitted effects atomically. Unselected/unready state remains independent; incomplete material bounds cannot execute a first-N prefix. Stale/unknown submission reconciles without automatic replay. No separate Preview page/action is required or offered inside the organizing journey. |
+| V2-OPS-011 | Scan products are absent on first deployment; shared capabilities needed by supported work remain. | Remove standalone Web/API/CLI routes, aliases, registration/help, work-type/readiness/action entries, scheduling/execution/retry/continuation, exclusive models/services/repositories/schema and dead code. Remove definition-bound scan-only/scan-and-plan values/aliases/defaults and exclusive branches as a narrow Slice45 exception to frozen Slice43. No retirement page/410/guidance/special guard, compatible executor, conversion, old-work settlement/takeover/migration, V1 parity or dedicated history/cancel/export remains. Old URLs/commands use ordinary not-found/argument errors under normal authentication; shared supported-type validation rejects before discovery/admission/authority. Never convert Scan into organization or grant implicit mutation authority by removing a default. Keep genuinely shared discovery/filtering/real elapsed stability/planning, diagnostic Preview/DryRun/Rules tests, supported scheduled Preview and all supported-work Results/pins/audit/permissions/restart/recovery/non-replay. No media/runtime/user-data clearing or Git-history rewrite is authorized. V2-FILES-005/006 remain a separate unit in the same Slice; other Slice43 workspace/Run once/metrics/settings work remains frozen. |
+| V2-OPS-012 | Recovery lists lead to native task/type-scoped file processing with integrated analysis, plan summary and explicit continuation. | Recognition, Metadata candidate/correction, Classification, conflict and failure use current legal backend choices/checkpoints and appropriate correctable forms. Save/analysis does not mutate media or confer execution authority; fresh mutation is confirmed against the in-context exact summary without a separate Preview route or operator-managed DryRun task. Pending lists/counts follow durable per-item resolution while retaining history, return context and successful siblings. Uncertain effects stay investigation-only; existing bounded within-Task analysis recovery preserves independent outcomes, with no new cross-Task bulk mutation. |
+
+For V2-OPS-012, the failure journey must expose the failed stage, source/target, completed steps,
+effect certainty and permitted action per file/attachment. Repair dependencies or save a legal
+decision, explicitly re-analyze the allowed scope, handle any new blocker, then review the in-context
+summary and confirm the eligible selected subset. Admission/running is not resolution; membership
+follows current durable problems, recovery attempts retain independent history, and a repeated
+failure explains its new cause and next step. Dependency repair never silently repins old work to
+new Active; unavailable pinned context refuses continuation with guidance. Unknown confirmation
+responses reconcile the exact durable request; uncertain effects have evidence/investigation only,
+and preparation-only unready items are not fabricated execution failures.
+
+## FileIndex retirement and shared live lists — TARGET (Slice45)
+
+The user-approved 2026-10-18 amendment adds complete FileIndex retirement to current Slice45.
+It supersedes V1 global indexing, FileIndex catalog/detail/statistics, automatic result sync and
+optional indexed Files feedback; it preserves supported Task/Result/pin/audit/permission/source
+safety and actual internal stability. [The retirement design](file-index-retirement-spec.md)
+defines the CLI and end-to-end journey. No implementation is claimed.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-FILES-005 | CLI `mediaflow files list`, ResourceLibrary Files and MediaLibrary browsing share library-scoped live Storage listing without recording a file catalog. | Resolve the same Active library kind/ID/root and bounded relative directory/cursor through shared application behavior. Preserve exact names, supported entry types, path confinement, kind-separated cursors, bounded/unknown totals and actionable errors. List/refresh/paging creates no file/observation records, Tasks/Jobs/Results, execution authority, Provider/Hash calls or media mutations; it never falls back to an index. Explicit subsequent work retains its required durable records. |
+| V2-FILES-006 | FileIndex fully exits the product and all runtime consumers under the prelaunch boundary. | Remove indexed CLI/API/UI/reprocess/statistics, global file-directory/occurrence/disposition persistence, repositories/stand-ins, dedicated schema, initialization, sync/repair paths and dead code. Fresh supported deployments and every supported CLI/API/Worker/discovery/organize/recovery/Automation foundation work without FileIndex; do not hide or rename it or substitute a no-op/global cache. Exact work-scoped source/plan/pin/stability/results, locks and completed/uncertain non-replay stay authoritative. No old FileIndex production migration, dual write, historical FileID/API or takeover compatibility is required; do not clear existing runtime data/media. Necessary shared dependency removal does not implement frozen Automation business features. |
+
 ## Automation workspace requirements — TARGET (Slice 43)
+
+Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
+`ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
+These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
+Slice45's ACTIVE Contract owns Task Center, integrated manual plan-summary confirmation and first-
+deployment Scan absence. The user-approved 2026-10-18 narrow exception moves removal of scan-only/
+scan-and-plan modes and exclusive branches into Slice45; the remaining Slice43 work stays frozen.
+Old-mode inventory/history/parity clauses below are historical targets superseded by V2-OPS-011,
+not Scan compatibility obligations. Supported automatic-organization history and safety remain.
 
 The existing Automation/Settings foundations remain CURRENT. The following complete workspace
 journey is TARGET, selected from `docs/pics/自动化.png` and `docs/pics/自动化-全局设置.png` for business
-logic and visual style only. Activation is not a delivery claim; `SLICE.md` owns its bounded scope.
+logic and visual style only. Activation is not a delivery claim; the preserved Slice43 Contract owns its bounded scope.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -105,7 +158,7 @@ logic and visual style only. Activation is not a delivery claim; `SLICE.md` owns
 | V2-AUTO-006 | Automation history reaches existing native Operations result, control and per-item recovery behavior with return context. | Bound reached does not imply source exhaustion; original/continuation/sibling outcomes remain traceable. Successful/uncertain effects are not replayed, and no second task/recovery engine is introduced. |
 | V2-AUTO-007 | Global Automation settings use the shared managed authority and truthful operational meanings. | Activity capacity bounds pending plus running Jobs in the shared pool, not execution parallelism. Stale age detects lack of durable updates, not total runtime or permission to requeue. Four-field checked Save preserves unrelated settings/Drafts and uses backend validation, not reference example ranges. |
 | V2-AUTO-008 | Settings consumption is proved by the actual eligible runtime consumers. | Resident Worker/Scheduler adopt configured polling changes at safe boundaries without routine restart, including idle/long-wait transitions. Fresh consumer values/version distinguish published/adopted/pending/override/unavailable; API binding alone is insufficient. CLI overrides, heartbeats/fences and admitted pipeline pins remain authoritative. |
-| V2-AUTO-009 | Automation supports automatic organization only; the other two modes are entirely removed. | Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound publication, scheduling/admission/execution branches across Web/API/CLI. No legacy-mode inventory, conversion feature, grandfathering or compatible old-mode executor is required or permitted. Unsupported old configuration/work fails closed with existing correction/removal/cancel/history guidance. Preserve recorded intent, pins, results and audits as read-only historical data; never reinterpret it as organizing authority or replay completed/uncertain effects. Standalone Scan/Preview/DryRun and automatic organization's internal analysis stages remain. User-approved amendment and clarification dated 2026-10-13; previous V1 acceptance and safety invariants remain historical facts. |
+| V2-AUTO-009 | Automation supports automatic organization only; the other two modes are entirely removed. | Remove scan-only/scan-and-plan mode values/aliases/defaults, selectors and exclusive publication/scheduling/admission/execution/continuation branches across Web/API/CLI. The 2026-10-18 first-deployment amendment selects this removal in Slice45 under V2-OPS-011, with ordinary unsupported-value validation and no legacy-mode inventory/conversion/history/parity/retirement layer or compatible executor. Never reinterpret removed modes as organization or make default removal grant authority. Preserve supported-work intent/pins/results/audit and completed/uncertain non-replay, shared internal analysis and diagnostic Preview/DryRun. Other Automation workspace targets remain frozen; prior V1 acceptance stays historical. |
 
 ## Authority and evolution
 
@@ -123,6 +176,10 @@ product requirements here; the Python runtime, authority, authentication, coexis
 boundaries are.
 
 ## UI-V2 Files Contract — 2026-09-14
+
+The bullets below retain the accepted historical baseline. Slice45's later `V2-FILES-005/006`
+TARGET explicitly supersedes their FileIndex display/synchronization/compatibility allowances;
+they do not authorize retaining an index after that outcome is implemented and accepted.
 
 - UI-V2 Files exposes ResourceLibrary as the first-level business object.
 - Files browsing is ResourceLibrary-scoped and backed by live Storage reads.

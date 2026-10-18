@@ -28,7 +28,6 @@ import {
   normalizeManualPreview,
   normalizeManualPreviewListPage,
 } from "./preview";
-import { normalizeManualScan } from "./scan";
 
 type Json = Record<string, unknown>;
 
@@ -48,9 +47,9 @@ describe("real API action matrix documents", () => {
     expect(model.selectionRequired).toBe(false);
     expect(model.runtime.ready).toBe(true);
     expect(model.runtime.condition).toBe("configuration_active");
-    expect(model.actions.scan.available).toBe(true);
+    expect(model.actions.scan.available).toBe(false);
     expect(model.actions.scan.path).toBe("/api/v1/operations/scans");
-    expect(model.actions.scan.modes).toEqual(["full", "incremental"]);
+    expect(model.actions.scan.modes).toEqual([]);
     expect(model.actions.preview.available).toBe(true);
     expect(model.actions.preview.path).toBe("/api/v1/operations/previews");
     expect(model.source?.filename).toBe("One.2001.mkv");
@@ -73,50 +72,8 @@ describe("real API action matrix documents", () => {
     expect(model.source).toBeNull();
     expect(model.actions.scan.available).toBe(false);
     expect(model.actions.preview.available).toBe(false);
-    expect(model.actions.scan.reason).toContain(
-      "select an exact ResourceLibrary",
-    );
+    expect(model.actions.scan.reason).toContain("已退役");
     expect(model.resourceLibraries).toHaveLength(1);
-  });
-});
-
-describe("real API Scan documents", () => {
-  it("normalizes the admission response and the refreshable detail", () => {
-    const admission = normalizeManualScan(document("scanAdmission"));
-    expect(admission.status).toBe("running");
-    expect(admission.mode).toBe("incremental");
-    expect(admission.scopeKind).toBe("file");
-    expect(admission.items).toEqual([]);
-    expect(admission.itemLimit).toBeNull();
-    expect(admission.actions.cancel.available).toBe(true);
-    expect(admission.actions.cancel.method).toBe("POST");
-    expect(admission.actions.cancel.path).toContain("/cancel");
-
-    const detail = normalizeManualScan(document("scanDetail"));
-    expect(detail.status).toBe("completed");
-    expect(detail.progress.filesVisited).toBe(1);
-    expect(detail.progress.mediaCandidates).toBe(1);
-    expect(detail.progress.errors).toBe(0);
-    expect(detail.items).toHaveLength(1);
-    expect(detail.items[0]?.status).toBe("ready");
-    expect(detail.items[0]?.change).toBe("unchanged");
-    expect(detail.items[0]?.sourcePath).toBe("One.2001.mkv");
-    expect(detail.items[0]?.failure).toBeNull();
-    expect(detail.errors).toEqual([]);
-    expect(detail.failure).toBeNull();
-    expect(detail.actions.cancel.available).toBe(false);
-  });
-
-  it("normalizes the paged ResourceLibrary detail without dropping siblings", () => {
-    const paged = normalizeManualScan(document("scanLibraryDetail"));
-    expect(paged.scopeKind).toBe("resourceLibrary");
-    expect(paged.itemLimit).toBe(1);
-    expect(paged.items).toHaveLength(1);
-    expect(paged.itemsTruncated).toBe(true);
-    expect(paged.nextItemCursor).not.toBeNull();
-    expect(paged.previousItemCursor).toBeNull();
-    expect(paged.reconciliationComplete).toBe(true);
-    expect(paged.progress.filesVisited).toBe(2);
   });
 });
 
@@ -146,7 +103,7 @@ describe("real API Preview documents", () => {
         overwriteRequired: false,
         sourceCleanupRequired: false,
         statement:
-          "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+          "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file",
       });
       expect(item?.title).toBe("One");
       expect(item?.provider).toBe("tmdb");

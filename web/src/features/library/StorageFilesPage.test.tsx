@@ -3462,6 +3462,69 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // Active pin changed while the response was in flight.
     const user = userEvent.setup();
     const discoveryPosts: Record<string, unknown>[] = [];
+    const provedDiscovery = {
+      actions: {
+        cancel: { available: true, method: "POST", path: "/x" },
+        finalize: { available: false, method: "POST", path: "/x" },
+        pause: { available: true, method: "POST", path: "/x" },
+        resume: { available: false, method: "POST", path: "/x" },
+      },
+      budgets: {},
+      cancelRequested: false,
+      createdAt: "2026-01-01T00:00:00+00:00",
+      discoveryId: "proved-original",
+      execution: "not_available_from_discovery",
+      failure: null,
+      frozen: false,
+      frozenAt: null,
+      intentId: null,
+      journey: "discovery",
+      nextAction: "continue",
+      nextObservationAt: null,
+      pauseRequested: false,
+      primarySourceCount: 1,
+      progress: {
+        activeSeconds: 0,
+        errorEntries: 0,
+        excludedEntries: 0,
+        findings: [],
+        incomplete: false,
+        incompleteReason: null,
+        materialRefusal: null,
+        message: "bounded discovery completed the whole admitted scope",
+        pageFetches: 0,
+        phase: "completed",
+        primarySources: 1,
+        reasons: [],
+        refusalReasons: [],
+        unstableEntries: 0,
+        visitedDirectories: 1,
+        visitedEntries: 1,
+      },
+      resourceLibraryId: "lib-a",
+      storageId: "local-1",
+      configurationSnapshotId: "active-1",
+      // The exact identity the page generated and submitted.  It is read back
+      // from the observed POST so the assertion proves the *echoed* identity
+      // is what drives recovery.
+      admissionRequestId: "",
+      selection: {
+        scopeCount: 1,
+        scopes: [{ kind: "directory", path: "Recover" }],
+      },
+      sideEffects: "none",
+      sources: [],
+      status: "completed",
+      updatedAt: "2026-01-01T00:00:00+00:00",
+      version: 1,
+      worker: {
+        condition: "ready",
+        durableState: "ready",
+        nextAction: "continue",
+        ready: true,
+      },
+      zeroMutation: true,
+    };
     vi.stubGlobal(
       "fetch",
       stripFetchMock({
@@ -3471,72 +3534,20 @@ describe("Files entry state and ResourceLibrary strip", () => {
           discoveryPosts.push(body);
           throw new TypeError("simulated lost discovery admission response");
         },
+        // The recovered admission opens the one in-context preparation
+        // workspace, which reads the discovery detail.  The echoed identity
+        // is what drives recovery, so the detail carries it.
+        onDiscoveryDetail: () =>
+          jsonResponse({
+            ...provedDiscovery,
+            admissionRequestId: String(discoveryPosts[0]?.requestId ?? ""),
+          }),
         onDiscoveries: () =>
           jsonResponse({
             items: [
               {
-                actions: {
-                  cancel: { available: true, method: "POST", path: "/x" },
-                  finalize: { available: false, method: "POST", path: "/x" },
-                  pause: { available: true, method: "POST", path: "/x" },
-                  resume: { available: false, method: "POST", path: "/x" },
-                },
-                budgets: {},
-                cancelRequested: false,
-                createdAt: "2026-01-01T00:00:00+00:00",
-                discoveryId: "proved-original",
-                execution: "not_available_from_discovery",
-                failure: null,
-                frozen: false,
-                frozenAt: null,
-                intentId: null,
-                journey: "discovery",
-                nextAction: "continue",
-                nextObservationAt: null,
-                pauseRequested: false,
-                primarySourceCount: 1,
-                progress: {
-                  activeSeconds: 0,
-                  errorEntries: 0,
-                  excludedEntries: 0,
-                  findings: [],
-                  incomplete: false,
-                  incompleteReason: null,
-                  materialRefusal: null,
-                  message:
-                    "bounded discovery completed the whole admitted scope",
-                  pageFetches: 0,
-                  phase: "completed",
-                  primarySources: 1,
-                  reasons: [],
-                  refusalReasons: [],
-                  unstableEntries: 0,
-                  visitedDirectories: 1,
-                  visitedEntries: 1,
-                },
-                resourceLibraryId: "lib-a",
-                storageId: "local-1",
-                configurationSnapshotId: "active-1",
-                // The exact identity the page generated and submitted.  It is
-                // read back from the observed POST so the assertion proves the
-                // *echoed* identity is what drives recovery.
+                ...provedDiscovery,
                 admissionRequestId: String(discoveryPosts[0]?.requestId ?? ""),
-                selection: {
-                  scopeCount: 1,
-                  scopes: [{ kind: "directory", path: "Recover" }],
-                },
-                sideEffects: "none",
-                sources: [],
-                status: "completed",
-                updatedAt: "2026-01-01T00:00:00+00:00",
-                version: 1,
-                worker: {
-                  condition: "ready",
-                  durableState: "ready",
-                  nextAction: "continue",
-                  ready: true,
-                },
-                zeroMutation: true,
               },
             ],
             journey: "discovery",
@@ -3557,8 +3568,13 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(screen.getByRole("button", { name: "批量整理" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "整理发现" })).toBeVisible(),
+      expect(
+        screen.getByRole("heading", { name: "新建整理任务" }),
+      ).toBeVisible(),
     );
+    // The recovered admission opens the one in-context preparation workspace
+    // for exactly this durable discovery, not a duplicate admission.
+    expect(screen.getByText(/准备完成/)).toBeVisible();
     // The page really did submit its own generated identity.
     expect(discoveryPosts).toHaveLength(1);
     expect(String(discoveryPosts[0]?.requestId)).toMatch(

@@ -2007,10 +2007,10 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         )
         return config, active
 
-    def _paused_scan(self, active, *, discovered: str | None = None):
+    def _paused_preview(self, active, *, discovered: str | None = None):
         task = PersistentTask(
             "task-original",
-            "scan",
+            "preview",
             PersistentTaskStatus.RUNNING,
             False,
             NOW,
@@ -2031,53 +2031,12 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.repository.request_task_pause(task.task_id, NOW)
         return self.coordinator.acknowledge_pause(task.task_id)
 
-    def test_worker_continues_a_paused_scan_without_repeating_discovered_sources(self) -> None:
-        from mediaflow.final_cli import _run_queued_workflow
-
-        config, active = self._activate(scope="Incoming")
-        (self.root / "Incoming" / "first.mkv").write_bytes(b"first")
-        (self.root / "Incoming" / "second.mkv").write_bytes(b"second")
-        original = self._paused_scan(active, discovered="Incoming/first.mkv")
-
-        service = ScopeContinuationService(self.repository, snapshot_validator=lambda *_: None)
-        submission = service.submit(
-            original.task_id,
-            expected_version=None,
-            actor="operator",
-            maximum_active_jobs=10,
-        )
-        task_id = _run_queued_workflow(
-            submission.job, str(config), lambda: False, repository=self.repository
-        )
-        self.assertIsNotNone(task_id)
-        assert task_id is not None
-        continuation = self.repository.get_task(task_id)
-        self.assertEqual(continuation.command, "scan")
-        self.assertIs(continuation.status, PersistentTaskStatus.COMPLETED)
-        # The already-discovered source is never repeated, and the original Task
-        # keeps its own durable history and pin untouched.
-        self.assertEqual(
-            {item.source_path for item in self.repository.list_items(task_id)},
-            {"Incoming/second.mkv"},
-        )
-        self.assertEqual(
-            {item.source_path for item in self.repository.list_items(original.task_id)},
-            {"Incoming/first.mkv"},
-        )
-        kept = self.repository.get_task(original.task_id)
-        self.assertIs(kept.status, PersistentTaskStatus.PAUSED)
-        self.assertEqual(kept.configuration_snapshot_id, active.revision_id)
-        self.assertEqual(kept.configuration_snapshot_digest, active.digest)
-        finished = self.repository.get_scope_continuation_for_job(submission.job.job_id)
-        self.assertIs(finished.status, ScopeContinuationStatus.COMPLETED)
-        self.assertEqual(finished.new_task_id, task_id)
-
     def test_worker_prepare_failure_closes_the_continuation_without_any_effect(self) -> None:
         from mediaflow.final_cli import _run_queued_workflow
 
         config, active = self._activate(scope="Incoming")
         (self.root / "Incoming" / "one.mkv").write_bytes(b"one")
-        original = self._paused_scan(active)
+        original = self._paused_preview(active)
 
         service = ScopeContinuationService(self.repository, snapshot_validator=lambda *_: None)
         submission = service.submit(
@@ -2129,7 +2088,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         config, active = self._activate(scope="Incoming")
         (self.root / "Incoming" / "first.mkv").write_bytes(b"first")
         (self.root / "Incoming" / "second.mkv").write_bytes(b"second")
-        original = self._paused_scan(active)
+        original = self._paused_preview(active)
         service = ScopeContinuationService(self.repository, snapshot_validator=lambda *_: None)
         submission = service.submit(
             original.task_id,

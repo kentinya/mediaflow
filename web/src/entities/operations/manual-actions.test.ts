@@ -25,8 +25,8 @@ describe("normalizeManualActionMatrix", () => {
     const model = normalizeManualActionMatrix(actionMatrixPayload());
     expect(model.scopeKind).toBe("file");
     expect(model.fileId).not.toBeNull();
-    expect(model.actions.scan.available).toBe(true);
-    expect(model.actions.scan.modes).toEqual(["full", "incremental"]);
+    expect(model.actions.scan.available).toBe(false);
+    expect(model.actions.scan.modes).toEqual([]);
     expect(model.actions.preview.available).toBe(true);
     expect(model.runtime.ready).toBe(true);
     expect(model.limits.previewMaxItems).toBeGreaterThan(0);

@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  authorizeTaskItemRecoveryOrganize,
+  confirmTaskItemRecoveryPreparation,
   continueTaskItemAnalysis,
   ignoreTaskItemReview,
+  prepareTaskItemRecoverySummary,
   searchTaskItemMetadata,
   submitTaskItemRecoveryDecision,
 } from "../../shared/api/api-client";
@@ -20,6 +21,7 @@ import {
   taskItemRecoveryQueryKey,
   taskItemRecoveryQueryOptions,
 } from "./run-detail-query";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 
@@ -73,12 +75,7 @@ export interface TaskItemRecoveryPanelProps {
   readonly itemId: string;
   readonly runId: string;
   readonly active: boolean;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
+  readonly analysisDepth?: number;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
@@ -89,7 +86,7 @@ export function TaskItemRecoveryPanel({
   itemId,
   runId,
   active,
-  onOpenRecoveryPreview,
+  analysisDepth = 0,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
 }: TaskItemRecoveryPanelProps) {
@@ -107,14 +104,58 @@ export function TaskItemRecoveryPanel({
     useState<MetadataSearchModel | null>(null);
   const [conflictStrategy, setConflictStrategy] = useState("");
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
-  const [allowOverwriteAtPreview, setAllowOverwriteAtPreview] = useState(false);
-  const [allowCleanupAtPreview, setAllowCleanupAtPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [repeatLocked, setRepeatLocked] = useState(false);
+  const [preparation, setPreparation] = useState<{
+    readonly preparationId: string;
+    readonly previewId: string;
+    readonly status: string;
+    readonly checkpointVersion: string;
+  } | null>(null);
+  const [submittedPreparationId, setSubmittedPreparationId] = useState<
+    string | null
+  >(null);
+  const [confirmSelection, setConfirmSelection] = useState<
+    readonly string[] | null
+  >(null);
+  const [allowOverwriteConfirm, setAllowOverwriteConfirm] = useState(false);
+  const [allowCleanupConfirm, setAllowCleanupConfirm] = useState(false);
   const model = query.data?.ok === true ? query.data.model : null;
   const checkpoint = model?.checkpoint ?? null;
   const decision = model?.decision ?? null;
+  // The durable summary the current authenticated principal may read is the
+  // single read authority for this journey.  A locally prepared summary is
+  // only a faster path to the same record; a refresh, return, reconnect or
+  // restart restores it from the persisted preparation instead of losing it.
+  const durablePreparation = model?.manualRecoveryPreparation ?? null;
+  // The durable record always wins over a local cache.  Once the persisted
+  // summary is confirmed, superseded or stale it can never be covered by an
+  // older local ``prepared`` value: the confirm action disappears and the
+  // linked execution is shown instead.
+  const activePreparation =
+    durablePreparation !== null
+      ? durablePreparation.status === "prepared"
+        ? {
+            preparationId: durablePreparation.preparationId,
+            previewId: durablePreparation.previewId,
+            status: "prepared" as const,
+            checkpointVersion: durablePreparation.checkpointVersion,
+          }
+        : null
+      : preparation !== null
+        ? {
+            preparationId: preparation.preparationId,
+            previewId: preparation.previewId,
+            status: preparation.status,
+            checkpointVersion: preparation.checkpointVersion,
+          }
+        : null;
+  const confirmedPreparation =
+    durablePreparation?.status === "confirmed" &&
+    durablePreparation.executionId !== null
+      ? durablePreparation
+      : null;
   const permitted = new Set(checkpoint?.permittedActionIds ?? []);
   const decisionKey = JSON.stringify([
     checkpoint?.checkpointVersion ?? null,
@@ -272,21 +313,29 @@ export function TaskItemRecoveryPanel({
     }
   };
 
-  const authorizePreview = async () => {
+  const prepareSummary = async () => {
     if (checkpoint === null || busy || repeatLocked) return;
     setBusy(true);
     setMessage(null);
     try {
-      const result = await authorizeTaskItemRecoveryOrganize(token, {
+      const result = await prepareTaskItemRecoverySummary(
+        token,
         taskId,
         itemId,
-        expectedCheckpointVersion: checkpoint.checkpointVersion,
-        allowOverwrite: allowOverwriteAtPreview,
-        allowSourceCleanup: allowCleanupAtPreview,
-      });
+        checkpoint.checkpointVersion,
+      );
       if (result.ok) {
+        setPreparation({
+          preparationId: result.model.preparationId,
+          previewId: result.model.previewId,
+          status: result.model.status,
+          checkpointVersion: result.model.checkpointVersion,
+        });
+        setConfirmSelection(null);
+        setAllowOverwriteConfirm(false);
+        setAllowCleanupConfirm(false);
         setMessage(
-          "精确 Preview 和一次性授权已准备好。先打开 Preview 检查完整计划，再决定是否执行。 ",
+          "已在当前界面生成新的零变更计划摘要。检查下方来源、目标、附件与影响后，选择就绪子集并明确确认继续。",
         );
         setRepeatLocked(false);
         refreshLinkedReads();
@@ -299,14 +348,104 @@ export function TaskItemRecoveryPanel({
     }
   };
 
+  const confirmPreparation = async () => {
+    if (
+      activePreparation === null ||
+      activePreparation.status !== "prepared" ||
+      confirmSelection === null ||
+      confirmSelection.length === 0 ||
+      busy ||
+      repeatLocked
+    ) {
+      return;
+    }
+    const submittedPreparationId = activePreparation.preparationId;
+    setSubmittedPreparationId(submittedPreparationId);
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await confirmTaskItemRecoveryPreparation(
+        token,
+        submittedPreparationId,
+        {
+          itemIds: confirmSelection,
+          allowOverwrite: allowOverwriteConfirm,
+          allowSourceCleanup: allowCleanupConfirm,
+        },
+      );
+      if (result.ok) {
+        setMessage(
+          `已受理 ${result.model.selectedItemIds.length} 项；常驻 Worker 将执行已确认的精确子集。可在关联执行中跟踪逐项结果。`,
+        );
+        setPreparation(null);
+        setConfirmSelection(null);
+        setRepeatLocked(false);
+        refreshLinkedReads();
+        onOpenRecoveryExecution?.(result.model.executionId);
+      } else {
+        // An unknown response is never treated as a refusal.  Keep the
+        // submission locked and let the operator explicitly re-read the
+        // durable preparation, which reveals whether this exact confirmation
+        // was admitted.
+        await reportUnknown(result.code, result.status);
+        refreshLinkedReads();
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reconcile = async () => {
     const result = await query.refetch();
-    if (result.data?.ok === true) {
-      setRepeatLocked(false);
-      setMessage("已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ");
-    } else {
+    if (result.data?.ok !== true) {
       setMessage("条目状态仍无法读取。保持提交锁定；恢复读取后再检查。 ");
+      return;
     }
+    const durable = result.data.model.manualRecoveryPreparation ?? null;
+    // The reconciliation is bound to the exact summary this page submitted.
+    // Reading a different current preparation, or only a successful TaskItem
+    // GET, must not unlock a submission whose own admission is still unknown.
+    if (submittedPreparationId !== null) {
+      if (
+        durable === null ||
+        durable.preparationId !== submittedPreparationId
+      ) {
+        setRepeatLocked(true);
+        setMessage(
+          "未读回本次提交对应的计划摘要；保持提交锁定，请刷新页面后按当前持久状态处理。 ",
+        );
+        return;
+      }
+      if (durable.status === "prepared") {
+        // The admission did not commit; the same prepared summary is safe to
+        // confirm again deliberately.
+        setRepeatLocked(false);
+        setSubmittedPreparationId(null);
+        setMessage(
+          "本次确认未获受理；已读回同一计划摘要，可重新检查后再次确认。 ",
+        );
+        return;
+      }
+      if (durable.status === "confirmed" && durable.executionId !== null) {
+        setRepeatLocked(false);
+        setSubmittedPreparationId(null);
+        setMessage(
+          "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 ",
+        );
+        return;
+      }
+      setRepeatLocked(true);
+      setMessage(
+        "该计划摘要已被更新或不再可用；保持提交锁定，请刷新页面后按当前摘要重新处理。 ",
+      );
+      return;
+    }
+    setRepeatLocked(false);
+    setMessage(
+      durable?.status === "confirmed"
+        ? "已读取持久状态：本次确认已经受理，可打开关联执行查看逐项结果。 "
+        : "已重新读取此 TaskItem 的持久状态。请按当前展示的动作继续。 ",
+    );
   };
 
   if (query.data === undefined) {
@@ -339,7 +478,8 @@ export function TaskItemRecoveryPanel({
   const linked = model?.manualRecoveryLink ?? null;
   const canPreparePreview =
     model?.manualRecoveryAvailable === true &&
-    checkpoint?.continuationStatus === "completed" &&
+    model.manualRecoveryAnalysisReady &&
+    confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
 
   return (
@@ -382,6 +522,41 @@ export function TaskItemRecoveryPanel({
           title="恢复操作状态"
         >
           <p>{message}</p>
+        </StatusBanner>
+      )}
+      {activePreparation !== null &&
+        activePreparation.status === "prepared" && (
+          <SamePagePlanSummary
+            token={token}
+            previewId={activePreparation.previewId}
+            selected={confirmSelection}
+            onSelected={setConfirmSelection}
+            allowOverwrite={allowOverwriteConfirm}
+            onAllowOverwrite={setAllowOverwriteConfirm}
+            allowCleanup={allowCleanupConfirm}
+            onAllowCleanup={setAllowCleanupConfirm}
+            busy={busy || repeatLocked}
+            onConfirm={() => void confirmPreparation()}
+            heading="新计划摘要（零变更）"
+          />
+        )}
+      {confirmedPreparation !== null && (
+        <StatusBanner variant="info" title="本次确认已经受理">
+          <p>
+            已确认的精确子集已进入常驻 Worker
+            执行；受理不代表文件整理已成功。请打开关联执行查看逐项结果。
+          </p>
+          {confirmedPreparation.executionId && onOpenRecoveryExecution && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() =>
+                onOpenRecoveryExecution(confirmedPreparation.executionId!)
+              }
+            >
+              查看关联执行结果
+            </button>
+          )}
         </StatusBanner>
       )}
       {repeatLocked && (
@@ -473,9 +648,7 @@ export function TaskItemRecoveryPanel({
       {checkpoint?.continuationStatus === "completed" && (
         <StatusBanner variant="info" title="单项分析已完成">
           <p>
-            {checkpoint.continuationTaskId && checkpoint.continuationResultId
-              ? `关联分析 Task ${checkpoint.continuationTaskId}，Result ${checkpoint.continuationResultId}。`
-              : "已保存关联分析结果；检查上方新计划与原始结果。"}{" "}
+            已保存关联分析结果；在当前界面检查新计划与原始结果。
             分析结果仍是零变更检查，不代表文件整理已成功。
           </p>
           {checkpoint.continuationTaskId &&
@@ -496,60 +669,59 @@ export function TaskItemRecoveryPanel({
             )}
         </StatusBanner>
       )}
+      {checkpoint?.continuationStatus === "failed" &&
+        checkpoint.continuationTaskId &&
+        checkpoint.continuationItemId &&
+        !model?.manualRecoveryAnalysisReady &&
+        confirmedPreparation === null && (
+          <StatusBanner variant="warning" title="重新检查发现新问题">
+            <p>
+              原任务和失败历史保持不变。请在此处理新问题并继续安全分析，
+              完成后更新原恢复摘要；保存决定不会修改文件。
+            </p>
+            {analysisDepth < 16 ? (
+              <div aria-label="当前关联问题">
+                <TaskItemRecoveryPanel
+                  key={checkpoint.continuationItemId}
+                  taskId={checkpoint.continuationTaskId}
+                  itemId={checkpoint.continuationItemId}
+                  runId={runId}
+                  active={active}
+                  analysisDepth={analysisDepth + 1}
+                  onOpenRecoveryExecution={onOpenRecoveryExecution}
+                />
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  disabled={query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  更新原恢复摘要
+                </button>
+              </div>
+            ) : (
+              <p>
+                关联分析已达到支持的深度，请保留当前记录并联系管理员核查恢复链。
+              </p>
+            )}
+          </StatusBanner>
+        )}
       {canPreparePreview && checkpoint !== null && (
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>
           <p>
-            Worker 已完成此原条目的 DryRun。准备新的精确 Preview
-            后，必须检查完整计划并单独确认执行。
+            Worker 已完成此原条目的 DryRun。在当前界面生成新的零变更计划摘要，
+            检查后选择就绪子集并明确确认继续；普通恢复不再需要跳转独立 Preview。
           </p>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowOverwriteAtPreview}
-              disabled={busy || repeatLocked}
-              onChange={(event) =>
-                setAllowOverwriteAtPreview(event.target.checked)
-              }
-            />
-            如精确 Preview 显示需要，允许本条目替换现有目标
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowCleanupAtPreview}
-              disabled={busy || repeatLocked}
-              onChange={(event) =>
-                setAllowCleanupAtPreview(event.target.checked)
-              }
-            />
-            如精确 Preview 显示需要，允许删除整理后为空的来源目录
-          </label>
           <div className="mf-actions">
             <button
               type="button"
-              className="mf-button mf-button-secondary"
+              className="mf-button"
               disabled={busy || repeatLocked}
-              onClick={() => void authorizePreview()}
+              onClick={() => void prepareSummary()}
             >
-              {busy ? "正在准备…" : "准备精确 Preview"}
+              {busy ? "正在准备…" : "生成计划摘要并在此确认"}
             </button>
-            {linked && onOpenRecoveryPreview && (
-              <button
-                type="button"
-                className="mf-button"
-                onClick={() =>
-                  onOpenRecoveryPreview(
-                    linked.previewId,
-                    linked.linkId,
-                    taskId,
-                    itemId,
-                  )
-                }
-              >
-                检查精确 Preview
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -571,20 +743,13 @@ export function TaskItemRecoveryPanel({
               查看关联执行结果
             </button>
           )}
-          {onOpenRecoveryPreview && linked.status === "authorized" && (
+          {onOpenRecoveryExecution && linked.executionId && (
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              onClick={() =>
-                onOpenRecoveryPreview(
-                  linked.previewId,
-                  linked.linkId,
-                  taskId,
-                  itemId,
-                )
-              }
+              onClick={() => onOpenRecoveryExecution(linked.executionId!)}
             >
-              查看已审核计划
+              查看关联执行结果
             </button>
           )}
         </div>

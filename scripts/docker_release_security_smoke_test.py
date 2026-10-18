@@ -835,31 +835,40 @@ def assert_v2_manual_organize(
     # a metadata identity for it, so it carries the fail-closed legs below.
     unseeded = source_root / "Release Fail Closed.2001.mkv"
     unseeded.write_bytes(b"release-security-fail-closed" * 8)
-    status, scan = json_request(
+    # The compatibility metadata fixture still needs index association until
+    # RO-7. Seed it through the shared internal Scanner, never standalone admission.
+    status, refused = json_request(
         base,
         "/api/v1/operations/scans",
         admin,
         method="POST",
-        body={
-            "scopeKind": "resourceLibrary",
-            "resourceLibraryId": "source",
-            "mode": "full",
-        },
+        body={"scopeKind": "resourceLibrary", "resourceLibraryId": "source", "mode": "full"},
     )
-    if status != 202:
-        raise RuntimeError(f"manual Organize scan admission returned HTTP {status}")
-
-    def scan_complete() -> bool:
-        current_status, detail = json_request(
-            base, f"/api/v1/operations/scans/{scan['taskId']}", admin
-        )
-        return current_status == 200 and detail.get("status") in {
-            "completed",
-            "partial_success",
-            "failed",
-        }
-
-    wait_until(scan_complete, timeout=90.0, description="manual Organize source scan")
+    if status != 410 or refused.get("error", {}).get("code") != "standalone_scan_retired":
+        raise RuntimeError("standalone Scan did not refuse before creating work")
+    discovery_code = r"""
+import os
+from mediaflow.application.scanner import StorageScanner
+from mediaflow.final_cli import _configuration
+from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
+runtime = _configuration(os.environ['MEDIAFLOW_CONFIG'])
+library = runtime.resource_libraries[0]
+with SQLiteFileIndexRepository(runtime.database_path) as index:
+    storages = runtime.create_storages(storage_ids={library.storage_id})
+    result = StorageScanner(storages, index).scan(library)
+    if result.status.value != 'completed':
+        raise RuntimeError('shared fixture discovery failed')
+"""
+    internal = subprocess.run(
+        [*command, "exec", "-T", "api", "python", "-c", discovery_code],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if internal.returncode:
+        raise RuntimeError("shared fixture discovery failed before release-security checks")
     status, files = json_request(base, "/api/v1/files?resourceLibrary=source&limit=100", admin)
     if status != 200:
         raise RuntimeError(f"manual Organize FileIndex listing returned HTTP {status}")

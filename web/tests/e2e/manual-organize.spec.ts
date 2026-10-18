@@ -257,7 +257,7 @@ test.describe("manual organize journey", () => {
 
     await page.getByRole("button", { name: "核对提交结果" }).click();
     await expect(
-      page.getByRole("heading", { name: "操作与任务", exact: true }),
+      page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
     await expect(page).toHaveURL(/command=manual_organize/);
     await expect(page).toHaveURL(/run=organize-task-e2e-001/);
@@ -376,10 +376,10 @@ test.describe("manual organize journey", () => {
     await connect(page, VIEWER_TOKEN);
 
     await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-    await expect(page.getByText("复制")).toBeVisible();
+    await expect(page.getByText("复制").first()).toBeVisible();
     await expect(
       page.getByText(
-        /此精确方案会替换已有目标文件，并在整理后删除已清空的来源目录；需要分别明确授权。/,
+        /此精确方案会把来源复制到目标，来源媒体保留。另外，会替换已有目标文件，需要明确授权覆盖；会删除整理后为空的来源目录，需要明确授权来源清理。/,
       ),
     ).toHaveCount(1);
     const execute = page.getByRole("button", {
@@ -445,7 +445,7 @@ test.describe("manual organize journey", () => {
     await connect(page, READ_ONLY_TOKEN);
     // The unified inventory landing renders with its Chinese business heading.
     await expect(
-      page.getByRole("heading", { name: "操作与任务", exact: true }),
+      page.getByRole("heading", { name: "任务中心", exact: true }),
     ).toBeVisible();
     // The task-center entry is the native `新建整理任务` journey start; a
     // read-only principal is offered neither the old nor the new control.

@@ -38,10 +38,8 @@ import { expect, test, type Page } from "@playwright/test";
 const BASE_URL = "http://127.0.0.1:4173";
 const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
-const SCAN_TASK_ID = "scan-e2e-001";
 const PREVIEW_ID = "preview-e2e-001";
 /** Durable discovery items the fake seeds for the pre-admission Scan. */
-const SEEDED_SCAN_ITEM_COUNT = 101;
 
 interface ManualRequestEvidence {
   readonly method: string;
@@ -79,165 +77,6 @@ async function connect(page: Page, token: string): Promise<void> {
   await page.getByRole("button", { name: "Connect" }).click();
 }
 
-test.describe.serial("durable Scan state", () => {
-  test("Scan detail pages the durable items forward and back", async ({
-    page,
-  }) => {
-    await page.goto(`/ui-v2/operations/scan/${SCAN_TASK_ID}`);
-    await connect(page, VIEWER_TOKEN);
-
-    await expect(
-      page.getByRole("heading", { name: `Scan ${SCAN_TASK_ID}` }),
-    ).toBeVisible();
-    await expect(page.getByText(/^completed$/i)).toBeVisible();
-
-    const itemIds = page.locator("table tbody tr td:first-child");
-    await expect(itemIds.first()).toBeVisible();
-    const firstPageIds = await itemIds.allTextContents();
-    expect(firstPageIds.length).toBeGreaterThan(1);
-
-    // The detail read is one exact GET whose itemLimit is the page size the
-    // browser actually rendered; the document echoed it back.
-    const firstRead = requestsTo(
-      await manualEvidence(page),
-      "GET",
-      `/api/v1/scans/${SCAN_TASK_ID}`,
-    )[0];
-    expect(firstRead?.objectType).toBe("scan");
-    expect(firstRead?.objectId).toBe(SCAN_TASK_ID);
-    expect(firstRead?.body?.itemLimit).toBe(firstPageIds.length);
-
-    // The second page is read through the opaque cursor the document
-    // advertised; the browser only echoes it back.
-    await page.getByRole("button", { name: "Next items" }).click();
-    await expect
-      .poll(async () => (await itemIds.allTextContents()).join(","))
-      .not.toBe(firstPageIds.join(","));
-    const secondPageIds = await itemIds.allTextContents();
-    expect(secondPageIds.length).toBe(
-      Math.min(
-        firstPageIds.length,
-        SEEDED_SCAN_ITEM_COUNT - firstPageIds.length,
-      ),
-    );
-    expect(secondPageIds.some((id) => firstPageIds.includes(id))).toBe(false);
-
-    const pagedReads = requestsTo(
-      await manualEvidence(page),
-      "GET",
-      `/api/v1/scans/${SCAN_TASK_ID}`,
-    ).filter((entry) => typeof entry.body?.itemCursor === "string");
-    expect(pagedReads).toHaveLength(1);
-    expect(pagedReads[0]?.body?.itemLimit).toBe(firstPageIds.length);
-    expect(String(pagedReads[0]?.body?.itemCursor).length).toBeLessThanOrEqual(
-      256,
-    );
-
-    await page.getByRole("button", { name: "Previous items" }).click();
-    await expect
-      .poll(async () => (await itemIds.allTextContents()).join(","))
-      .toBe(firstPageIds.join(","));
-  });
-
-  test("Bounded Scan admission submits one exact request and shows the durable detail", async ({
-    page,
-  }) => {
-    await page.goto(
-      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-index-example&resourceLibraryId=resources",
-    );
-    await connect(page, VIEWER_TOKEN);
-
-    await expect(
-      page.getByRole("heading", { name: "Start bounded Scan" }),
-    ).toBeVisible();
-    const mode = page.getByLabel("Scan mode");
-    await expect(mode).toBeVisible();
-    await expect(mode.locator("option")).toHaveCount(2);
-    expect(await mode.locator("option").allTextContents()).toEqual([
-      "Full",
-      "Incremental",
-    ]);
-    await mode.selectOption("incremental");
-
-    const before = (await manualEvidence(page)).length;
-    await page.getByRole("button", { name: "Submit bounded Scan" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Scan admitted" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: `Scan ${SCAN_TASK_ID}` }),
-    ).toBeVisible();
-
-    // Exactly one admission POST: the browser never replays a submission.
-    const submissions = (await manualEvidence(page))
-      .slice(before)
-      .filter(
-        (entry) => entry.method === "POST" && entry.path === "/api/v1/scans",
-      );
-    expect(submissions).toHaveLength(1);
-    expect(submissions[0]?.objectType).toBe("scan");
-    expect(submissions[0]?.objectId).toBe(SCAN_TASK_ID);
-    expect(submissions[0]?.body).toEqual({
-      scopeKind: "file",
-      fileId: "file-index-example",
-      resourceLibraryId: "resources",
-      mode: "incremental",
-    });
-  });
-
-  test("a read-only Scan detail advertises no cancellation control", async ({
-    page,
-  }) => {
-    await page.goto(`/ui-v2/operations/scan/${SCAN_TASK_ID}`);
-    await connect(page, READ_ONLY_TOKEN);
-
-    await expect(
-      page.getByRole("heading", { name: `Scan ${SCAN_TASK_ID}` }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Request cancel" }),
-    ).toHaveCount(0);
-    await expect(
-      page.getByText(/cancel_job permission required/),
-    ).toBeVisible();
-  });
-
-  test("Scan detail requests exactly one cooperative cancellation", async ({
-    page,
-  }) => {
-    await page.goto(`/ui-v2/operations/scan/${SCAN_TASK_ID}`);
-    await connect(page, VIEWER_TOKEN);
-    await expect(
-      page.getByRole("heading", { name: `Scan ${SCAN_TASK_ID}` }),
-    ).toBeVisible();
-    // The record the admission created is non-terminal and cancellable.
-    await expect(page.getByText(/^running$/i)).toBeVisible();
-
-    const cancel = page.getByRole("button", { name: "Request cancel" });
-    await expect(cancel).toBeVisible();
-    const before = (await manualEvidence(page)).length;
-    await cancel.click();
-
-    await expect(page.getByText(/^cancelled$/i)).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Request cancel" }),
-    ).toHaveCount(0);
-    // Successful sibling outcomes stay visible after cancellation.
-    await expect(page.locator("table tbody tr").first()).toBeVisible();
-
-    const cancellations = (await manualEvidence(page))
-      .slice(before)
-      .filter(
-        (entry) =>
-          entry.method === "POST" &&
-          entry.path === `/api/v1/scans/${SCAN_TASK_ID}/cancel`,
-      );
-    expect(cancellations).toHaveLength(1);
-    expect(cancellations[0]?.objectType).toBe("scan");
-    expect(cancellations[0]?.objectId).toBe(SCAN_TASK_ID);
-  });
-});
-
 test("Operations landing offers no manual action before a scope is chosen", async ({
   page,
 }) => {
@@ -247,7 +86,7 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   // The unified inventory landing keeps the manual journey discoverable with
   // its Chinese business presentation.
   await expect(
-    page.getByRole("heading", { name: "操作与任务", exact: true }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
@@ -261,7 +100,7 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   await expect(scope.locator('option[value="resources"]')).toHaveCount(1);
   await scope.selectOption("resources");
 
-  await expect(page.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "运行零变更预览" }),
   ).toBeVisible();
@@ -387,17 +226,15 @@ test("Unauthenticated deep entry stays behind the connection boundary", async ({
   // Connecting continues to the same deep entry with memory-only authority.
   await connect(page, VIEWER_TOKEN);
   await expect(
-    page.getByRole("heading", { name: "Start bounded Scan" }),
+    page.getByRole("heading", { name: "独立扫描已退役" }),
   ).toBeVisible();
-  await expect(page.getByLabel("Scan mode")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Submit bounded Scan" }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
   await expect(page.getByLabel("API token")).toHaveCount(0);
   expect(
-    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions")
-      .length,
-  ).toBeGreaterThan(0);
+    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")).length,
+  ).toBe(0);
 });
 
 test("Read-only principal sees no manual action and the backend reason", async ({
@@ -419,53 +256,11 @@ test("Read-only principal sees no manual action and the backend reason", async (
   await expect(page.getByText(/此范围没有后端公告的手动操作/)).toBeVisible();
 });
 
-test("Unknown Scan record renders the bounded not-found state inside the shell", async ({
-  page,
-}) => {
-  await page.goto("/ui-v2/operations/scan/does-not-exist");
-  await connect(page, VIEWER_TOKEN);
-
-  await expect(
-    page.getByRole("heading", { name: "Record not found" }),
-  ).toBeVisible();
-  await expect(page.getByText("Return to the Operations list.")).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Back to Operations" }),
-  ).toBeVisible();
-});
-
-test("Invalid Scan scope deep entry offers no submit control", async ({
-  page,
-}) => {
-  const scanPosts: string[] = [];
-  page.on("request", (request) => {
-    if (request.method() === "POST") {
-      scanPosts.push(request.url());
-    }
-  });
-
-  await page.goto("/ui-v2/operations/scan/new?scopeKind=bucket");
-  await connect(page, VIEWER_TOKEN);
-
-  await expect(
-    page.getByRole("heading", { name: "Start bounded Scan" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Invalid scope" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Submit bounded Scan" }),
-  ).not.toBeEnabled();
-  expect(scanPosts.filter((url) => url.includes("/api/v1/scans"))).toHaveLength(
-    0,
-  );
-});
-
 test("hostile action-matrix evidence never reaches the built-artifact DOM", async ({
   page,
 }) => {
   await page.goto(
-    "/ui-v2/operations/scan/new?scopeKind=file&fileId=hostile-source&resourceLibraryId=resources",
+    "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
   );
   await connect(page, VIEWER_TOKEN);
 
@@ -494,7 +289,7 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
-      request.url().includes("/files/organize")
+      request.url().includes("/files/discoveries")
     ) {
       admissionBodies.push(request.postData() ?? "");
     }
@@ -511,11 +306,13 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "整理" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
+    /\/ui-v2\/operations\/organize\/new\?discoveryId=organize-discovery-e2e-001/,
   );
-  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "生成精确预览" }),
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
   ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');

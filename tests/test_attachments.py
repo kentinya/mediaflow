@@ -171,8 +171,9 @@ class AttachmentTests(unittest.TestCase):
                 "Movies/Movie/poster.jpg",
             ),
         )
-        self.assertEqual(plan.status, PlanStatus.CONFLICT)
-        self.assertEqual(len(plan.conflicts), 1)
+        self.assertEqual(plan.status, PlanStatus.READY)
+        self.assertEqual(plan.conflicts, ())
+        self.assertEqual(plan.attachment_plans[1].blocked_reason, "attachment_collision")
 
     def test_rename_retargets_the_complete_file_set(self) -> None:
         attachment = AttachmentPlan(
@@ -325,7 +326,7 @@ class AttachmentTests(unittest.TestCase):
             def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
                 self.moves += 1
                 if self.moves == 2:
-                    raise OSError("simulated primary failure")
+                    raise OSError("simulated attachment failure")
                 super().move(source, target, overwrite=overwrite)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -351,12 +352,14 @@ class AttachmentTests(unittest.TestCase):
             )
             result = OrganizerExecutor().execute(plan, {"local": storage}, execute=True)
             self.assertEqual(result.status, ExecutionStatus.PARTIAL)
-            self.assertTrue(
-                any(
-                    value.startswith("ATTACHMENT:subtitle") for value in result.completed_operations
-                )
+            self.assertIn("MOVE", result.completed_operations)
+            self.assertTrue(result.primary_completed)
+            self.assertEqual(
+                result.attachment_results[0]["effect_certainty"], "attempted_unverified"
             )
-            self.assertTrue((root / "Incoming/Movie.mkv").exists())
+            self.assertIn("不要重放", result.attachment_results[0]["next_action"])
+            self.assertFalse((root / "Incoming/Movie.mkv").exists())
+            self.assertTrue((root / "Movies/Movie/Movie.mkv").exists())
             self.assertTrue((root / "Incoming/unknown.bin").exists())
 
             database = root / "runtime.sqlite3"
@@ -373,9 +376,101 @@ class AttachmentTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as reopened:
                 persisted = reopened.list_results(task.task_id)[0]
                 self.assertEqual(persisted.attachment_count, 1)
-                self.assertTrue(
-                    any(
-                        value.startswith("ATTACHMENT:subtitle")
-                        for value in persisted.completed_operations
-                    )
+                self.assertIn("MOVE", persisted.completed_operations)
+                self.assertTrue(persisted.primary_completed)
+                self.assertEqual(persisted.attachment_results, result.attachment_results)
+
+    def test_primary_completes_before_independent_attachment_checks(self) -> None:
+        for issue in ("missing", "collision", "unavailable"):
+            with self.subTest(issue=issue), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "Incoming").mkdir()
+                (root / "Incoming/Movie.mkv").write_bytes(b"video")
+                (root / "Incoming/Movie.nfo").write_bytes(b"nfo")
+                if issue != "missing":
+                    (root / "Incoming/Movie.en.srt").write_bytes(b"subtitle")
+                target = root / "Movies/Movie/Movie.en.srt"
+                if issue == "collision":
+                    target.parent.mkdir(parents=True)
+                    target.write_bytes(b"keep existing")
+
+                class Storage(LocalStorage):
+                    def exists(self, path):
+                        if path.endswith(".srt") and issue == "unavailable":
+                            raise OSError("private adapter error")
+                        if path.endswith(".srt"):
+                            self_test.assertTrue((root / "Movies/Movie/Movie.mkv").exists())
+                        return super().exists(path)
+
+                self_test = self
+                storage = Storage("local", root)
+                plan = replace(
+                    primary_plan(),
+                    source_storage_id="local",
+                    target_storage_id="local",
+                    source_location=StorageLocation("local", "Incoming/Movie.mkv"),
+                    destination_location=StorageLocation("local", "Movies/Movie/Movie.mkv"),
+                    attachment_plans=tuple(
+                        AttachmentPlan(
+                            StorageLocation("local", f"Incoming/Movie.{suffix}"),
+                            StorageLocation("local", f"Movies/Movie/Movie.{suffix}"),
+                            kind,
+                            PlanOperation.MOVE,
+                            language=language,
+                        )
+                        for suffix, kind, language in (
+                            ("en.srt", AttachmentType.SUBTITLE, "en"),
+                            ("nfo", AttachmentType.NFO, None),
+                        )
+                    ),
                 )
+                result = OrganizerExecutor().execute(plan, {"local": storage}, execute=True)
+                self.assertTrue(result.primary_completed)
+                self.assertEqual(result.status, ExecutionStatus.PARTIAL)
+                self.assertEqual(result.effect_certainty.value, "verified_complete")
+                first, sibling = result.attachment_results
+                self.assertEqual(
+                    first["reason"],
+                    {
+                        "missing": "source_missing",
+                        "collision": "attachment_collision",
+                        "unavailable": "storage_unavailable",
+                    }[issue],
+                )
+                self.assertEqual(first["language"], "en")
+                self.assertEqual(first["source_path"], "Incoming/Movie.en.srt")
+                self.assertEqual(first["destination_path"], "Movies/Movie/Movie.en.srt")
+                self.assertEqual(sibling["status"], "success")
+                self.assertNotIn("private", str(result))
+                if issue == "collision":
+                    self.assertEqual(target.read_bytes(), b"keep existing")
+                    self.assertIn("有冲突：Movie.en.srt", first["next_action"])
+                    self.assertIn("请修正后再进行‘移动’操作", first["next_action"])
+
+    def test_attachment_guidance_uses_pinned_operation_not_blanket_move(self) -> None:
+        from mediaflow.application.attachments import attachment_result_document
+        from mediaflow.domain.organizer import OrganizeOperationType
+
+        attachment = AttachmentPlan(
+            StorageLocation("source", "Incoming/Movie.en.srt"),
+            StorageLocation("target", "Movies/Movie/Movie.en.srt"),
+            AttachmentType.SUBTITLE,
+            PlanOperation.MOVE,
+        )
+        for operation, link, label in (
+            (PlanOperation.MOVE, None, "移动"),
+            (PlanOperation.COPY, None, "复制"),
+            (PlanOperation.LINK, OrganizeOperationType.HARD_LINK, "硬链接"),
+            (PlanOperation.LINK, OrganizeOperationType.SOFT_LINK, "软链接"),
+        ):
+            plan = replace(primary_plan(operation), link_operation=link)
+            outcome = attachment_result_document(
+                plan, attachment, status="not_executed", reason="attachment_collision"
+            )
+            self.assertIn(f"‘{label}’", outcome["next_action"])
+            self.assertIn("Movie.en.srt", outcome["next_action"])
+            unknown = attachment_result_document(
+                plan, attachment, status="failed", certainty="attempted_unverified"
+            )
+            self.assertNotIn(f"‘{label}’", unknown["next_action"])
+            self.assertIn("核查", unknown["next_action"])

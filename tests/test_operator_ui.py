@@ -1217,10 +1217,11 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
         script = APP_JS.decode("utf-8")
         files = _js_function_body(script, "renderFiles")
         self.assertIn(
-            "controls.append(manualScanLibraryControls(resourceLibraries, selectedStorage));", files
+            "controls.append(manualPreviewLibraryControls(resourceLibraries, selectedStorage));",
+            files,
         )
         self.assertIn(
-            "['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Manual Scan', 'Preview'], rows",
+            "['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Preview'], rows",
             files,
         )
         self.assertIn(
@@ -1245,7 +1246,7 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
         index = _js_function_body(script, "renderFileIndex")
         self.assertIn(
             "['ID', 'Path', 'Scan / discovery', 'Processing disposition',\n"
-            "        'Current occurrence', 'Updated', 'Manual Scan', 'Preview'], rows",
+            "        'Current occurrence', 'Updated', 'Preview'], rows",
             index,
         )
         self.assertIn("const previewPayload = manualPreviewPayloadFromFile(item);", index)
@@ -1274,7 +1275,7 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
         from_file = _js_function_body(script, "manualPreviewPayloadFromFile")
         from_membership = _js_function_body(script, "manualPreviewPayloadFromMembership")
 
-        self.assertIn("const scan = manualScanPayloadFromFile(item);", from_file)
+        self.assertIn("const scan = currentSourcePayloadFromFile(item);", from_file)
         self.assertIn("if (!scan) return null;", from_file)
         self.assertIn(
             "return {scopeKind: 'file', resourceLibraryId: scan.resourceLibraryId,\n"
@@ -1333,7 +1334,7 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
 
     def test_resource_library_journey_previews_the_bounded_library_scope(self) -> None:
         script = APP_JS.decode("utf-8")
-        controls = _js_function_body(script, "manualScanLibraryControls")
+        controls = _js_function_body(script, "manualPreviewLibraryControls")
         self.assertIn("actionButton(`Preview ${item.id}`, () =>", controls)
         self.assertIn(
             "confirmCurrentPreview({scopeKind: 'resource_library', resourceLibraryId: item.id},\n"

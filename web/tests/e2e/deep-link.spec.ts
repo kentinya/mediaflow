@@ -202,7 +202,7 @@ test("no supported page emits a retired Library address into the DOM", async ({
     page.getByRole("heading", { name: "新建整理任务", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "返回操作与任务" }),
+    page.getByRole("link", { name: "返回任务中心" }),
   ).toHaveAttribute("href", "/ui-v2/operations");
   const retiredLinks = await page.locator('a[href^="/ui-v2/library"]').count();
   expect(retiredLinks).toBe(0);

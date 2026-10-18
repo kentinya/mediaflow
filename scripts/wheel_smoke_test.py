@@ -211,6 +211,74 @@ def smoke(wheel: Path, project: Path) -> None:
             cwd=root,
             environment=environment,
         )
+        # The installed wheel really contains and loads the Task 45.2
+        # same-page preparation consumer: the durable discovery aggregate and
+        # the Worker that serves it are imported from site-packages, and a
+        # real preparation round-trips through the persisted schema.
+        # The installed wheel really contains and loads the Task 45.2
+        # same-page preparation consumer: the durable discovery aggregate and
+        # the Worker that serves it are imported from site-packages.
+        preparation_script = (
+            "import json, tempfile;"
+            "from pathlib import Path;"
+            "from datetime import UTC, datetime;"
+            "from mediaflow.application.manual_organize import ManualOrganizeIntentService;"
+            "from mediaflow.application.media_discovery import MediaDiscoveryService;"
+            "from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker;"
+            "from mediaflow.domain.media_discovery import DiscoveryStatus;"
+            "from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository;"
+            "directory = tempfile.mkdtemp(prefix='mediaflow-wheel-preparation-');"
+            "database = str(Path(directory, 'runtime.sqlite3'));"
+            "repository = SQLiteTaskRepository(database);"
+            "service = MediaDiscoveryService(repository, None,"
+            " clock=lambda: datetime(2026, 10, 16, tzinfo=UTC));"
+            "assert service.budgets.max_primary_sources > 0;"
+            "worker = MediaDiscoveryWorker(service, notice=lambda line: None);"
+            "assert worker.commands == ('media_discovery',);"
+            "assert DiscoveryStatus.ANALYZING.value == 'analyzing';"
+            "assert hasattr(service, 'request_analysis');"
+            "assert isinstance("
+            "ManualOrganizeIntentService(repository, None),"
+            " ManualOrganizeIntentService);"
+            "repository.close();"
+            "print(json.dumps({'preparationConsumer': 'loaded'}))"
+        )
+        run(
+            [str(python), "-c", preparation_script],
+            cwd=root,
+            environment=environment,
+        )
+        # The installed wheel really contains and loads the Task 45.3 recovery
+        # preparation consumer: the non-authorizing plan-summary domain record
+        # and the service that persists/links it are imported from
+        # site-packages, and a real preparation round-trips through the schema.
+        recovery_preparation_script = (
+            "import json, tempfile;"
+            "from pathlib import Path;"
+            "from datetime import UTC, datetime;"
+            "from mediaflow.application.manual_recovery_continuation import ("
+            " ManualRecoveryContinuationService);"
+            "from mediaflow.domain.manual_recovery import ("
+            " ManualRecoveryPreparation, ManualRecoveryPreparationStatus);"
+            "from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository;"
+            "directory = tempfile.mkdtemp(prefix='mediaflow-wheel-recovery-prep-');"
+            "database = str(Path(directory, 'runtime.sqlite3'));"
+            "repository = SQLiteTaskRepository(database);"
+            "assert hasattr(ManualRecoveryContinuationService, 'prepare_summary');"
+            "assert hasattr(ManualRecoveryContinuationService, 'confirm_prepared');"
+            "assert ManualRecoveryPreparationStatus.PREPARED.value == 'prepared';"
+            "assert hasattr(repository, 'create_manual_recovery_preparation');"
+            "assert hasattr(repository, 'get_current_manual_recovery_preparation');"
+            "assert hasattr(repository, 'complete_manual_recovery_preparation');"
+            "assert ManualRecoveryPreparation.__dataclass_fields__['intent_version'];"
+            "repository.close();"
+            "print(json.dumps({'recoveryPreparationConsumer': 'loaded'}))"
+        )
+        run(
+            [str(python), "-c", recovery_preparation_script],
+            cwd=root,
+            environment=environment,
+        )
 
 
 def main() -> int:

@@ -8,16 +8,42 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice 43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on
-local `main`, integrating accepted Slice 44 with preserved unfinished work under
-the current Slice 44-era governance. [SLICE.md](../SLICE.md) retains the original Base and records
-the user's clarified 2026-10-13 automatic-organization-only amendment: the other two Automation
-modes are removed entirely, without conversion or compatible execution. Task 43.1 is **B PASS**;
-[TASK.md](../TASK.md) owns the legally adjusted, unstarted Task 43.2 under the committed Contract:
-Run once automatically discovers and freezes its bounded source manifest from the saved scope,
-then uses exact Preview and separate execution intent; normal file picking is not required.
-The mode removal, durable Preview/Run once and remaining Slice outcomes
-are not delivered or finally accepted. Detailed implementation and review history remains in Git.
+Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — is **ACTIVE** on
+`main`, retaining accepted Slice44 Base
+`a72252091d5d46edf3e2114b994036ae21b08e2e`. The user-confirmed final Contract selects nine task/recovery
+lists, in-context exact plan-summary confirmation and first-deployment Scan absence with shared
+internal discovery/stability preserved. [The final page specification](task-center-page-spec.md)
+indexes nine named references under `docs/pics/`. Implementation is in progress; Implementation Head
+for A final review is NOT SET and no Slice delivery/closure is claimed. The final 2026-10-18 revision
+removes standalone Scan, scan-only/scan-and-plan modes and retirement compatibility layers: old inputs
+receive ordinary not-found/argument/unsupported-type errors before work/authority, not retirement
+pages/410/guidance/guards. No old Scan/V1 parity, migration or dedicated history is required. Mode
+removal is the narrow user-authorized exception to frozen Slice43; its other features remain frozen. A further
+user amendment adds complete FileIndex retirement and CLI/Web shared live Storage listing without
+catalog recording to this same Slice as RO-7; [its specification](file-index-retirement-spec.md) is
+TARGET, not delivered behavior. Shared discovery/stability and supported Task/Result/source-safety
+facts remain, without requiring old FileIndex production migration or history compatibility.
+Supported-work same-version restart/recovery remains; no existing data/media is cleared. Task45.4
+remains FIX REQUIRED and is adjusted against the new Contract; B plans the FileIndex unit after its PASS.
+The original stable-product/TARGET documentation checkpoint carried no frozen Automation code;
+the subsequent explicit integration below changes that code baseline, not the recorded acceptances.
+
+On 2026-10-18 the user authorized merging main with `slice/45-scope-pending`, preferring Slice45
+conflict changes while retaining nonconflicting work from both. The original isolation/no-import
+restriction is superseded for this integration of existing Task43.1/43.2 code. Continue Task45.4
+FIX REQUIRED on main; preserve Task43.2's historical B PASS, do not start Task43.3 or close Slice43.
+The combined tree requires its own integration checks; earlier candidates' T4/PASS is not new merge
+validation. Original branches/checkpoints and local unrelated dirty files remain preserved.
+
+Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
+**Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
+Contract, Task43.3 plan and Task43.2 B decision are retained at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on
+`frozen/slice-43-2026-10-15`; the suspended Contract is checkpointed at `ed974e0df8b263f631bfe48b524da461013d8780`. Original Slice Base
+and historical unfinished commitments remain recorded; the latest narrow Scan-mode exception is owned
+by Slice45, not permission to resume the remaining work. The user originally authorized A to reserve Slice45
+from accepted Slice44; its now-defined task-center Contract remains separate from suspended Automation.
+There is no active implementation Task for the frozen Slice43.
+This scheduling exception changes no accepted closure entry below.
 
 Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
 Its closure-ledger entry and all earlier accepted entries below are unchanged. The frozen Slice 43

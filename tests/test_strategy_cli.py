@@ -358,10 +358,7 @@ class StrategyCLITests(unittest.TestCase):
                 runner_factory=lambda live: runner,
             )
             relative_destination = "Movies/Anime/Spirited Away (2001)/Spirited Away (2001).mkv"
-            # The CLI resolves the execution root (canonicalizing host symlinks such
-            # as macOS `/var` -> `/private/var`), so the expected destination must be
-            # canonicalized the same way while keeping the exact full-path assertion.
-            resolved_destination = str(Path(target_root, relative_destination).resolve())
+            resolved_destination = str((Path(target_root) / relative_destination).resolve())
             self.assertEqual(0, dry_code)
             self.assertEqual("", dry_errors.getvalue())
             self.assertTrue(os.path.exists(source))
@@ -399,7 +396,7 @@ class StrategyCLITests(unittest.TestCase):
             self.assertIn("Mode: EXECUTE", output.getvalue())
             self.assertIn("Status: SUCCESS", output.getvalue())
             self.assertIn(f"Source: {source}", output.getvalue())
-            self.assertIn(f"Resolved destination: {destination}", output.getvalue())
+            self.assertIn(f"Resolved destination: {Path(destination).resolve()}", output.getvalue())
 
     def test_live_metadata_displays_localized_title_match_evidence(self) -> None:
         provider = SyntheticMetadataProvider(

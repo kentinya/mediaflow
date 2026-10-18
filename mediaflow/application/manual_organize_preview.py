@@ -18,7 +18,11 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from uuid import uuid4
 
-from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
+from mediaflow.application.attachments import (
+    AttachmentDiscovery,
+    AttachmentPlanner,
+    attachment_result_document,
+)
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -184,8 +188,11 @@ class ManualOrganizePreviewService:
         source_scope_id: str | None = None,
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
         review_decisions: object | None = None,
+        reuse_analysis_identity: object | None = None,
+        require_durable_identity: bool = False,
         skip_current_snapshot_check: bool = False,
         recovery_source_task_id: str | None = None,
+        tolerate_unready_sources: bool = False,
         persist: bool = True,
         analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
     ) -> ManualOrganizePreview:
@@ -197,6 +204,13 @@ class ManualOrganizePreviewService:
         recovery path must review the plan under that pin rather than under the
         current Active revision.  The ordinary Files path keeps the strict
         current-Active rule.
+
+        ``tolerate_unready_sources`` is the one explicit opt-in for the RO-2
+        same-page preparation re-analysis: one source that is missing or has
+        changed becomes its own bounded per-item finding instead of aborting
+        the whole analysis.  That keeps a failed sibling from erasing the
+        correction and readable state of every other remaining item.  It is
+        never used by the ordinary Files admission, which keeps failing closed.
         """
 
         actor = self._actor(actor)
@@ -262,6 +276,22 @@ class ManualOrganizePreviewService:
                     )
                 self._validate_choice(intent, item.choice, record)
             except ManualIntentError as error:
+                if tolerate_unready_sources:
+                    # RO-2: a same-page re-analysis keeps one failed source as
+                    # its own bounded finding instead of erasing the correction
+                    # and readable state of every other remaining item.  The
+                    # per-item outcome below publishes the exact reason and
+                    # next action; nothing is admitted and nothing is mutated.
+                    source_admission_errors[item.source.file_id] = ManualPreviewError(
+                        str(error),
+                        code=error.code,
+                        status=error.status,
+                        next_action=error.next_action,
+                        details={"itemId": item.item_id, **error.details},
+                    )
+                    records[item.item_id] = item.source
+                    states[item.item_id] = self._input_state(intent, item, item.source)
+                    continue
                 if error.code in {"source_stale", "source_missing", "source_invalid"}:
                     self._invalidate_items((item.item_id,), str(error), intent_id=intent.intent_id)
                 raise ManualPreviewError(
@@ -301,6 +331,8 @@ class ManualOrganizePreviewService:
                         records[item.item_id],
                         preview_id,
                         review_decisions=review_decisions,
+                        reuse_analysis_identity=reuse_analysis_identity,
+                        require_durable_identity=require_durable_identity,
                         analysis_checkpoint=analysis_checkpoint,
                         visited_entries=len(selected),
                         analysed_items=position,
@@ -1467,7 +1499,7 @@ class ManualOrganizePreviewService:
             raise ManualPreviewError(
                 "configured ResourceLibrary has no current FileIndex sources",
                 code="selection_empty",
-                next_action="run a bounded Scan, then select the current ResourceLibrary again",
+                next_action="prepare a new organize summary from the live source in Files",
                 details={"resourceLibraryId": resource_library_id},
             )
         if len(values) > self._max_items:
@@ -1528,7 +1560,7 @@ class ManualOrganizePreviewService:
                 code=code,
                 status=409,
                 next_action=(
-                    "refresh FileIndex and select the current source after a successful Scan"
+                    "prepare a new organize summary in Files with internal stability checks"
                 ),
                 details={
                     "fileId": getattr(record, "file_id", None),
@@ -1544,7 +1576,7 @@ class ManualOrganizePreviewService:
                 "current FileIndex source occurrence is not verified",
                 code="source_unverified",
                 status=409,
-                next_action="run a complete Scan, then select the refreshed current occurrence",
+                next_action="open Files and prepare a new organize summary from the live source",
                 details={"fileId": getattr(record, "file_id", None)},
             )
 
@@ -1649,7 +1681,7 @@ class ManualOrganizePreviewService:
                     "current FileIndex source is no longer present in Storage",
                     code="source_missing",
                     status=409,
-                    next_action="run a bounded Scan and select the current source occurrence",
+                    next_action="prepare a new organize summary from the live source in Files",
                     details={"fileId": record.file_id},
                 ) from error
             raise ManualPreviewUnavailable(
@@ -1666,7 +1698,7 @@ class ManualOrganizePreviewService:
                 "current FileIndex source is no longer a file in Storage",
                 code="source_missing",
                 status=409,
-                next_action="run a bounded Scan and select the current source occurrence",
+                next_action="prepare a new organize summary from the live source in Files",
                 details={"fileId": record.file_id},
             )
         observed = source_fingerprint(record.storage_id, record.resource_library_id, entry)
@@ -2195,6 +2227,8 @@ class ManualOrganizePreviewService:
         preview_id: str,
         *,
         review_decisions: object | None = None,
+        reuse_analysis_identity: object | None = None,
+        require_durable_identity: bool = False,
         analysis_checkpoint: Callable[[str, int, int, int], None] | None = None,
         visited_entries: int = 0,
         analysed_items: int = 0,
@@ -2261,6 +2295,7 @@ class ManualOrganizePreviewService:
         metadata_selection = None
         metadata_identity = None
         metadata_correction = None
+        durable_identity = None
         if metadata_reference is not None and metadata_policy.query_type is MediaQueryType.NONE:
             # An offline MetadataPolicy performs no lookup by definition, so a bounded
             # identity that the source-linked authority already grounded is pinned
@@ -2286,11 +2321,66 @@ class ManualOrganizePreviewService:
             metadata_selection, metadata_correction = self._bound_metadata_decision(
                 bound, item, type_policy, metadata_policy
             )
+        # Reuse the exact identity an already completed, source/pin-bound
+        # re-analysis resolved under this same MetadataPolicy.  This is a durable
+        # reviewed fact, not a fresh lookup: the summary is built without a second
+        # Provider search/detail round-trip.  The identity is re-validated against
+        # the pinned policy before it is applied, and when the operator also saved
+        # an explicit Metadata decision/reference that decision must still agree
+        # with the durable identity; otherwise the item is blocked for a fresh
+        # analysis instead of silently overriding either fact.
+        if (
+            metadata_identity is None
+            and metadata_policy.query_type is not MediaQueryType.NONE
+            and reuse_analysis_identity is not None
+            and self._durable_identity_compatible(metadata_policy, item, reuse_analysis_identity)
+        ):
+            candidate_durable = self._rebind_durable_identity(
+                reuse_analysis_identity, item.choice.recognition_type_id
+            )
+            mismatch = self._metadata_decision_mismatch(
+                candidate_durable, metadata_selection, metadata_correction, metadata_reference
+            )
+            if mismatch is not None:
+                return _PreviewOutcome(
+                    ManualPreviewItemStatus.BLOCKED,
+                    error=mismatch,
+                    next_action=(
+                        "request a fresh analysis for this exact item so the saved Metadata "
+                        "decision and the resolved identity agree before continuing"
+                    ),
+                )
+            durable_identity = candidate_durable
+            metadata_selection = None
+            metadata_correction = None
+        if (
+            require_durable_identity
+            and durable_identity is None
+            and metadata_identity is None
+            and metadata_policy.query_type is not MediaQueryType.NONE
+        ):
+            # The same-page summary never falls back to a live Provider lookup
+            # inside the HTTP request: a missing, incomplete or expired durable
+            # identity becomes an explicit re-analysis action handled by the
+            # existing durable Job/Worker.
+            return _PreviewOutcome(
+                ManualPreviewItemStatus.BLOCKED,
+                error=(
+                    "the completed re-analysis has no reusable metadata identity under the "
+                    "pinned MetadataPolicy"
+                ),
+                next_action=(
+                    "request a fresh analysis for this exact item, wait for the Worker, then "
+                    "generate the plan summary again"
+                ),
+            )
         live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
-        if metadata_identity is not None:
+        if metadata_identity is not None or durable_identity is not None:
             live_metadata = False
-        if metadata_identity is None and (
-            metadata_selection is not None or metadata_correction is not None
+        if (
+            metadata_identity is None
+            and durable_identity is None
+            and (metadata_selection is not None or metadata_correction is not None)
         ):
             live_metadata = True
         providers = (
@@ -2311,6 +2401,7 @@ class ManualOrganizePreviewService:
             metadata_selection=metadata_selection,
             metadata_correction=metadata_correction,
             metadata_identity=metadata_identity,
+            durable_identity=durable_identity,
             classification_selection=classification_selection,
             forced_recognition_type_id=item.choice.recognition_type_id,
             storage_path=item.source.path,
@@ -2348,9 +2439,10 @@ class ManualOrganizePreviewService:
             return _PreviewOutcome(
                 ManualPreviewItemStatus.BLOCKED,
                 plan=self._partial_plan(strategy, item, type_policy),
-                error="metadata identity is not ready for exact planning",
+                error="metadata identity needs an explicit candidate selection",
                 next_action=(
-                    "open or resolve the linked Metadata review, then explicitly rerun Preview"
+                    "choose one of this source's grounded metadata candidates on this page, "
+                    "then rerun the analysis"
                 ),
             )
         if strategy.naming is None:
@@ -2685,6 +2777,79 @@ class ManualOrganizePreviewService:
             recognition_review=lookup("recognition_reviews"),
         )
 
+    def _durable_identity_compatible(self, metadata_policy, item, identity) -> bool:
+        """Whether a completed analysis identity can be pinned to this item.
+
+        The identity must match the pinned MetadataPolicy's provider and media
+        type, so a stale, cross-source or cross-policy identity is never
+        replanned.  Its RecognitionType is only the type the analysis happened
+        to resolve under; because the same provider+media type is source-
+        determined, the identity is rebound to this item's own forced
+        RecognitionType by :meth:`_rebind_durable_identity` rather than being
+        rejected for a policy-equivalent type difference.
+        """
+
+        if not isinstance(identity, MediaIdentity):
+            return False
+        if not self._identity_compatible(
+            metadata_policy, identity.provider, identity.media_type.value
+        ):
+            return False
+        expected = getattr(metadata_policy, "media_type", None)
+        if expected is not None and identity.media_type is not expected:
+            return False
+        return True
+
+    @staticmethod
+    def _rebind_durable_identity(
+        identity: MediaIdentity, recognition_type_id: str
+    ) -> MediaIdentity:
+        if identity.recognition_type_id == recognition_type_id:
+            return identity
+        return replace(identity, recognition_type_id=recognition_type_id)
+
+    @staticmethod
+    def _metadata_decision_mismatch(
+        durable: MediaIdentity,
+        metadata_selection,
+        metadata_correction,
+        metadata_reference,
+    ) -> str | None:
+        """Whether a saved Metadata decision contradicts the durable identity.
+
+        The summary reuses the identity the completed re-analysis actually
+        resolved, so any decision the operator also saved must agree with it on
+        the provider and media type, and on the concrete Provider ID whenever
+        the decision named one.  A contradiction is returned as a bounded reason
+        so the caller blocks for a fresh analysis instead of silently preferring
+        one fact over the other.
+        """
+
+        provider = None
+        provider_id = None
+        media_type = None
+        if metadata_selection is not None:
+            provider = getattr(metadata_selection, "provider", None)
+            provider_id = getattr(metadata_selection, "provider_id", None)
+            media_type = getattr(metadata_selection, "media_type", None)
+        elif metadata_correction is not None:
+            provider = getattr(metadata_correction, "provider", None)
+            provider_id = getattr(metadata_correction, "direct_provider_id", None)
+            media_type = getattr(metadata_correction, "media_type", None)
+        elif metadata_reference is not None:
+            provider = getattr(metadata_reference, "provider", None)
+            provider_id = getattr(metadata_reference, "provider_id", None)
+            media_type = getattr(metadata_reference, "media_type", None)
+        else:
+            return None
+        if provider and provider != durable.provider:
+            return "the saved Metadata decision names a different Provider than the analysis"
+        if provider_id and provider_id != durable.provider_id:
+            return "the saved Metadata decision names a different identity than the analysis"
+        if media_type and str(media_type) != durable.media_type.value:
+            return "the saved Metadata decision names a different media type than the analysis"
+        return None
+
     @staticmethod
     def _identity_compatible(policy, provider: str | None, media_type: str | None) -> bool:
         """Whether a resolved identity can be planned under the pinned MetadataPolicy."""
@@ -2848,6 +3013,13 @@ class ManualOrganizePreviewService:
                 },
                 "operation": value.operation.value,
                 "suffix": _bounded(value.suffix, 128),
+                "language": value.language,
+                "blockedReason": value.blocked_reason,
+                "nextAction": attachment_result_document(
+                    plan, value, status="not_executed", reason=value.blocked_reason
+                )["next_action"]
+                if value.blocked_reason
+                else None,
             }
             for value in plan.attachment_plans[:_MAX_COLLECTION]
         ]
@@ -2864,6 +3036,8 @@ class ManualOrganizePreviewService:
                 },
                 "operation": value.operation.value,
                 "suffix": value.suffix,
+                "language": value.language,
+                "blockedReason": value.blocked_reason,
             }
             for value in plan.attachment_plans[:_MAX_COLLECTION]
         ]

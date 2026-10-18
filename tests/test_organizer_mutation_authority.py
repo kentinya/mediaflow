@@ -109,7 +109,7 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             self.assertTrue((root / "Incoming" / "Movie.mkv").read_bytes() == b"media")
             self.assertFalse((root / "Movies").exists())
 
-    def test_refusal_after_one_attachment_stops_second_attachment_and_primary(self) -> None:
+    def test_refusal_after_primary_and_one_attachment_stops_second_attachment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "Incoming").mkdir()
@@ -125,7 +125,7 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
                     ),
                 )
             )
-            authority = AuthorityRecorder(fail_on=3)
+            authority = AuthorityRecorder(fail_on=4)
             result = OrganizerExecutor().execute(
                 plan,
                 {"local": LocalStorage("local", root)},
@@ -136,6 +136,7 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             self.assertEqual(
                 (
                     "CREATE_DIRECTORY",
+                    "MOVE",
                     "ATTACHMENT:subtitle:Incoming/Movie.en.srt",
                 ),
                 result.completed_operations,
@@ -143,16 +144,19 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             self.assertEqual(ExecutionEffectCertainty.VERIFIED_COMPLETE, result.effect_certainty)
             self.assertEqual(RollbackStatus.DISABLED, result.rollback_status)
             self.assertEqual(
-                ["CREATE_DIRECTORY", "ATTACHMENT:MOVE", "ATTACHMENT:MOVE"],
+                ["CREATE_DIRECTORY", "PRIMARY:MOVE", "ATTACHMENT:MOVE", "ATTACHMENT:MOVE"],
                 [boundary for _source, boundary in authority.calls],
             )
             self.assertTrue((root / "Movies" / "Movie" / "Movie.en.srt").read_bytes() == b"english")
             self.assertFalse((root / "Incoming" / "Movie.en.srt").exists())
             self.assertTrue((root / "Incoming" / "Movie.zh.srt").read_bytes() == b"chinese")
             self.assertFalse((root / "Movies" / "Movie" / "Movie.zh.srt").exists())
-            self.assertTrue((root / "Incoming" / "Movie.mkv").read_bytes() == b"media")
+            self.assertFalse((root / "Incoming" / "Movie.mkv").exists())
+            self.assertEqual((root / "Movies/Movie/Movie.mkv").read_bytes(), b"media")
+            self.assertTrue(result.primary_completed)
+            self.assertEqual(result.attachment_results[1]["reason"], "authority_refused")
 
-    def test_refusal_after_attachment_before_primary_records_completed_effect(self) -> None:
+    def test_refusal_before_primary_keeps_all_attachments_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "Incoming").mkdir()
@@ -167,13 +171,11 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             )
             self.assertEqual(ExecutionStatus.PARTIAL, result.status)
             self.assertEqual(
-                (
-                    "CREATE_DIRECTORY",
-                    "ATTACHMENT:subtitle:Incoming/Movie.en.srt",
-                ),
+                ("CREATE_DIRECTORY",),
                 result.completed_operations,
             )
-            self.assertTrue((root / "Movies" / "Movie" / "Movie.en.srt").read_bytes() == b"english")
+            self.assertFalse((root / "Movies" / "Movie" / "Movie.en.srt").exists())
+            self.assertEqual((root / "Incoming/Movie.en.srt").read_bytes(), b"english")
             self.assertTrue((root / "Incoming" / "Movie.mkv").read_bytes() == b"media")
             self.assertIn("PRIMARY:MOVE", authority.calls[-1][1])
 
@@ -304,7 +306,7 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             self.assertEqual(ExecutionStatus.PARTIAL, result.status)
             self.assertEqual(RollbackStatus.PARTIAL, result.rollback_status)
             self.assertEqual(ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED, result.effect_certainty)
-            self.assertTrue((root / "Movies" / "Movie" / "Movie.en.srt").read_bytes() == b"english")
+            self.assertFalse((root / "Movies" / "Movie" / "Movie.en.srt").exists())
             self.assertTrue((root / "Incoming" / "Movie.en.srt").read_bytes() == b"english")
             self.assertTrue((root / "Movies").exists())
             self.assertTrue(
@@ -329,8 +331,8 @@ class OrganizerMutationAuthorityTests(unittest.TestCase):
             self.assertEqual(
                 [
                     "CREATE_DIRECTORY",
-                    "ATTACHMENT:MOVE",
                     "PRIMARY:MOVE",
+                    "ATTACHMENT:MOVE",
                 ],
                 [boundary for _source, boundary in authority.calls],
             )

@@ -78,13 +78,45 @@ export interface ManualRecoveryLinkModel {
   readonly nextAction: string;
 }
 
+/**
+ * One durable, non-authorizing plan summary of a recovery source item.
+ *
+ * `hasExecutionAuthority` is always false while the summary is `prepared`;
+ * the summary is a read/prepare artifact, and confirmation is a separate,
+ * explicitly confirmed action.  The linked execution appears only after that
+ * confirmation admitted the exact ready subset.
+ */
+export interface ManualRecoveryPreparationModel {
+  readonly preparationId: string;
+  readonly status: "prepared" | "confirmed" | "superseded" | "stale";
+  readonly previewId: string;
+  readonly intentId: string;
+  readonly sourceTaskId: string;
+  readonly sourceItemId: string;
+  readonly checkpointVersion: string;
+  readonly configurationSnapshotId: string;
+  readonly configurationSnapshotDigest: string;
+  readonly authorizationId: string | null;
+  readonly executionId: string | null;
+  readonly hasExecutionAuthority: boolean;
+  readonly nextAction: string;
+  /** Creator of the durable preparation, used to match the exact summary. */
+  readonly actor: string | null;
+  /** Exact admitted subset; empty while the preparation is still prepared. */
+  readonly selectedItemIds: readonly string[] | null;
+  readonly allowOverwrite: boolean | null;
+  readonly allowSourceCleanup: boolean | null;
+}
+
 export interface TaskItemRecoveryModel {
   readonly taskId: string;
   readonly itemId: string;
   readonly checkpoint: TaskItemRecoveryCheckpoint;
   readonly decision: TaskItemDecision | null;
   readonly manualRecoveryLink: ManualRecoveryLinkModel | null;
+  readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
+  readonly manualRecoveryAnalysisReady: boolean;
   readonly nextAction: string;
 }
 
@@ -122,6 +154,14 @@ export interface RecoveryBatchChild {
   readonly reason: string | null;
   readonly error: string | null;
   readonly nextAction: string;
+  /** The child's current durable same-page summary, when one exists. */
+  readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
+  /** The current durable checkpoint version of the child item. */
+  readonly currentCheckpointVersion: string | null;
+  /** The child's completed single-item re-analysis status, if any. */
+  readonly recoveryContinuationStatus: string | null;
+  /** Whether the child is still one exact persisted manual execution item. */
+  readonly manualRecoveryAvailable: boolean;
 }
 
 export interface RecoveryBatchModel {
@@ -357,6 +397,65 @@ export function normalizeManualRecoveryLink(
   };
 }
 
+export function normalizeManualRecoveryPreparation(
+  payload: unknown,
+): ManualRecoveryPreparationModel {
+  const source = readRecord(payload, "manualRecoveryPreparation");
+  const status = text(source, "status");
+  if (!["prepared", "confirmed", "superseded", "stale"].includes(status)) {
+    return fail();
+  }
+  const version = text(source, "checkpoint_version");
+  if (!/^[a-f0-9]{64}$/.test(version)) return fail();
+  return {
+    preparationId: text(source, "preparation_id"),
+    status: status as ManualRecoveryPreparationModel["status"],
+    previewId: text(source, "preview_id"),
+    intentId: text(source, "intent_id"),
+    sourceTaskId: text(source, "source_task_id"),
+    sourceItemId: text(source, "source_item_id"),
+    checkpointVersion: version,
+    configurationSnapshotId: text(source, "configuration_snapshot_id"),
+    configurationSnapshotDigest: text(source, "configuration_snapshot_digest"),
+    authorizationId: optionalText(source, "authorization_id"),
+    executionId: optionalText(source, "execution_id"),
+    hasExecutionAuthority: normalizeBoolean(
+      source["hasExecutionAuthority"] ?? false,
+      "hasExecutionAuthority",
+    ),
+    nextAction: text(
+      source,
+      source["next_action"] === undefined ? "nextAction" : "next_action",
+    ),
+    actor:
+      source["actor"] === null || source["actor"] === undefined
+        ? null
+        : normalizeIdentityText(source["actor"], "actor", MAX_TEXT_LENGTH),
+    selectedItemIds:
+      source["selected_item_ids"] === null ||
+      source["selected_item_ids"] === undefined
+        ? null
+        : normalizeTextArray(
+            source["selected_item_ids"],
+            "selected_item_ids",
+            100,
+          ),
+    allowOverwrite:
+      source["allow_overwrite"] === null ||
+      source["allow_overwrite"] === undefined
+        ? null
+        : normalizeBoolean(source["allow_overwrite"], "allow_overwrite"),
+    allowSourceCleanup:
+      source["allow_source_cleanup"] === null ||
+      source["allow_source_cleanup"] === undefined
+        ? null
+        : normalizeBoolean(
+            source["allow_source_cleanup"],
+            "allow_source_cleanup",
+          ),
+  };
+}
+
 export function normalizeTaskItemRecovery(
   payload: unknown,
 ): TaskItemRecoveryModel {
@@ -364,10 +463,14 @@ export function normalizeTaskItemRecovery(
   const rawDecision = source["decision"];
   const rawLink =
     source["manualRecoveryLink"] ?? source["manual_recovery_link"];
+  const rawPreparation =
+    source["manualRecoveryPreparation"] ??
+    source["manual_recovery_preparation"];
+  const checkpoint = readCheckpoint(source["checkpoint"]);
   return {
     taskId: text(source, "task_id"),
     itemId: text(source, "item_id"),
-    checkpoint: readCheckpoint(source["checkpoint"]),
+    checkpoint,
     decision:
       rawDecision === null || rawDecision === undefined
         ? null
@@ -376,10 +479,18 @@ export function normalizeTaskItemRecovery(
       rawLink === null || rawLink === undefined
         ? null
         : normalizeManualRecoveryLink(rawLink),
+    manualRecoveryPreparation:
+      rawPreparation === null || rawPreparation === undefined
+        ? null
+        : normalizeManualRecoveryPreparation(rawPreparation),
     manualRecoveryAvailable: normalizeBoolean(
       source["manualRecoveryAvailable"],
       "manualRecoveryAvailable",
     ),
+    manualRecoveryAnalysisReady:
+      source["manualRecoveryAnalysisReady"] === true ||
+      (source["manualRecoveryAnalysisReady"] === undefined &&
+        checkpoint.continuationStatus === "completed"),
     nextAction: text(source, "next_action"),
   };
 }
@@ -437,6 +548,22 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
         reason: optionalText(item, "reason"),
         error: optionalText(item, "error"),
         nextAction: text(item, "next_action"),
+        manualRecoveryPreparation:
+          item["manualRecoveryPreparation"] === null ||
+          item["manualRecoveryPreparation"] === undefined
+            ? null
+            : normalizeManualRecoveryPreparation(
+                item["manualRecoveryPreparation"],
+              ),
+        currentCheckpointVersion: optionalText(
+          item,
+          "currentCheckpointVersion",
+        ),
+        recoveryContinuationStatus: optionalText(
+          item,
+          "recoveryContinuationStatus",
+        ),
+        manualRecoveryAvailable: item["manualRecoveryAvailable"] === true,
       };
     }),
     nextAction: text(source, "next_action"),

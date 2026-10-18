@@ -77,6 +77,17 @@ class DefinitionScopedExecutionService:
         can never acquire mutation authority or a compatible executor.
         """
 
+        from mediaflow.application.automation import persisted_definition_origin
+
+        if job.command is AutomationCommand.SCAN and not persisted_definition_origin(
+            self._repository, job
+        ):
+            raise self._failure(
+                "standalone_scan_retired",
+                "no Task created; no discovery performed",
+                False,
+                "在任务中心新建整理并生成摘要。",
+            )
         definition = self._resolve_definition(job)
         if not definition.mode.is_runnable:
             raise self._failure(

@@ -65,7 +65,6 @@ from mediaflow.domain.file_lifecycle import (
     next_action_for_disposition,
     retry_safety_for_effect_certainty,
 )
-from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.manual_execution import (
     ManualExecution,
@@ -108,17 +107,14 @@ from mediaflow.domain.manual_organize_preview import (
 from mediaflow.domain.manual_recovery import (
     ManualRecoveryLink,
     ManualRecoveryLinkStatus,
+    ManualRecoveryPreparation,
+    ManualRecoveryPreparationStatus,
 )
 from mediaflow.domain.manual_safety import (
     redact_evidence_text,
     redact_manual_text,
     redact_manual_value,
     searchable_identity_text,
-)
-from mediaflow.domain.manual_scan import (
-    ManualScanItemOutcome,
-    ManualScanScopeKind,
-    ManualScanTask,
 )
 from mediaflow.domain.media_discovery import (
     DiscoveryConflict,
@@ -157,9 +153,9 @@ from mediaflow.domain.notification import (
     NotificationEventType,
 )
 from mediaflow.domain.operations_run import (
-    ATTENTION_RUN_STATUSES,
     COMMAND_LABELS,
     DISCOVERY_COMMAND_LABEL,
+    RECOVERY_PROBLEM_TYPES,
     RUN_RECORD_KINDS,
     OperationsRunItemWindow,
     OperationsRunOverview,
@@ -168,6 +164,7 @@ from mediaflow.domain.operations_run import (
     OperationsRunRecordWindow,
     OperationsRunStatus,
     OperationsRunTrigger,
+    OperationsRunView,
     disposition_partition,
     known_command_label,
     statuses_for_disposition,
@@ -217,7 +214,6 @@ from mediaflow.domain.resident_services import (
     validate_resident_service_name,
     validate_resident_waiting_reason,
 )
-from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.scope_continuation import (
     ScopeContinuation,
     ScopeContinuationError,
@@ -315,30 +311,7 @@ from mediaflow.infrastructure.file_index_schema import (
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-# Schema 46 adds the additive definition-bound Run once origin: one nullable
-# ``media_discoveries.definition_origin_json`` recording the exact published
-# definition/pin/effective-bound a deliberate Run once was admitted for, and the
-# matching nullable ``operations_run_display`` origin columns so the same
-# durable run is reachable from both Automation history and Operations.  Both
-# are immutable historical/display evidence only — they create no execution
-# authority, no dummy Job and no second queue — and a legacy row simply has no
-# origin, so nothing is backfilled and no definition identity is guessed.
-# Schema 47 adds the additive ``preview_analyses`` table: one durable record per
-# admitted *exact analysis* of a pinned definition or manual intent.  A large
-# definition Preview or manual exact analysis is therefore admitted promptly,
-# executed by the existing resident Worker under an exclusive claim/lease, and
-# readable, pausable and cancellable while it runs.  It is identity/progress
-# evidence only — it creates no execution authority, no dummy Job and no second
-# queue — and a legacy database simply has no analysis rows, so nothing is
-# backfilled.
-# Schema 48 adds the additive ``admission_request_bindings`` table: one durable
-# association per accepted client request identity.  When an equivalent open
-# admission converges on an existing durable discovery or exact analysis, the
-# newly accepted request identity is bound to that same record, so a lost
-# response for *every* accepted request reconciles by its own ID instead of a
-# bounded absence that reads as "no work exists".  It is reconciliation evidence
-# only — it never changes which record does the work and nothing is backfilled.
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 47
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -427,6 +400,20 @@ def _canonical_json(value: object) -> str:
 
 def _fingerprint_json(value: object) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _json_text_list(value: object) -> tuple[str, ...]:
+    """Decode one persisted bounded string list, tolerating legacy/NULL rows."""
+
+    if value is None:
+        return ()
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(item for item in parsed if isinstance(item, str))
 
 
 def _command_family_pattern(command: str) -> str:
@@ -567,6 +554,13 @@ class OperationsRunsWindow:
     status_counts: dict[str, int]
     has_next: bool
     has_previous: bool
+    #: The population-scoped current-problem facet count over the same
+    #: filtered population (never just the returned page).
+    attention_count: int = 0
+    #: Filter-scoped task/file statistics and source options from this same
+    #: database read snapshot. Source options are drawn from the authorized
+    #: population so operators can change the current source filter.
+    summary: dict[str, object] | None = None
 
 
 _JOB_RUN_STATUS_MAP = {
@@ -952,44 +946,6 @@ class SQLiteTaskRepository:
         values = tuple(self._task(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
 
-    def create_manual_scan(
-        self,
-        task: PersistentTask,
-        scan: ManualScanTask,
-        *,
-        display: RunDisplayContext | None = None,
-    ) -> None:
-        """Atomically create the generic Task row and its discovery-specific scope row.
-
-        When the admitting producer supplies bounded display evidence, the
-        ``operations_run_display`` row commits in the same transaction, so a
-        newly admitted Scan can never appear in the unified inventory without
-        the business identity its operator just chose.
-        """
-
-        if task.task_id != scan.task_id:
-            raise ValueError("manual Scan Task and scope identity do not match")
-        with self._lock, self._connection:
-            self._connection.execute(
-                "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                self._task_values(task),
-            )
-            self._connection.execute(
-                """
-                INSERT INTO manual_scan_tasks (
-                    task_id, scope_kind, scope_id, resource_library_id, mode, file_id,
-                    source_occurrence_id, source_fingerprint, storage_id, source_path,
-                    configuration_snapshot_id, configuration_snapshot_digest,
-                    cancellation_requested, progress_json, errors_json,
-                    reconciliation_complete, failure_stage, known_effects, retry_safe,
-                    next_action, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                self._manual_scan_values(scan),
-            )
-            if display is not None:
-                self._insert_run_display_locked(task.task_id, display, task.created_at)
-
     def _insert_run_display_locked(
         self, task_id: str, display: RunDisplayContext, created_at: datetime
     ) -> None:
@@ -1015,221 +971,6 @@ class SQLiteTaskRepository:
                 display.origin_kind,
             ),
         )
-
-    def get_manual_scan(self, task_id: str) -> ManualScanTask | None:
-        with self._lock:
-            row = self._connection.execute(
-                """
-                SELECT m.*, t.status
-                FROM manual_scan_tasks AS m
-                JOIN tasks AS t ON t.task_id = m.task_id
-                WHERE m.task_id=?
-                """,
-                (task_id,),
-            ).fetchone()
-        return self._manual_scan(row) if row else None
-
-    def update_manual_scan(self, scan: ManualScanTask) -> None:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """
-                UPDATE manual_scan_tasks SET scope_kind=?, scope_id=?, resource_library_id=?,
-                    mode=?, file_id=?, source_occurrence_id=?, source_fingerprint=?,
-                    storage_id=?, source_path=?, configuration_snapshot_id=?,
-                    configuration_snapshot_digest=?, cancellation_requested=CASE
-                        WHEN cancellation_requested=1 THEN 1 ELSE ? END,
-                    progress_json=?, errors_json=?, reconciliation_complete=?, failure_stage=?,
-                    known_effects=?, retry_safe=?, next_action=?, created_at=?, updated_at=?
-                WHERE task_id=?
-                """,
-                (
-                    *self._manual_scan_values(scan)[1:12],
-                    int(scan.cancellation_requested),
-                    *self._manual_scan_values(scan)[13:],
-                    scan.task_id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise LookupError(f"manual Scan Task {scan.task_id!r} was not found")
-
-    def request_manual_scan_cancellation(
-        self, task_id: str, updated_at: datetime
-    ) -> ManualScanTask:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """
-                UPDATE manual_scan_tasks SET cancellation_requested=1, updated_at=?
-                WHERE task_id=? AND EXISTS (
-                    SELECT 1 FROM tasks
-                    WHERE tasks.task_id=manual_scan_tasks.task_id
-                      AND tasks.status IN ('pending', 'running')
-                )
-                """,
-                (updated_at.isoformat(), task_id),
-            )
-            if cursor.rowcount != 1:
-                existing = self.get_manual_scan(task_id)
-                if existing is None:
-                    raise LookupError(f"manual Scan Task {task_id!r} was not found")
-                if existing.cancellation_requested:
-                    return existing
-                raise ValueError("only a pending or running manual Scan can be cancelled")
-        value = self.get_manual_scan(task_id)
-        if value is None:
-            raise LookupError(f"manual Scan Task {task_id!r} was not found")
-        return value
-
-    def claim_manual_scan_cancellation(
-        self,
-        task_id: str,
-        *,
-        updated_at: datetime,
-        expected_version: str | None = None,
-    ) -> ManualScanTask | None:
-        """Atomically claim one manual Scan cancellation for the observed Task state.
-
-        Unlike the idempotent compatibility request, this admission binds the
-        unset cancellation flag, the Task's cancellable state and (when the
-        operator submitted one) the exact Task version that was read.
-        """
-
-        statement = (
-            "UPDATE manual_scan_tasks SET cancellation_requested=1, updated_at=? "
-            "WHERE task_id=? AND cancellation_requested=0 AND EXISTS ("
-            "SELECT 1 FROM tasks WHERE tasks.task_id=manual_scan_tasks.task_id "
-            "AND tasks.status IN (?, ?)"
-        )
-        parameters: list[object] = [
-            updated_at.isoformat(),
-            task_id,
-            PersistentTaskStatus.PENDING.value,
-            PersistentTaskStatus.RUNNING.value,
-        ]
-        if expected_version is not None:
-            statement += " AND tasks.updated_at=?"
-            parameters.append(expected_version)
-        statement += ")"
-        with self._lock, self._connection:
-            cursor = self._connection.execute(statement, tuple(parameters))
-            if cursor.rowcount != 1:
-                return None
-        return self.get_manual_scan(task_id)
-
-    def upsert_manual_scan_item(self, item: ManualScanItemOutcome) -> None:
-        with self._lock, self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO manual_scan_items (
-                    item_id, task_id, storage_id, resource_library_id, source_path, file_id,
-                    status, change_status, stage, source_occurrence_id, source_fingerprint,
-                    source_fingerprint_state, error, known_effects, retry_safe, next_action,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(task_id, source_path) DO UPDATE SET
-                    item_id=excluded.item_id, storage_id=excluded.storage_id,
-                    resource_library_id=excluded.resource_library_id, file_id=excluded.file_id,
-                    status=excluded.status, change_status=excluded.change_status,
-                    stage=excluded.stage, source_occurrence_id=excluded.source_occurrence_id,
-                    source_fingerprint=excluded.source_fingerprint,
-                    source_fingerprint_state=excluded.source_fingerprint_state,
-                    error=excluded.error, known_effects=excluded.known_effects,
-                    retry_safe=excluded.retry_safe, next_action=excluded.next_action,
-                    updated_at=excluded.updated_at
-                """,
-                self._manual_scan_item_values(item),
-            )
-
-    def list_manual_scan_items(
-        self,
-        task_id: str,
-        *,
-        limit: int | None = None,
-        after: tuple[datetime, str] | None = None,
-        before: tuple[datetime, str] | None = None,
-    ) -> tuple[ManualScanItemOutcome, ...]:
-        if after is not None and before is not None:
-            raise ValueError("after and before are mutually exclusive")
-        query = "SELECT * FROM manual_scan_items WHERE task_id=?"
-        parameters: tuple[object, ...] = (task_id,)
-        reverse = before is not None
-        if after is not None:
-            timestamp = after[0].isoformat()
-            query += " AND (created_at > ? OR (created_at = ? AND item_id > ?))"
-            parameters += (timestamp, timestamp, after[1])
-        elif before is not None:
-            timestamp = before[0].isoformat()
-            query += " AND (created_at < ? OR (created_at = ? AND item_id < ?))"
-            parameters += (timestamp, timestamp, before[1])
-        query += (
-            " ORDER BY created_at DESC, item_id DESC"
-            if reverse
-            else " ORDER BY created_at, item_id"
-        )
-        if limit is not None:
-            parameters += (limit,)
-            query += " LIMIT ?"
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-        values = tuple(self._manual_scan_item(row) for row in rows)
-        return tuple(reversed(values)) if reverse else values
-
-    def finalize_manual_scan(self, task: PersistentTask, scan: ManualScanTask) -> ManualScanTask:
-        """Persist terminal discovery state and generic Task state together.
-
-        A cancellation request wins the terminal race.  This keeps a late worker callback from
-        publishing ``completed`` after an operator has durably requested cancellation.
-        """
-
-        if task.task_id != scan.task_id:
-            raise ValueError("manual Scan Task and scope identity do not match")
-        with self._lock, self._connection:
-            row = self._connection.execute(
-                "SELECT cancellation_requested FROM manual_scan_tasks WHERE task_id=?",
-                (scan.task_id,),
-            ).fetchone()
-            if row is None:
-                raise LookupError(f"manual Scan Task {scan.task_id!r} was not found")
-            if row["cancellation_requested"] and scan.status is not PersistentTaskStatus.CANCELLED:
-                scan = replace(
-                    scan,
-                    status=PersistentTaskStatus.CANCELLED,
-                    cancellation_requested=True,
-                    reconciliation_complete=False,
-                    known_effects="partial_discovery_only",
-                    next_action=(
-                        "inspect persisted item outcomes, then repeat the same bounded Scan"
-                    ),
-                )
-                task = replace(
-                    task,
-                    status=PersistentTaskStatus.CANCELLED,
-                    completed_at=scan.updated_at,
-                    updated_at=scan.updated_at,
-                    error="manual Scan cancelled",
-                )
-            self._connection.execute(
-                """
-                UPDATE manual_scan_tasks SET scope_kind=?, scope_id=?, resource_library_id=?,
-                    mode=?, file_id=?, source_occurrence_id=?, source_fingerprint=?,
-                    storage_id=?, source_path=?, configuration_snapshot_id=?,
-                    configuration_snapshot_digest=?, cancellation_requested=?, progress_json=?,
-                    errors_json=?, reconciliation_complete=?, failure_stage=?, known_effects=?,
-                    retry_safe=?, next_action=?, created_at=?, updated_at=?
-                WHERE task_id=?
-                """,
-                (*self._manual_scan_values(scan)[1:], scan.task_id),
-            )
-            self._connection.execute(
-                """
-                UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
-                    updated_at=?, started_at=?, completed_at=?, total_items=?, completed_items=?,
-                    failed_items=?, error=?, pause_requested=?, scope_path=?, item_limit=?,
-                    configuration_snapshot_id=?, configuration_snapshot_digest=?
-                WHERE task_id=?
-                """,
-                (*self._task_values(task)[1:], task.task_id),
-            )
-        return scan
 
     def load_dashboard_state(self, *, recent_limit: int) -> DashboardPersistentState:
         if isinstance(recent_limit, bool) or not isinstance(recent_limit, int):
@@ -1885,6 +1626,23 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._recovery_continuation(row) for row in rows)
 
+    def list_recovery_continuations_for_task(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryContinuation, ...]:
+        """Find bounded parent continuations that produced one linked Task."""
+
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("linked Task ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("recovery continuation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recovery_continuations WHERE new_task_id=?
+                ORDER BY created_at, continuation_id LIMIT ?""",
+                (task_id, limit),
+            ).fetchall()
+        return tuple(self._recovery_continuation(row) for row in rows)
+
     def create_manual_recovery_link(self, link: ManualRecoveryLink) -> None:
         if link.status is not ManualRecoveryLinkStatus.AUTHORIZED:
             raise ValueError("manual recovery link must start authorized")
@@ -2052,6 +1810,170 @@ class SQLiteTaskRepository:
         value = self.get_manual_recovery_link(link_id)
         if value is None:
             raise LookupError(f"manual recovery link {link_id!r} was not found")
+        return value
+
+    def create_manual_recovery_preparation(self, preparation: ManualRecoveryPreparation) -> None:
+        if preparation.status is not ManualRecoveryPreparationStatus.PREPARED:
+            raise ValueError("manual recovery preparation must start prepared")
+        if preparation.authorization_id is not None or preparation.execution_id is not None:
+            raise ValueError("a prepared summary must not carry execution authority")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO manual_recovery_preparations (
+                    preparation_id, source_task_id, source_item_id,
+                    analysis_continuation_id, analysis_task_id, analysis_result_id,
+                    intent_id, preview_id, intent_version, checkpoint_version,
+                    input_fingerprint,
+                    configuration_snapshot_id, configuration_snapshot_digest, actor,
+                    status, current, authorization_id, execution_id,
+                    selected_item_ids_json, allow_overwrite, allow_source_cleanup,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                self._manual_recovery_preparation_values(preparation),
+            )
+
+    def get_manual_recovery_preparation(
+        self, preparation_id: str
+    ) -> ManualRecoveryPreparation | None:
+        if not isinstance(preparation_id, str) or not preparation_id.strip():
+            raise ValueError("manual recovery preparation ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_recovery_preparations WHERE preparation_id=?",
+                (preparation_id,),
+            ).fetchone()
+        return self._manual_recovery_preparation(row) if row else None
+
+    def get_current_manual_recovery_preparation(
+        self, source_task_id: str, source_item_id: str
+    ) -> ManualRecoveryPreparation | None:
+        if not isinstance(source_task_id, str) or not source_task_id.strip():
+            raise ValueError("manual recovery source Task ID is required")
+        if not isinstance(source_item_id, str) or not source_item_id.strip():
+            raise ValueError("manual recovery source TaskItem ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT * FROM manual_recovery_preparations
+                WHERE source_task_id=? AND source_item_id=? AND current=1
+                ORDER BY created_at DESC, preparation_id DESC LIMIT 1""",
+                (source_task_id, source_item_id),
+            ).fetchone()
+        return self._manual_recovery_preparation(row) if row else None
+
+    def list_manual_recovery_preparations(
+        self, source_task_id: str, source_item_id: str, *, limit: int = 32
+    ) -> tuple[ManualRecoveryPreparation, ...]:
+        if not isinstance(source_task_id, str) or not source_task_id.strip():
+            raise ValueError("manual recovery source Task ID is required")
+        if not isinstance(source_item_id, str) or not source_item_id.strip():
+            raise ValueError("manual recovery source TaskItem ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("manual recovery preparation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM manual_recovery_preparations
+                WHERE source_task_id=? AND source_item_id=?
+                ORDER BY created_at DESC, preparation_id DESC LIMIT ?""",
+                (source_task_id, source_item_id, limit),
+            ).fetchall()
+        return tuple(self._manual_recovery_preparation(row) for row in rows)
+
+    def supersede_manual_recovery_preparation(
+        self, preparation_id: str, *, now: datetime
+    ) -> ManualRecoveryPreparation:
+        """Mark the previous current summary historical without touching history.
+
+        Used when a newer decision/analysis replaced an unconfirmed summary, or
+        when a fresh summary is published for the same source item.  The row is
+        kept fully readable; only its ``current`` flag and status change.
+        """
+
+        if now.tzinfo is None:
+            raise ValueError("manual recovery preparation supersede timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_preparations
+                SET status=?, current=0, updated_at=?
+                WHERE preparation_id=? AND current=1""",
+                (
+                    ManualRecoveryPreparationStatus.SUPERSEDED.value,
+                    now.isoformat(),
+                    preparation_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_preparation(preparation_id)
+                if value is None:
+                    raise LookupError(
+                        f"manual recovery preparation {preparation_id!r} was not found"
+                    )
+                return value
+        value = self.get_manual_recovery_preparation(preparation_id)
+        if value is None:
+            raise LookupError(f"manual recovery preparation {preparation_id!r} was not found")
+        return value
+
+    def complete_manual_recovery_preparation(
+        self,
+        preparation_id: str,
+        *,
+        authorization_id: str,
+        execution_id: str,
+        selected_item_ids: tuple[str, ...],
+        allow_overwrite: bool,
+        allow_source_cleanup: bool,
+        now: datetime,
+    ) -> ManualRecoveryPreparation:
+        """Link the exact admitted execution to its confirming summary.
+
+        This is the only transition that fills ``authorization_id`` and
+        ``execution_id``; it is performed inside the same atomic admission that
+        consumes the one-shot authority, so a summary never appears confirmed
+        without a durable execution.  The exact confirmed selection and
+        destructive permissions are persisted together with the execution
+        identity so a repeat confirmation can prove equivalence.
+        """
+
+        if not isinstance(authorization_id, str) or not authorization_id.strip():
+            raise ValueError("manual recovery preparation authorization ID is required")
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("manual recovery preparation execution ID is required")
+        if now.tzinfo is None:
+            raise ValueError("manual recovery preparation completion timestamp needs timezone")
+        values = tuple(str(value) for value in selected_item_ids)
+        if not values or len(set(values)) != len(values):
+            raise ValueError("manual recovery preparation selection must be non-empty and unique")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE manual_recovery_preparations
+                SET status=?, authorization_id=?, execution_id=?,
+                    selected_item_ids_json=?, allow_overwrite=?, allow_source_cleanup=?,
+                    updated_at=?
+                WHERE preparation_id=? AND status=?""",
+                (
+                    ManualRecoveryPreparationStatus.CONFIRMED.value,
+                    authorization_id,
+                    execution_id,
+                    _canonical_json(list(values)),
+                    int(bool(allow_overwrite)),
+                    int(bool(allow_source_cleanup)),
+                    now.isoformat(),
+                    preparation_id,
+                    ManualRecoveryPreparationStatus.PREPARED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                value = self.get_manual_recovery_preparation(preparation_id)
+                if value is None:
+                    raise LookupError(
+                        f"manual recovery preparation {preparation_id!r} was not found"
+                    )
+                if value.status is ManualRecoveryPreparationStatus.CONFIRMED:
+                    return value
+                raise ValueError("manual recovery preparation is no longer prepared")
+        value = self.get_manual_recovery_preparation(preparation_id)
+        if value is None:
+            raise LookupError(f"manual recovery preparation {preparation_id!r} was not found")
         return value
 
     def create_recovery_batch(self, batch: RecoveryBatch) -> None:
@@ -3385,11 +3307,19 @@ class SQLiteTaskRepository:
                     ORDER BY source_item_id, created_at DESC, continuation_id DESC""",
                     values,
                 ).fetchall()
+                verified_rows = self._connection.execute(
+                    "SELECT i.item_id FROM task_items i WHERE i.item_id IN ("
+                    + placeholders
+                    + ") AND "
+                    + self._verified_recovery_follow_up("i"),
+                    values,
+                ).fetchall()
             except BaseException:
                 self._connection.rollback()
                 raise
             self._connection.commit()
 
+        verified_item_ids = {row["item_id"] for row in verified_rows}
         items = {row["item_id"]: self._item(row) for row in item_rows}
         tasks = {row["task_id"]: self._task(row) for row in task_rows}
         results_by_item: dict[str, list[PersistentResultRecord]] = {}
@@ -3441,6 +3371,7 @@ class SQLiteTaskRepository:
                 ),
                 tuple(recovery_by_item.get(item_id, ())),
                 tuple(continuations_by_item.get(item_id, ())),
+                item_id in verified_item_ids,
             )
             for item_id, item in items.items()
             if item.task_id in tasks
@@ -3646,6 +3577,7 @@ class SQLiteTaskRepository:
                 audits=tuple(audits[-audit_limit:]),
                 recovery_requests=recovery_requests,
                 recovery_continuations=recovery_continuations,
+                verified_recovery_follow_up=self.has_verified_recovery_follow_up(item_id),
             )
 
     def list_results(
@@ -5451,15 +5383,21 @@ class SQLiteTaskRepository:
         created_after: datetime | None,
         created_before: datetime | None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[list[str], list[object]]:
         """Bounded WHERE clauses shared by the page and the count queries.
 
         Every clause binds to a real persisted column of the unified
         population; nothing infers a link or a label from free-form data.
         ``attention`` is an explicit, composable population facet over the
-        overlapping attention statuses — it never replaces the status
+        derived current-problem facet — it never replaces the status
         partition and is always submitted as a first-class filter, so a
-        cursor minted with it can never be replayed without it.
+        cursor minted with it can never be replayed without it.  ``view``
+        selects one of the nine sibling views and ``problem_type`` selects
+        one cross-Task recovery list; both are real persisted-evidence
+        filters rather than client-side page filtering.
         """
 
         clauses: list[str] = []
@@ -5468,9 +5406,35 @@ class SQLiteTaskRepository:
             clauses.append("derived_status = ?")
             parameters.append(status)
         if attention:
-            attention_statuses = sorted(value.value for value in ATTENTION_RUN_STATUSES)
-            clauses.append(f"derived_status IN ({', '.join('?' for _ in attention_statuses)})")
-            parameters.extend(attention_statuses)
+            clauses.append("derived_attention = 1")
+        if view is not None:
+            if view == OperationsRunView.RUNNING.value:
+                # Real unfinished work: queued, executing, continuable-paused
+                # or waiting on internal stability.  The complement of the
+                # ended view, so the two lifecycle views partition the
+                # population without a gap.
+                clauses.append(
+                    "derived_status NOT IN ('completed', 'partial_success', 'failed', 'cancelled')"
+                )
+            elif view == OperationsRunView.ENDED.value:
+                clauses.append(
+                    "derived_status IN ('completed', 'partial_success', 'failed', 'cancelled')"
+                )
+            elif view == OperationsRunView.ATTENTION.value:
+                clauses.append("derived_attention = 1")
+            elif view in {
+                OperationsRunView.RECOGNITION.value,
+                OperationsRunView.METADATA.value,
+                OperationsRunView.CLASSIFICATION.value,
+                OperationsRunView.CONFLICT.value,
+                OperationsRunView.FAILURE.value,
+            }:
+                clauses.append(f"has_{view}_problem = 1")
+        if problem_type is not None:
+            clauses.append(f"has_{problem_type}_problem = 1")
+        if source is not None:
+            clauses.append("effective_scope = ?")
+            parameters.append(source)
         if command is not None:
             clauses.append("(effective_command = ? OR effective_command LIKE ? ESCAPE '\\')")
             parameters.extend((command, _command_family_pattern(command)))
@@ -5513,6 +5477,130 @@ class SQLiteTaskRepository:
         """
 
         media_prefix = f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}%"
+        # The exact Task identity of this run: the linked Task through the
+        # persisted Job→Task link, a transfer Task, or the standalone Task
+        # anchor.  Every problem probe below binds to this same identity.
+        task_identity = "COALESCE(runs.linked_task_id, runs.transfer_task_id, runs.anchor_id)"
+        problem_predicates = {
+            problem: self._problem_item_predicate(problem)[0] for problem in RECOVERY_PROBLEM_TYPES
+        }
+
+        def task_item_exists(problem: str) -> str:
+            predicate = problem_predicates[problem].replace("i.", "problem_items.")
+            return (
+                "EXISTS (SELECT 1 FROM task_items problem_items "
+                f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
+            )
+
+        def task_item_count(problem: str) -> str:
+            predicate = problem_predicates[problem].replace("i.", "problem_items.")
+            return (
+                "(SELECT COUNT(DISTINCT problem_items.item_id) FROM task_items problem_items "
+                f"WHERE problem_items.task_id = {task_identity} AND {predicate})"
+            )
+
+        actionable_failure = task_item_exists("failure")
+        # A confirmed recovery plan summary whose linked execution already
+        # completed with a verified effect is a durable follow-up that no longer
+        # needs operator attention.  This mirrors ``completed_manual_follow_up``
+        # but reads the newer preparation -> execution -> TaskItem/Result chain,
+        # never the legacy link, so a source item resolved through the same-page
+        # journey leaves the current problem list once its real Worker outcome
+        # proves the effect.
+        completed_preparation_follow_up = self._verified_recovery_follow_up("continuation_items")
+        # A resolved review or admitted analysis/retry is no longer a
+        # technical failure. Its pending safe-continuation step remains in
+        # the generic attention view until a later durable outcome replaces
+        # that state. This keeps it discoverable without inventing a failure.
+        completed_manual_follow_up = (
+            "EXISTS (SELECT 1 FROM manual_recovery_links recovery_links "
+            "JOIN recovery_continuations resolved_continuations "
+            "ON resolved_continuations.source_task_id = recovery_links.source_task_id "
+            "AND resolved_continuations.source_item_id = recovery_links.source_item_id "
+            "AND resolved_continuations.new_task_id = continuation_items.task_id "
+            "JOIN recovery_continuations linked_analysis "
+            "ON linked_analysis.continuation_id = recovery_links.analysis_continuation_id "
+            "AND linked_analysis.new_task_id = recovery_links.analysis_task_id "
+            "AND linked_analysis.source_task_id = resolved_continuations.source_task_id "
+            "AND linked_analysis.source_item_id = resolved_continuations.source_item_id "
+            "JOIN task_results analysis_results "
+            "ON analysis_results.result_id = recovery_links.analysis_result_id "
+            "AND analysis_results.task_id = recovery_links.analysis_task_id "
+            "AND analysis_results.result_id = linked_analysis.new_result_id "
+            "JOIN manual_preview_items preview_items "
+            "ON preview_items.preview_id = recovery_links.preview_id "
+            "AND preview_items.source_fingerprint = analysis_results.source_fingerprint "
+            "AND json_extract(preview_items.source_json, '$.occurrenceId') "
+            "= analysis_results.source_occurrence_id "
+            "JOIN manual_execution_items execution_items "
+            "ON execution_items.execution_id = recovery_links.execution_id "
+            "AND execution_items.preview_id = recovery_links.preview_id "
+            "AND execution_items.preview_item_id = preview_items.preview_item_id "
+            "AND execution_items.item_id = preview_items.item_id "
+            "JOIN manual_executions executions "
+            "ON executions.execution_id = recovery_links.execution_id "
+            "AND executions.task_id = execution_items.task_id "
+            "WHERE recovery_links.status = 'consumed' "
+            "AND recovery_links.execution_id IS NOT NULL "
+            "AND executions.status = 'completed' "
+            "AND execution_items.status = 'success' "
+            "AND execution_items.result_id IS NOT NULL "
+            "AND execution_items.effect_certainty = 'verified_complete' "
+            "AND execution_items.uncertain_effects = '[]' "
+            "AND recovery_links.source_task_id = resolved_continuations.source_task_id)"
+        )
+        safe_continuation = (
+            "EXISTS (SELECT 1 FROM task_items continuation_items "
+            f"WHERE continuation_items.task_id = {task_identity} "
+            "AND continuation_items.status = 'pending' "
+            "AND ((continuation_items.stage LIKE '%\\_resolved' ESCAPE '\\' "
+            f"AND NOT {completed_manual_follow_up} "
+            f"AND NOT {completed_preparation_follow_up}) "
+            "OR (continuation_items.stage = 'task_retry_requested' AND NOT EXISTS ("
+            "SELECT 1 FROM manual_recovery_links recovery_links WHERE "
+            "recovery_links.source_item_id = continuation_items.item_id "
+            f"AND recovery_links.status = 'consumed') AND NOT {completed_preparation_follow_up})))"
+        )
+        item_attention = (
+            "EXISTS (SELECT 1 FROM task_items attention_items"
+            f" WHERE attention_items.task_id = {task_identity}"
+            " AND attention_items.status IN ('waiting_recognition', 'waiting_metadata',"
+            " 'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm'))"
+            f" OR {actionable_failure} OR {safe_continuation}"
+        )
+        # A run-level current problem (RO-1): a Job that failed *before* any
+        # Task existed carries structured, durable repair/verification evidence
+        # (a stable failure category plus an explicit next action) and no
+        # linked Task.  It has no TaskItem to appear in the five file lists, but
+        # it is exactly the configuration/authority repair work an operator must
+        # still act on.  A plain queue admission carries none of these fields, a
+        # generic exception failure has no structured category, and a Job that
+        # later created a Task is owned by that Task's item evidence — so none
+        # of them is misclassified as a manual to-do here.  The predicate reads
+        # durable structured columns only; it never matches free-form error text
+        # and never infers a repair from the current Active configuration.
+        # Only a genuine failure is a repair to-do.  A cancelled Job also
+        # records bounded cancellation evidence, but cancellation is the
+        # operator's own completed intent, never an outstanding problem.
+        run_level_repair = (
+            "runs.run_kind = 'job' "
+            "AND runs.linked_task_id IS NULL "
+            "AND runs.job_status = 'failed' "
+            "AND runs.anchor_failure_category IS NOT NULL "
+            "AND runs.anchor_failure_category <> '' "
+            "AND runs.anchor_failure_next_action IS NOT NULL "
+            "AND runs.anchor_failure_next_action <> ''"
+        )
+        attention_sql = f"CASE WHEN {item_attention} OR {run_level_repair} THEN 1 ELSE 0 END"
+        attention_reason_sql = (
+            f"CASE WHEN {item_attention} THEN 'task_problem' "
+            f"WHEN {run_level_repair} THEN 'run_repair' ELSE NULL END"
+        )
+        problem_sql = {
+            problem: f"CASE WHEN {task_item_exists(problem)} THEN 1 ELSE 0 END"
+            for problem in RECOVERY_PROBLEM_TYPES
+        }
+        problem_file_sql = {problem: task_item_count(problem) for problem in RECOVERY_PROBLEM_TYPES}
         document = f"""
             SELECT runs.*,
                    task_status.status AS linked_task_status,
@@ -5538,6 +5626,49 @@ class SQLiteTaskRepository:
                    END AS library_kind,
                    task_status.total_items, task_status.completed_items,
                    task_status.failed_items, task_status.pause_requested,
+                   CASE WHEN task_status.task_id IS NULL OR task_status.total_items IS NULL
+                        THEN NULL
+                        -- The declared admission total must bound the WHOLE
+                        -- durable TaskItem population, not only its terminal
+                        -- subset: a waiting/pending/processing item beyond the
+                        -- declared total is an inconsistent snapshot, so no
+                        -- processed ratio is published at all.
+                        WHEN (SELECT COUNT(*) FROM task_items population_items
+                              WHERE population_items.task_id = {task_identity})
+                             > task_status.total_items
+                        THEN NULL ELSE (
+                       SELECT COUNT(*)
+                       FROM task_items progress_items
+                       WHERE progress_items.task_id = {task_identity}
+                       AND progress_items.status IN (
+                           'dry_run', 'success', 'partial', 'failed', 'skipped',
+                           'cancelled', 'ignored'
+                       )
+                   ) END AS processed_items,
+                   (SELECT CASE
+                       WHEN COUNT(DISTINCT CASE
+                           WHEN current_items.stage IN (
+                               'scanning', 'manual_scan_discovery', 'discovery'
+                           ) THEN 'scanning'
+                           WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
+                               THEN 'organizing'
+                           WHEN current_items.stage = 'pipeline' THEN 'processing'
+                           ELSE 'unknown'
+                       END) = 1 THEN MAX(CASE
+                           WHEN current_items.stage IN (
+                               'scanning', 'manual_scan_discovery', 'discovery'
+                           ) THEN 'scanning'
+                           WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
+                               THEN 'organizing'
+                           WHEN current_items.stage = 'pipeline' THEN 'processing'
+                           ELSE 'unknown'
+                       END)
+                       WHEN COUNT(*) > 1 THEN 'multiple'
+                       ELSE NULL END
+                    FROM task_items current_items
+                    WHERE current_items.task_id = {task_identity}
+                    AND current_items.status = 'processing'
+                   ) AS current_stage,
                    task_status.configuration_snapshot_id,
                    -- The bounded historical scope: prefer the business
                    -- identity the admitting producer recorded inside the
@@ -5600,11 +5731,44 @@ class SQLiteTaskRepository:
                        WHEN runs.job_status IN ('completed', 'failed', 'cancelled') THEN
                            runs.job_status
                        ELSE 'unknown'
-                   END AS derived_status
+                   END AS derived_status,
+                   -- The current, real operator-attention facet (RO-1).  It is
+                   -- true only when this run has an outstanding decision,
+                   -- repair or investigation derived from the same durable
+                   -- review/checkpoint/continuation evidence the recovery
+                   -- lists read.  A plain queue admission is not attention.
+                   {attention_sql} AS derived_attention,
+                   {attention_reason_sql} AS attention_reason,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_category ELSE NULL END
+                       AS attention_failure_category,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_durable_state ELSE NULL END
+                       AS attention_failure_durable_state,
+                   CASE WHEN {run_level_repair}
+                        THEN runs.anchor_failure_next_action ELSE NULL END
+                       AS attention_failure_next_action,
+                   -- Per-type problem evidence, each from a durable review,
+                   -- item state or continuation.  A resolved review leaves
+                   -- its item pending at a *_resolved stage, so it stops
+                   -- contributing; a new blocker contributes to its own type.
+                   {problem_sql["recognition"]} AS has_recognition_problem,
+                   {problem_sql["metadata"]} AS has_metadata_problem,
+                   {problem_sql["classification"]} AS has_classification_problem,
+                   {problem_sql["conflict"]} AS has_conflict_problem,
+                   {problem_sql["failure"]} AS has_failure_problem,
+                   {problem_file_sql["recognition"]} AS problem_recognition_files,
+                   {problem_file_sql["metadata"]} AS problem_metadata_files,
+                   {problem_file_sql["classification"]} AS problem_classification_files,
+                   {problem_file_sql["conflict"]} AS problem_conflict_files,
+                   {problem_file_sql["failure"]} AS problem_failure_files
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
-                       jobs.updated_at AS job_updated_at
+                       jobs.updated_at AS job_updated_at,
+                       jobs.failure_category AS anchor_failure_category,
+                       jobs.failure_durable_state AS anchor_failure_durable_state,
+                       jobs.failure_next_action AS anchor_failure_next_action
                 FROM ({self._RUN_QUERY_SELECT}) job_rows
                 LEFT JOIN automation_jobs jobs ON jobs.job_id = job_rows.anchor_id
                        AND job_rows.run_kind = 'job'
@@ -5643,6 +5807,10 @@ class SQLiteTaskRepository:
         search: str | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[OperationsRunOverview, ...]:
         """One bounded, deterministic page of the unified run population.
 
@@ -5661,6 +5829,10 @@ class SQLiteTaskRepository:
             search=search,
             created_after=created_after,
             created_before=created_before,
+            attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         return page
 
@@ -5676,6 +5848,9 @@ class SQLiteTaskRepository:
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> OperationsRunsWindow:
         """One page window plus filter-scoped totals from one read snapshot.
 
@@ -5713,6 +5888,9 @@ class SQLiteTaskRepository:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
         page_clauses = list(filter_clauses)
@@ -5738,6 +5916,36 @@ class SQLiteTaskRepository:
             f"SELECT derived_status, COUNT(*) AS value_count FROM ({document})"
             f" {filter_where} GROUP BY derived_status"
         )
+        attention_sql = (
+            f"SELECT COUNT(*) AS value_count FROM ({document})"
+            f" {filter_where}" + (" AND" if filter_clauses else " WHERE") + " derived_attention = 1"
+        )
+        summary_sql = f"""SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN derived_status NOT IN (
+                'completed', 'partial_success', 'failed', 'cancelled'
+            ) THEN 1 ELSE 0 END) AS running,
+            SUM(derived_attention) AS attention,
+            SUM(CASE WHEN derived_status IN (
+                'completed', 'partial_success', 'failed', 'cancelled'
+            ) THEN 1 ELSE 0 END) AS ended,
+            SUM(has_recognition_problem) AS recognition_tasks,
+            SUM(has_metadata_problem) AS metadata_tasks,
+            SUM(has_classification_problem) AS classification_tasks,
+            SUM(has_conflict_problem) AS conflict_tasks,
+            SUM(has_failure_problem) AS failure_tasks,
+            SUM(problem_recognition_files) AS recognition_files,
+            SUM(problem_metadata_files) AS metadata_files,
+            SUM(problem_classification_files) AS classification_files,
+            SUM(problem_conflict_files) AS conflict_files,
+            SUM(problem_failure_files) AS failure_files
+            FROM ({document}) {filter_where}"""
+        sources_sql = f"""SELECT effective_scope AS value, COUNT(*) AS value_count
+            FROM ({document})
+            WHERE effective_scope IS NOT NULL AND effective_scope <> ''
+            GROUP BY effective_scope
+            ORDER BY value_count DESC, value ASC
+            LIMIT 51"""
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -5749,11 +5957,41 @@ class SQLiteTaskRepository:
                     str(row["derived_status"]): int(row["value_count"])
                     for row in self._connection.execute(status_sql, filter_parameters).fetchall()
                 }
+                attention_count = int(
+                    self._connection.execute(attention_sql, filter_parameters).fetchone()[
+                        "value_count"
+                    ]
+                )
+                summary_row = self._connection.execute(summary_sql, filter_parameters).fetchone()
+                source_rows = self._connection.execute(sources_sql).fetchall()
             except BaseException:
                 self._connection.execute("ROLLBACK")
                 raise
             else:
                 self._connection.execute("COMMIT")
+        source_options = [
+            {"value": str(row["value"]), "label": str(row["value"])} for row in source_rows[:50]
+        ]
+        summary = {
+            "available": True,
+            "scope": "current_filters",
+            "source_options_scope": "authorized_population",
+            "total": int(summary_row["total"] or 0),
+            "running": int(summary_row["running"] or 0),
+            "attention": int(summary_row["attention"] or 0),
+            "ended": int(summary_row["ended"] or 0),
+            "problem_tasks": {
+                problem: int(summary_row[f"{problem}_tasks"] or 0)
+                for problem in RECOVERY_PROBLEM_TYPES
+            },
+            "problem_files": {
+                problem: int(summary_row[f"{problem}_files"] or 0)
+                for problem in RECOVERY_PROBLEM_TYPES
+            },
+            "sources": source_options,
+            "sources_truncated": len(source_rows) > 50,
+            "sideEffects": "none",
+        }
         if reverse:
             # The window fetches the ``limit`` rows nearest the boundary
             # oldest-first; one extra row proves an older page behind them.
@@ -5771,6 +6009,8 @@ class SQLiteTaskRepository:
             status_counts=counts,
             has_next=has_next,
             has_previous=has_previous,
+            attention_count=attention_count,
+            summary=summary,
         )
 
     def operations_runs_page(
@@ -5785,6 +6025,9 @@ class SQLiteTaskRepository:
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         attention: bool = False,
+        view: str | None = None,
+        problem_type: str | None = None,
+        source: str | None = None,
     ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
         """Page, filtered total and status counts from one consistent basis.
 
@@ -5802,6 +6045,9 @@ class SQLiteTaskRepository:
             created_after=created_after,
             created_before=created_before,
             attention=attention,
+            view=view,
+            problem_type=problem_type,
+            source=source,
         )
         return window.page, window.total, window.status_counts
 
@@ -5823,6 +6069,100 @@ class SQLiteTaskRepository:
                 f"SELECT * FROM ({document}) WHERE anchor_id = ? LIMIT 1", (run_id,)
             ).fetchone()
         return self._operations_run_overview(row) if row is not None else None
+
+    def operations_run_summary(self) -> dict[str, object]:
+        """The complete-authorized-population summary of the nine views (RO-1).
+
+        Every number is derived from the same deduplicated run population and
+        the same durable problem evidence the list queries read, inside one
+        SQLite read snapshot, so the summary cards, the view counts and the
+        page rows can never disagree.  Task and file totals are separate: a
+        Task may appear in several overlapping recovery lists, and each list
+        counts only the files of its own problem type, so the recovery counts
+        are deliberately not required to sum to the total Task count.
+        """
+
+        document = self._run_query_document()
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                row = self._connection.execute(
+                    f"""SELECT
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN derived_status NOT IN (
+                            'completed', 'partial_success', 'failed', 'cancelled'
+                        ) THEN 1 ELSE 0 END) AS running,
+                        SUM(derived_attention) AS attention,
+                        SUM(CASE WHEN derived_status IN (
+                            'completed', 'partial_success', 'failed', 'cancelled'
+                        ) THEN 1 ELSE 0 END) AS ended,
+                        SUM(has_recognition_problem) AS recognition,
+                        SUM(has_metadata_problem) AS metadata,
+                        SUM(has_classification_problem) AS classification,
+                        SUM(has_conflict_problem) AS conflict,
+                        SUM(has_failure_problem) AS failure
+                    FROM ({document})"""
+                ).fetchone()
+                source_rows = self._connection.execute(
+                    f"""SELECT effective_scope AS value, COUNT(*) AS value_count
+                    FROM ({document})
+                    WHERE effective_scope IS NOT NULL AND effective_scope <> ''
+                    GROUP BY effective_scope
+                    ORDER BY value_count DESC, value ASC
+                    LIMIT 51"""
+                ).fetchall()
+                files = self._run_summary_files_locked(document)
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        # The source options are distinct durable historical scopes from the
+        # complete authorized population, bounded to 50 with an honest
+        # truncation flag.  They are never derived from the current page or a
+        # read-time Active lookup.
+        sources = [
+            {"value": str(row["value"]), "label": str(row["value"])} for row in source_rows[:50]
+        ]
+        return {
+            "available": True,
+            "total": int(row["total"] or 0),
+            "running": int(row["running"] or 0),
+            "attention": int(row["attention"] or 0),
+            "ended": int(row["ended"] or 0),
+            "problem_tasks": {
+                "recognition": int(row["recognition"] or 0),
+                "metadata": int(row["metadata"] or 0),
+                "classification": int(row["classification"] or 0),
+                "conflict": int(row["conflict"] or 0),
+                "failure": int(row["failure"] or 0),
+            },
+            "problem_files": files,
+            "sources": sources,
+            "sources_truncated": len(source_rows) > 50,
+            "sideEffects": "none",
+        }
+
+    def _run_summary_files_locked(self, document: str) -> dict[str, int]:
+        """Distinct affected primary files per recovery problem type.
+
+        Every count joins through the same persisted Task identity and the
+        same durable problem predicate as its list view.  A file that carries
+        several problems is counted once in each of its type lists; attachment
+        steps are not counted here because they are not ``task_items`` rows
+        (the run detail keeps them separately).
+        """
+
+        row = self._connection.execute(
+            f"""SELECT
+                SUM(problem_recognition_files) AS recognition,
+                SUM(problem_metadata_files) AS metadata,
+                SUM(problem_classification_files) AS classification,
+                SUM(problem_conflict_files) AS conflict,
+                SUM(problem_failure_files) AS failure
+                FROM ({document})"""
+        ).fetchone()
+        return {problem: int(row[problem] or 0) for problem in RECOVERY_PROBLEM_TYPES}
 
     # -- Selected-run detail reads (Slice 42 RO-3) --------------------------
 
@@ -5974,11 +6314,6 @@ class SQLiteTaskRepository:
         effect_counts = {
             str(row["certainty"] or "unknown"): int(row["value_count"]) for row in effect_rows
         }
-        scan_row = self._connection.execute(
-            "SELECT errors_json, reconciliation_complete, progress_json "
-            "FROM manual_scan_tasks WHERE task_id = ?",
-            (task_id,),
-        ).fetchone()
         terminal = overview.status in {
             OperationsRunStatus.COMPLETED,
             OperationsRunStatus.PARTIAL_SUCCESS,
@@ -5989,16 +6324,7 @@ class SQLiteTaskRepository:
         scan_discovery_complete: bool | None = None
         scan_progress: dict[str, int] = {}
         indeterminate = False
-        if scan_row is not None:
-            # A manual Scan discovers its population while it runs, so its
-            # total is honestly unknown until discovery reconciles; the scan
-            # keeps its own bounded error/progress evidence separate from the
-            # primary item counts.
-            scan_discovery_complete = bool(scan_row["reconciliation_complete"]) or terminal
-            indeterminate = not scan_discovery_complete
-            scan_errors = _bounded_scan_error_count(scan_row["errors_json"])
-            scan_progress = _bounded_int_mapping(scan_row["progress_json"])
-        elif not terminal:
+        if not terminal:
             admitted_raw = overview.total_items
             admitted = (
                 int(admitted_raw)
@@ -6032,7 +6358,7 @@ class SQLiteTaskRepository:
             scan_errors=scan_errors,
             scan_discovery_complete=scan_discovery_complete,
             scan_progress=scan_progress,
-            primary_unit="discovered_files" if scan_row is not None else "task_items",
+            primary_unit="task_items",
             execute_authorized=execute_authorized,
         )
 
@@ -6117,6 +6443,275 @@ class SQLiteTaskRepository:
             has_next=has_next,
             has_previous=has_previous,
         )
+
+    def operations_run_problem_items_window(
+        self,
+        task_id: str,
+        problem_type: str,
+        *,
+        limit: int = 20,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> OperationsRunItemWindow:
+        """One problem-type-filtered item page from one read snapshot (RO-3).
+
+        The recovery file list must show exactly the files of its own problem
+        type, server-filtered, so the browser never has to page the whole Task
+        and filter locally.  The predicate is the same durable review/item
+        evidence the run overview derives its problem types from: a resolved
+        review no longer contributes, a new blocker of another type does.  A
+        file carrying two problems appears once in each of its type lists,
+        which is exactly the overlapping cross-Task view the specification
+        requires.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("run problem item page limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        if problem_type not in RECOVERY_PROBLEM_TYPES:
+            raise ValueError("run problem item type is invalid")
+        predicate, parameters = self._problem_item_predicate(problem_type)
+        reverse = before is not None
+        # The population count is over the problem predicate only; the cursor
+        # narrows the page window, never the reported population.
+        page_clauses = [predicate]
+        page_parameters = list(parameters)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(i.created_at > ? OR (i.created_at = ? AND i.item_id > ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append("(i.created_at < ? OR (i.created_at = ? AND i.item_id < ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        where = " AND ".join(page_clauses)
+        order = "i.created_at DESC, i.item_id DESC" if reverse else "i.created_at, i.item_id"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                matching_total = int(
+                    self._connection.execute(
+                        f"SELECT COUNT(*) AS value_count FROM task_items i "
+                        f"WHERE i.task_id = ? AND {predicate}",
+                        (task_id, *parameters),
+                    ).fetchone()["value_count"]
+                )
+                status_counts = self._run_status_counts_locked(task_id)
+                dispositions, total = disposition_partition(status_counts)
+                uncertain_success = self._run_uncertain_success_locked(task_id)
+                rows = self._connection.execute(
+                    f"SELECT i.* FROM task_items i WHERE i.task_id = ? AND {where} "
+                    f"ORDER BY {order} LIMIT ?",
+                    (task_id, *page_parameters, limit + 1),
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        return OperationsRunItemWindow(
+            page=tuple(self._item(row) for row in rows),
+            total=total,
+            matching_total=matching_total,
+            dispositions=dispositions,
+            uncertain_success=uncertain_success,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
+    @staticmethod
+    def _verified_recovery_follow_up(item_alias: str) -> str:
+        """Exact confirmed item effect, including its bounded analysis lineage.
+
+        Only persisted links establish ancestry. Every hop preserves the source,
+        library and immutable pin and has exactly one child. A sibling's success,
+        a queued execution or a known/unknown partial effect never resolves it.
+        Shared by inventory, file paging/counts and checkpoint action projection.
+        """
+        return f"""EXISTS (
+            WITH RECURSIVE lineage(root_item_id, item_id, depth) AS (
+                SELECT source_item_id, source_item_id, 0
+                FROM manual_recovery_preparations
+                WHERE status = 'confirmed' AND execution_id IS NOT NULL
+                UNION ALL
+                SELECT lineage.root_item_id, child.item_id, lineage.depth + 1
+                FROM lineage
+                JOIN task_items parent ON parent.item_id = lineage.item_id
+                JOIN tasks parent_task ON parent_task.task_id = parent.task_id
+                JOIN recovery_continuations link
+                  ON link.source_item_id = parent.item_id
+                 AND link.source_task_id = parent.task_id
+                 AND link.status IN ('completed', 'failed')
+                JOIN tasks child_task ON child_task.task_id = link.new_task_id
+                JOIN task_items child ON child.task_id = child_task.task_id
+                WHERE lineage.depth < 16
+                  AND child.storage_id = parent.storage_id
+                  AND child.source_path = parent.source_path
+                  AND child.resource_library_id = parent.resource_library_id
+                  AND child_task.configuration_snapshot_id = parent_task.configuration_snapshot_id
+                  AND child_task.configuration_snapshot_digest
+                      = parent_task.configuration_snapshot_digest
+                  AND link.configuration_snapshot_id = parent_task.configuration_snapshot_id
+                  AND link.configuration_snapshot_digest = parent_task.configuration_snapshot_digest
+                  AND (SELECT COUNT(*) FROM task_items scope
+                       WHERE scope.task_id = child.task_id) = 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM recovery_continuations newer
+                      WHERE newer.source_item_id = parent.item_id
+                        AND (newer.created_at > link.created_at OR
+                             (newer.created_at = link.created_at
+                              AND newer.continuation_id > link.continuation_id)))
+            )
+            SELECT 1 FROM lineage
+            JOIN manual_recovery_preparations prep ON prep.source_item_id = lineage.root_item_id
+            JOIN task_items root_item ON root_item.item_id = prep.source_item_id
+              AND root_item.task_id = prep.source_task_id
+            JOIN tasks root_task ON root_task.task_id = root_item.task_id
+            JOIN manual_executions execution ON execution.execution_id = prep.execution_id
+            JOIN manual_execution_items effect ON effect.execution_id = execution.execution_id
+              AND effect.preview_id = prep.preview_id AND effect.intent_id = prep.intent_id
+            JOIN task_results result ON result.result_id = effect.result_id
+              AND result.task_id = effect.task_id AND result.item_id = effect.task_item_id
+            WHERE lineage.item_id = {item_alias}.item_id
+              AND prep.status = 'confirmed'
+              AND root_task.configuration_snapshot_id = prep.configuration_snapshot_id
+              AND root_task.configuration_snapshot_digest = prep.configuration_snapshot_digest
+              AND execution.status = 'completed'
+              AND execution.configuration_snapshot_id = prep.configuration_snapshot_id
+              AND execution.configuration_snapshot_digest = prep.configuration_snapshot_digest
+              AND effect.item_id IN (SELECT value FROM json_each(prep.selected_item_ids_json))
+              AND json_extract(effect.source_json, '$.storageId') = {item_alias}.storage_id
+              AND json_extract(effect.source_json, '$.path') = {item_alias}.source_path
+              AND effect.status = 'success' AND effect.effect_certainty = 'verified_complete'
+              AND effect.uncertain_effects = '[]'
+              AND lower(result.status) = 'success'
+        )"""
+
+    def has_verified_recovery_follow_up(self, item_id: str) -> bool:
+        with self._lock:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM task_items resolved_item WHERE resolved_item.item_id = ? AND "
+                    + self._verified_recovery_follow_up("resolved_item"),
+                    (item_id,),
+                ).fetchone()
+                is not None
+            )
+
+    @staticmethod
+    def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
+        """The exact durable predicate of one recovery problem type.
+
+        Kept next to the run document's own problem probes so the list view
+        and its file list can never disagree about what counts as an
+        outstanding problem.  ``i`` is the ``task_items`` alias of the caller.
+        """
+
+        if problem_type == "recognition":
+            return (
+                "EXISTS (SELECT 1 FROM recognition_reviews recog "
+                "WHERE recog.item_id = i.item_id AND recog.status = 'pending')"
+                " AND i.status IN ('waiting_recognition', 'pending')",
+                (),
+            )
+        if problem_type == "metadata":
+            return (
+                "i.status IN ('waiting_metadata', 'waiting_metadata_correction')",
+                (),
+            )
+        if problem_type == "classification":
+            return ("i.status = 'waiting_classification'", ())
+        if problem_type == "conflict":
+            return (
+                "EXISTS (SELECT 1 FROM conflict_confirmations conflict "
+                "WHERE conflict.item_id = i.item_id AND conflict.status = 'pending')"
+                " AND i.status IN ('waiting_confirm', 'pending')",
+                (),
+            )
+        if problem_type == "failure":
+
+            def latest_request(alias: str) -> str:
+                """Keep only the last admission for equal as well as ordered times."""
+
+                return (
+                    "NOT EXISTS (SELECT 1 FROM recovery_requests newer_requests "
+                    f"WHERE newer_requests.item_id = {alias}.item_id AND ("
+                    f"newer_requests.requested_at > {alias}.requested_at OR ("
+                    f"newer_requests.requested_at = {alias}.requested_at AND "
+                    f"newer_requests.request_id > {alias}.request_id)))"
+                )
+
+            # A failed analysis continuation may have moved the actual
+            # operator decision to its linked TaskItem. Keep the source item
+            # out of Failure when that exact child currently carries a real
+            # review, conflict, or technical blocker; the child Task owns the
+            # current problem and its file list. A continuation that failed
+            # before producing a child blocker remains a source failure.
+            # A saved decision leaves the child item ``pending`` with a
+            # ``*_resolved`` stage while it waits for the next admission. That
+            # exact linked child still owns the current problem, so the source
+            # keeps its generic safe-continuation attention instead of being
+            # reclassified as a technical failure. Only a genuinely new
+            # failure/unknown effect (no child blocker and no saved decision)
+            # restores the source failure.
+            child_blocker = (
+                "EXISTS (SELECT 1 FROM task_items child_items "
+                "WHERE child_items.task_id = {continuation}.new_task_id AND ("
+                "child_items.status IN ('waiting_recognition', 'waiting_metadata', "
+                "'waiting_metadata_correction', 'waiting_classification', 'waiting_confirm') "
+                "OR (child_items.status = 'pending' AND child_items.stage IN ("
+                "'conflict_resolved', 'recognition_resolved', 'metadata_resolved', "
+                "'metadata_correction_resolved', 'classification_resolved')) "
+                "OR (child_items.status = 'pending' AND EXISTS ("
+                "SELECT 1 FROM recognition_reviews child_reviews "
+                "WHERE child_reviews.item_id = child_items.item_id "
+                "AND child_reviews.status = 'pending')) "
+                "OR (child_items.status = 'pending' AND EXISTS ("
+                "SELECT 1 FROM conflict_confirmations child_conflicts "
+                "WHERE child_conflicts.item_id = child_items.item_id "
+                "AND child_conflicts.status = 'pending'))))"
+            )
+            failed_request = (
+                "EXISTS (SELECT 1 FROM recovery_requests failed_requests "
+                "WHERE failed_requests.item_id = i.item_id "
+                "AND failed_requests.status = 'failed' "
+                f"AND {latest_request('failed_requests')} "
+                "AND NOT EXISTS (SELECT 1 FROM recovery_continuations linked_continuations "
+                "WHERE linked_continuations.request_id = failed_requests.request_id "
+                "AND linked_continuations.source_item_id = i.item_id "
+                "AND linked_continuations.status = 'failed' "
+                "AND linked_continuations.new_task_id IS NOT NULL AND "
+                f"{child_blocker.format(continuation='linked_continuations')}))"
+            )
+            failed_continuation = (
+                "EXISTS (SELECT 1 FROM recovery_continuations failed_continuations "
+                "JOIN recovery_requests continuation_requests "
+                "ON continuation_requests.request_id = failed_continuations.request_id "
+                "WHERE failed_continuations.source_item_id = i.item_id "
+                "AND failed_continuations.status = 'failed' "
+                f"AND {latest_request('continuation_requests')} AND NOT "
+                f"{child_blocker.format(continuation='failed_continuations')})"
+            )
+            return (
+                "((i.status IN ('failed', 'partial')"
+                " AND i.stage NOT IN ('conflict_resolved', 'recognition_resolved',"
+                " 'metadata_resolved', 'metadata_correction_resolved',"
+                " 'classification_resolved', 'task_retry_requested'))"
+                " OR (i.status = 'pending' AND i.stage = 'task_retry_requested' AND ("
+                f"{failed_request} OR {failed_continuation})))"
+                f" AND NOT {SQLiteTaskRepository._verified_recovery_follow_up('i')}",
+                (),
+            )
+        raise ValueError("run problem item type is invalid")
 
     def operations_run_records_window(
         self,
@@ -6459,6 +7054,13 @@ class SQLiteTaskRepository:
             # A discovery carries no Task-item population yet; an honest
             # unknown aggregate, never a fabricated progress triple.
             total_items = None
+        problem_types = tuple(
+            problem for problem in RECOVERY_PROBLEM_TYPES if bool(row[f"has_{problem}_problem"])
+        )
+        problem_file_counts = tuple(
+            (problem, int(row[f"problem_{problem}_files"] or 0))
+            for problem in RECOVERY_PROBLEM_TYPES
+        )
         return OperationsRunOverview(
             run_kind=run_kind,
             run_id=anchor_id,
@@ -6483,7 +7085,23 @@ class SQLiteTaskRepository:
             total_items=total_items,
             completed_items=(None if run_kind == "discovery" else row["completed_items"]),
             failed_items=(None if run_kind == "discovery" else row["failed_items"]),
+            processed_items=(None if run_kind == "discovery" else row["processed_items"]),
+            current_stage=(str(row["current_stage"]) if row["current_stage"] is not None else None),
             pause_requested=bool(row["pause_requested"]),
+            attention=bool(row["derived_attention"]),
+            problem_types=problem_types,
+            problem_file_counts=problem_file_counts,
+            attention_reason=(str(row["attention_reason"]) if row["attention_reason"] else None),
+            attention_failure_category=(
+                str(row["attention_failure_category"])
+                if row["attention_failure_category"]
+                else None
+            ),
+            attention_failure_next_action=(
+                str(row["attention_failure_next_action"])
+                if row["attention_failure_next_action"]
+                else None
+            ),
             configuration_snapshot_id=(
                 str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
             ),
@@ -9061,6 +9679,123 @@ class SQLiteTaskRepository:
             ).fetchall()
             return tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
 
+    def list_manual_previews_by_source(
+        self,
+        storage_id: str,
+        path: str,
+        *,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        occurrence_id: str | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        limit: int = 10,
+    ) -> tuple[ManualOrganizePreview, ...]:
+        """Every exact Preview whose reviewed scope contains this exact source.
+
+        Used only to ground a same-page identity correction in durable,
+        source-linked evidence.  It reads the persisted Preview plan identity
+        for the exact Storage source and never mutates or re-runs analysis.
+
+        The exact source identity is matched *in the database before ordering
+        and limiting*, so an unrelated preparation with the same filename in
+        another directory or Storage can never displace this source's own
+        records.  When the caller supplies the source occurrence/fingerprint,
+        the pinned configuration snapshot, or the ResourceLibrary/Storage
+        binding, only evidence from that exact source version and pin is
+        returned; a replaced file or a different binding never inherits an old
+        Preview's candidate authority.
+        """
+
+        if not isinstance(storage_id, str) or not storage_id.strip():
+            raise ValueError("manual Preview source Storage ID is required")
+        if not isinstance(path, str) or not path.strip() or "\x00" in path:
+            raise ValueError("manual Preview source path is required")
+        for name, value in (
+            ("ResourceLibrary ID", resource_library_id),
+            ("occurrence ID", occurrence_id),
+            ("configuration snapshot ID", configuration_snapshot_id),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"manual Preview source {name} is invalid")
+        if configuration_snapshot_digest is not None and (
+            not isinstance(configuration_snapshot_digest, str)
+            or not configuration_snapshot_digest.strip()
+        ):
+            raise ValueError("manual Preview source configuration digest is invalid")
+        if source_fingerprint is not None and (
+            not isinstance(source_fingerprint, str)
+            or len(source_fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in source_fingerprint)
+        ):
+            raise ValueError("manual Preview source fingerprint is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("manual Preview source limit must be between 1 and 100")
+        # ``source_json`` is canonical JSON, so the exact Storage ID and full
+        # path are matched with ``json_extract`` equality before ordering and
+        # limiting.  A path that merely contains the requested text can never
+        # be mistaken for the exact source, and unrelated rows cannot consume
+        # the bounded result window.
+        clauses = [
+            "json_extract(i.source_json, '$.storageId') = ?",
+            "json_extract(i.source_json, '$.path') = ?",
+        ]
+        parameters: list[object] = [storage_id, path]
+        if resource_library_id is not None:
+            clauses.append("json_extract(i.source_json, '$.resourceLibraryId') = ?")
+            parameters.append(resource_library_id)
+        if source_fingerprint is not None:
+            clauses.append("i.source_fingerprint = ?")
+            parameters.append(source_fingerprint)
+        if occurrence_id is not None:
+            clauses.append("json_extract(i.source_json, '$.occurrenceId') = ?")
+            parameters.append(occurrence_id)
+        if configuration_snapshot_id is not None:
+            clauses.append("p.configuration_snapshot_id = ?")
+            parameters.append(configuration_snapshot_id)
+        if configuration_snapshot_digest is not None:
+            clauses.append("p.configuration_snapshot_digest = ?")
+            parameters.append(configuration_snapshot_digest)
+        parameters.append(limit)
+        query = (
+            "SELECT DISTINCT p.preview_id FROM manual_previews p "
+            "JOIN manual_preview_items i ON i.preview_id=p.preview_id "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY p.created_at DESC, p.preview_id DESC LIMIT ?"
+        )
+        with self._lock:
+            rows = self._connection.execute(query, tuple(parameters)).fetchall()
+            previews = tuple(self._load_manual_preview_locked(row["preview_id"]) for row in rows)
+        return tuple(
+            preview
+            for preview in previews
+            if (
+                configuration_snapshot_id is None
+                or preview.configuration_snapshot_id == configuration_snapshot_id
+            )
+            and (
+                configuration_snapshot_digest is None
+                or preview.configuration_snapshot_digest == configuration_snapshot_digest
+            )
+            and any(
+                getattr(item.source, "storage_id", None) == storage_id
+                and getattr(item.source, "path", None) == path
+                and (
+                    resource_library_id is None
+                    or getattr(item.source, "resource_library_id", None) == resource_library_id
+                )
+                and (
+                    source_fingerprint is None
+                    or getattr(item.source, "fingerprint", None) == source_fingerprint
+                )
+                and (
+                    occurrence_id is None
+                    or getattr(item.source, "occurrence_id", None) == occurrence_id
+                )
+                for item in preview.items
+            )
+        )
+
     def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None:
         values = self.list_manual_previews(intent_id, limit=1)
         return values[0] if values else None
@@ -9502,6 +10237,26 @@ class SQLiteTaskRepository:
         self._validate_manual_discovery_id(task_id, "Task ID")
         return self._list_manual_executions_by_column("task_id", task_id, limit)
 
+    def list_manual_execution_item_ids_for_intent(self, intent_id: str) -> tuple[str, ...]:
+        """Every intent item ID any durable manual execution already admitted.
+
+        This is the durable authority for the RO-2 promise that an already
+        admitted item never re-enters a *new* preparation.  The union spans
+        every execution of the intent, including superseded ones, so a finished,
+        failed or still-queued execution all keep their reviewed item out of a
+        fresh creation scope without guessing from a truncated recent list or
+        from whether the source file still exists.
+        """
+
+        self._validate_manual_discovery_id(intent_id, "manual intent ID")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT DISTINCT item_id FROM manual_execution_items WHERE intent_id=? "
+                "ORDER BY item_id",
+                (intent_id,),
+            ).fetchall()
+        return tuple(row["item_id"] for row in rows)
+
     def list_manual_executions_for_task_item(
         self, task_id: str, task_item_id: str, *, limit: int = 100
     ) -> tuple[ManualExecution, ...]:
@@ -9679,6 +10434,8 @@ class SQLiteTaskRepository:
         now: datetime,
         *,
         display: RunDisplayContext | None = None,
+        preparation_id: str | None = None,
+        checkpoint_projector=None,
     ) -> ManualExecution:
         """Atomically consume exact authority, create Task scope, and fence paths.
 
@@ -9686,6 +10443,12 @@ class SQLiteTaskRepository:
         ``operations_run_display`` row commits inside this same transaction:
         a newly admitted manual Organize run always carries its historical
         business identity for the unified Operations inventory.
+
+        When ``preparation_id`` names one still-``prepared`` recovery summary,
+        that summary is linked to this execution and its consumed authority
+        inside the same transaction.  A summary therefore never appears
+        confirmed without a durable execution, and an admission can never leave
+        an unlinked prepared summary behind.
         """
 
         if not items or tuple(item.item_id for item in items) != execution.selected_item_ids:
@@ -9956,6 +10719,86 @@ class SQLiteTaskRepository:
                         {"taskId": execution.task_id},
                     )
                 )
+                if preparation_id is not None:
+                    # Link the non-authorizing summary to the exact execution it
+                    # confirmed, inside this same atomic admission.  The guarded
+                    # update proves the summary was still the current prepared
+                    # record for this source item; a changed or already-confirmed
+                    # summary rolls the whole admission back instead of leaving
+                    # an orphaned authority or execution.  The exact confirmed
+                    # selection and destructive permissions are persisted with
+                    # the execution identity so a repeat confirmation can prove
+                    # equivalence.  The original item's checkpoint is
+                    # re-projected inside this transaction (the same bounded,
+                    # side-effect-free projection the HTTP preflight used) so a
+                    # concurrent decision/result cannot be admitted against a
+                    # stale summary.  No Provider, Storage or long analysis is
+                    # invoked while the write transaction is held.
+                    preparation = self._connection.execute(
+                        "SELECT * FROM manual_recovery_preparations "
+                        "WHERE preparation_id=? AND status=? AND current=1",
+                        (
+                            preparation_id,
+                            ManualRecoveryPreparationStatus.PREPARED.value,
+                        ),
+                    ).fetchone()
+                    if preparation is None:
+                        raise ManualExecutionError(
+                            "the recovery plan summary changed before confirmation",
+                            code="preparation_stale",
+                            next_action="reload the current plan summary and confirm again",
+                        )
+                    context = self._get_processing_checkpoint_context_locked(
+                        preparation["source_item_id"], result_limit=32, audit_limit=64
+                    )
+                    if context is None:
+                        raise ManualExecutionError(
+                            "the original recovery item is unavailable",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                        )
+                    if checkpoint_projector is None:
+                        from mediaflow.application.processing_checkpoint import (
+                            ProcessingCheckpointService,
+                        )
+
+                        current = ProcessingCheckpointService(self)._project(context)
+                    else:
+                        current = checkpoint_projector(context)
+                    if (
+                        context.item.task_id != preparation["source_task_id"]
+                        or current.checkpoint_version != preparation["checkpoint_version"]
+                    ):
+                        raise ManualExecutionError(
+                            "the item changed after the summary was prepared",
+                            code="stale_checkpoint",
+                            next_action="reload the current item and prepare a fresh summary",
+                            details={"currentCheckpointVersion": current.checkpoint_version},
+                        )
+                    completed = self._connection.execute(
+                        """UPDATE manual_recovery_preparations
+                        SET status=?, authorization_id=?, execution_id=?,
+                            selected_item_ids_json=?, allow_overwrite=?,
+                            allow_source_cleanup=?, updated_at=?
+                        WHERE preparation_id=? AND status=? AND current=1""",
+                        (
+                            ManualRecoveryPreparationStatus.CONFIRMED.value,
+                            authorization.authorization_id,
+                            execution.execution_id,
+                            _canonical_json(list(execution.selected_item_ids)),
+                            int(bool(execution.allow_overwrite)),
+                            int(bool(execution.allow_source_cleanup)),
+                            now.isoformat(),
+                            preparation_id,
+                            ManualRecoveryPreparationStatus.PREPARED.value,
+                        ),
+                    )
+                    if completed.rowcount != 1:
+                        raise ManualExecutionError(
+                            "the recovery plan summary changed before confirmation",
+                            code="preparation_stale",
+                            next_action="reload the current plan summary and confirm again",
+                        )
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -10087,7 +10930,7 @@ class SQLiteTaskRepository:
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "pause_requested, cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
-        "definition_origin_json"
+        "auto_prepare, preview_id"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -10177,7 +11020,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -10204,6 +11047,7 @@ class SQLiteTaskRepository:
         snapshot_id: str,
         snapshot_digest: str,
         scope_signature: str,
+        auto_prepare: bool | None = None,
     ) -> MediaDiscovery | None:
         """One already durable *open* discovery for this exact admission.
 
@@ -10225,6 +11069,7 @@ class SQLiteTaskRepository:
                 "snapshotId": snapshot_id,
                 "snapshotDigest": snapshot_digest,
                 "scope": scope_signature,
+                "autoPrepare": bool(auto_prepare),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -10467,7 +11312,7 @@ class SQLiteTaskRepository:
                 "UPDATE media_discoveries SET status=?, version=?, budgets_json=?, "
                 "progress_json=?, sources_json=?, intent_id=?, frozen_at=?, attempts=?, "
                 "pause_requested=?, cancel_requested=?, error=?, updated_at=?, "
-                "next_observation_at=? "
+                "next_observation_at=?, preview_id=? "
                 "WHERE discovery_id=? AND version=?",
                 (
                     discovery.status.value,
@@ -10487,6 +11332,7 @@ class SQLiteTaskRepository:
                         if discovery.next_observation_at is not None
                         else None
                     ),
+                    discovery.preview_id,
                     discovery.discovery_id,
                     expected_version,
                 ),
@@ -10569,7 +11415,7 @@ class SQLiteTaskRepository:
         expires_at = now + timedelta(seconds=float(lease_seconds))
         with self._lock, self._connection:
             row = self._connection.execute(
-                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?) "
+                "SELECT discovery_id FROM media_discoveries WHERE status IN (?, ?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
                 # A waiting discovery is claimable only once a later observation
                 # could actually change its stability verdict.  Reclaiming it
@@ -10583,6 +11429,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                     now.isoformat(),
                     now.isoformat(),
                 ),
@@ -10592,7 +11439,7 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
                 "claim_expires_at=?, attempts=attempts+1, updated_at=? "
-                "WHERE discovery_id=? AND status IN (?, ?, ?) "
+                "WHERE discovery_id=? AND status IN (?, ?, ?, ?) "
                 "AND (claim_expires_at IS NULL OR claim_expires_at <= ?) "
                 "AND (next_observation_at IS NULL OR next_observation_at <= ?)",
                 (
@@ -10604,6 +11451,7 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                     now.isoformat(),
                     now.isoformat(),
                 ),
@@ -10647,7 +11495,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_expires_at=?, updated_at=? "
-                "WHERE discovery_id=? AND claim_token=? AND status IN (?, ?, ?)",
+                "WHERE discovery_id=? AND claim_token=? AND status IN (?, ?, ?, ?)",
                 (
                     expires_at.isoformat(),
                     now.isoformat(),
@@ -10656,12 +11504,20 @@ class SQLiteTaskRepository:
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
                 ),
             )
             return cursor.rowcount == 1
 
     def release_media_discovery_claim(self, discovery_id: str, claim_token: str) -> bool:
-        """Drop one *unstarted* claim so another Worker may pick the record up."""
+        """Drop one *unstarted* claim so another Worker may pick the record up.
+
+        A terminal record is included deliberately: a preparation that linked
+        its exact Preview in the same pass publishes a terminal status and must
+        still drop its own claim, otherwise a later re-analysis request would
+        find the record unclaimable until the lease expired.  A terminal record
+        is never selected by the claim query, so this can never hand out work.
+        """
 
         if not isinstance(claim_token, str) or not claim_token.strip():
             raise ValueError("media discovery claim token is invalid")
@@ -10669,13 +11525,16 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE media_discoveries SET claim_worker_id=NULL, claim_token=NULL, "
                 "claim_expires_at=NULL WHERE discovery_id=? AND claim_token=? "
-                "AND status IN (?, ?, ?)",
+                "AND status IN (?, ?, ?, ?, ?, ?)",
                 (
                     discovery_id,
                     claim_token,
                     DiscoveryStatus.QUEUED.value,
                     DiscoveryStatus.RUNNING.value,
                     DiscoveryStatus.WAITING_STABILITY.value,
+                    DiscoveryStatus.ANALYZING.value,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
                 ),
             )
             return cursor.rowcount == 1
@@ -11536,7 +12395,7 @@ class SQLiteTaskRepository:
         columns = (
             "status=?, version=?, budgets_json=?, progress_json=?, sources_json=?, "
             "intent_id=?, frozen_at=?, attempts=?, error=?, updated_at=?, "
-            "next_observation_at=?"
+            "next_observation_at=?, preview_id=?"
         )
         parameters: list[object] = [
             discovery.status.value,
@@ -11554,6 +12413,7 @@ class SQLiteTaskRepository:
                 if discovery.next_observation_at is not None
                 else None
             ),
+            discovery.preview_id,
         ]
         if claim_token is None:
             columns += ", pause_requested=?, cancel_requested=?"
@@ -11732,15 +12592,8 @@ class SQLiteTaskRepository:
             ),
             self._admission_signature(discovery),
             discovery.admission_request_id,
-            (
-                json.dumps(
-                    discovery.definition_origin.document(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-                if discovery.definition_origin is not None
-                else None
-            ),
+            1 if discovery.auto_prepare else 0,
+            discovery.preview_id,
         )
 
     @staticmethod
@@ -11752,7 +12605,8 @@ class SQLiteTaskRepository:
         admission is reconciled however long ago it was created and however many
         unrelated discoveries were admitted since.  It contains no secret and no
         physical Storage path: the actor, the enabled library/Storage binding,
-        the immutable configuration pin and the exact canonical scope.
+        the immutable configuration pin, the exact canonical scope and whether
+        the admission is a full preparation.
         """
 
         return json.dumps(
@@ -11763,6 +12617,7 @@ class SQLiteTaskRepository:
                 "snapshotId": discovery.snapshot_id,
                 "snapshotDigest": discovery.snapshot_digest,
                 "scope": discovery_scope_signature(discovery.progress.scope_entries),
+                "autoPrepare": discovery.auto_prepare,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -11805,11 +12660,8 @@ class SQLiteTaskRepository:
                     "updatedAt": row["updated_at"],
                     "nextObservationAt": row["next_observation_at"],
                     "admissionRequestId": row["admission_request_id"],
-                    "definitionOrigin": (
-                        json.loads(row["definition_origin_json"])
-                        if row["definition_origin_json"]
-                        else None
-                    ),
+                    "autoPrepare": bool(row["auto_prepare"]),
+                    "previewId": row["preview_id"],
                 }
             )
         except Exception as error:
@@ -12965,6 +13817,46 @@ class SQLiteTaskRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 self._insert_result_locked(result)
+                if result.attachment_results:
+                    for index, outcome in enumerate(result.attachment_results):
+                        # Keep each existing 8-KiB audit envelope bounded without truncating paths.
+                        payloads = [outcome]
+                        if len(json.dumps(outcome, ensure_ascii=False).encode()) > 7000:
+                            payloads = []
+                            for key, value in outcome.items():
+                                if isinstance(value, str) and len(value.encode()) > 4000:
+                                    chunks = [
+                                        value[start : start + 512]
+                                        for start in range(0, len(value), 512)
+                                    ]
+                                    payloads.extend(
+                                        {
+                                            "field": key,
+                                            "part": part,
+                                            "parts": len(chunks),
+                                            "value": chunk,
+                                        }
+                                        for part, chunk in enumerate(chunks)
+                                    )
+                                else:
+                                    payloads.append({key: value})
+                        for payload in payloads:
+                            self._insert_manual_execution_authorization_audit(
+                                ManualExecutionAuthorizationAudit(
+                                    str(uuid4()),
+                                    execution.authorization_id,
+                                    "attachment_outcome",
+                                    result.created_at,
+                                    actor=execution.actor,
+                                    execution_id=execution.execution_id,
+                                    details={
+                                        "resultId": result.result_id,
+                                        "index": index,
+                                        "primaryCompleted": result.primary_completed,
+                                        "attachmentResult": payload,
+                                    },
+                                )
+                            )
                 task_item = self._bind_item_to_current_occurrence(task_item)
                 self._connection.execute(
                     _TASK_ITEM_UPSERT,
@@ -13979,37 +14871,6 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS files_transfers_status_created
                     ON files_transfers(status, created_at, transfer_id);
-                CREATE TABLE IF NOT EXISTS manual_scan_tasks (
-                    task_id TEXT PRIMARY KEY, scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL,
-                    resource_library_id TEXT NOT NULL, mode TEXT NOT NULL, file_id TEXT,
-                    source_occurrence_id TEXT, source_fingerprint TEXT, storage_id TEXT,
-                    source_path TEXT, configuration_snapshot_id TEXT NOT NULL,
-                    configuration_snapshot_digest TEXT NOT NULL,
-                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
-                    progress_json TEXT NOT NULL DEFAULT '{}',
-                    errors_json TEXT NOT NULL DEFAULT '[]',
-                    reconciliation_complete INTEGER NOT NULL DEFAULT 0,
-                    failure_stage TEXT, known_effects TEXT NOT NULL DEFAULT 'none',
-                    retry_safe INTEGER NOT NULL DEFAULT 1, next_action TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
-                );
-                CREATE INDEX IF NOT EXISTS manual_scan_tasks_scope
-                    ON manual_scan_tasks(scope_kind, scope_id, created_at, task_id);
-                CREATE TABLE IF NOT EXISTS manual_scan_items (
-                    item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, storage_id TEXT NOT NULL,
-                    resource_library_id TEXT NOT NULL, source_path TEXT NOT NULL, file_id TEXT,
-                    status TEXT NOT NULL, change_status TEXT, stage TEXT NOT NULL,
-                    source_occurrence_id TEXT, source_fingerprint TEXT,
-                    source_fingerprint_state TEXT NOT NULL DEFAULT 'unverified',
-                    error TEXT, known_effects TEXT NOT NULL DEFAULT 'none',
-                    retry_safe INTEGER NOT NULL DEFAULT 1, next_action TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    UNIQUE(task_id, source_path),
-                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
-                );
-                CREATE INDEX IF NOT EXISTS manual_scan_items_task_order
-                    ON manual_scan_items(task_id, created_at, item_id);
                 CREATE TABLE IF NOT EXISTS manual_ignore_audit (
                     decision_id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
                     item_id TEXT NOT NULL UNIQUE, review_kind TEXT NOT NULL,
@@ -14197,7 +15058,7 @@ class SQLiteTaskRepository:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     next_observation_at TEXT,
                     admission_signature TEXT, admission_request_id TEXT,
-                    definition_origin_json TEXT
+                    auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -14442,6 +15303,37 @@ class SQLiteTaskRepository:
                     ON manual_recovery_links(source_task_id, source_item_id, link_id);
                 CREATE INDEX IF NOT EXISTS manual_recovery_links_authorization
                     ON manual_recovery_links(authorization_id);
+                CREATE TABLE IF NOT EXISTS manual_recovery_preparations (
+                    preparation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+                    source_item_id TEXT NOT NULL,
+                    analysis_continuation_id TEXT NOT NULL,
+                    analysis_task_id TEXT NOT NULL,
+                    analysis_result_id TEXT NOT NULL,
+                    intent_id TEXT NOT NULL, preview_id TEXT NOT NULL UNIQUE,
+                    intent_version INTEGER NOT NULL,
+                    checkpoint_version TEXT NOT NULL,
+                    input_fingerprint TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    actor TEXT NOT NULL, status TEXT NOT NULL, current INTEGER NOT NULL,
+                    authorization_id TEXT UNIQUE, execution_id TEXT,
+                    selected_item_ids_json TEXT NOT NULL DEFAULT '[]',
+                    allow_overwrite INTEGER NOT NULL DEFAULT 0,
+                    allow_source_cleanup INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(source_item_id) REFERENCES task_items(item_id),
+                    FOREIGN KEY(analysis_continuation_id)
+                        REFERENCES recovery_continuations(continuation_id),
+                    FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id),
+                    FOREIGN KEY(preview_id) REFERENCES manual_previews(preview_id),
+                    FOREIGN KEY(authorization_id)
+                        REFERENCES manual_execution_authorizations(authorization_id),
+                    FOREIGN KEY(execution_id) REFERENCES manual_executions(execution_id)
+                );
+                CREATE INDEX IF NOT EXISTS manual_recovery_preparations_source
+                    ON manual_recovery_preparations(source_task_id, source_item_id,
+                                                   current, created_at, preparation_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
                     acquired_at TEXT NOT NULL,
@@ -14759,6 +15651,9 @@ class SQLiteTaskRepository:
                     ON operational_logs(occurred_at, log_id);
                 """
             )
+            # sqlite does not start a transaction for ALTER/CREATE statements.
+            # All additive upgrades and the version marker must fail atomically.
+            self._connection.execute("BEGIN IMMEDIATE")
             if self._connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
             ).fetchone():
@@ -14812,15 +15707,18 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN admission_request_id TEXT"
                 )
-            if "definition_origin_json" not in discovery_columns:
-                # Additive: a prior-schema (Files-originated) discovery simply has
-                # no definition origin, so it stays exactly the manual
-                # folder/mixed selection it was.  Nothing is backfilled and no
-                # definition identity is guessed; a definition-bound Run once is
-                # always a new admission.
+            if "auto_prepare" not in discovery_columns:
+                # Additive: a prior-schema discovery keeps the original explicit
+                # Finalize contract and is never retroactively turned into a
+                # preparation.
                 self._connection.execute(
-                    "ALTER TABLE media_discoveries ADD COLUMN definition_origin_json TEXT"
+                    "ALTER TABLE media_discoveries ADD COLUMN auto_prepare INTEGER NOT NULL "
+                    "DEFAULT 0"
                 )
+            if "preview_id" not in discovery_columns:
+                # Additive: a prior-schema discovery simply has no linked
+                # Preview and stays fully readable.
+                self._connection.execute("ALTER TABLE media_discoveries ADD COLUMN preview_id TEXT")
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
                 "ON media_discoveries(actor, admission_request_id)"
@@ -14851,6 +15749,45 @@ class SQLiteTaskRepository:
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS manual_previews_recovery_source "
                 "ON manual_previews(recovery_source_task_id, created_at, preview_id)"
+            )
+            # Schema 46: a recovery plan summary records the exact ready subset
+            # and destructive permissions the operator confirmed, so a repeat
+            # confirmation of a *different* selection can never be folded into
+            # the already-admitted submission.  Additive: a legacy row keeps its
+            # existing columns and simply carries no confirmed selection until a
+            # new confirmation fills it.
+            if self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='manual_recovery_preparations'"
+            ).fetchone():
+                preparation_columns = {
+                    row["name"]
+                    for row in self._connection.execute(
+                        "PRAGMA table_info(manual_recovery_preparations)"
+                    ).fetchall()
+                }
+                if "selected_item_ids_json" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "selected_item_ids_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                if "allow_overwrite" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "allow_overwrite INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "allow_source_cleanup" not in preparation_columns:
+                    self._connection.execute(
+                        "ALTER TABLE manual_recovery_preparations ADD COLUMN "
+                        "allow_source_cleanup INTEGER NOT NULL DEFAULT 0"
+                    )
+            # Parent lookup follows the one-item continuation chain so explicit
+            # recovery decisions remain available to later linked analyses.
+            # Keep this index with additive migrations so a failed migration
+            # does not leave a partially applied schema change behind.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS recovery_continuations_task_created "
+                "ON recovery_continuations(new_task_id, created_at, continuation_id)"
             )
             delivery_columns = {
                 row["name"]
@@ -15021,6 +15958,16 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE task_results ADD COLUMN uncertain_effects "
                     "TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "primary_completed" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "primary_completed INTEGER NOT NULL DEFAULT 0"
+                )
+            if "attachment_results" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "attachment_results TEXT NOT NULL DEFAULT '[]'"
                 )
             grant_columns = {
                 row["name"]
@@ -15455,9 +16402,10 @@ class SQLiteTaskRepository:
                 organize_policy_id, operation, status, created_at, title, error,
                 completed_operations, attachment_count, retry_attempts, retry_category,
                 cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects,
-                source_occurrence_id, source_fingerprint, source_fingerprint_state
+                source_occurrence_id, source_fingerprint, source_fingerprint_state,
+                primary_completed, attachment_results
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?)""",
+                      ?, ?, ?, ?, ?, ?, ?)""",
             self._result_values(result),
         )
         self._apply_result_to_file_index_locked(result)
@@ -15735,6 +16683,8 @@ class SQLiteTaskRepository:
             result.source_occurrence_id,
             result.source_fingerprint,
             result.source_fingerprint_state,
+            int(result.primary_completed),
+            json.dumps(result.attachment_results, ensure_ascii=False),
         )
 
     @staticmethod
@@ -15757,106 +16707,6 @@ class SQLiteTaskRepository:
             task.item_limit,
             task.configuration_snapshot_id,
             task.configuration_snapshot_digest,
-        )
-
-    @staticmethod
-    def _manual_scan_values(scan: ManualScanTask) -> tuple[object, ...]:
-        return (
-            scan.task_id,
-            scan.scope_kind.value,
-            scan.scope_id,
-            scan.resource_library_id,
-            scan.mode.value,
-            scan.file_id,
-            scan.source_occurrence_id,
-            scan.source_fingerprint,
-            scan.storage_id,
-            scan.source_path,
-            scan.configuration_snapshot_id,
-            scan.configuration_snapshot_digest,
-            int(scan.cancellation_requested),
-            json.dumps(scan.progress, ensure_ascii=False, sort_keys=True),
-            json.dumps(scan.errors, ensure_ascii=False, sort_keys=True),
-            int(scan.reconciliation_complete),
-            scan.failure_stage,
-            scan.known_effects,
-            int(scan.retry_safe),
-            scan.next_action,
-            scan.created_at.isoformat(),
-            scan.updated_at.isoformat(),
-        )
-
-    @staticmethod
-    def _manual_scan(row: sqlite3.Row) -> ManualScanTask:
-        return ManualScanTask(
-            task_id=row["task_id"],
-            scope_kind=ManualScanScopeKind(row["scope_kind"]),
-            resource_library_id=row["resource_library_id"],
-            mode=ScanMode(row["mode"]),
-            status=PersistentTaskStatus(row["status"]),
-            configuration_snapshot_id=row["configuration_snapshot_id"],
-            configuration_snapshot_digest=row["configuration_snapshot_digest"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            file_id=row["file_id"],
-            source_occurrence_id=row["source_occurrence_id"],
-            source_fingerprint=row["source_fingerprint"],
-            storage_id=row["storage_id"],
-            source_path=row["source_path"],
-            cancellation_requested=bool(row["cancellation_requested"]),
-            progress=json.loads(row["progress_json"]),
-            errors=tuple(json.loads(row["errors_json"])),
-            reconciliation_complete=bool(row["reconciliation_complete"]),
-            failure_stage=row["failure_stage"],
-            known_effects=row["known_effects"],
-            retry_safe=bool(row["retry_safe"]),
-            next_action=row["next_action"],
-        )
-
-    @staticmethod
-    def _manual_scan_item_values(item: ManualScanItemOutcome) -> tuple[object, ...]:
-        return (
-            item.item_id,
-            item.task_id,
-            item.storage_id,
-            item.resource_library_id,
-            item.source_path,
-            item.file_id,
-            item.status.value,
-            item.change.value if item.change else None,
-            item.stage,
-            item.source_occurrence_id,
-            item.source_fingerprint,
-            item.source_fingerprint_state,
-            item.error,
-            item.known_effects,
-            int(item.retry_safe),
-            item.next_action,
-            item.created_at.isoformat(),
-            item.updated_at.isoformat(),
-        )
-
-    @staticmethod
-    def _manual_scan_item(row: sqlite3.Row) -> ManualScanItemOutcome:
-        return ManualScanItemOutcome(
-            item_id=row["item_id"],
-            task_id=row["task_id"],
-            storage_id=row["storage_id"],
-            resource_library_id=row["resource_library_id"],
-            source_path=row["source_path"],
-            file_id=row["file_id"],
-            status=FileScanStatus(row["status"]),
-            change=FileChange(row["change_status"]) if row["change_status"] else None,
-            stage=row["stage"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
-            source_occurrence_id=row["source_occurrence_id"],
-            source_fingerprint=row["source_fingerprint"],
-            source_fingerprint_state=row["source_fingerprint_state"],
-            error=row["error"],
-            known_effects=row["known_effects"],
-            retry_safe=bool(row["retry_safe"]),
-            next_action=row["next_action"],
         )
 
     @staticmethod
@@ -15972,6 +16822,8 @@ class SQLiteTaskRepository:
                 row["source_fingerprint_state"]
                 if "source_fingerprint_state" in row.keys()
                 else "unverified",
+                primary_completed=bool(row["primary_completed"]),
+                attachment_results=tuple(json.loads(row["attachment_results"] or "[]")),
             )
         )
 
@@ -16230,6 +17082,67 @@ class SQLiteTaskRepository:
             row["error"],
             row["recovery"],
             row["authority_statement"],
+        )
+
+    @staticmethod
+    def _manual_recovery_preparation_values(
+        preparation: ManualRecoveryPreparation,
+    ) -> tuple[object, ...]:
+        return (
+            preparation.preparation_id,
+            preparation.source_task_id,
+            preparation.source_item_id,
+            preparation.analysis_continuation_id,
+            preparation.analysis_task_id,
+            preparation.analysis_result_id,
+            preparation.intent_id,
+            preparation.preview_id,
+            preparation.intent_version,
+            preparation.checkpoint_version,
+            preparation.input_fingerprint,
+            preparation.configuration_snapshot_id,
+            preparation.configuration_snapshot_digest,
+            preparation.actor,
+            preparation.status.value,
+            int(preparation.status is ManualRecoveryPreparationStatus.PREPARED),
+            preparation.authorization_id,
+            preparation.execution_id,
+            _canonical_json(list(preparation.selected_item_ids)),
+            int(bool(preparation.allow_overwrite)),
+            int(bool(preparation.allow_source_cleanup)),
+            preparation.created_at.isoformat(),
+            preparation.updated_at.isoformat(),
+        )
+
+    @staticmethod
+    def _manual_recovery_preparation(row: sqlite3.Row) -> ManualRecoveryPreparation:
+        try:
+            status = ManualRecoveryPreparationStatus(row["status"])
+        except ValueError:
+            status = ManualRecoveryPreparationStatus.STALE
+        return ManualRecoveryPreparation(
+            row["preparation_id"],
+            row["source_task_id"],
+            row["source_item_id"],
+            row["analysis_continuation_id"],
+            row["analysis_task_id"],
+            row["analysis_result_id"],
+            row["intent_id"],
+            row["preview_id"],
+            int(row["intent_version"]),
+            row["checkpoint_version"],
+            row["input_fingerprint"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["actor"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["authorization_id"],
+            row["execution_id"],
+            tuple(_json_text_list(row["selected_item_ids_json"])),
+            bool(row["allow_overwrite"]),
+            bool(row["allow_source_cleanup"]),
         )
 
     @staticmethod

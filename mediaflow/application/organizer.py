@@ -3,9 +3,10 @@ import hashlib
 import posixpath
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import BinaryIO
 
+from mediaflow.application.attachments import attachment_result_document
 from mediaflow.domain.classification import ClassificationResult
 from mediaflow.domain.direct_files import (
     DirectEntryEvidence,
@@ -478,36 +479,6 @@ class OrganizerExecutor:
                     errors=("destination already exists",),
                     resolved_destination=display_destination,
                 )
-            attachment_sizes: dict[str, int] = {}
-            for attachment in plan.attachment_plans:
-                attachment_source = storages[attachment.source.storage_id]
-                attachment_target = storages[attachment.destination.storage_id]
-                if not attachment_source.exists(attachment.source.path):
-                    return self._result(
-                        plan,
-                        ExecutionStatus.FAILED,
-                        started,
-                        plan_id,
-                        errors=(f"attachment source does not exist: {attachment.source.path}",),
-                        resolved_destination=display_destination,
-                    )
-                if (
-                    attachment_target.exists(attachment.destination.path)
-                    and not plan.overwrite_authorized
-                ):
-                    return self._result(
-                        plan,
-                        ExecutionStatus.FAILED,
-                        started,
-                        plan_id,
-                        errors=(
-                            f"attachment destination already exists: {attachment.destination.path}",
-                        ),
-                        resolved_destination=display_destination,
-                    )
-                attachment_sizes[attachment.source.path] = attachment_source.stat(
-                    attachment.source.path
-                ).size
             if parent and not target_storage.exists(parent):
                 missing_directories = (
                     _missing_directories(target_storage, parent)
@@ -534,57 +505,6 @@ class OrganizerExecutor:
                                 getattr(directory_entry, "entry_type", None),
                             )
                         )
-            for attachment in plan.attachment_plans:
-                attachment_source = storages[attachment.source.storage_id]
-                attachment_target = storages[attachment.destination.storage_id]
-                marker = f"ATTACHMENT:{attachment.attachment_type.value}:{attachment.source.path}"
-                try:
-                    mutation_attempted = True
-                    self._mutate_and_record(
-                        plan,
-                        attachment_source,
-                        attachment_target,
-                        attachment.source.path,
-                        attachment.destination.path,
-                        marker,
-                        effects,
-                        mutation_authority=mutation_authority,
-                    )
-                except PartialExecutionError as error:
-                    raise PartialExecutionError(
-                        str(error), tuple(f"{marker}:{step}" for step in error.completed)
-                    ) from error
-                except MutationAuthorityRefused as error:
-                    if error.verified_effects:
-                        error.verified_effects = tuple(
-                            f"{marker}:{step}" for step in error.verified_effects
-                        )
-                    raise
-                completed.append(marker)
-                if not attachment_target.exists(attachment.destination.path):
-                    raise RuntimeError(f"attachment verification failed: {attachment.source.path}")
-                attachment_entry = attachment_target.stat(attachment.destination.path)
-                if attachment.operation is PlanOperation.LINK:
-                    expected_type = (
-                        StorageEntryType.SYMLINK
-                        if plan.link_operation is OrganizeOperationType.SOFT_LINK
-                        else StorageEntryType.FILE
-                    )
-                    if attachment_entry.entry_type is not expected_type:
-                        raise RuntimeError(
-                            f"attachment verification failed: link type mismatch: "
-                            f"{attachment.source.path}"
-                        )
-                elif attachment_entry.size != attachment_sizes[attachment.source.path]:
-                    raise RuntimeError(
-                        f"attachment verification failed: size mismatch: {attachment.source.path}"
-                    )
-                if plan.operation is PlanOperation.MOVE and attachment_source.exists(
-                    attachment.source.path
-                ):
-                    raise RuntimeError(
-                        f"attachment move verification failed: {attachment.source.path}"
-                    )
             mutation_attempted = True
             self._mutate_and_record(
                 plan,
@@ -651,6 +571,39 @@ class OrganizerExecutor:
                 display_destination,
                 mutation_authority,
             )
+        # Once verified, the primary is never rolled back or replayed for a sidecar failure.
+        attachment_results = self._execute_attachments(
+            plan, storages, mutation_authority, completed
+        )
+        if any(value["status"] != "success" for value in attachment_results):
+            uncertain = any(
+                value["effect_certainty"] in {"unknown", "attempted_unverified"}
+                for value in attachment_results
+            )
+            return self._result(
+                plan,
+                ExecutionStatus.PARTIAL,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                warnings=("primary verified complete; inspect independent attachment results",),
+                errors=("unattended authority refused before attachment mutation",)
+                if any(value["reason"] == "authority_refused" for value in attachment_results)
+                else (),
+                rollback_status=RollbackStatus.NOT_NEEDED
+                if plan.rollback_policy.enabled
+                else RollbackStatus.DISABLED,
+                resolved_destination=display_destination,
+                effect_certainty=(
+                    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+                    if uncertain
+                    else ExecutionEffectCertainty.VERIFIED_COMPLETE
+                ),
+                uncertain_effects=("attachment_mutation_outcome",) if uncertain else (),
+                primary_completed=True,
+                attachment_results=attachment_results,
+            )
         cleanup = self._cleanup_source_directories(
             plan, source_storage, storage_source, mutation_authority
         )
@@ -668,6 +621,8 @@ class OrganizerExecutor:
                 cleanup_status=cleanup.status,
                 cleanup_steps=cleanup.steps,
                 effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+                primary_completed=True,
+                attachment_results=attachment_results,
             )
         if cleanup.status is DirectoryCleanupStatus.FAILED:
             return self._result(
@@ -683,6 +638,8 @@ class OrganizerExecutor:
                 cleanup_steps=cleanup.steps,
                 effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
                 uncertain_effects=("mutation_outcome",),
+                primary_completed=True,
+                attachment_results=attachment_results,
             )
         if cleanup.status is DirectoryCleanupStatus.PARTIAL:
             # Some admitted cleanup effects are known complete and an unknown
@@ -702,6 +659,8 @@ class OrganizerExecutor:
                 cleanup_status=cleanup.status,
                 cleanup_steps=cleanup.steps,
                 effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+                primary_completed=True,
+                attachment_results=attachment_results,
             )
         return self._result(
             plan,
@@ -717,7 +676,95 @@ class OrganizerExecutor:
             cleanup_status=cleanup.status,
             cleanup_steps=cleanup.steps,
             effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            primary_completed=True,
+            attachment_results=attachment_results,
         )
+
+    def _execute_attachments(self, plan, storages, authority, completed):
+        results = []
+        stopped = False
+        destinations = {(plan.target_storage_id, plan.target.casefold())}
+        for attachment in plan.attachment_plans:
+            marker = f"ATTACHMENT:{attachment.attachment_type.value}:{attachment.source.path}"
+            attempted = False
+            steps = ()
+            reason = attachment.blocked_reason
+            status, certainty = "not_executed", "none"
+            try:
+                if stopped:
+                    reason = "execution_stopped"
+                elif (
+                    attachment.destination.storage_id,
+                    attachment.destination.path.casefold(),
+                ) in destinations:
+                    reason = "attachment_collision"
+                elif reason is None:
+                    source = storages[attachment.source.storage_id]
+                    target = storages[attachment.destination.storage_id]
+                    if not source.exists(attachment.source.path):
+                        reason = "source_missing"
+                    elif target.exists(attachment.destination.path):
+                        reason = "attachment_collision"
+                    else:
+                        size = source.stat(attachment.source.path).size
+                        attempted = True
+                        self._mutate_and_record(
+                            replace(plan, overwrite_authorized=False),
+                            source,
+                            target,
+                            attachment.source.path,
+                            attachment.destination.path,
+                            marker,
+                            [],
+                            mutation_authority=authority,
+                        )
+                        steps = (marker,)
+                        completed.append(marker)
+                        entry = target.stat(attachment.destination.path)
+                        expected = (
+                            StorageEntryType.SYMLINK
+                            if plan.link_operation is OrganizeOperationType.SOFT_LINK
+                            else StorageEntryType.FILE
+                        )
+                        if plan.operation is PlanOperation.LINK:
+                            if entry.entry_type is not expected:
+                                raise RuntimeError("attachment link verification failed")
+                        elif entry.size != size:
+                            raise RuntimeError("attachment size verification failed")
+                        if plan.operation is PlanOperation.MOVE and source.exists(
+                            attachment.source.path
+                        ):
+                            raise RuntimeError("attachment source removal not verified")
+                        status, certainty = "success", "verified_complete"
+            except MutationAuthorityRefused as error:
+                stopped = True
+                reason = "authority_refused"
+                steps = tuple(f"{marker}:{step}" for step in error.verified_effects)
+                completed.extend(steps)
+                status = "failed" if steps else "not_executed"
+                certainty = "verified_complete" if steps else "none"
+            except (StorageError, RuntimeError, OSError, KeyError) as error:
+                reason = "verification_failed" if attempted else "storage_unavailable"
+                status = "failed" if attempted else "not_executed"
+                certainty = "attempted_unverified" if attempted else "none"
+                if isinstance(error, PartialExecutionError):
+                    steps = tuple(f"{marker}:{step}" for step in error.completed)
+                    completed.extend(steps)
+                stopped = attempted
+            destinations.add(
+                (attachment.destination.storage_id, attachment.destination.path.casefold())
+            )
+            results.append(
+                attachment_result_document(
+                    plan,
+                    attachment,
+                    status=status,
+                    reason=reason,
+                    certainty=certainty,
+                    completed=steps,
+                )
+            )
+        return tuple(results)
 
     # ------------------------------------------------------------------
     # Direct Files commands
@@ -1797,6 +1844,8 @@ class OrganizerExecutor:
                 result=status.value,
                 effect_certainty=result.effect_certainty.value,
                 uncertain_effects=result.uncertain_effects,
+                primary_completed=result.primary_completed,
+                attachment_results=result.attachment_results,
                 error_category=_execution_log_category(result),
             )
         return result
@@ -2589,6 +2638,8 @@ class OrganizerExecutor:
         cleanup_steps: tuple[DirectoryCleanupStep, ...] = (),
         effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.NONE,
         uncertain_effects: tuple[str, ...] = (),
+        primary_completed: bool = False,
+        attachment_results: tuple[dict[str, object], ...] = (),
     ) -> ExecutionResult:
         result = ExecutionResult(
             status,
@@ -2608,6 +2659,14 @@ class OrganizerExecutor:
             cleanup_steps=cleanup_steps,
             effect_certainty=effect_certainty,
             uncertain_effects=uncertain_effects,
+            primary_completed=primary_completed,
+            attachment_results=attachment_results
+            or tuple(
+                attachment_result_document(
+                    plan, value, status="not_executed", reason="primary_not_completed"
+                )
+                for value in plan.attachment_plans
+            ),
         )
         if self._logger:
             self._logger.log(
@@ -2626,6 +2685,8 @@ class OrganizerExecutor:
                 rollback_steps=tuple((step.action, step.success) for step in result.rollback_steps),
                 effect_certainty=result.effect_certainty.value,
                 uncertain_effects=result.uncertain_effects,
+                primary_completed=result.primary_completed,
+                attachment_results=result.attachment_results,
                 error_category=_execution_log_category(result),
             )
         return result
@@ -2882,7 +2943,6 @@ def _plan_validation_error(plan: OrganizePlan) -> str | None:
         or any(part in {"", ".", ".."} for part in plan.target.lstrip("/").split("/"))
     ):
         return "invalid destination"
-    attachment_destinations: set[tuple[str, str]] = set()
     for attachment in plan.attachment_plans:
         if attachment.operation is not plan.operation:
             return "attachment operation does not match the primary operation"
@@ -2898,10 +2958,6 @@ def _plan_validation_error(plan: OrganizePlan) -> str | None:
             return "attachment source must share the primary source directory"
         if posixpath.dirname(attachment.destination.path) != posixpath.dirname(primary_target):
             return "attachment destination must share the primary destination directory"
-        identity = (attachment.destination.storage_id, attachment.destination.path.casefold())
-        if identity in attachment_destinations:
-            return "attachment destinations collide"
-        attachment_destinations.add(identity)
     return None
 
 

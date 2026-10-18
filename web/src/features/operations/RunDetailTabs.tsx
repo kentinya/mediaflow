@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
+import { AttachmentResults } from "./AttachmentResults";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -56,9 +57,20 @@ import {
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
-import { submitTaskRecoveryBatch } from "../../shared/api/api-client";
+import { SamePagePlanSummary } from "./SamePagePlanSummary";
+import {
+  confirmTaskItemRecoveryPreparation,
+  prepareTaskItemRecoverySummary,
+  submitTaskRecoveryBatch,
+} from "../../shared/api/api-client";
+import type {
+  ManualRecoveryPreparationModel,
+  RecoveryBatchModel,
+  RecoveryBatchChild,
+} from "../../entities/operations/task-item-recovery";
 import {
   clearOtherRecoveryBatchSessions,
+  recoveryBatchConfirmationSessionKey,
   recoveryBatchSessionKey,
 } from "./recovery-batch-session";
 
@@ -534,17 +546,7 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** Optional run facts rendered inside 任务详情 above the progress card. */
   readonly facts?: ReactNode;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
 
@@ -555,9 +557,7 @@ export function RunDetailTabs({
   onStateChange,
   active,
   facts,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
-  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
@@ -623,7 +623,7 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
-            onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
+            onOpenRecoveryExecution={onOpenRecoveryExecution}
             active={active}
           />
           {state.evidenceItem !== null && (
@@ -631,7 +631,6 @@ export function RunDetailTabs({
               runId={runId}
               itemId={state.evidenceItem}
               active={active}
-              onOpenRecoveryPreview={onOpenRecoveryPreview}
               onOpenLinkedAnalysis={onOpenLinkedAnalysis}
               onOpenRecoveryExecution={onOpenRecoveryExecution}
               onClose={() => inspectItem(null)}
@@ -817,7 +816,7 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
-  onOpenBatchLinkedAnalysis,
+  onOpenRecoveryExecution,
   active,
 }: {
   readonly runId: string;
@@ -825,10 +824,7 @@ function RunItemsSection({
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string) => void;
-  readonly onOpenBatchLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly active: boolean;
 }) {
   const token = useAuthToken();
@@ -1012,7 +1008,8 @@ function RunItemsSection({
                   runId={runId}
                   selected={selectedRecoveryItems}
                   onSelectionChange={setSelectedRecoveryItems}
-                  onOpenLinkedAnalysis={onOpenBatchLinkedAnalysis}
+                  onInspectItem={onInspectItem}
+                  onOpenRecoveryExecution={onOpenRecoveryExecution}
                 />
               )}
             </>
@@ -1074,16 +1071,15 @@ function FailedAnalysisBatchControls({
   runId,
   selected,
   onSelectionChange,
-  onOpenLinkedAnalysis,
+  onInspectItem,
+  onOpenRecoveryExecution,
 }: {
   readonly taskId: string;
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
-  readonly onOpenLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
+  readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }) {
   const token = useAuthToken();
   const authGeneration = useAuthGeneration();
@@ -1117,7 +1113,8 @@ function FailedAnalysisBatchControls({
             runId={runId}
             selected={selected}
             onSelectionChange={onSelectionChange}
-            onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+            onInspectItem={onInspectItem}
+            onOpenRecoveryExecution={onOpenRecoveryExecution}
             principalId={data.principalId}
             authGeneration={authGeneration}
           />
@@ -1132,7 +1129,8 @@ function VerifiedFailedAnalysisBatchControls({
   runId,
   selected,
   onSelectionChange,
-  onOpenLinkedAnalysis,
+  onInspectItem,
+  onOpenRecoveryExecution,
   principalId,
   authGeneration,
 }: {
@@ -1140,10 +1138,8 @@ function VerifiedFailedAnalysisBatchControls({
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
-  readonly onOpenLinkedAnalysis?: (
-    taskId: string,
-    sourceItemId: string,
-  ) => void;
+  readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly principalId: string;
   readonly authGeneration: number;
 }) {
@@ -1173,6 +1169,9 @@ function VerifiedFailedAnalysisBatchControls({
     batchStorage.command !== null,
   );
   const [knownSubmitted, setKnownSubmitted] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [pendingManualConfirmation, setPendingManualConfirmation] =
+    useState(false);
   const [message, setMessage] = useState<string | null>(() =>
     !batchStorage.available
       ? "此浏览器无法读取账号隔离的批量命令记录；批量提交已关闭，避免响应丢失后无法核对。"
@@ -1422,18 +1421,19 @@ function VerifiedFailedAnalysisBatchControls({
                     {child.itemId} — {labels[child.status] ?? child.status}
                     {child.error ? `：${child.error}` : ""}；下一步：
                     {child.nextAction}
-                    {child.newTaskId && onOpenLinkedAnalysis && (
+                    {onInspectItem && (
                       <>
                         {" "}
                         ·{" "}
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"
-                          onClick={() =>
-                            onOpenLinkedAnalysis(child.newTaskId!, child.itemId)
-                          }
+                          onClick={() => onInspectItem(child.itemId)}
                         >
-                          查看关联分析 Task
+                          {child.status === "queued" ||
+                          child.status === "running"
+                            ? "在此任务内查看分析进度"
+                            : "在当前界面生成并确认摘要"}
                         </button>
                       </>
                     )}
@@ -1442,18 +1442,645 @@ function VerifiedFailedAnalysisBatchControls({
                 ))}
               </ul>
               <p className="mf-dashboard-meta">{batch.nextAction}</p>
+              <BatchRecoverySummary
+                taskId={taskId}
+                batchId={batch.batchId}
+                principalId={principalId}
+                children={batch.children}
+                token={token}
+                busy={summaryBusy}
+                onBusyChange={setSummaryBusy}
+                onPendingChange={setPendingManualConfirmation}
+                onOpenRecoveryExecution={onOpenRecoveryExecution}
+                onRefresh={async () => {
+                  void queryClient.invalidateQueries({
+                    queryKey: [runItemsQueryKey, runId],
+                  });
+                  const refreshed = await batchQuery.refetch();
+                  if (
+                    refreshed.data?.ok !== true ||
+                    refreshed.data.model.batchId !== batch.batchId ||
+                    refreshed.data.model.taskId !== taskId ||
+                    refreshed.data.model.actor !== principalId
+                  ) {
+                    return null;
+                  }
+                  return refreshed.data.model;
+                }}
+              />
             </>
           )}
           {settled && (
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={clearForNewBatch}
-            >
-              开始新的批量选择
-            </button>
+            <>
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                disabled={pendingManualConfirmation}
+                onClick={clearForNewBatch}
+              >
+                开始新的批量选择
+              </button>
+              {pendingManualConfirmation && (
+                <p className="mf-dashboard-meta">
+                  有条目的整理确认结果仍待持久状态核对；核对完成前请保留当前批次。
+                </p>
+              )}
+            </>
           )}
         </>
+      )}
+    </section>
+  );
+}
+
+// -- Aggregated batch same-page summaries -----------------------------------
+
+interface BatchChildPreparationState {
+  readonly selected: readonly string[] | null;
+  readonly allowOverwrite: boolean;
+  readonly allowCleanup: boolean;
+}
+
+interface BatchConfirmationSubmission {
+  readonly batchId: string;
+  readonly principalId: string;
+  readonly preparationId: string;
+  readonly previewId: string;
+  readonly intentId: string;
+  readonly sourceTaskId: string;
+  readonly sourceItemId: string;
+  readonly checkpointVersion: string;
+  readonly configurationSnapshotId: string;
+  readonly configurationSnapshotDigest: string;
+  readonly preparationActor: string;
+  readonly selectedItemIds: readonly string[];
+  readonly allowOverwrite: boolean;
+  readonly allowSourceCleanup: boolean;
+}
+
+function readBatchConfirmationSubmissions(
+  key: string,
+  batchId: string,
+  taskId: string,
+  principalId: string,
+): {
+  readonly available: boolean;
+  readonly values: Record<string, BatchConfirmationSubmission>;
+} {
+  try {
+    const raw = window.sessionStorage.getItem(key);
+    if (raw === null) return { available: true, values: {} };
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return { available: false, values: {} };
+    }
+    const values: Record<string, BatchConfirmationSubmission> = {};
+    for (const [itemId, value] of Object.entries(parsed)) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return { available: false, values: {} };
+      }
+      const record = value as Record<string, unknown>;
+      const selectedItemIds = record["selectedItemIds"];
+      if (
+        record["batchId"] !== batchId ||
+        record["principalId"] !== principalId ||
+        record["sourceTaskId"] !== taskId ||
+        record["sourceItemId"] !== itemId ||
+        typeof record["preparationId"] !== "string" ||
+        typeof record["previewId"] !== "string" ||
+        typeof record["intentId"] !== "string" ||
+        typeof record["checkpointVersion"] !== "string" ||
+        typeof record["configurationSnapshotId"] !== "string" ||
+        typeof record["configurationSnapshotDigest"] !== "string" ||
+        typeof record["preparationActor"] !== "string" ||
+        !Array.isArray(selectedItemIds) ||
+        selectedItemIds.length === 0 ||
+        selectedItemIds.length > 100 ||
+        selectedItemIds.some((item) => typeof item !== "string") ||
+        typeof record["allowOverwrite"] !== "boolean" ||
+        typeof record["allowSourceCleanup"] !== "boolean"
+      ) {
+        return { available: false, values: {} };
+      }
+      values[itemId] = record as unknown as BatchConfirmationSubmission;
+    }
+    return { available: true, values };
+  } catch {
+    return { available: false, values: {} };
+  }
+}
+
+/**
+ * Aggregates the independent, durable same-page summaries of one recovery
+ * batch's children and confirms only the ready subset the operator selects.
+ *
+ * Each child keeps its own exact Preview, pin, selection and destructive
+ * implications; this component never merges them into one fake common
+ * snapshot.  Children without a current durable summary are listed as not yet
+ * ready and cannot be confirmed.  Confirmation is per child through the same
+ * existing atomic admission the single-item journey uses, so success, refusal
+ * and unselected siblings each keep their own outcome.
+ */
+function BatchRecoverySummary({
+  taskId,
+  batchId,
+  principalId,
+  children,
+  token,
+  busy,
+  onBusyChange,
+  onPendingChange,
+  onOpenRecoveryExecution,
+  onRefresh,
+}: {
+  readonly taskId: string;
+  readonly batchId: string;
+  readonly principalId: string;
+  readonly children: readonly RecoveryBatchChild[];
+  readonly token: string | null;
+  readonly busy: boolean;
+  readonly onBusyChange: (value: boolean) => void;
+  readonly onPendingChange: (value: boolean) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
+  readonly onRefresh: () => Promise<RecoveryBatchModel | null>;
+}) {
+  const confirmationStorageKey = recoveryBatchConfirmationSessionKey(
+    principalId,
+    taskId,
+    batchId,
+  );
+  const [confirmationStorage] = useState(() =>
+    readBatchConfirmationSubmissions(
+      confirmationStorageKey,
+      batchId,
+      taskId,
+      principalId,
+    ),
+  );
+  const [confirmationStorageAvailable, setConfirmationStorageAvailable] =
+    useState(confirmationStorage.available);
+  const [submissions, setSubmissions] = useState(confirmationStorage.values);
+  const [state, setState] = useState<
+    Record<string, BatchChildPreparationState>
+  >({});
+  const [message, setMessage] = useState<string | null>(null);
+  const [prepared, setPrepared] = useState<
+    Record<string, ManualRecoveryPreparationModel>
+  >({});
+  useEffect(() => {
+    onPendingChange(Object.keys(submissions).length > 0);
+  }, [onPendingChange, submissions]);
+
+  const saveSubmissions = (
+    value: Record<string, BatchConfirmationSubmission>,
+  ) => {
+    if (!confirmationStorageAvailable) return false;
+    try {
+      if (Object.keys(value).length === 0) {
+        window.sessionStorage.removeItem(confirmationStorageKey);
+      } else {
+        window.sessionStorage.setItem(
+          confirmationStorageKey,
+          JSON.stringify(value),
+        );
+      }
+      setSubmissions(value);
+      return true;
+    } catch {
+      setConfirmationStorageAvailable(false);
+      return false;
+    }
+  };
+  const preparationFor = (
+    child: RecoveryBatchChild,
+  ): ManualRecoveryPreparationModel | null =>
+    child.manualRecoveryPreparation ?? prepared[child.itemId] ?? null;
+  const readyChildren = children.filter(
+    (child) => preparationFor(child)?.status === "prepared",
+  );
+  const confirmedChildren = children.filter(
+    (child) => preparationFor(child)?.status === "confirmed",
+  );
+  const notReady = children.filter((child) => {
+    const preparation = preparationFor(child);
+    return (
+      preparation === null ||
+      (preparation.status !== "prepared" && preparation.status !== "confirmed")
+    );
+  });
+  const canPrepare = children.filter(
+    (child) =>
+      preparationFor(child) === null &&
+      child.manualRecoveryAvailable &&
+      child.recoveryContinuationStatus === "completed" &&
+      child.currentCheckpointVersion !== null,
+  );
+  const stateFor = (itemId: string): BatchChildPreparationState =>
+    state[itemId] ?? {
+      selected: null,
+      allowOverwrite: false,
+      allowCleanup: false,
+    };
+  const selectedCount = readyChildren.reduce((total, child) => {
+    const value = stateFor(child.itemId).selected;
+    return (
+      total + (submissions[child.itemId] || value === null ? 0 : value.length)
+    );
+  }, 0);
+
+  const prepareReady = async () => {
+    if (busy || canPrepare.length === 0) return;
+    onBusyChange(true);
+    setMessage(null);
+    try {
+      const next: Record<string, ManualRecoveryPreparationModel> = {};
+      const failures: string[] = [];
+      for (const child of canPrepare) {
+        const result = await prepareTaskItemRecoverySummary(
+          token,
+          taskId,
+          child.itemId,
+          child.currentCheckpointVersion!,
+        );
+        if (result.ok) {
+          next[child.itemId] = result.model;
+        } else {
+          failures.push(`${child.itemId}：无法生成摘要（${result.code}）`);
+        }
+      }
+      setPrepared((previous) => ({ ...previous, ...next }));
+      const summary = [
+        Object.keys(next).length > 0
+          ? `已为 ${Object.keys(next).length} 项生成零变更计划摘要。`
+          : null,
+        ...failures,
+      ]
+        .filter((value): value is string => value !== null)
+        .join("；");
+      setMessage(summary.length > 0 ? summary : null);
+      const durableBatch = await onRefresh();
+      if (durableBatch !== null && Object.keys(submissions).length > 0) {
+        reconcileSubmissions(durableBatch, submissions);
+      }
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  const confirmSelected = async () => {
+    if (
+      busy ||
+      selectedCount === 0 ||
+      !confirmationStorageAvailable ||
+      token === null
+    ) {
+      return;
+    }
+    onBusyChange(true);
+    setMessage(null);
+    try {
+      const outcomes: string[] = [];
+      const pending = { ...submissions };
+      for (const child of readyChildren) {
+        const current = stateFor(child.itemId);
+        if (
+          submissions[child.itemId] !== undefined ||
+          current.selected === null ||
+          current.selected.length === 0
+        ) {
+          continue;
+        }
+        const preparation = preparationFor(child);
+        if (
+          preparation === null ||
+          preparation.actor === null ||
+          preparation.sourceItemId !== child.itemId ||
+          preparation.sourceTaskId !== taskId
+        ) {
+          outcomes.push(
+            `${child.itemId}：当前摘要缺少精确身份字段，未发送确认`,
+          );
+          continue;
+        }
+        const submission: BatchConfirmationSubmission = {
+          batchId,
+          principalId,
+          preparationId: preparation.preparationId,
+          previewId: preparation.previewId,
+          intentId: preparation.intentId,
+          sourceTaskId: preparation.sourceTaskId,
+          sourceItemId: preparation.sourceItemId,
+          checkpointVersion: preparation.checkpointVersion,
+          configurationSnapshotId: preparation.configurationSnapshotId,
+          configurationSnapshotDigest: preparation.configurationSnapshotDigest,
+          preparationActor: preparation.actor,
+          selectedItemIds: [...current.selected],
+          allowOverwrite: current.allowOverwrite,
+          allowSourceCleanup: current.allowCleanup,
+        };
+        pending[child.itemId] = submission;
+        if (!saveSubmissions(pending)) {
+          outcomes.push(
+            `${child.itemId}：无法保存账号隔离的确认记录，未发送请求`,
+          );
+          delete pending[child.itemId];
+          break;
+        }
+        const result = await confirmTaskItemRecoveryPreparation(
+          token,
+          preparation.preparationId,
+          {
+            itemIds: current.selected,
+            allowOverwrite: current.allowOverwrite,
+            allowSourceCleanup: current.allowCleanup,
+          },
+        );
+        if (result.ok) {
+          const selectionMatches =
+            result.model.selectedItemIds.length ===
+              submission.selectedItemIds.length &&
+            result.model.selectedItemIds.every(
+              (itemId, index) => itemId === submission.selectedItemIds[index],
+            );
+          outcomes.push(
+            selectionMatches
+              ? `${child.itemId}：已收到受理响应，正在核对持久状态`
+              : `${child.itemId}：响应与所选子集不一致，结果未知并保持锁定`,
+          );
+        } else {
+          outcomes.push(
+            `${child.itemId}：确认结果未知（${result.code}），保持重复提交锁定`,
+          );
+        }
+      }
+      setMessage(outcomes.join("；"));
+      const durableBatch = await onRefresh();
+      if (durableBatch !== null) {
+        reconcileSubmissions(durableBatch, pending);
+      } else if (Object.keys(pending).length > 0) {
+        setMessage(
+          `${outcomes.join("；")}；批次持久状态尚未读回，保持所有待核对项锁定。`,
+        );
+      }
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  const samePreparation = (
+    durable: ManualRecoveryPreparationModel | null,
+    submitted: BatchConfirmationSubmission,
+  ) =>
+    durable !== null &&
+    durable.preparationId === submitted.preparationId &&
+    durable.previewId === submitted.previewId &&
+    durable.intentId === submitted.intentId &&
+    durable.sourceTaskId === submitted.sourceTaskId &&
+    durable.sourceItemId === submitted.sourceItemId &&
+    durable.checkpointVersion === submitted.checkpointVersion &&
+    durable.configurationSnapshotId === submitted.configurationSnapshotId &&
+    durable.configurationSnapshotDigest ===
+      submitted.configurationSnapshotDigest &&
+    durable.actor === submitted.preparationActor;
+
+  const reconcileSubmissions = (
+    durableBatch: RecoveryBatchModel,
+    submittedRecords: Record<string, BatchConfirmationSubmission>,
+  ) => {
+    if (
+      durableBatch.batchId !== batchId ||
+      durableBatch.taskId !== taskId ||
+      durableBatch.actor !== principalId
+    ) {
+      setMessage("批次持久记录与当前账号或批次不匹配；保持待核对项锁定。 ");
+      return;
+    }
+    const byItemId = new Map(
+      durableBatch.children.map((child) => [child.itemId, child]),
+    );
+    const remaining = { ...submittedRecords };
+    const outcomes: string[] = [];
+    let changed = false;
+    for (const [itemId, submitted] of Object.entries(submittedRecords)) {
+      if (
+        submitted.principalId !== principalId ||
+        submitted.batchId !== batchId
+      ) {
+        outcomes.push(`${itemId}：本地提交账号不匹配，保持锁定`);
+        continue;
+      }
+      const durable = byItemId.get(itemId)?.manualRecoveryPreparation ?? null;
+      if (!samePreparation(durable, submitted)) {
+        outcomes.push(`${itemId}：未读回本次精确计划摘要，结果未知并保持锁定`);
+        continue;
+      }
+      if (
+        durable?.status === "confirmed" &&
+        durable.authorizationId !== null &&
+        durable.executionId !== null &&
+        durable.selectedItemIds !== null &&
+        durable.selectedItemIds.length === submitted.selectedItemIds.length &&
+        durable.selectedItemIds.every(
+          (value, index) => value === submitted.selectedItemIds[index],
+        ) &&
+        durable.allowOverwrite === submitted.allowOverwrite &&
+        durable.allowSourceCleanup === submitted.allowSourceCleanup
+      ) {
+        delete remaining[itemId];
+        changed = true;
+        outcomes.push(`${itemId}：持久状态已确认本次精确子集`);
+        continue;
+      }
+      if (
+        durable?.status === "prepared" &&
+        durable.selectedItemIds !== null &&
+        durable.selectedItemIds.length === 0 &&
+        durable.allowOverwrite === false &&
+        durable.allowSourceCleanup === false
+      ) {
+        delete remaining[itemId];
+        changed = true;
+        setState((previous) => ({
+          ...previous,
+          [itemId]: {
+            selected: submitted.selectedItemIds,
+            allowOverwrite: submitted.allowOverwrite,
+            allowCleanup: submitted.allowSourceCleanup,
+          },
+        }));
+        outcomes.push(`${itemId}：持久摘要仍为未受理状态，可检查后明确重试`);
+        continue;
+      }
+      outcomes.push(`${itemId}：持久状态与本次选择或授权效果不一致，保持锁定`);
+    }
+    if (changed) saveSubmissions(remaining);
+    setMessage(outcomes.join("；"));
+  };
+
+  const reconcilePending = async () => {
+    if (busy || Object.keys(submissions).length === 0) return;
+    onBusyChange(true);
+    setMessage("正在读取固定批次，核对每项自己的计划编号、选择和效果授权。");
+    try {
+      const durableBatch = await onRefresh();
+      if (durableBatch === null) {
+        setMessage("批次持久状态读取失败；待核对项保持锁定。 ");
+        return;
+      }
+      reconcileSubmissions(durableBatch, submissions);
+    } finally {
+      onBusyChange(false);
+    }
+  };
+
+  return (
+    <section className="mf-count-section" aria-label="批量同页计划摘要">
+      <h6>批量同页计划摘要</h6>
+      <p className="mf-dashboard-meta">
+        每项保留自己的固定来源、pin、目标与影响；选择后统一确认，只受理所选就绪项，
+        未选项、成功项与效果未知项不会被执行。
+      </p>
+      {message && (
+        <StatusBanner
+          variant={Object.keys(submissions).length > 0 ? "warning" : "info"}
+          title={
+            Object.keys(submissions).length > 0
+              ? "批量确认结果待核对"
+              : "批量确认状态"
+          }
+        >
+          <p>{message}</p>
+        </StatusBanner>
+      )}
+      {Object.keys(submissions).length > 0 && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            disabled={busy}
+            onClick={() => void reconcilePending()}
+          >
+            {busy ? "正在读取持久状态…" : "重新读取批次持久状态"}
+          </button>
+        </div>
+      )}
+      {!confirmationStorageAvailable && (
+        <StatusBanner variant="warning" title="批量确认已关闭">
+          <p>
+            无法读取或保存当前账号的逐项确认记录；请先恢复浏览器会话存储并重新读取批次状态。
+          </p>
+        </StatusBanner>
+      )}
+      {canPrepare.length > 0 && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={busy}
+            onClick={() => void prepareReady()}
+          >
+            {busy ? "正在准备…" : `为 ${canPrepare.length} 项生成计划摘要`}
+          </button>
+        </div>
+      )}
+      {confirmedChildren.map((child) => {
+        const confirmedPreparation = preparationFor(child);
+        return (
+          <StatusBanner
+            key={child.itemId}
+            variant="info"
+            title={`${child.itemId}：本次确认已经受理`}
+          >
+            <p>该精确子集已进入常驻 Worker；受理不代表文件整理已成功。</p>
+            {confirmedPreparation?.executionId && onOpenRecoveryExecution && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  onOpenRecoveryExecution(confirmedPreparation.executionId!)
+                }
+              >
+                查看关联执行结果
+              </button>
+            )}
+          </StatusBanner>
+        );
+      })}
+      {readyChildren.map((child) => {
+        const preparation = preparationFor(child)!;
+        const current = stateFor(child.itemId);
+        return (
+          <div className="mf-count-section" key={child.itemId}>
+            <h6>条目 {child.itemId}</h6>
+            <SamePagePlanSummary
+              token={token}
+              previewId={preparation.previewId}
+              selected={current.selected}
+              onSelected={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: {
+                    ...stateFor(child.itemId),
+                    selected: value,
+                  },
+                }))
+              }
+              allowOverwrite={current.allowOverwrite}
+              onAllowOverwrite={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: {
+                    ...stateFor(child.itemId),
+                    allowOverwrite: value,
+                  },
+                }))
+              }
+              allowCleanup={current.allowCleanup}
+              onAllowCleanup={(value) =>
+                setState((previous) => ({
+                  ...previous,
+                  [child.itemId]: {
+                    ...stateFor(child.itemId),
+                    allowCleanup: value,
+                  },
+                }))
+              }
+              busy={
+                busy ||
+                submissions[child.itemId] !== undefined ||
+                !confirmationStorageAvailable
+              }
+              onConfirm={() => void confirmSelected()}
+              heading="本项零变更摘要"
+              showConfirm={false}
+            />
+          </div>
+        );
+      })}
+      {notReady.length > 0 && (
+        <p className="mf-dashboard-meta">
+          未就绪 {notReady.length} 项（尚无当前持久摘要）：
+          {notReady.map((child) => child.itemId).join("、")}
+          。请在各自条目内完成决定后 重新分析，不会在此被执行。
+        </p>
+      )}
+      {readyChildren.length > 0 && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={
+              busy || selectedCount === 0 || !confirmationStorageAvailable
+            }
+            onClick={() => void confirmSelected()}
+          >
+            {busy ? "正在受理…" : `确认继续整理所选 ${selectedCount} 项`}
+          </button>
+        </div>
       )}
     </section>
   );
@@ -1465,7 +2092,6 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
-  onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onClose,
@@ -1473,12 +2099,6 @@ function RunEvidenceSection({
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
-  readonly onOpenRecoveryPreview?: (
-    previewId: string,
-    linkId: string,
-    taskId: string,
-    itemId: string,
-  ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onClose: () => void;
@@ -1602,7 +2222,13 @@ function RunEvidenceSection({
                         <tr key={result.resultId}>
                           <td>{result.resultId}</td>
                           <td>{result.operation ?? "—"}</td>
-                          <td>{result.status}</td>
+                          <td>
+                            {result.status}
+                            <AttachmentResults
+                              primaryCompleted={result.primaryCompleted}
+                              results={result.attachmentResults ?? []}
+                            />
+                          </td>
                           <td>
                             {RUN_EFFECT_CERTAINTY_LABELS[
                               result.effectCertainty
@@ -1699,7 +2325,6 @@ function RunEvidenceSection({
                 itemId={itemId}
                 runId={runId}
                 active={active}
-                onOpenRecoveryPreview={onOpenRecoveryPreview}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
               />

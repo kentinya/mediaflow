@@ -1,0 +1,581 @@
+/**
+ * Operator journey for the in-context creation workspace (Task 45.2 RO-2).
+ *
+ * These tests drive the real `/operations/organize/new` route with a stubbed
+ * API boundary.  The Preview and action-matrix payloads are the exact
+ * contract-captured documents the real Python API returns, so these tests
+ * exercise the real route tree, query boundaries and normalizers together.
+ * They prove the same-page preparation journey:
+ *
+ * - a full preparation shows its durable progress and links the exact plan
+ *   summary on the same page;
+ * - the confirmation button counts exactly the selected ready subset;
+ * - a material budget refusal never offers an executable prefix;
+ * - an ambiguous Execute response is never retried automatically and only the
+ *   bounded admission-outcome read resolves it.
+ */
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderApp } from "../../../tests/utils";
+import { authStore } from "../../shared/api/auth-store";
+import fixture from "../../entities/operations/__fixtures__/manual-operations.json";
+
+type Json = Record<string, unknown>;
+
+const documents = fixture as unknown as Record<string, Json>;
+const TOKEN = "creation-token";
+const DISCOVERY_ID = "prep-1";
+const PREVIEW_ID = "preview-1";
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function clone(name: string): Json {
+  return JSON.parse(JSON.stringify(documents[name])) as Json;
+}
+
+/** The exact contract Preview detail, retargeted to this workspace's ids. */
+function previewDocument(): Json {
+  const value = clone("organizePreviewDetail");
+  value["previewId"] = PREVIEW_ID;
+  value["intentId"] = "intent-1";
+  value["executionCandidateItemIds"] = ["item-1"];
+  const items = value["items"] as Json[];
+  const first = items[0]!;
+  first["itemId"] = "item-1";
+  first["previewItemId"] = "pitem-1";
+  const source = first["source"] as Json;
+  source["path"] = "Movies/One.2001.mkv";
+  source["filename"] = "One.2001.mkv";
+  (value["selection"] as Json)["selectedItemIds"] = ["item-1"];
+  (value["selection"] as Json)["unselectedItemIds"] = [];
+  const execute = (value["actions"] as Json)["execute"] as Json;
+  execute["path"] =
+    `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`;
+  return value;
+}
+
+function discoveryDocument(overrides: Record<string, unknown> = {}): Json {
+  return {
+    journey: "discovery",
+    discoveryId: DISCOVERY_ID,
+    resourceLibraryId: "library",
+    storageId: "source",
+    configurationSnapshotId: "active-1",
+    status: "completed",
+    version: 5,
+    createdAt: "2026-01-01T00:00:00+00:00",
+    updatedAt: "2026-01-01T00:00:00+00:00",
+    selection: {
+      scopeCount: 1,
+      scopes: [{ kind: "directory", path: "Movies" }],
+    },
+    budgets: {},
+    progress: {
+      phase: "prepared",
+      visitedEntries: 2,
+      visitedDirectories: 1,
+      pageFetches: 1,
+      primarySources: 1,
+      excludedEntries: 0,
+      unstableEntries: 0,
+      errorEntries: 0,
+      activeSeconds: 0.1,
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      findings: [],
+      reasons: [],
+      message: "the exact zero-mutation plan summary is ready",
+    },
+    primarySourceCount: 1,
+    admissionRequestId: null,
+    autoPrepare: true,
+    prepared: true,
+    previewId: PREVIEW_ID,
+    intentId: "intent-1",
+    frozen: true,
+    frozenAt: "2026-01-01T00:00:00+00:00",
+    pauseRequested: false,
+    cancelRequested: false,
+    nextObservationAt: null,
+    worker: {
+      ready: true,
+      condition: "ready",
+      durableState: "ready",
+      nextAction: "claim",
+    },
+    actions: {
+      pause: action(),
+      resume: action(),
+      cancel: action(),
+      finalize: action(),
+      prepare: action(),
+    },
+    sources: [],
+    nextAction: "open the linked exact plan summary",
+    failure: null,
+    sideEffects: "none",
+    zeroMutation: true,
+    execution: "not_available_from_discovery",
+    ...overrides,
+  };
+}
+
+function action() {
+  return {
+    available: false,
+    method: "POST",
+    path: null,
+    requiresVersion: true,
+    sideEffects: "none",
+    refusal: null,
+    pendingReason: null,
+    reason: null,
+    nextAction: null,
+  };
+}
+
+describe("organize creation workspace", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    authStore.clearToken();
+  });
+
+  it("shows the linked plan summary and confirms only the selected ready subset", async () => {
+    const user = userEvent.setup();
+    let executeBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          const first = (value["items"] as Json[])[0]!;
+          const second = JSON.parse(JSON.stringify(first)) as Json;
+          second["itemId"] = "item-2";
+          second["previewItemId"] = "pitem-2";
+          second["position"] = 1;
+          (second["source"] as Json)["filename"] = "Two.2002.mkv";
+          (second["source"] as Json)["path"] = "Movies/Two.2002.mkv";
+          value["items"] = [first, second];
+          value["executionCandidateItemIds"] = ["item-1", "item-2"];
+          (value["selection"] as Json)["selectedItemIds"] = [
+            "item-1",
+            "item-2",
+          ];
+          return jsonResponse(value);
+        }
+        if (
+          url === `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`
+        ) {
+          executeBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          return jsonResponse(
+            {
+              executionId: "exec-1",
+              taskId: "task-1",
+              status: "admitted",
+              selectedItemCount: 1,
+            },
+            202,
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "新建整理任务" });
+    // The same page shows the exact plan summary without a Preview jump.
+    await screen.findByRole("heading", { name: "计划摘要" });
+    await screen.findByText("One.2001.mkv");
+    // Deselect one ready item: the confirmation must count exactly one.
+    await user.click(
+      screen.getByRole("checkbox", { name: "选择 Two.2002.mkv" }),
+    );
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
+    });
+    await user.click(confirm);
+    await waitFor(() => expect(executeBody).not.toBeNull());
+    expect(executeBody?.["itemIds"]).toEqual(["item-1"]);
+    expect(executeBody?.["confirmation"]).toBe(true);
+  });
+
+  it("never offers an executable prefix after a material budget refusal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              status: "partial_success",
+              previewId: null,
+              prepared: false,
+              progress: {
+                phase: "partial",
+                visitedEntries: 5,
+                visitedDirectories: 1,
+                pageFetches: 1,
+                primarySources: 2,
+                excludedEntries: 0,
+                unstableEntries: 0,
+                errorEntries: 0,
+                activeSeconds: 0.1,
+                incomplete: true,
+                incompleteReason: "primary_limit",
+                refusalReasons: ["primary_limit"],
+                materialRefusal: "primary_limit",
+                findings: [],
+                reasons: [],
+                message: "bounded discovery stopped at a limit",
+              },
+              nextAction: "narrow the selected scope",
+            }),
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "新建整理任务" });
+    await screen.findByText(/不能冻结为可执行清单/);
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+  });
+
+  it("offers a same-page re-check whenever the backend advertises it", async () => {
+    const user = userEvent.setup();
+    let analyzePosts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(
+            discoveryDocument({
+              actions: {
+                pause: action(),
+                resume: action(),
+                cancel: action(),
+                finalize: action(),
+                prepare: {
+                  ...action(),
+                  available: true,
+                  method: "POST",
+                  path: `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`,
+                },
+              },
+            }),
+          );
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          return jsonResponse(previewDocument());
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
+        ) {
+          analyzePosts += 1;
+          return jsonResponse(
+            discoveryDocument({
+              status: "analyzing",
+              previewId: null,
+              prepared: false,
+            }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    const recheck = await screen.findByRole("button", {
+      name: "重新检查并更新摘要",
+    });
+    await user.click(recheck);
+    await waitFor(() => expect(analyzePosts).toBe(1));
+  });
+
+  it("keeps the unselected sibling confirmable after a selected item was admitted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          const first = (value["items"] as Json[])[0]!;
+          const second = JSON.parse(JSON.stringify(first)) as Json;
+          second["itemId"] = "item-2";
+          second["previewItemId"] = "pitem-2";
+          second["position"] = 1;
+          (second["source"] as Json)["filename"] = "Two.2002.mkv";
+          (second["source"] as Json)["path"] = "Movies/Two.2002.mkv";
+          value["items"] = [first, second];
+          value["executionCandidateItemIds"] = ["item-1", "item-2"];
+          (value["selection"] as Json)["selectedItemIds"] = [
+            "item-1",
+            "item-2",
+          ];
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          // item-1 was already admitted to one durable execution.
+          const value = clone("organizeExecutionList");
+          const first = (value["items"] as Json[])[0]!;
+          first["previewId"] = PREVIEW_ID;
+          first["intentId"] = "intent-1";
+          first["executionId"] = "exec-1";
+          first["taskId"] = "task-1";
+          const actions = first["actions"] as Json;
+          (actions["detail"] as Json)["path"] =
+            "/api/v1/operations/organize/executions/exec-1";
+          (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
+          first["selectedItemIds"] = ["item-1"];
+          first["unselectedItemIds"] = ["item-2"];
+          first["selectedItemCount"] = 1;
+          first["unselectedItemCount"] = 1;
+          return jsonResponse(value);
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    // The admitted item is shown as already accepted and cannot be re-selected.
+    await screen.findByText("已受理执行，不再纳入本次创建");
+    expect(
+      screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
+    ).toBeDisabled();
+    // The unselected sibling keeps its own confirmable state.
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+  });
+
+  it("shows grounded metadata candidates and saves a same-page identity choice", async () => {
+    const user = userEvent.setup();
+    let choiceBody: Record<string, unknown> | null = null;
+    let analyzePosts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          const value = previewDocument();
+          value["executionCandidateItemIds"] = [];
+          const first = (value["items"] as Json[])[0]!;
+          first["status"] = "blocked";
+          first["executionState"] = "not_available_in_this_task";
+          first["failure"] = {
+            category: "metadata_failure",
+            durableState:
+              "this is a zero-mutation preparation finding; no execution TaskItem or Result was created",
+            message: "metadata failure: no durable media identity was selected",
+            nextAction:
+              "choose one of this source's grounded metadata candidates on this page, then rerun the analysis",
+            retrySafe: true,
+            sideEffects: "none",
+          };
+          first["nextAction"] =
+            "choose one of this source's grounded metadata candidates on this page, then rerun the analysis";
+          (value["selection"] as Json)["selectedItemIds"] = [];
+          (value["actions"] as Json)["execute"] = {
+            ...((value["actions"] as Json)["execute"] as Json),
+            available: false,
+            reason: "no Preview item is current, complete and executable",
+          };
+          return jsonResponse(value);
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/intents/intent-1/items/item-1/choice`
+        ) {
+          choiceBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          const value = clone("organizeIntentChoice");
+          value["intentId"] = "intent-1";
+          const actions = value["actions"] as Json;
+          (actions["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          (actions["preview"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/previews";
+          return jsonResponse(value);
+        }
+        if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+          const value = clone("organizeIntent");
+          value["intentId"] = "intent-1";
+          value["status"] = "open";
+          const actions = value["actions"] as Json;
+          (actions["choice"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
+          (actions["preview"] as Json)["path"] =
+            "/api/v1/operations/organize/intents/intent-1/previews";
+          const item = (value["items"] as Json[])[0]!;
+          item["itemId"] = "item-1";
+          (item["source"] as Json)["path"] = "Movies/One.2001.mkv";
+          (item["source"] as Json)["filename"] = "One.2001.mkv";
+          item["allowedMetadataIdentities"] = [
+            {
+              mediaType: "movie",
+              provider: "tmdb",
+              providerId: "201",
+              title: "One",
+              year: 2001,
+            },
+            {
+              mediaType: "movie",
+              provider: "tmdb",
+              providerId: "999",
+              title: "One",
+              year: 2001,
+            },
+          ];
+          return jsonResponse(value);
+        }
+        if (
+          url ===
+          `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}/analyze`
+        ) {
+          analyzePosts += 1;
+          return jsonResponse(
+            discoveryDocument({ status: "analyzing", version: 6 }),
+          );
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    // The ambiguous candidates are explained on the same page.
+    await screen.findByText("未就绪");
+    // Both grounded candidates are offered as real, legal options.
+    const select = await screen.findByRole("combobox", {
+      name: "元数据身份 One.2001.mkv",
+    });
+    expect(
+      Array.from(select.querySelectorAll("option")).map((option) =>
+        option.getAttribute("value"),
+      ),
+    ).toContain("tmdb/999");
+    await user.selectOptions(select, "tmdb/999");
+    await waitFor(() => expect(choiceBody).not.toBeNull());
+    const body = choiceBody as unknown as Record<string, unknown>;
+    expect((body["metadata"] as Record<string, unknown>)["providerId"]).toBe(
+      "999",
+    );
+    // Saving a candidate re-enters the durable analysis on the same page.
+    await waitFor(() => expect(analyzePosts).toBe(1));
+  });
+
+  it("treats an ambiguous Execute response as unknown and reconciles without replay", async () => {
+    const user = userEvent.setup();
+    let executePosts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/operations/organize/discoveries/${DISCOVERY_ID}`) {
+          return jsonResponse(discoveryDocument());
+        }
+        if (url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
+          return jsonResponse(previewDocument());
+        }
+        if (
+          url === `/api/v1/operations/organize/previews/${PREVIEW_ID}/execute`
+        ) {
+          executePosts += 1;
+          throw new TypeError("simulated lost execute response");
+        }
+        if (
+          url.startsWith(
+            `/api/v1/operations/organize/previews/${PREVIEW_ID}/admission`,
+          )
+        ) {
+          return jsonResponse({
+            outcome: "known",
+            executionId: "exec-9",
+            taskId: "task-9",
+          });
+        }
+        if (url.startsWith("/api/v1/operations/organize/executions")) {
+          return jsonResponse({
+            items: [],
+            total: 0,
+            limit: 100,
+            truncated: false,
+          });
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/organize/new?discoveryId=${DISCOVERY_ID}`);
+
+    await screen.findByRole("heading", { name: "计划摘要" });
+    await user.click(
+      await screen.findByRole("button", { name: "确认整理 1 项" }),
+    );
+    // The ambiguous outcome is shown, never silently retried.
+    await screen.findByText("执行结果未知");
+    expect(executePosts).toBe(1);
+    // The bounded reconciliation read proves the durable admission.
+    await user.click(screen.getByRole("button", { name: "核对提交结果" }));
+    await waitFor(() => expect(executePosts).toBe(1));
+  });
+});

@@ -79,10 +79,12 @@ import {
 } from "../../entities/rules/rules-workspace";
 import {
   normalizeManualRecoveryLink,
+  normalizeManualRecoveryPreparation,
   normalizeMetadataSearch,
   normalizeRecoveryBatch,
   normalizeTaskItemRecovery,
   type ManualRecoveryLinkModel,
+  type ManualRecoveryPreparationModel,
   type MetadataSearchModel,
   type RecoveryBatchModel,
   type TaskItemRecoveryModel,
@@ -703,17 +705,21 @@ import {
   normalizeRunOverview,
   RUN_STATUSES,
   type RunInventoryPage,
+  type RunProblemType,
   type RunStatus,
   type RunSummary,
+  type RunView,
 } from "../../entities/operations/run";
 import {
   normalizeRunItemsPage,
   normalizeRunRecordsPage,
   normalizeRunItemEvidence,
+  normalizeRunProblemItemsPage,
   normalizeRunExportPackage,
   type RunExportPackage,
   type RunItemEvidence,
   type RunItemsPage,
+  type RunProblemItemsPage,
   type RunRecordsPage,
 } from "../../entities/operations/run-detail";
 import {
@@ -1259,9 +1265,16 @@ export interface RunInventoryQueryOptions {
   readonly q?: string | null;
   readonly from?: string | null;
   readonly to?: string | null;
+  /** Exact bounded historical source scope; cursor-bound with all filters. */
+  readonly source?: string | null;
   /** Submit the overlapping attention facet (`attention=true`); a null or
    * absent value reads the unfiltered population. */
   readonly attention?: boolean | null;
+  /** One of the nine sibling views; null/absent reads the full population. */
+  readonly view?: RunView | null;
+  /** One cross-Task recovery problem type; null/absent applies no problem
+   * filter beyond the selected view's own predicate. */
+  readonly problem?: RunProblemType | null;
   readonly limit?: number;
   readonly cursor?: string | null;
 }
@@ -1273,11 +1286,14 @@ export function runInventoryUrl(options: RunInventoryQueryOptions): string {
   if (options.q) params.set("q", options.q);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
+  if (options.source) params.set("source", options.source);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   // The facet is a boolean server parameter: only `attention=true` restricts
   // the population, so an unfiltered read keeps its exact original URL.
   if (options.attention) params.set("attention", "true");
+  if (options.view) params.set("view", options.view);
+  if (options.problem) params.set("problem", options.problem);
   const qs = params.toString();
   return `/api/v1/operations/runs${qs ? `?${qs}` : ""}`;
 }
@@ -1418,6 +1434,29 @@ export function runItemEvidenceUrl(runId: string, itemId: string): string {
   return `${runDetailBase(runId)}/items/${encodeURIComponent(itemId)}`;
 }
 
+/**
+ * One problem-type file page of a recovery list entry (Slice 45 RO-3).
+ *
+ * The problem type is a closed backend token; the page is server-filtered and
+ * server-paged on the same durable predicate the recovery list uses.
+ */
+export interface RunProblemItemsQueryOptions {
+  readonly runId: string;
+  readonly problem: RunProblemType;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function runProblemItemsUrl(
+  options: RunProblemItemsQueryOptions,
+): string {
+  const params = new URLSearchParams();
+  params.set("problem", options.problem);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  return `${runDetailBase(options.runId)}/problem-items?${params.toString()}`;
+}
+
 export function runExportUrl(runId: string, limit: number): string {
   return `${runDetailBase(runId)}/export?limit=${String(limit)}`;
 }
@@ -1456,6 +1495,28 @@ async function parseRunDetailResponse<T>(
 }
 
 export type RunItemsRead = OperationsRead<RunItemsPage>;
+
+export type RunProblemItemsRead = OperationsRead<RunProblemItemsPage>;
+
+export async function fetchRunProblemItems(
+  token: string | null,
+  options: RunProblemItemsQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunProblemItemsRead> {
+  if (!isSafeIdentifier(options.runId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runProblemItemsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRunProblemItemsPage);
+}
 
 export async function fetchRunItems(
   token: string | null,
@@ -1752,11 +1813,7 @@ import {
   normalizeManualActionMatrix,
   type ManualActionMatrixModel,
 } from "../../entities/operations/manual-actions";
-import {
-  normalizeManualScan,
-  type ManualScanModel,
-  type ScanMode,
-} from "../../entities/operations/scan";
+
 import {
   normalizeManualPreview,
   normalizeManualPreviewListPage,
@@ -1844,6 +1901,7 @@ import {
 } from "../../entities/operations/notification";
 import {
   normalizeBoundedText,
+  normalizeIdentityText,
   readRecord,
 } from "../../entities/shared/normalize";
 import { normalizePrincipalId } from "../auth/principal-identity";
@@ -1908,184 +1966,6 @@ export async function fetchManualActionMatrix(
     return { ok: true, model: normalizeManualActionMatrix(payload) };
   } catch {
     throw new OperationsApiError("malformed");
-  }
-}
-
-// --- Submit server-bound scan ---
-
-export interface SubmitScanOptions {
-  readonly scopeKind: "file" | "resourceLibrary";
-  readonly fileId?: string | null;
-  readonly resourceLibraryId?: string | null;
-  /**
-   * The exact bounded Scan mode the backend requires. The operator selects it
-   * from the modes the action matrix advertises; nothing is defaulted here.
-   */
-  readonly mode: ScanMode;
-}
-
-export type SubmitScanResult =
-  | { readonly ok: true; readonly model: ManualScanModel }
-  | { readonly ok: false; readonly status: number; readonly code: string };
-
-export async function submitServerBoundScan(
-  token: string | null,
-  options: SubmitScanOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<SubmitScanResult> {
-  const body: Record<string, string> = {
-    scopeKind: options.scopeKind,
-    mode: options.mode,
-  };
-  if (options.fileId) body.fileId = options.fileId;
-  if (options.resourceLibraryId)
-    body.resourceLibraryId = options.resourceLibraryId;
-
-  let response: Response;
-  try {
-    response = await fetchImpl("/api/v1/operations/scans", {
-      method: "POST",
-      headers: operationsMutationHeaders(token),
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return { ok: false, status: 0, code: "transport_unavailable" };
-  }
-  if (!response.ok) {
-    let code = "request_rejected";
-    try {
-      const errBody = await response.json();
-      const error = errBody?.error;
-      if (typeof error?.code === "string") code = error.code;
-    } catch {
-      // ignore
-    }
-    return { ok: false, status: response.status, code };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
-  }
-  try {
-    return { ok: true, model: normalizeManualScan(payload) };
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
-  }
-}
-
-// --- Fetch scan detail ---
-
-export interface ScanDetailQueryOptions {
-  readonly taskId: string;
-  readonly itemLimit?: number;
-  readonly itemCursor?: string | null;
-}
-
-export type ScanDetailRead =
-  | { readonly ok: true; readonly model: ManualScanModel }
-  | { readonly ok: false; readonly failure: OperationsFailure };
-
-export async function fetchManualScanDetail(
-  token: string | null,
-  options: ScanDetailQueryOptions,
-  fetchImpl: FetchLike = fetch,
-): Promise<ScanDetailRead> {
-  if (!isSafeIdentifier(options.taskId)) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  const params = new URLSearchParams();
-  if (options.itemLimit !== undefined)
-    params.set("itemLimit", String(options.itemLimit));
-  if (options.itemCursor) params.set("itemCursor", options.itemCursor);
-  const qs = params.toString();
-  const url = `/api/v1/operations/scans/${encodeURIComponent(options.taskId)}${qs ? `?${qs}` : ""}`;
-
-  let response: Response;
-  try {
-    response = await fetchImpl(url, {
-      method: "GET",
-      headers: operationsHeaders(token),
-    });
-  } catch {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (response.status === 401) {
-    throw new OperationsApiError("unauthorized");
-  }
-  if (response.status === 403) {
-    throw new OperationsApiError("forbidden");
-  }
-  if (response.status === 404) {
-    return { ok: false, failure: operationsFailure("not_found") };
-  }
-  if (response.status >= 500) {
-    return { ok: false, failure: operationsFailure("unavailable") };
-  }
-  if (!response.ok) {
-    return { ok: false, failure: operationsFailure("rejected") };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-  try {
-    return { ok: true, model: normalizeManualScan(payload) };
-  } catch {
-    throw new OperationsApiError("malformed");
-  }
-}
-
-// --- Cancel scan ---
-
-export type CancelScanResult =
-  | { readonly ok: true; readonly model: ManualScanModel }
-  | { readonly ok: false; readonly status: number; readonly code: string };
-
-export async function submitManualScanCancellation(
-  token: string | null,
-  taskId: string,
-  fetchImpl: FetchLike = fetch,
-): Promise<CancelScanResult> {
-  if (!isSafeIdentifier(taskId)) {
-    return { ok: false, status: 0, code: "invalid_request" };
-  }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/operations/scans/${encodeURIComponent(taskId)}/cancel`,
-      {
-        method: "POST",
-        headers: operationsMutationHeaders(token),
-      },
-    );
-  } catch {
-    return { ok: false, status: 0, code: "transport_unavailable" };
-  }
-  if (!response.ok) {
-    let code = "request_rejected";
-    try {
-      const errBody = await response.json();
-      const error = errBody?.error;
-      if (typeof error?.code === "string") code = error.code;
-    } catch {
-      // ignore
-    }
-    return { ok: false, status: response.status, code };
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
-  }
-  try {
-    return { ok: true, model: normalizeManualScan(payload) };
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
   }
 }
 
@@ -2502,6 +2382,100 @@ export async function executeTaskItemRecoveryOrganize(
   );
 }
 
+/**
+ * Publish one non-authorizing plan summary of a recovery source item.
+ *
+ * This is a read/prepare action: it creates no execution authority and
+ * performs no Storage mutation.  The operator still has to explicitly confirm
+ * a ready subset through `confirmTaskItemRecoveryPreparation`.
+ */
+export async function prepareTaskItemRecoverySummary(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  expectedCheckpointVersion: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryPreparationModel>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `${taskItemRecoveryBase(taskId, itemId)}/prepare-summary`,
+    { expectedCheckpointVersion },
+    normalizeManualRecoveryPreparation,
+    fetchImpl,
+  );
+}
+
+/**
+ * Confirm an exact ready subset of one prepared recovery summary.
+ *
+ * Only the explicitly selected ready items are admitted; the linked execution
+ * is the durable result of that confirmation.  A repeated or concurrent call
+ * resolves to the same durable execution instead of admitting a second one.
+ */
+export async function confirmTaskItemRecoveryPreparation(
+  token: string | null,
+  preparationId: string,
+  options: {
+    readonly itemIds: readonly string[];
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryConfirmationModel>> {
+  if (!isSafeIdentifier(preparationId) || options.itemIds.length === 0) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/manual-recovery-preparations/${encodeURIComponent(preparationId)}/confirm`,
+    {
+      itemIds: [...options.itemIds],
+      confirmation: true,
+      allowOverwrite: options.allowOverwrite,
+      allowSourceCleanup: options.allowSourceCleanup,
+    },
+    normalizeManualRecoveryConfirmation,
+    fetchImpl,
+  );
+}
+
+/** One bounded, secret-free confirmation result: the admitted execution. */
+export interface ManualRecoveryConfirmationModel {
+  readonly executionId: string;
+  readonly taskId: string;
+  readonly status: string;
+  readonly selectedItemIds: readonly string[];
+  readonly nextAction: string;
+}
+
+export function normalizeManualRecoveryConfirmation(
+  payload: unknown,
+): ManualRecoveryConfirmationModel {
+  const source = readRecord(payload, "manualRecoveryConfirmation");
+  const rawItems = source["selectedItemIds"];
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    throw new Error(
+      "manual recovery confirmation response did not match its contract",
+    );
+  }
+  return {
+    executionId: normalizeIdentityText(
+      source["executionId"],
+      "executionId",
+      200,
+    ),
+    taskId: normalizeIdentityText(source["taskId"], "taskId", 200),
+    status: normalizeBoundedText(source["status"], "status"),
+    selectedItemIds: rawItems.map((value) =>
+      normalizeIdentityText(value, "selectedItemId", 200),
+    ),
+    nextAction: normalizeBoundedText(source["nextAction"], "nextAction"),
+  };
+}
+
 export interface SubmitOrganizeIntentOptions {
   readonly scopeKind: "file" | "resourceLibrary";
   readonly fileId?: string | null;
@@ -2592,6 +2566,18 @@ export interface UpdateOrganizeChoiceOptions {
   readonly namingPolicyId?: string;
   readonly classificationPolicyId?: string;
   readonly organizePolicyId?: string;
+  /**
+   * The pinned metadata identity already carried by the intent item.  The
+   * backend validates it against durable source-linked evidence; it is not a
+   * free-form provider payload.
+   */
+  readonly metadata?: {
+    readonly provider: string | null;
+    readonly providerId: string | null;
+    readonly mediaType: string | null;
+    readonly title: string | null;
+    readonly year: number | null;
+  };
 }
 
 export async function updateOrganizeChoice(
@@ -2619,6 +2605,15 @@ export async function updateOrganizeChoice(
     if (value !== undefined) {
       body[field] = value;
     }
+  }
+  if (options.metadata !== undefined) {
+    body["metadata"] = {
+      provider: options.metadata.provider,
+      providerId: options.metadata.providerId,
+      mediaType: options.metadata.mediaType,
+      title: options.metadata.title,
+      year: options.metadata.year,
+    };
   }
   return submitOrganizeMutation(
     token,
@@ -3645,6 +3640,13 @@ export interface FilesOrganizeAdmissionOptions {
    * when the runtime has no cryptographic random source.
    */
   readonly requestId?: string;
+  /**
+   * Whether this admission is a full same-page preparation (RO-2): after the
+   * bounded walk the resident Worker freezes the reviewed sources and links
+   * one exact zero-mutation plan summary.  Omitted (false) keeps the explicit
+   * Finalize discovery contract.
+   */
+  readonly autoPrepare?: boolean;
 }
 
 export type FilesDiscoveryAdmissionResult =
@@ -3696,6 +3698,7 @@ export async function submitFilesDiscovery(
         },
         body: JSON.stringify({
           paths: [...options.paths],
+          ...(options.autoPrepare === true ? { autoPrepare: true } : {}),
           ...(options.requestId === undefined
             ? {}
             : { requestId: options.requestId }),
@@ -3968,6 +3971,70 @@ export type OrganizeDiscoveryFinalizeResult =
       readonly code: string;
       readonly nextAction: string | null;
     };
+
+export interface OrganizeDiscoveryAnalysisOptions {
+  readonly discoveryId: string;
+  readonly expectedVersion: number;
+}
+
+/**
+ * Re-enter the durable analysis stage of a full preparation after the operator
+ * saved a legal correction on its linked intent.
+ *
+ * This records one versioned request only: the resident Worker re-runs the
+ * complete zero-mutation analysis under the same pinned configuration and
+ * links a new exact Preview.  It grants no execution authority.
+ */
+export async function requestOrganizeDiscoveryAnalysis(
+  token: string | null,
+  options: OrganizeDiscoveryAnalysisOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeDiscoveryControlResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/discoveries/${encodeURIComponent(
+        options.discoveryId,
+      )}/analyze`,
+      {
+        method: "POST",
+        headers: { ...operationsMutationHeaders(token) },
+        body: JSON.stringify({ expectedVersion: options.expectedVersion }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  if (!response.ok) {
+    return discoveryErrorResult(response.status, payload);
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeDiscovery(payload) };
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+}
 
 /**
  * Freeze the discovered source list and link the existing durable manual

@@ -156,6 +156,8 @@ export interface TaskItemCheckpoint {
 }
 
 export interface TaskResultSummary {
+  readonly primaryCompleted?: boolean;
+  readonly attachmentResults?: readonly AttachmentResult[];
   readonly resultId: string;
   readonly taskId: string;
   readonly itemId: string;
@@ -180,6 +182,56 @@ export interface TaskResultSummary {
   readonly uncertainEffects: readonly string[];
   /** The Organize cleanup outcome attached to this result, when any. */
   readonly cleanupStatus: string | null;
+}
+
+export interface AttachmentResult {
+  readonly type: string;
+  readonly language: string | null;
+  readonly operation: string;
+  readonly status: string;
+  readonly reason: string | null;
+  readonly sourceStorageId: string;
+  readonly sourcePath: string;
+  readonly destinationStorageId: string;
+  readonly destinationPath: string;
+  readonly effectCertainty: string;
+  readonly completedOperations: readonly string[];
+  readonly nextAction: string;
+}
+
+export function normalizeAttachmentResults(
+  value: unknown,
+): readonly AttachmentResult[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 64) return fail();
+  return value.map((entry) => {
+    const source = readRecord(entry, "attachment_result");
+    return {
+      type: text(source, "type"),
+      language: optionalText(source, "language"),
+      operation: text(source, "operation"),
+      status: normalizeEnum(source["status"], "attachment.status", [
+        "success",
+        "failed",
+        "not_executed",
+      ] as const),
+      reason: optionalText(source, "reason"),
+      sourceStorageId: text(source, "source_storage_id"),
+      sourcePath: text(source, "source_path"),
+      destinationStorageId: text(source, "destination_storage_id"),
+      destinationPath: text(source, "destination_path"),
+      effectCertainty: normalizeEnum(
+        source["effect_certainty"],
+        "attachment.effect_certainty",
+        EFFECT_CERTAINTY_VALUES,
+      ),
+      completedOperations: normalizeTextArray(
+        source["completed_operations"],
+        "attachment.completed_operations",
+      ),
+      nextAction: text(source, "next_action"),
+    };
+  });
 }
 
 export interface TaskDetailPage {
@@ -415,6 +467,11 @@ export function normalizeTaskResultSummary(
     fail();
   }
   return {
+    primaryCompleted:
+      source["primary_completed"] === undefined
+        ? false
+        : flag(source, "primary_completed"),
+    attachmentResults: normalizeAttachmentResults(source["attachment_results"]),
     resultId: text(source, "result_id"),
     taskId: text(source, "task_id"),
     itemId: text(source, "item_id"),

@@ -394,6 +394,8 @@ class PersistentResultRecord:
     source_occurrence_id: str | None = None
     source_fingerprint: str | None = None
     source_fingerprint_state: str = "unverified"
+    primary_completed: bool = False
+    attachment_results: tuple[dict[str, object], ...] = ()
 
 
 def redact_persistent_result(
@@ -426,6 +428,9 @@ def redact_persistent_result(
         uncertain_effects=tuple(
             redact_evidence_text(value) if isinstance(value, str) else redact_evidence_value(value)
             for value in result.uncertain_effects
+        ),
+        attachment_results=tuple(
+            redact_evidence_value(value) for value in result.attachment_results[:64]
         ),
     )
 
@@ -477,6 +482,18 @@ class PersistentTaskRepository(Protocol):
     def get_manual_preview(self, preview_id: str) -> ManualOrganizePreview | None: ...
     def list_manual_previews(
         self, intent_id: str, *, limit: int = 100
+    ) -> tuple[ManualOrganizePreview, ...]: ...
+    def list_manual_previews_by_source(
+        self,
+        storage_id: str,
+        path: str,
+        *,
+        resource_library_id: str | None = None,
+        source_fingerprint: str | None = None,
+        occurrence_id: str | None = None,
+        configuration_snapshot_id: str | None = None,
+        configuration_snapshot_digest: str | None = None,
+        limit: int = 10,
     ) -> tuple[ManualOrganizePreview, ...]: ...
     def get_latest_manual_preview(self, intent_id: str) -> ManualOrganizePreview | None: ...
     def mark_manual_preview_items_stale(

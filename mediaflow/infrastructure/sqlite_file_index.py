@@ -273,7 +273,9 @@ class SQLiteFileIndexRepository:
                 r.uncertain_effects AS r_uncertain_effects,
                 r.source_occurrence_id AS r_source_occurrence_id,
                 r.source_fingerprint AS r_source_fingerprint,
-                r.source_fingerprint_state AS r_source_fingerprint_state
+                r.source_fingerprint_state AS r_source_fingerprint_state,
+                r.primary_completed AS r_primary_completed,
+                r.attachment_results AS r_attachment_results
             FROM file_index f
             LEFT JOIN task_results r ON r.result_id = (
                 SELECT r2.result_id FROM task_results r2
@@ -705,6 +707,8 @@ class SQLiteFileIndexRepository:
             row["r_source_fingerprint_state"]
             if "r_source_fingerprint_state" in row.keys()
             else "unverified",
+            primary_completed=bool(row["r_primary_completed"]),
+            attachment_results=tuple(json.loads(row["r_attachment_results"] or "[]")),
         )
         return FileCatalogEnrichedRecord(SQLiteFileIndexRepository._record(row), result)
 

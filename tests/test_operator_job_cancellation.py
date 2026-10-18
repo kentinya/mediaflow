@@ -53,7 +53,7 @@ class OperatorJobCancellationTests(unittest.TestCase):
 
     def test_pending_and_running_cancellation_reuse_existing_service(self) -> None:
         service = AutomationJobService(self.repository)
-        running = service.submit("scan")
+        running = service.submit("preview")
         pending = service.submit("preview")
         self.repository.claim_next_job(datetime.now(UTC))
 
@@ -89,7 +89,7 @@ class OperatorJobCancellationTests(unittest.TestCase):
         self.assertNotIn(running.job_id, json.dumps(audit_routes))
 
     def test_cancel_contract_rejects_method_query_body_and_bad_path(self) -> None:
-        job = AutomationJobService(self.repository).submit("scan")
+        job = AutomationJobService(self.repository).submit("preview")
         path = f"/api/v1/jobs/{job.job_id}/cancel"
         self.assertEqual(request(self.api, "GET", path, token="operator-token")[0], 405)
         self.assertEqual(
@@ -113,7 +113,7 @@ class OperatorJobCancellationTests(unittest.TestCase):
         """
 
         service = AutomationJobService(self.repository)
-        service.submit("scan")
+        service.submit("preview")
         claimed = self.repository.claim_next_job(datetime.now(UTC))
         assert claimed is not None
         self.repository.request_job_cancellation(
@@ -153,7 +153,7 @@ class OperatorJobCancellationTests(unittest.TestCase):
         worker = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
         try:
             service = AutomationJobService(self.repository)
-            service.submit("scan")
+            service.submit("preview")
             claimed = worker.claim_next_job(datetime.now(UTC))
             assert claimed is not None
             # The second connection durably accepts the cancellation for the

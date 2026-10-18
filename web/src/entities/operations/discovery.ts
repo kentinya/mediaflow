@@ -34,6 +34,7 @@ export type OrganizeDiscoveryStatus =
   | "running"
   | "paused"
   | "waiting_stability"
+  | "analyzing"
   | "completed"
   | "partial_success"
   | "failed"
@@ -101,6 +102,11 @@ export interface OrganizeDiscoveryAction {
    * deliberately not offered yet, such as a pause whose safe-boundary
    * acknowledgement has not landed. `null` when the action is not pending. */
   readonly pendingReason: string | null;
+  /** A bounded explanation of why a mutating action is refused, published by
+   * the backend so the page can explain the refusal without inventing one. */
+  readonly reason: string | null;
+  /** The backend's own next action for an unavailable mutating action. */
+  readonly nextAction: string | null;
 }
 
 export interface OrganizeDiscoveryModel {
@@ -119,6 +125,11 @@ export interface OrganizeDiscoveryModel {
   readonly progress: OrganizeDiscoveryProgress;
   readonly primarySourceCount: number;
   readonly intentId: string | null;
+  /** Whether this admission is a full same-page preparation (RO-2). */
+  readonly autoPrepare: boolean;
+  /** The exact read-only Preview linked by a completed preparation. */
+  readonly previewId: string | null;
+  readonly prepared: boolean;
   readonly frozen: boolean;
   readonly pauseRequested: boolean;
   readonly cancelRequested: boolean;
@@ -141,6 +152,7 @@ export interface OrganizeDiscoveryModel {
     readonly resume: OrganizeDiscoveryAction;
     readonly cancel: OrganizeDiscoveryAction;
     readonly finalize: OrganizeDiscoveryAction;
+    readonly prepare: OrganizeDiscoveryAction;
   };
   readonly sources: readonly OrganizeDiscoverySource[];
   readonly nextAction: string;
@@ -168,6 +180,7 @@ const STATUSES: ReadonlySet<string> = new Set([
   "running",
   "paused",
   "waiting_stability",
+  "analyzing",
   "completed",
   "partial_success",
   "failed",
@@ -218,6 +231,14 @@ function normalizeAction(
       typeof record.pendingReason === "string" &&
       record.pendingReason.length > 0
         ? record.pendingReason
+        : null,
+    reason:
+      typeof record.reason === "string" && record.reason.length > 0
+        ? record.reason
+        : null,
+    nextAction:
+      typeof record.nextAction === "string" && record.nextAction.length > 0
+        ? record.nextAction
         : null,
   };
 }
@@ -353,6 +374,9 @@ export function normalizeOrganizeDiscovery(
       "primarySourceCount",
     ),
     intentId: optionalText(record, "intentId"),
+    autoPrepare: record["autoPrepare"] === true,
+    previewId: optionalText(record, "previewId"),
+    prepared: record["prepared"] === true,
     frozen: record["frozen"] === true,
     pauseRequested: record["pauseRequested"] === true,
     cancelRequested: record["cancelRequested"] === true,
@@ -377,6 +401,22 @@ export function normalizeOrganizeDiscovery(
       resume: normalizeAction(actions, "resume"),
       cancel: normalizeAction(actions, "cancel"),
       finalize: normalizeAction(actions, "finalize"),
+      // The preparation re-analysis action is additive: a legacy projection
+      // that predates it simply offers no such action.
+      prepare:
+        actions["prepare"] === undefined
+          ? {
+              available: false,
+              method: null,
+              path: null,
+              requiresVersion: false,
+              sideEffects: "none",
+              refusal: null,
+              pendingReason: null,
+              reason: null,
+              nextAction: null,
+            }
+          : normalizeAction(actions, "prepare"),
     },
     sources: ((rawSources ?? []) as unknown[]).map((item, index) => {
       const source = readRecord(item, `sources[${index}]`);

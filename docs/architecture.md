@@ -75,7 +75,9 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
     → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
-    → Slice 43 — V2 Automation Workspace and Engine Settings (ACTIVE; resumed, unaccepted)
+    → Slice 43 — V2 Automation Workspace and Engine Settings (PLANNED; FROZEN BY USER, unaccepted)
+    → Slice 44 — Existing V2 Pages Functional Improvements (PASS / CLOSED)
+    → Slice 45 — V2 Task Center Redesign and Recovery Pages (ACTIVE; TARGET)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -592,6 +594,130 @@ Review inbox, history cleanup, universal rollback or automatic uncertain replay 
 These are accepted CURRENT facts at Implementation Head
 `ce3fc2a3e70d40279fa725b5d7dc838d11123980`, reviewed by A on 2026-10-06.
 
+## TARGET — Task Center query, summary confirmation and typed recovery (Slice45)
+
+The selected user journey and nine visual references are in
+[task-center-page-spec.md](task-center-page-spec.md); acceptance is V2-OPS-009–012 and the ACTIVE
+root Contract. This is TARGET, not an implementation claim. The accepted Slice42 CURRENT read
+model above remains the actual baseline until implementation and A closure.
+
+```text
+Nine task-center list routes + native task/type-scoped processing
+  -> shared typed authenticated query/command boundary
+  -> Python authorized run/recovery projection and shared application orchestration
+  -> existing Job / Task / TaskItem / Result / blocker / checkpoint / continuation repositories
+  -> explicit bounded prepare -> in-context exact plan summary -> explicit confirmation
+  -> existing admission / resident Worker / OrganizerExecutor
+```
+
+Extend the unified run read model with explicit view/recovery-kind semantics and bounded source,
+text/type/time filters. Query the complete authorized population before grouping each recovery
+kind by its real Task/run identity; derive Task totals and distinct affected-item totals on a
+consistent read basis. Ordinary Pending is not automatically a human-action blocker. Current
+linked blockers/checkpoints/actions determine membership; a historical failed Result alone cannot
+keep a resolved item pending. One Task may belong to several views for different unresolved items.
+Do not fetch an arbitrary page of Tasks and join/filter it in the browser or invent relations from
+labels, paths or timestamps. Preserve pre-Task admissions, historical pinned display and unknowns.
+
+Keep runtime lifecycle, per-item disposition, current problem and effect certainty separate.
+Recovery classification/action decisions belong to Python application behavior; persistence supplies
+bounded queries and indexes as needed without creating another lifecycle/queue/authority. Additive
+schema changes, if necessary, retain supported-work outcomes, immutable pins, Results and audit
+meaning. Original and continuation attempts remain explicitly traceable rather than overwritten.
+The prelaunch Scan amendment below removes a dedicated old standalone-Scan compatibility obligation;
+it does not authorize deleting runtime/history data or weakening shared persistence safety.
+
+Manual creation composes live ResourceLibrary source selection, existing confined discovery and
+exact source identities with the production recognition/metadata/policy/planning/attachment chain.
+Long preparation uses existing durable work/Worker boundaries, not a synchronous HTTP media loop.
+The current creation interface renders its persisted exact summary (source/completeness, eligible
+subset, attachments, operations/destinations, unready findings and destructive effects) before a
+separate explicit confirmation. Preparation has zero Storage mutation and no execution authority;
+REQ-ORG-011 remains intact. Unselected/unready preparation records remain independently inspectable
+without becoming executable authority or a fabricated formal-review backlog.
+
+Confirmation atomically binds the reviewed plans, exact selected ready subset, actor/permissions,
+source evidence, immutable runtime and permitted effects to existing execution admission. Use the
+existing revalidation, deduplication, locks/leases/fences and OrganizerExecutor mutation boundary.
+Changed material source/plan evidence requires an updated summary and fresh intent in the same
+interface. A legal old pin does not silently become today's Active. Unknown submissions reconcile
+the exact durable request; reads and reconnects never re-admit work.
+
+Recovery pages group cross-Task problems but processing stays on the selected Task/type's files.
+Reuse TaskItemRecoveryService, legal review/correction/conflict services, checkpoint admission and
+durable continuations. Safely compose analysis, then display the fresh exact summary and confirm
+mutation in context. Remove mandatory standalone Preview UI/routes/actions from creation, recovery
+and remaining-scope reauthorization; retain any useful backend immutable plan/Preview storage as an
+internal mechanism. General DryRun and Rules tests remain outside retirement. Existing within-Task
+bounded batch analysis keeps per-item acceptance/refusal; no new cross-Task mutation engine.
+
+Retire standalone Scan admissions and executable standalone command/retry/continuation branches
+across Web/API/CLI, then remove exclusive code. Keep genuinely shared Scanner, scan_filters and
+Storage discovery/stability behavior. Under the user-approved 2026-10-18 prelaunch revision, there is
+no production old-Scan population to migrate: do not retain/build a Scan-only historical service,
+detail/cancel/export surface, startup cleanup, owner takeover or old-work migration mechanism.
+The final first-deployment instruction supersedes thin retirement refusals: remove Scan routes,
+aliases, CLI registration/help, dedicated readiness/action entries and specialized retirement guards.
+Ordinary not-found/argument errors and shared supported-type validation reject before discovery,
+admission or authority creation; no retirement page, 410, guidance or hidden diagnostic alias remains.
+Organization/Automation dependencies that instruct operators to run Scan must
+perform bounded observations within their own workflow, retaining real elapsed stability checks.
+Other supported Task/Result/pin/audit/claim safety and history remain unchanged; no media/runtime data
+is cleared. Remove definition-bound scan-only/scan-and-plan values/aliases/defaults and exclusive
+publication/scheduling/admission/dispatch/continuation as the user-authorized narrow exception to
+frozen Slice43. Shared planning, supported scheduled Preview and diagnostic Preview/DryRun/Rules tests
+remain where actually consumed; do not replace removed defaults with implicit organizing permission.
+Fresh supported schema omits Scan-exclusive tables; no old-Scan/V1 parity, migration or history layer
+is required. Same-version supported-work reopen/restart/recovery remains required. FileIndex removal
+stays a separate unit in this Slice; the remaining Automation workspace/settings scope stays frozen.
+
+Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
+columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,
+one-shot authority, revoked unattended authority and per-item unknown effects preserve existing
+semantics. Historical Task/Job deep links remain diagnostic native reads. Bounded visible polling,
+queries, exports and navigation create no Jobs, Provider calls or Storage mutation. No Node runtime
+server, Provider/auth redesign, distributed persistence or general rollback is introduced.
+
+## TARGET — FileIndex retirement and shared live listing (Slice45)
+
+[The full retirement design](file-index-retirement-spec.md) adds V2-FILES-005/006 to the current
+Slice. CURRENT index descriptions elsewhere remain baseline facts pending implementation/acceptance.
+
+```text
+CLI files list / ResourceLibrary Files / MediaLibrary Files
+  -> one library-kind/ID + relative-directory application boundary
+  -> exact Active -> confined Storage list/stat -> bounded live response
+
+Explicit organize/maintenance/recovery
+  -> work-scoped exact sources/observations/plans/pins
+  -> existing Task/Result/checkpoint/claim/lease/fence -> OrganizerExecutor
+```
+
+Reuse RuntimeFilesBrowserService and its two library projections for CLI and Web; remove its
+obsolete FileIndex composition argument. Browsing has no catalog/observation/Task/Result writes,
+Provider/Hash calls or media effects, and does not initialize/migrate a database as a listing side
+effect. Exact kind/ID/root/cursor/path/whitespace rules remain shared. No global index fallback.
+
+Remove FileCatalog/FileIndex products, domain/repositories/memory stand-ins, dedicated schema,
+Worker/API/CLI startup composition, global occurrence/disposition directory and Missing catalog
+reconciliation, automatic Result/direct-command synchronization and its repair/reprocess paths.
+Fresh supported runtime schemas contain no FileIndex tables. Dashboard and other projections lose
+index-only metrics/links without starting Storage walks or inventing totals; ordinary Task metrics remain.
+
+Existing Scanner/Automation/Preview/recovery consumers must use Storage and exact work-scoped
+evidence without constructing an index. Reuse existing bounded discovery/Task observation storage;
+do not rename the same global path catalog as cache or implement a no-op repository. Per-work
+fingerprints, scope, source version, stable-size elapsed observations, pinned plans, locks, completed
+steps, Results and audits remain necessary; they do not become a browse catalog. Task/Result
+publication errors never authorize replay of completed/uncertain mutation.
+
+No production old-index migration, dual write, historical FileID/API compatibility or takeover
+mechanism is required. Do not clear, drop or silently rebuild current runtime data/media; unsupported
+development old schemas fail with actionable new-isolated-data guidance. Current supported Task/
+Result reopen and ordinary failure atomicity remain. Shared dependency removal in existing Automation
+foundations is allowed; frozen business-mode retirement/workspace changes and frozen-branch imports
+remain excluded. Production wheel/Docker prove real listing and consumers with no index assembly.
+
 ## Manual organize
 
 Manual organization uses a durable intent and exact immutable Preview before execution. The Preview
@@ -678,6 +804,13 @@ replayed.
 
 ### TARGET — V2 Automation workspace and consumed engine settings (Slice 43)
 
+Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
+`ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
+These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
+Slice45's ACTIVE Contract owns Task Center, integrated manual confirmation and first-deployment Scan
+absence; its 2026-10-18 narrow exception includes removal of scan-only/scan-and-plan modes and their
+exclusive branches. The remaining Slice43 workspace/Run once/metrics/settings scope stays frozen.
+
 Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
 admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
 focused successor publication; they cannot publish unrelated Draft edits. Read models add bounded
@@ -688,14 +821,15 @@ removed definition. Removed definitions retain readable run history and revoked 
 Automation's only mode is automatic organization, per `V2-AUTO-009` and the user's clarified
 2026-10-13 amendment. Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound
 publication, Scheduler/admission and execution branches across Web/API/CLI. There is no grandfathered
-publication, compatible executor or dedicated conversion feature. Old configuration requesting a
-removed mode cannot validate/activate; existing configuration correction/removal is the recovery.
-Persisted removed-mode work stops safely at supported boundaries with unsupported-mode/cancel/history
-guidance, without invoking old-mode processing. Keep historical evidence/intent/pins/results readable
-without exposing an executable definition mode or broadening authority. Never delete history/media,
-reinterpret old work as organizing work or replay completed/uncertain effects. Standalone Scan/Preview/
-DryRun and automatic organization's internal scanning/planning remain; this removal does not delete
-the Scanner/Planner modules or unrelated standalone command support.
+publication, compatible executor or dedicated conversion feature. The 2026-10-18 first-deployment
+amendment assigns this removal to Slice45 and supersedes old-mode cancel/history/retirement obligations.
+Removed values use ordinary shared validation before publication, discovery or admission, not special
+Scan guards; no compatibility model or old-work engine remains. Keep supported-work history, exact
+intent/pins/results and authority intact. Never clear existing data/media, reinterpret unsupported
+work as organization or replay completed/uncertain effects. The Automation-mode
+amendment itself does not retire independent diagnostics. Slice45's subsequent TARGET separately
+retires standalone Scan and integrates manual Preview UI; shared Scanner/Planner and general
+DryRun/Rules tests remain. CURRENT runtime behavior is not changed by these TARGET paragraphs.
 
 Run once adds a durable manual-origin association, not another queue or processing model.
 Manual automatic organization composes automatic live discovery from the published definition's
@@ -729,7 +863,7 @@ and consumer evidence; preserve Base schema44 rows, authority, historical pins a
 Do not add process supervision, new worker parallelism or another configuration store.
 
 These paragraphs are TARGET architecture, not a claim of completed implementation or a rewrite of
-earlier Slice acceptance. The current Slice defines the complete journey and validation boundary.
+earlier Slice acceptance. The preserved Slice43 Contract defines that journey and validation boundary; Slice45 does not inherit it.
 
 ## API and Operator Web
 

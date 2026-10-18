@@ -895,7 +895,9 @@ class PersistentTaskCoordinator:
         return final
 
     def retryable_items(self, task_id: str, *, failed_only: bool) -> tuple[PersistentTaskItem, ...]:
-        self.require(task_id)
+        original = self.require(task_id)
+        if original.command == "scan":
+            raise ValueError("standalone_scan_retired: prepare a new organize summary")
         statuses = (
             {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
             if failed_only
@@ -972,6 +974,8 @@ class PersistentTaskCoordinator:
             item.source_occurrence_id,
             item.source_fingerprint,
             item.source_fingerprint_state,
+            primary_completed=execution.primary_completed if execution else False,
+            attachment_results=execution.attachment_results if execution else (),
         )
 
 

@@ -18,6 +18,7 @@ _KINDS = frozenset(
         "jobs",
         "operations_runs",
         "run_items",
+        "run_problem_items",
         "run_records",
         "task_items",
         "task_results",
@@ -47,6 +48,7 @@ _SCOPED_KINDS = frozenset(
         # the reading principal, so a cursor minted for one run, one filter
         # state or one principal is refused as soon as any of them differs.
         "run_items",
+        "run_problem_items",
         "run_records",
     }
 )

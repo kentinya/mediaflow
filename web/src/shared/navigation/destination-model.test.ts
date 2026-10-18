@@ -14,7 +14,7 @@ describe("destination model", () => {
     expect(destinations.map((item) => item.label)).toEqual([
       "Overview",
       "Library",
-      "Operations",
+      "任务中心",
       "Review & Recovery",
       "Configuration",
       "Organizing Rules",
@@ -30,8 +30,8 @@ describe("destination model", () => {
       "Task detail",
       "Job list",
       "Job detail",
-      "Start Scan",
-      "Scan detail",
+      "扫描已退役",
+      "扫描已退役",
       "Start Preview",
       "Preview detail",
       "Manual organize",
@@ -249,6 +249,19 @@ describe("destination model", () => {
       ).toBe(
         "status=failed&run=job-001&attention=true&cursor=abc123-DEF_0&dir=backward",
       );
+      // The chosen attention-row problem-file type survives a reconnect so
+      // the exact Task/type list reopens instead of a dead or guessed view.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "view=attention&problemRun=task-2&problemType=metadata&problemCursor=page-2&problemDir=forward",
+        ),
+      ).toBe(
+        "problemRun=task-2&problemType=metadata&view=attention&problemCursor=page-2&problemDir=forward",
+      );
+      expect(
+        allowlistedDestinationSearch("/operations", "problemType=teleported"),
+      ).toBeNull();
       expect(
         allowlistedDestinationSearch(
           "/operations",
@@ -376,6 +389,19 @@ describe("destination model", () => {
           "tab=records&istat=waiting",
         ),
       ).toBeNull();
+    });
+
+    it("keeps a bounded task-center return path on exact Task evidence links", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks/$taskId",
+          "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
+            "&tab=detail&item=item-9&token=secret",
+        ),
+      ).toBe(
+        "returnOps=view%3Dfailure%26source%3DMovies%252Falpha%26problemRun%3Dtask-2%26problemCursor%3Dpage-2%26problemDir%3Dforward" +
+          "&item=item-9",
+      );
     });
 
     it("carries the Organize journey return contexts through continuation", () => {
