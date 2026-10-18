@@ -656,12 +656,20 @@ across Web/API/CLI, then remove exclusive code. Keep genuinely shared Scanner, s
 Storage discovery/stability behavior. Under the user-approved 2026-10-18 prelaunch revision, there is
 no production old-Scan population to migrate: do not retain/build a Scan-only historical service,
 detail/cancel/export surface, startup cleanup, owner takeover or old-work migration mechanism.
-A thin retirement refusal closes unsupported entry/dispatch paths before discovery without converting
-them into Organize. Organization/Automation dependencies that instruct operators to run Scan must
+The final first-deployment instruction supersedes thin retirement refusals: remove Scan routes,
+aliases, CLI registration/help, dedicated readiness/action entries and specialized retirement guards.
+Ordinary not-found/argument errors and shared supported-type validation reject before discovery,
+admission or authority creation; no retirement page, 410, guidance or hidden diagnostic alias remains.
+Organization/Automation dependencies that instruct operators to run Scan must
 perform bounded observations within their own workflow, retaining real elapsed stability checks.
 Other supported Task/Result/pin/audit/claim safety and history remain unchanged; no media/runtime data
-is cleared. The subsequent FileIndex amendment below adds complete retirement to this same Slice;
-definition-bound Automation business modes and the broader workspace remain the frozen Slice43 boundary.
+is cleared. Remove definition-bound scan-only/scan-and-plan values/aliases/defaults and exclusive
+publication/scheduling/admission/dispatch/continuation as the user-authorized narrow exception to
+frozen Slice43. Shared planning, supported scheduled Preview and diagnostic Preview/DryRun/Rules tests
+remain where actually consumed; do not replace removed defaults with implicit organizing permission.
+Fresh supported schema omits Scan-exclusive tables; no old-Scan/V1 parity, migration or history layer
+is required. Same-version supported-work reopen/restart/recovery remains required. FileIndex removal
+stays a separate unit in this Slice; the remaining Automation workspace/settings scope stays frozen.
 
 Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
 columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,
@@ -798,9 +806,10 @@ replayed.
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained Automation targets are not inherited by Slice45 or a delivery claim. Slice45's
-ACTIVE Contract separately owns Task Center, integrated manual plan-summary confirmation and
-standalone Scan retirement; Slice43 remains frozen.
+These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
+Slice45's ACTIVE Contract owns Task Center, integrated manual confirmation and first-deployment Scan
+absence; its 2026-10-18 narrow exception includes removal of scan-only/scan-and-plan modes and their
+exclusive branches. The remaining Slice43 workspace/Run once/metrics/settings scope stays frozen.
 
 Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
 admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
@@ -812,12 +821,12 @@ removed definition. Removed definitions retain readable run history and revoked 
 Automation's only mode is automatic organization, per `V2-AUTO-009` and the user's clarified
 2026-10-13 amendment. Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound
 publication, Scheduler/admission and execution branches across Web/API/CLI. There is no grandfathered
-publication, compatible executor or dedicated conversion feature. Old configuration requesting a
-removed mode cannot validate/activate; existing configuration correction/removal is the recovery.
-Persisted removed-mode work stops safely at supported boundaries with unsupported-mode/cancel/history
-guidance, without invoking old-mode processing. Keep historical evidence/intent/pins/results readable
-without exposing an executable definition mode or broadening authority. Never delete history/media,
-reinterpret old work as organizing work or replay completed/uncertain effects. The Automation-mode
+publication, compatible executor or dedicated conversion feature. The 2026-10-18 first-deployment
+amendment assigns this removal to Slice45 and supersedes old-mode cancel/history/retirement obligations.
+Removed values use ordinary shared validation before publication, discovery or admission, not special
+Scan guards; no compatibility model or old-work engine remains. Keep supported-work history, exact
+intent/pins/results and authority intact. Never clear existing data/media, reinterpret unsupported
+work as organization or replay completed/uncertain effects. The Automation-mode
 amendment itself does not retire independent diagnostics. Slice45's subsequent TARGET separately
 retires standalone Scan and integrates manual Preview UI; shared Scanner/Planner and general
 DryRun/Rules tests remain. CURRENT runtime behavior is not changed by these TARGET paragraphs.

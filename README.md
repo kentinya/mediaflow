@@ -115,6 +115,13 @@ The service has not launched, so this work does not provide old FileIndex produc
 or history compatibility. See [the FileIndex retirement target](docs/file-index-retirement-spec.md).
 Task/Result/audit and source-safety persistence for explicit work remain required.
 
+The 2026-10-18 Scan TARGET treats the service as a first deployment: remove standalone Scan and
+scan-only/scan-and-plan definition modes, including routes/aliases, CLI registration/help and dedicated
+retirement pages/errors/guards. Old inputs use ordinary not-found/argument/unsupported-type errors;
+no old Scan/V1 compatibility is provided. Shared discovery/filtering/real stability/planning, supported
+diagnostic Preview/DryRun and supported-work restart/recovery remain. This is pending implementation,
+not permission to clear existing databases/media or a claim that the baseline below has changed.
+
 ### Baseline command reference
 
 The examples below describe the implementation baseline. FileIndex and standalone Scan examples

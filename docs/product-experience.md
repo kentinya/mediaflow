@@ -725,9 +725,10 @@ boundary.
 
 Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained Automation targets are not inherited by Slice45 or a delivery claim. Slice45's
-ACTIVE task-center Contract owns its separately selected manual journey and standalone Scan removal;
-Slice43 remains frozen.
+These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
+Slice45 owns its manual journey and first-deployment Scan absence; the 2026-10-18 narrow exception
+also removes scan-only/scan-and-plan modes and exclusive branches. The remaining Slice43 workspace,
+Run once, metrics and settings-consumption work stays frozen, without importing its unaccepted code.
 
 The two Automation references define composition/style and business relationships only. Their
 names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
@@ -1018,12 +1019,15 @@ Slice Base..Implementation Head on 2026-10-06; its CURRENT scope does not expand
 - **详情/控制：** 原生详情、操作记录和有界脱敏导出保留，Job/Task 只按真实关联去重；
   暂停/取消区分已请求与生效，继续重验剩余范围和当前实际权限；必要摘要确认在当前界面完成。
   页面/统计/刷新/导出/标签切换不创建工作、不调用 Provider、不变更媒体。
-- **退役：** 独立 Scan 的 Web/API/CLI 准入、独立执行/重试/继续与专属代码完整退役，旧请求
-  明确指引到新建整理，不自动创建或执行。用户于 2026-10-18 确认服务尚未上线，因此不建设
-  旧独立 Scan 任务的停止/接管、升级迁移或专用历史详情/取消/导出兼容。保留整理内部
-  Scanner/过滤/真实稳定性观察，不要求用户先跑被删 Scan；其他受支持任务的历史、pin、结果、
-  审计与未知效果非重放不变。本次不清空媒体/运行数据。FileIndex 完全退出已由用户追加到
-  当前 Slice 的下一完整业务单元，见下方旅程；通用 DryRun、Rules 测试和冻结自动化业务工作区不扩删。
+- **Scan 不存在：** 按用户于 2026-10-18 确认的首次部署范围，独立入口及 scan-only/scan-and-plan
+  定义模式、专用执行/恢复/数据结构与退役兼容层删除。无页面/路由/导航/API aliases、CLI 注册/
+  帮助、readiness/action 专用项、410、退役说明/指引或专用防线；旧 URL/命令/类型走正常认证下的
+  普通 not-found/参数/不支持类型错误，在发现/准入/许可前停止，不转换为整理。无旧 Scan/V1
+  parity、停止/接管、迁移/转换或专用历史兼容。保留其他功能需要的发现/过滤/真实稳定观察/
+  零变更计划、diagnostic Preview/DryRun/Rules 测试及受支持的 scheduled Preview，不靠名称误删。
+  其他工作仍可重启/重开/恢复，结果/pin/权限/审计及未知效果非重放不变；不清空媒体/运行数据/
+  用户文件或改写 Git 历史。定义模式删除是冻结范围窄例外，其余自动化工作区仍冻结。FileIndex
+  完全退出仍属当前 Slice 的下一完整业务单元，见下方旅程。
 
 此处明确选入跨任务分类列表，取代此前对此类列表的延期；跨任务批量 mutation、任意历史
 Reprocess、历史清理、通用回滚、不确定效果重放及冻结 Slice43 的其余工作仍不在本 Slice。
@@ -1043,7 +1047,8 @@ FileIndex 专用 CLI/API/V1/V2 列表、详情、统计、reprocess、同步修�
 无预扫描来源仍能在整理内完成真实稳定观察、同页摘要、精确确认和结果；工作重开/恢复不依赖索引。
 
 未上线环境不建设旧索引迁移、双写、历史兼容或在途接管，也不自动清空现存数据库/媒体。
-必要的共享 Automation 依赖移除在本范围，冻结 Slice43 的业务模式/页面/设置消费保持延期。
+必要的共享 Automation 依赖移除在本范围；Scan 模式删除另按上方窄例外纳入当前 Slice，
+冻结 Slice43 的其余页面/Run once/指标/设置消费保持延期。
 这些是 TARGET；其他 CURRENT/已接受闭合事实待本 Slice 实际验收后统一核对。
 
 ### Migration coexistence and deferrals

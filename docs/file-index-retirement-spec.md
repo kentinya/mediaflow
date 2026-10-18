@@ -96,8 +96,9 @@ stable-size 必须跨真实配置区间的未变观察；大小/mtime/有效指�
 
 FileIndex 在当前已接受的 Automation 基础实现中也有消费者；去掉这些共享依赖属于本 Outcome。
 可修改必要装配与共用发现/来源验证，不能因 Slice43 冻结而留下可运行 Index。
-冻结的业务模式退役、页面、调度/Run once、指标和全局设置仍不纳入本 Slice，
-不导入冻结分支代码，也不借此改变定义授权、scope、Provider、冲突或执行语义。
+此 FileIndex Outcome 不扩展自动化业务；Scan 模式删除已由 2026-10-18 首次部署修订另行选入
+同 Slice 的 RO-5 / Task45.4，作为冻结边界窄例外。其余页面、Run once、指标和全局设置消费
+继续冻结；不导入冻结分支代码，也不借此改变定义授权、scope、Provider、冲突或执行语义。
 
 ## 6. 服务未上线的交付边界
 

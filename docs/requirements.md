@@ -34,9 +34,10 @@ retain only automatic organization and clarified that the two other Automation m
 unwanted. `REQ-SCHED-001/002`, §自动整理 and §定时任务 below reflect that change; `V2-AUTO-009` records its
 V2 acceptance. Remove scan-only/scan-and-plan mode values/aliases and definition-bound publication,
 scheduling/admission/execution paths, without a conversion feature or compatible old-mode executor.
-Unsupported old configuration/work fails closed through existing correction/removal/cancel guidance;
-recorded intent, pins, results and audits remain historical data, never executable authority or
-automatic organization. That amendment did not retire standalone Scan/Preview/DryRun; the subsequent
+The 2026-10-18 first-deployment amendment below supersedes old Scan-mode compatibility obligations;
+unsupported mode values use ordinary validation, never automatic organizing authority. Supported-work
+intent, pins, results and audits remain intact. That amendment did not retire standalone
+Scan/Preview/DryRun; the subsequent
 2026-10-15 amendment below now supersedes standalone Scan and selected Web Preview-entry obligations.
 Internal discovery/planning and zero-mutation guarantees remain required. This is an explicit product
 change, not a Task-local deferral or delivery claim; prior V1 meanings and accepted release evidence
@@ -58,19 +59,31 @@ selected; cross-Task bulk mutation remains deferred. Prior V1/closed-Slice evide
 Stable acceptance is `V2-OPS-009`–`V2-OPS-012`; [the final page specification](task-center-page-spec.md)
 and root Contract define the selected journey. These are TARGET requirements, not delivered behavior.
 
-**Explicit product amendment — 2026-10-18, prelaunch standalone Scan retirement (TARGET):**
-the user confirmed that the service has not launched and authorized A to remove the assumed production
-upgrade scenario. `V2-OPS-011` no longer requires settling, taking over or migrating old standalone Scan
-work, or maintaining its dedicated history/detail/cancel/export surfaces and services. Remove the
-standalone product and exclusive code; a bounded retirement refusal may direct users to new organization,
-but must not discover files, grant authority or convert a Scan request into organization. Unsupported
-standalone commands fail before execution without requiring an old-work migration mechanism.
-This amendment does not authorize clearing media or runtime/history databases, weakening supported
-Task/Result/pin/audit/non-replay safety, or removing shared discovery/filtering/stability. The later
-FileIndex amendment below adds that complete retirement to the same Slice; frozen Automation business
-scope remains unchanged.
-Frozen V1 meanings, accepted closure facts and Git history remain historical, not a new Scan
-compatibility delivery obligation. No current implementation or acceptance is claimed here.
+**Explicit product amendment — 2026-10-18, Scan never existed / first deployment (TARGET):**
+the user confirmed that the service has not launched and selected a fresh-deployment product with no
+Scan compatibility obligation, including V1. Remove standalone Scan pages/routes/navigation, API aliases,
+CLI registration/help, supported-work type entries, scheduling/execution/retry/continuation branches,
+dedicated readiness/action projections, models/services/repositories/schema and unused exclusive code.
+Do not retain retirement pages, 410 errors, guidance, specialized Scan guards, hidden aliases, old-work
+settlement/takeover, migration/conversion or dedicated history/detail/cancel/export compatibility.
+Missing URLs use ordinary not-found under normal authentication; old CLI commands use ordinary unknown-
+command/argument errors; unsupported submitted work uses shared supported-type validation. Reject before
+discovery, admission or execution-authority creation; never reinterpret Scan as organization.
+
+Removal of scan-only/scan-and-plan definition-mode values, aliases, defaults and their exclusive
+publication/scheduling/admission/dispatch/continuation branches is now part of Slice45's V2-OPS-011.
+This is a narrow user-authorized exception to frozen Slice43; its remaining workspace, Run once,
+metrics and engine-settings consumption stay frozen, without importing its unaccepted implementation.
+Keep shared discovery/filtering/real elapsed stability, zero-mutation planning, general diagnostic
+Preview/DryRun/Rules tests and supported scheduled Preview where actually consumed. Do not erase shared
+capabilities by identifier matching. Removing a mode default never grants implicit mutation authority.
+
+No old Scan migration, V1 parity or historical compatibility matrix is required. First deployment does
+not authorize clearing/rebuilding media, runtime databases or user files, or rewriting Git history;
+supported Tasks still require same-version restart/reopen/recovery, exact sources/plans/pins, Results,
+audit, permissions/fencing and completed/uncertain-effect non-replay. This is not global V1 UI removal.
+The FileIndex amendment below remains a separate complete unit in the same Slice. Frozen V1 meanings
+and accepted closure facts stay historical; no implementation or acceptance is claimed here.
 
 **Explicit product amendment — 2026-10-18, complete FileIndex retirement in Slice45 (TARGET):**
 the user expanded the current Slice to remove FileIndex completely and make `mediaflow files list`
@@ -741,9 +754,10 @@ Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确�
 权限、版本和 OrganizerExecutor 边界不变。未就绪/未选择项状态独立，摘要本身不制造正式
 执行阻塞待办，不把未知效果或未执行项算成功，不自动重放成功/忽略/不确定项。
 
-独立 Scan 的页面、API/CLI 创建及专属执行/重试路径退役，必要共享扫描/发现/稳定性保留，
-原流程自行完成稳定性观察，不再要求先运行已退役的扫描功能。按 2026-10-18 未上线范围修订，
-不建设旧独立 Scan 的停止/接管、升级迁移或专用历史读取/取消/导出兼容；其他受支持工作的
+Scan 产品按 2026-10-18 首次部署修订视为从未存在：独立入口及 scan-only/scan-and-plan 定义模式、
+专属执行/重试/继续和退役兼容层删除，旧输入走普通 not-found/参数/不支持类型错误。必要共享
+发现/过滤/真实稳定性/计划保留，原流程自行完成观察，不再要求先运行 Scan。
+不建设旧 Scan/V1 parity、停止/接管、迁移或专用历史兼容；其他受支持工作的
 历史意图、结果和审计保持。此修订不授权清空媒体或运行数据。用户随后将 FileIndex 完全退出
 加入同一 Slice：CLI/两种库页共用只读 live Storage 列表，取消目录索引、专用接口/仓储/schema/
 同步修复及全部运行依赖，见 V2-FILES-005/006 与退役设计；不建设旧索引生产兼容。
