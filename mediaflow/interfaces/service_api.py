@@ -43,8 +43,6 @@ from mediaflow.application.direct_file_transfers import (
     durable_transfer_read_service,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
-from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -66,7 +64,6 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
-    bounded_manual_source_path,
     is_files_worker_task_command,
     job_lifecycle_document,
     job_operator_document,
@@ -149,11 +146,6 @@ from mediaflow.domain.direct_files import (
     LibraryKind,
 )
 from mediaflow.domain.failure import failure_document
-from mediaflow.domain.file_lifecycle import (
-    FileIndexLifecycleError,
-    OccurrenceState,
-    ProcessingDisposition,
-)
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
 from mediaflow.domain.manual_organize import (
@@ -173,7 +165,6 @@ from mediaflow.domain.media_discovery import (
 )
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
-    MetadataCorrectionContinuationStatus,
 )
 from mediaflow.domain.notification import (
     NotificationDeliveryConflict,
@@ -200,7 +191,6 @@ from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationError,
     RecoveryContinuationReason,
 )
-from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.system_settings import (
@@ -372,9 +362,6 @@ class MediaFlowApi:
         maximum_active_jobs: int | None = None,
         stale_job_age_seconds: int = 3600,
         system_status=None,
-        file_catalog: FileCatalogService | None = None,
-        file_index=None,
-        file_index_lifecycle: FileIndexLifecycleService | None = None,
         metadata_policies=(),
         configuration_service: ManagedConfigurationService | None = None,
         configuration_snapshot_id: str | None = None,
@@ -414,24 +401,14 @@ class MediaFlowApi:
             or stale_job_age_seconds > 604_800
         ):
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
-        self._file_catalog = file_catalog
-        self._file_index = file_index
-        self._file_lifecycle = file_index_lifecycle
-        if self._file_lifecycle is None and self._file_catalog is not None:
-            self._file_lifecycle = FileIndexLifecycleService(
-                self._file_catalog,
-                file_index=self._file_index,
-                task_repository=repository,
-            )
         self._storage_adapters = dict(storage_adapters or {})
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
         self._maximum_active_jobs_override = maximum_active_jobs
         self._manual_intents = manual_intent_service
-        if self._manual_intents is None and self._file_catalog is not None:
+        if self._manual_intents is None and configuration_service is not None:
             self._manual_intents = ManualOrganizeIntentService(
                 repository,
-                self._file_catalog,
                 configuration_service,
                 storage_factory=lambda runtime, ids: runtime.create_storages(
                     external=self._storage_adapters, storage_ids=ids
@@ -442,8 +419,6 @@ class MediaFlowApi:
             self._manual_previews = ManualOrganizePreviewService(
                 repository,
                 self._manual_intents,
-                self._file_catalog,
-                file_index=self._file_index,
                 configuration_service=configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
             )
@@ -579,8 +554,6 @@ class MediaFlowApi:
             # Active revision the request is served under.
             mutation_authority=None,
         )
-        if self._file_catalog is not None:
-            self._file_catalog.attach_checkpoint_service(self._checkpoint_service)
         self._manual_execution = manual_execution_service
         if self._manual_execution is None and self._manual_previews is not None:
             self._manual_execution = ManualOrganizeExecutionService(
@@ -609,7 +582,6 @@ class MediaFlowApi:
                 repository,
                 configuration_service,
                 metadata_provider_registry_factory=metadata_provider_registry_factory,
-                file_index=file_index,
             )
         # Durable exact-analysis admission: the expensive definition/manual
         # Preview walk and Provider batch run in the resident Processing Worker
@@ -1399,31 +1371,6 @@ class MediaFlowApi:
                 error.message,
                 details=error.details,
             )
-        except FileIndexLifecycleError as error:
-            self._safe_audit(
-                environ,
-                request_id,
-                locals().get("principal"),
-                method,
-                path,
-                "file-index-reprocess",
-                "conflict" if error.status < 500 else "error",
-                error.status,
-            )
-            details = {
-                "durableState": error.durable_state,
-                "sideEffects": "none",
-                "retrySafe": error.retry_safe,
-                "nextAction": error.next_action,
-                **error.details,
-            }
-            return self._error(
-                start_response,
-                error.status,
-                error.code,
-                str(error),
-                details=details,
-            )
         except LookupError as error:
             self._safe_audit(
                 environ,
@@ -1550,10 +1497,6 @@ class MediaFlowApi:
             # durable error, a fingerprint value or a configured display root.
             operations_projection = True
             parts = ["api", "v1", *parts[3:]]
-        if len(parts) >= 3 and parts[:3] == ["api", "v1", "file-index"]:
-            # ``/file-index`` remains the explicit V1/background catalog contract.
-            # UI-V2 Files uses ResourceLibrary-scoped live Storage routes instead.
-            parts[2] = "files"
         if (
             len(parts) >= 3
             and parts[:2] == ["api", "v1"]
@@ -1581,7 +1524,6 @@ class MediaFlowApi:
             "configuration",
             "confirmations",
             "dashboard",
-            "file-index",
             "files",
             "jobs",
             "logs",
@@ -1857,69 +1799,6 @@ class MediaFlowApi:
                 manual_preview_operator_document(self._manual_preview_document(preview)),
             )
         # --- V2 Operations: manual Organize intent, exact Preview, one Execute action ---
-        if parts == ["api", "v1", "operations", "organize", "intents"] and method == "POST":
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                    details={
-                        "durableState": "no_intent_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Task repository, then retry the "
-                            "same bounded selection"
-                        ),
-                    },
-                )
-            self._require_empty_query(environ, "operations organize intent")
-            document = self._document(environ)
-            allowed = {"scopeKind", "scope", "resourceLibraryId", "fileId", "itemIds"}
-            if set(document).difference(allowed):
-                raise ValueError(
-                    "operations organize intent accepts only bounded scope identity fields"
-                )
-            raw_kind = document.get("scopeKind", document.get("scope"))
-            if raw_kind == "resourceLibrary":
-                raw_kind = "resource_library"
-            if raw_kind not in {"file", "resource_library"}:
-                raise ValueError(
-                    "operations organize intent scope must be file or resource_library"
-                )
-            resource_library_id = document.get("resourceLibraryId")
-            if not isinstance(resource_library_id, str) or not resource_library_id.strip():
-                raise ValueError("operations organize intent requires resourceLibraryId")
-            if raw_kind == "file":
-                file_id = document.get("fileId")
-                if not isinstance(file_id, str) or not file_id.strip():
-                    raise ValueError("operations organize intent file scope requires fileId")
-                selected: list[object] = [file_id]
-            else:
-                if document.get("fileId") is not None:
-                    raise ValueError(
-                        "operations organize intent library scope cannot include fileId"
-                    )
-                raw_items = document.get("itemIds")
-                if not isinstance(raw_items, list) or not raw_items:
-                    raise ValueError(
-                        "operations organize intent requires itemIds for a library scope"
-                    )
-                if len(raw_items) > self._manual_intents.MAX_ITEMS:
-                    raise ValueError(
-                        "operations organize intent selection is over the supported item limit"
-                    )
-                selected = list(raw_items)
-            self._require_organize_selection(selected, resource_library_id)
-            try:
-                intent = self._manual_intents.create(selected, actor=principal.principal_id)
-            except ManualIntentError as error:
-                return self._manual_step_error(start_response, error)
-            return self._response(
-                start_response, 201, self._organize_intent_document(intent, principal)
-            )
         if (
             len(parts) == 6
             and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
@@ -2515,52 +2394,6 @@ class MediaFlowApi:
             except ManualExecutionError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(start_response, 200, self._organize_execution_document(execution))
-        if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "executions"]
-            and parts[6] == "file-index-reconciliation"
-            and method == "POST"
-        ):
-            # Display-only recovery for one reconciliation miss: the durable
-            # Result is re-applied to a current exact FileIndex occurrence.
-            # This never calls Storage and never replays the Organize mutation.
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_execution is None or not callable(
-                getattr(self._manual_execution, "reconcile_file_index", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual organize FileIndex reconciliation is unavailable",
-                    details={
-                        "durableState": "organize_effect_unchanged",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore the manual Organize execution service, then repeat the "
-                            "bounded reconciliation; no Organize mutation is replayed"
-                        ),
-                    },
-                )
-            self._require_empty_query(environ, "operations organize FileIndex reconciliation")
-            document = self._document(environ)
-            if set(document) != {"itemId"} or not isinstance(document["itemId"], str):
-                raise ValueError(
-                    "operations organize FileIndex reconciliation requires only itemId"
-                )
-            try:
-                return self._response(
-                    start_response,
-                    200,
-                    self._manual_execution.reconcile_file_index(
-                        parts[5],
-                        item_id=document["itemId"],
-                        actor=principal.principal_id,
-                    ),
-                )
-            except ManualExecutionError as error:
-                return self._manual_step_error(start_response, error)
         if parts == ["api", "v1", "operations", "organize", "discoveries"] and method == "GET":
             # The bounded operator list of this principal's own admitted
             # discoveries.  It never publishes a claim token, a configuration
@@ -6549,97 +6382,6 @@ class MediaFlowApi:
                 200,
                 self._with_transfer_worker_readiness(projection, media_library=True),
             )
-        if parts == ["api", "v1", "files", "stats"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._file_catalog is None:
-                return self._error(
-                    start_response, 503, "service_unavailable", "file catalog is unavailable"
-                )
-            resource_library_id, storage_id = self._file_stats_query(environ)
-            stats = self._file_catalog.stats(
-                resource_library_id=resource_library_id, storage_id=storage_id
-            )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "surface": "file_index",
-                    "fileIndexSurface": "/api/v1/file-index",
-                    "filesSurface": "/api/v1/storage/files",
-                    "total": stats.total,
-                    "byStatus": {
-                        status.value: stats.by_status.get(status, 0) for status in FileScanStatus
-                    },
-                },
-            )
-        if parts == ["api", "v1", "files"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._file_catalog is None:
-                return self._error(
-                    start_response, 503, "service_unavailable", "file catalog is unavailable"
-                )
-            filters = self._file_catalog_query(environ)
-            values = (
-                self._file_lifecycle.list(filters)
-                if self._file_lifecycle is not None
-                else self._file_catalog.list(filters)
-            )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "surface": "file_index",
-                    "fileIndexSurface": "/api/v1/file-index",
-                    "filesSurface": "/api/v1/storage/files",
-                    "items": [self._file_catalog_value(item) for item in values],
-                    "limit": filters.limit,
-                },
-            )
-        if parts == ["api", "v1", "files", "by-source"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._file_catalog is None:
-                return self._error(
-                    start_response, 503, "service_unavailable", "file catalog is unavailable"
-                )
-            storage_id, path, resource_library_id = self._file_by_source_query(environ)
-            record, unavailable_reason = self._file_catalog.resolve_by_source(
-                storage_id,
-                path,
-                resource_library_id=resource_library_id,
-            )
-            if record is None:
-                reason_code = "ambiguous" if unavailable_reason == "ambiguous" else "missing"
-                return self._response(
-                    start_response,
-                    200,
-                    {
-                        "surface": "file_index",
-                        "fileIndexSurface": "/api/v1/file-index",
-                        "filesSurface": "/api/v1/storage/files",
-                        "available": False,
-                        "fileId": None,
-                        "reason": reason_code,
-                        "unavailableReason": (
-                            "the source link is ambiguous; scope it by ResourceLibrary and reload"
-                            if reason_code == "ambiguous"
-                            else "no current indexed FileIndex record matches this source link"
-                        ),
-                    },
-                )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "surface": "file_index",
-                    "fileIndexSurface": "/api/v1/file-index",
-                    "filesSurface": "/api/v1/storage/files",
-                    "available": True,
-                    "fileId": record.file_id,
-                    "reason": None,
-                    "resourceLibraryId": record.resource_library_id,
-                    "detailUrl": f"/api/v1/files/{record.file_id}",
-                },
-            )
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
@@ -6724,143 +6466,23 @@ class MediaFlowApi:
                     "scopeId": parts[3],
                 },
             )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "files"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._file_catalog is None:
-                return self._error(
-                    start_response, 503, "service_unavailable", "file catalog is unavailable"
-                )
-            resource_library_id = self._file_resource_query(environ)
-            detail = self._file_catalog.detail(parts[3], resource_library_id=resource_library_id)
-            return self._response(
-                start_response,
-                200,
-                self._file_catalog_detail_value(detail),
-            )
         if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[4] == "reprocess"
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6] == "metadata-correction-continuation"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            if self._file_lifecycle is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "FileIndex lifecycle service is unavailable",
-                )
-            self._require_empty_query(environ, "FileIndex Reprocess")
-            document = self._document(environ)
-            if set(document) != {"occurrenceId", "fingerprint"}:
-                raise ValueError(
-                    "FileIndex Reprocess requires only the current occurrenceId and fingerprint"
-                )
-            occurrence_id = document["occurrenceId"]
-            fingerprint = document["fingerprint"]
-            if (
-                not isinstance(occurrence_id, str)
-                or not occurrence_id.strip()
-                or not isinstance(fingerprint, str)
-                or not fingerprint.strip()
-            ):
-                raise ValueError("FileIndex Reprocess occurrenceId and fingerprint are required")
-            request = self._file_lifecycle.admit_reprocess(
-                parts[3],
-                occurrence_id,
-                fingerprint,
-                actor=principal.principal_id,
-            )
-            return self._response(
-                start_response,
-                202,
-                {
-                    "surface": "file_index",
-                    "fileId": request.file_id,
-                    "requestId": request.request_id,
-                    "occurrenceId": request.occurrence_id,
-                    "fingerprint": request.fingerprint,
-                    "status": request.status,
-                    "actor": request.actor,
-                    "requestedAt": request.requested_at.isoformat(),
-                    "sideEffects": "none",
-                    "taskCreated": False,
-                    "providerRequested": False,
-                    "nextAction": request.next_action,
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[4] == "preview"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "current-source Preview")
-            request = self._current_preview_request(
-                self._document(environ), route_scope_kind="file", route_scope_id=parts[3]
-            )
-            preview = self._manual_previews.create_current(
-                **request,
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 201, self._manual_preview_document(preview))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] in {"preview", "previews"}
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "ResourceLibrary Preview")
-            request = self._current_preview_request(
-                self._document(environ),
-                route_scope_kind="resource_library",
-                route_scope_id=parts[3],
-            )
-            preview = self._manual_previews.create_current(
-                **request,
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 201, self._manual_preview_document(preview))
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "files"]
-            and parts[4] == "continue-dry-run"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            if self._file_catalog is None:
-                return self._error(
-                    start_response, 503, "service_unavailable", "file catalog is unavailable"
-                )
-            self._require_empty_query(environ, "file action")
+            self._require_empty_query(environ, "task item action")
             document = self._document(environ)
             allowed = {"reviewId", "expectedCorrectionVersion"}
             if set(document).difference(allowed):
-                raise ValueError(f"file {parts[4]} request fields are invalid")
+                raise ValueError(f"task item {parts[6]} request fields are invalid")
             if set(document) != allowed:
                 raise ValueError(
-                    "file continuation requires reviewId and expectedCorrectionVersion"
+                    "Metadata correction continuation requires reviewId and "
+                    "expectedCorrectionVersion"
                 )
             if self._configuration_service is None:
                 return self._error(
@@ -6870,11 +6492,11 @@ class MediaFlowApi:
                     "managed configuration service is unavailable",
                 )
             submission = FileMetadataCorrectionContinuationService(
-                self._file_catalog,
                 self._repository,
                 snapshot_validator=(self._configuration_service.validate_runtime_snapshot),
             ).submit(
                 parts[3],
+                parts[5],
                 document["reviewId"],
                 expected_correction_version=document["expectedCorrectionVersion"],
                 actor=principal.principal_id,
@@ -6902,49 +6524,6 @@ class MediaFlowApi:
                     ),
                 },
             )
-        if parts == ["api", "v1", "manual-intents"] and method == "POST":
-            # Manual intent admission is analysis/selection work, not execution.
-            # It uses the existing operator DryRun permission and never creates
-            # a Task, Plan, Provider request or execution authority.
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_intents is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual intent service is unavailable",
-                )
-            self._require_empty_query(environ, "manual intent creation")
-            document = self._document(environ)
-            if set(document) != {"fileIds"}:
-                raise ValueError("manual intent creation requires only fileIds")
-            file_ids = document["fileIds"]
-            if not isinstance(file_ids, list):
-                raise ValueError("manual intent fileIds must be an array")
-            intent = self._manual_intents.create(file_ids, actor=principal.principal_id)
-            return self._response(
-                start_response,
-                201,
-                self._manual_intent_document(intent),
-            )
-        if parts == ["api", "v1", "manual-previews"] and method == "POST":
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "current-source Preview")
-            request = self._current_preview_request(self._document(environ))
-            preview = self._manual_previews.create_current(
-                **request,
-                actor=principal.principal_id,
-            )
-            return self._response(start_response, 201, self._manual_preview_document(preview))
         if parts == ["api", "v1", "manual-previews"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_previews is None:
@@ -9787,9 +9366,6 @@ class MediaFlowApi:
             return False
         if parts == ["api", "v1", "management", "readiness"]:
             return False
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "files"] and parts[4] == "reprocess":
-            # Reprocess is an auditable admission marker only; it creates no workflow work.
-            return False
         if tuple(parts[:3]) in {
             ("api", "v1", "jobs"),
             ("api", "v1", "tasks"),
@@ -9931,7 +9507,6 @@ class MediaFlowApi:
                 self._configuration_service,
                 active_revision=runtime_revision,
                 runtime_configuration=runtime_configuration,
-                file_index=self._file_index,
                 storage_adapters=self._storage_adapters,
                 cursor_secret=self._storage_browser_cursor_secret,
             )
@@ -10127,7 +9702,6 @@ class MediaFlowApi:
             ("api", "v1", "metadata-corrections"),
             ("api", "v1", "recovery-batches"),
             ("api", "v1", "automation", "task-definitions"),
-            ("api", "v1", "file-index"),
             ("api", "v1", "files"),
             ("api", "v1", "storage", "files"),
             ("api", "v1", "media-libraries"),
@@ -10311,7 +9885,6 @@ class MediaFlowApi:
             and parts[:3]
             in (
                 ["api", "v1", "files"],
-                ["api", "v1", "file-index"],
                 ["api", "v1", "resource-libraries"],
             )
             and parts[4] in {"preview", "previews"}
@@ -10390,12 +9963,6 @@ class MediaFlowApi:
             return "/api/v1/media-libraries/{id}/removal-preview"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"]:
             return "/api/v1/media-libraries/{id}"
-        if (
-            len(parts) == 5
-            and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
-            and parts[4] == "reprocess"
-        ):
-            return f"/api/v1/{parts[2]}/{{id}}/reprocess"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "confirmations"]:
             return "/api/v1/confirmations/{id}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "metadata-reviews"]:
@@ -10987,7 +10554,7 @@ class MediaFlowApi:
         # configuration has been activated and loaded.
         runtime_ready = bool(configuration_snapshot_id)
         preview_service_ready = callable(
-            getattr(self._manual_previews, "create_current_from_index", None)
+            getattr(self._manual_previews, "create_current_from_storage", None)
         )
         intent_service_ready = callable(getattr(self._manual_intents, "create", None))
         preview_intent_ready = callable(getattr(self._manual_previews, "create", None))
@@ -11088,66 +10655,22 @@ class MediaFlowApi:
         elif raw_kind == "file":
             if not isinstance(file_id, str) or not file_id.strip():
                 raise ValueError("manual action matrix fileId is required for file scope")
-            # Check ResourceLibrary availability.
+            # A single-file admission is made from the live library directory, not
+            # from a remembered catalog identity.  This bounded matrix therefore
+            # states the exact prerequisite instead of resolving a file ID.
             rl_info = rl_map.get(resource_library_id)
+            preview_available = False
+            organize_available = False
             if rl_info is None or not rl_info.get("enabled", False):
-                preview_available = False
-                organize_available = False
-
                 preview_reason = "the configured ResourceLibrary is not available"
                 organize_reason = "the configured ResourceLibrary is not available"
             else:
-                # Resolve the FileIndex record.
-                file_index = self._file_index
-                lister = (
-                    getattr(file_index, "list_by_resource_library", None) if file_index else None
+                preview_reason = (
+                    "select the live file from the ResourceLibrary directory to prepare a summary"
                 )
-                record = None
-                if callable(lister):
-                    for candidate in lister(resource_library_id):
-                        if getattr(candidate, "file_id", None) == file_id:
-                            record = candidate
-                            break
-                if record is None:
-                    preview_available = False
-                    organize_available = False
-
-                    preview_reason = "the current FileIndex source was not found"
-                    organize_reason = "the current FileIndex source was not found"
-                elif (
-                    getattr(record, "occurrence_state", None) != OccurrenceState.VERIFIED
-                    or getattr(record, "scan_status", None) != FileScanStatus.READY
-                    or not getattr(record, "occurrence_id", None)
-                    or not getattr(record, "fingerprint", None)
-                ):
-                    preview_available = False
-                    organize_available = False
-
-                    preview_reason = (
-                        "the FileIndex source is not a verified ready current occurrence"
-                    )
-                    organize_reason = (
-                        "the FileIndex source is not a verified ready current occurrence"
-                    )
-                else:
-                    source = {
-                        "fileId": file_id,
-                        "resourceLibraryId": resource_library_id,
-                        "storageId": getattr(record, "storage_id", None),
-                        "path": bounded_manual_source_path(getattr(record, "path", None)),
-                        "filename": getattr(record, "filename", None),
-                        "sizeBytes": getattr(record, "size", None),
-                        "occurrenceState": getattr(
-                            getattr(record, "occurrence_state", None),
-                            "value",
-                            getattr(record, "occurrence_state", None),
-                        ),
-                        "scanStatus": getattr(
-                            getattr(record, "scan_status", None),
-                            "value",
-                            getattr(record, "scan_status", None),
-                        ),
-                    }
+                organize_reason = (
+                    "select the live file from the ResourceLibrary directory to organize it"
+                )
         else:
             if file_id is not None:
                 raise ValueError("manual action matrix file scope is required for resource_library")
@@ -11213,9 +10736,15 @@ class MediaFlowApi:
                             "available": organize_available,
                             "reason": organize_reason,
                             "method": "POST",
-                            "path": "/api/v1/operations/organize/intents",
+                            "path": (
+                                f"/api/v1/resource-libraries/{resource_library_id}"
+                                "/files/discoveries"
+                                if raw_kind == "resource_library"
+                                else ""
+                            ),
                             "nextAction": (
-                                "create a durable manual intent, then request an exact Preview"
+                                "select the live files in the library directory, then review the "
+                                "prepared summary"
                                 if organize_available
                                 else organize_reason
                             ),
@@ -11807,7 +11336,7 @@ class MediaFlowApi:
                     resource_library_id = scope_id
         if set(document).difference(allowed):
             raise ValueError(
-                "current-source Preview accepts only bounded FileIndex identity and snapshot fields"
+                "current-source Preview accepts only bounded source identity and snapshot fields"
             )
         if not isinstance(kind, str) or kind not in {"file", "resource_library"}:
             raise ValueError("current-source Preview scope must be file or resource_library")
@@ -11944,12 +11473,6 @@ class MediaFlowApi:
             return True
         if (
             len(parts) == 5
-            and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
-            and parts[4] == "previews"
-        ):
-            return True
-        if (
-            len(parts) == 5
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "previews"
         ):
@@ -11968,11 +11491,7 @@ class MediaFlowApi:
         ):
             return True
         return (
-            (
-                parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
-                and (len(parts) == 4 or parts == ["api", "v1", parts[2], "by-source"])
-            )
-            or parts == ["api", "v1", "storage", "files"]
+            parts == ["api", "v1", "storage", "files"]
             or (
                 len(parts) == 5
                 and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -12420,158 +11939,6 @@ class MediaFlowApi:
             raise ValueError("file by-source query requires storageId and path")
         return storage_id, path, values.get("resourceLibrary", [None])[0]
 
-    @staticmethod
-    def _file_catalog_query(environ: dict) -> FileCatalogFilter:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {
-            "resourceLibrary",
-            "storage",
-            "scanStatus",
-            "query",
-            "limit",
-            "after",
-            "before",
-            "cursorFileId",
-            "recognitionType",
-            "provider",
-            "providerId",
-            "title",
-            "taskId",
-            "year",
-            "processingDisposition",
-        }
-        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("file catalog query fields must be supported and specified once")
-        if "cursorFileId" in values and "after" not in values and "before" not in values:
-            raise ValueError("file cursor requires after/before and cursorFileId")
-        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["100"])[0], "file")
-        scan_status = FileScanStatus(values["scanStatus"][0]) if "scanStatus" in values else None
-        processing_disposition = (
-            ProcessingDisposition(values["processingDisposition"][0])
-            if "processingDisposition" in values
-            else None
-        )
-        after = (
-            MediaFlowApi._file_cursor(values.get("after"), values.get("cursorFileId"))
-            if "after" in values
-            else None
-        )
-        before = (
-            MediaFlowApi._file_cursor(values.get("before"), values.get("cursorFileId"))
-            if "before" in values
-            else None
-        )
-        year = int(values["year"][0]) if "year" in values else None
-        return FileCatalogFilter(
-            resource_library_id=values.get("resourceLibrary", [None])[0],
-            storage_id=values.get("storage", [None])[0],
-            scan_status=scan_status,
-            query=values.get("query", [None])[0],
-            limit=limit,
-            after=after,
-            before=before,
-            recognition_type=values.get("recognitionType", [None])[0],
-            provider=values.get("provider", [None])[0],
-            provider_id=values.get("providerId", [None])[0],
-            title=values.get("title", [None])[0],
-            task_id=values.get("taskId", [None])[0],
-            year=year,
-            processing_disposition=processing_disposition,
-        )
-
-    @staticmethod
-    def _file_cursor(timestamp_values, file_id_values):
-        timestamp = timestamp_values[0] if timestamp_values else None
-        file_id = file_id_values[0] if file_id_values else None
-        if timestamp is None and file_id is None:
-            return None
-        if timestamp is None or file_id is None:
-            raise ValueError("file cursor requires after/before and cursorFileId")
-        try:
-            parsed = datetime.fromisoformat(timestamp)
-        except ValueError as error:
-            raise ValueError("file cursor timestamp must be ISO-8601") from error
-        return parsed, file_id
-
-    @staticmethod
-    def _file_catalog_value(record) -> dict:
-        disposition = getattr(record.processing_disposition, "value", record.processing_disposition)
-        occurrence_state = getattr(record.occurrence_state, "value", record.occurrence_state)
-        reprocess_eligible = bool(
-            record.scan_status is FileScanStatus.READY
-            and occurrence_state == "verified"
-            and record.fingerprint
-            and record.processing_result_id
-            and disposition not in {"unknown", "unverified", "reprocess_requested"}
-            and record.processing_retry_safety == "safe"
-        )
-        return {
-            "fileId": record.file_id,
-            "storageId": record.storage_id,
-            "resourceLibraryId": record.resource_library_id,
-            "path": record.path,
-            "filename": record.filename,
-            "extension": record.extension,
-            "size": record.size,
-            "modifiedAt": record.modified_at.isoformat(),
-            "stableSince": record.stable_since.isoformat() if record.stable_since else None,
-            "scanStatus": record.scan_status.value,
-            "change": record.change.value,
-            "firstSeenAt": record.first_seen_at.isoformat(),
-            "lastSeenAt": record.last_seen_at.isoformat(),
-            "missingSince": record.missing_since.isoformat() if record.missing_since else None,
-            "lastScanId": record.last_scan_id,
-            "updatedAt": record.updated_at.isoformat(),
-            "discovery": {
-                "status": record.scan_status.value,
-                "change": record.change.value,
-                "stableSince": record.stable_since.isoformat() if record.stable_since else None,
-                "lastSeenAt": record.last_seen_at.isoformat(),
-                "missingSince": record.missing_since.isoformat() if record.missing_since else None,
-                "lastScanId": record.last_scan_id,
-            },
-            "processingDisposition": disposition,
-            "processing": {
-                "disposition": disposition,
-                "resultId": record.processing_result_id,
-                "effectCertainty": record.processing_effect_certainty,
-                "retrySafety": record.processing_retry_safety,
-                "nextAction": record.processing_next_action,
-                "updatedAt": (
-                    record.processing_updated_at.isoformat()
-                    if record.processing_updated_at
-                    else None
-                ),
-            },
-            "priorResultRelevance": {
-                "currentResultId": record.processing_result_id,
-                "current": bool(
-                    record.processing_result_id
-                    and occurrence_state == "verified"
-                    and disposition not in {"unknown", "unverified"}
-                ),
-                "historicalOnly": occurrence_state != "verified",
-            },
-            "currentOccurrence": {
-                "occurrenceId": record.occurrence_id,
-                "fingerprint": record.fingerprint,
-                "fingerprintAlgorithm": record.fingerprint_algorithm,
-                "fingerprintEvidence": dict(record.fingerprint_evidence or {}),
-                "state": occurrence_state,
-                "current": True,
-            },
-            "reprocess": {
-                "eligible": reprocess_eligible,
-                "reason": (
-                    "explicit Reprocess is available for this current occurrence"
-                    if reprocess_eligible
-                    else (
-                        "inspect the current disposition and occurrence before requesting Reprocess"
-                    )
-                ),
-            },
-        }
-
     def _manual_intent_document(self, intent, *, include_audit: bool = True) -> dict:
         document = intent.document(include_audit=include_audit)
         if self._manual_execution is not None:
@@ -12953,54 +12320,6 @@ class MediaFlowApi:
         if not worker_ready:
             return "start or repair the resident Processing Worker so discovery can continue"
         return "the resident Processing Worker continues this bounded discovery"
-
-    def _require_organize_selection(self, item_ids: list, resource_library_id: str) -> None:
-        """Resolve every selected FileIndex identity in its exact current scope.
-
-        The browser submits only FileIndex identities it already rendered; the
-        backend resolves each one through the current catalog inside the chosen
-        ResourceLibrary, so a stale, foreign or fabricated identity can never
-        become a durable manual intent.
-        """
-
-        catalog_reader = getattr(self._file_catalog, "show", None) if self._file_catalog else None
-        index_reader = (
-            getattr(self._file_index, "list_by_resource_library", None)
-            if self._file_index is not None
-            else None
-        )
-        seen: set[str] = set()
-        for raw in item_ids:
-            if not isinstance(raw, str) or not raw.strip() or len(raw) > 512:
-                raise ValueError(
-                    "operations organize selection contains an invalid FileIndex identity"
-                )
-            file_id = raw.strip()
-            if file_id in seen:
-                raise ValueError(
-                    "operations organize selection contains a duplicate FileIndex identity"
-                )
-            seen.add(file_id)
-            record = None
-            if callable(catalog_reader):
-                try:
-                    record = catalog_reader(file_id, resource_library_id=resource_library_id)
-                except LookupError:
-                    record = None
-                except Exception as error:
-                    raise ValueError(
-                        "the selected FileIndex scope could not be resolved from the current "
-                        "catalog"
-                    ) from error
-            if record is None and callable(index_reader):
-                for candidate in index_reader(resource_library_id):
-                    if getattr(candidate, "file_id", None) == file_id:
-                        record = candidate
-                        break
-            if record is None:
-                raise ValueError(
-                    "a selected FileIndex record is not current in the chosen ResourceLibrary"
-                )
 
     def _organize_worker_evidence(self) -> dict[str, object]:
         """Backend-authoritative Worker evidence for the admitted execution queue."""
@@ -19733,191 +19052,6 @@ class MediaFlowApi:
                 ),
             )
 
-    def _file_catalog_detail_value(self, detail) -> dict:
-        projection = (
-            self._file_lifecycle.project(detail) if self._file_lifecycle is not None else None
-        )
-        document = self._file_catalog_value(detail.record)
-        document["surface"] = "file_index"
-        document["filesSurface"] = "/api/v1/storage/files"
-        if projection is not None:
-            document["currentOccurrence"] = {
-                **document["currentOccurrence"],
-                "history": [value.document() for value in projection.occurrence_history],
-            }
-            document["occurrenceHistory"] = [
-                value.document() for value in projection.occurrence_history
-            ]
-            document["reprocess"] = {
-                "eligible": projection.reprocess_eligible,
-                "reason": projection.reprocess_reason,
-                "required": {
-                    "occurrenceId": detail.record.occurrence_id,
-                    "fingerprint": detail.record.fingerprint,
-                },
-            }
-            document["priorResultRelevance"] = [
-                {
-                    "resultId": result.result_id,
-                    "relevance": relation,
-                    "current": relation == "current",
-                }
-                for result, relation in projection.result_relevance
-            ]
-            document["reprocessRequests"] = [
-                value.document() for value in projection.reprocess_requests
-            ]
-        if self._manual_execution is not None:
-            document["manualExecutionDiscovery"] = self._manual_execution.discovery_for_source(
-                detail.record.storage_id,
-                detail.record.path,
-            )
-        related_reviews = [
-            {
-                "kind": item.kind,
-                "reviewId": item.review_id,
-                "status": item.status,
-                "taskId": item.task_id,
-                "itemId": item.item_id,
-            }
-            for item in detail.related_reviews
-        ]
-        if self._file_catalog is not None:
-            continuation_service = FileMetadataCorrectionContinuationService(
-                self._file_catalog,
-                self._repository,
-            )
-            for value in related_reviews:
-                if value["kind"] != "metadata_correction":
-                    continue
-                get_continuation = getattr(
-                    self._repository,
-                    "get_metadata_correction_continuation_for_review",
-                    None,
-                )
-                continuation = (
-                    get_continuation(value["reviewId"]) if callable(get_continuation) else None
-                )
-                try:
-                    context = continuation_service.context(detail.record.file_id, value["reviewId"])
-                except (LookupError, ValueError):
-                    # A queued/running/failed continuation must remain visible even
-                    # if source linkage became stale after admission. Projection is
-                    # read-only; retry stays disabled until the linkage is repaired.
-                    if continuation is None:
-                        continue
-                    value["correctionVersion"] = continuation.correction_version
-                    value["configurationSnapshotId"] = continuation.configuration_snapshot_id
-                    value["configurationSnapshotDigest"] = (
-                        continuation.configuration_snapshot_digest
-                    )
-                    value["canContinue"] = False
-                    value["continuation"] = self._metadata_correction_continuation_value(
-                        continuation,
-                        next_action=(
-                            "repair the linked File/Task/TaskItem, then reload before retrying"
-                        ),
-                    )
-                    continue
-                value["correctionVersion"] = context.correction_version
-                value["configurationSnapshotId"] = context.configuration_snapshot_id
-                value["configurationSnapshotDigest"] = context.configuration_snapshot_digest
-                value["canContinue"] = context.current is None or context.current.status in {
-                    MetadataCorrectionContinuationStatus.FAILED,
-                    MetadataCorrectionContinuationStatus.CANCELLED,
-                }
-                if context.current is not None:
-                    get_job = getattr(self._repository, "get_job", None)
-                    job = get_job(context.current.job_id) if callable(get_job) else None
-                    stale = (
-                        context.current.status is MetadataCorrectionContinuationStatus.RUNNING
-                        and job is not None
-                        and job.status.value == "running"
-                        and datetime.now(UTC) - job.updated_at
-                        >= timedelta(seconds=self._runtime_binding.stale_job_age_seconds)
-                    )
-                    value["continuation"] = self._metadata_correction_continuation_value(
-                        context.current,
-                        display_status="stale" if stale else None,
-                        job=job,
-                    )
-                    if stale:
-                        value["nextAction"] = (
-                            "inspect the stale Job and explicitly requeue it, then reload this File"
-                        )
-        document["relatedReviews"] = related_reviews
-        document["evidence"] = [self._pipeline_evidence_value(value) for value in detail.evidence]
-        document["evidenceAvailability"] = "available" if detail.evidence else "unavailable"
-        document["items"] = []
-        for value in detail.items:
-            item_document = self._file_detail_item_value(value)
-            if (
-                detail.record.occurrence_id is None
-                or detail.record.occurrence_state.value == "legacy"
-                or value.source_occurrence_id is None
-            ):
-                item_document["relevance"] = "unverified_legacy"
-                item_document["current"] = False
-            elif value.source_occurrence_id == detail.record.occurrence_id:
-                if (
-                    value.source_fingerprint_state == "verified"
-                    and value.source_fingerprint == detail.record.fingerprint
-                ):
-                    item_document["relevance"] = "current"
-                    item_document["current"] = True
-                else:
-                    item_document["relevance"] = "historical_fingerprint_mismatch"
-                    item_document["current"] = False
-            else:
-                item_document["relevance"] = "historical_different_occurrence"
-                item_document["current"] = False
-            document["items"].append(item_document)
-        relation_by_result = (
-            {result.result_id: relation for result, relation in projection.result_relevance}
-            if projection is not None
-            else {}
-        )
-        document["results"] = [
-            self._file_result_value(value, relevance=relation_by_result.get(value.result_id))
-            for value in detail.results
-        ]
-        document["currentActions"] = [
-            {
-                "actionId": value.action_id,
-                "label": value.label,
-                "confirmationRequired": value.confirmation_required,
-                "requiredAuthority": value.required_authority,
-                "resolutionSurface": value.resolution_surface,
-                "admissible": value.admissible,
-                "taskId": value.task_id,
-                "itemId": value.item_id,
-            }
-            for value in detail.actions
-        ]
-        document["truncated"] = dict(detail.truncated)
-        latest_result = (
-            projection.current_result if projection is not None else detail.latest_result
-        )
-        if latest_result is None:
-            document["latestResult"] = None
-            return document
-        document["latestResult"] = self._file_result_value(
-            latest_result,
-            include_source=False,
-            latest=True,
-            relevance=(
-                "current"
-                if projection is not None
-                and latest_result.source_occurrence_id == detail.record.occurrence_id
-                and latest_result.source_fingerprint == detail.record.fingerprint
-                else "unverified_legacy"
-                if projection is not None
-                else None
-            ),
-        )
-        return document
-
-    @staticmethod
     def _pipeline_evidence_value(evidence) -> dict:
         return evidence.document()
 

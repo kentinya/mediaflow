@@ -8,14 +8,6 @@
  * so the UI never fabricates unavailable counts or details.
  */
 
-export interface DashboardFileCounts {
-  readonly total: number;
-  readonly ready: number;
-  readonly unstable: number;
-  readonly missing: number;
-  readonly errors: number;
-}
-
 export interface DashboardTaskCounts {
   readonly total: number;
   readonly pending: number;
@@ -48,7 +40,6 @@ export interface DashboardModel {
   readonly asOf: string;
   readonly resourceLibraries: number;
   readonly mediaLibraries: number;
-  readonly files: DashboardFileCounts;
   readonly tasks: DashboardTaskCounts;
   readonly jobs: DashboardJobCounts;
   readonly pendingConfirmations: number;
@@ -100,16 +91,6 @@ function readBoundedText(
   return value;
 }
 
-function readFileCounts(source: Record<string, unknown>): DashboardFileCounts {
-  return {
-    total: readBoundedCount(source, "total"),
-    ready: readBoundedCount(source, "ready"),
-    unstable: readBoundedCount(source, "unstable"),
-    missing: readBoundedCount(source, "missing"),
-    errors: readBoundedCount(source, "errors"),
-  };
-}
-
 function readTaskCounts(source: Record<string, unknown>): DashboardTaskCounts {
   return {
     total: readBoundedCount(source, "total"),
@@ -155,7 +136,6 @@ export function normalizeDashboard(payload: unknown): DashboardModel {
     asOf: readBoundedText(source, "as_of"),
     resourceLibraries: readBoundedCount(source, "resource_libraries"),
     mediaLibraries: readBoundedCount(source, "media_libraries"),
-    files: readFileCounts(readRecord(source["files"])),
     tasks: readTaskCounts(readRecord(source["tasks"])),
     jobs: readJobCounts(readRecord(source["jobs"])),
     pendingConfirmations: readBoundedCount(source, "pending_confirmations"),
@@ -176,11 +156,9 @@ export function normalizeDashboard(payload: unknown): DashboardModel {
 }
 
 /**
- * The honest empty state: nothing has been indexed, planned or run yet.
+ * The honest empty state: nothing has been planned or run yet.
  * The Dashboard never substitutes unavailable details for this state.
  */
 export function isDashboardEmpty(model: DashboardModel): boolean {
-  return (
-    model.files.total === 0 && model.tasks.total === 0 && model.jobs.total === 0
-  );
+  return model.tasks.total === 0 && model.jobs.total === 0;
 }

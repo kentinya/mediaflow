@@ -38,7 +38,6 @@ from mediaflow.application.configuration_snapshot import (
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
@@ -65,6 +64,7 @@ from mediaflow.application.scope_continuation import (
     continuation_origin,
     definition_occurrence_authority,
 )
+from mediaflow.application.storage_browser import StorageBrowserError
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -93,7 +93,6 @@ from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.resident_services import ResidentServiceWaiting
-from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.storage import StorageEntryType
@@ -129,7 +128,6 @@ from mediaflow.infrastructure.sqlite_backup import SQLiteBackupService
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_restore import SQLiteRestoreService
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.upgrade_preflight import UpgradePreflightService
@@ -232,29 +230,33 @@ def final_main(
     storage_commands.add_parser("list", help="list configured Storages without connecting")
     storage_check = storage_commands.add_parser("check", help="run read-only Storage preflight")
     storage_check.add_argument("storage_id", nargs="?")
-    files = commands.add_parser("files", help="read-only indexed file catalog")
+    files = commands.add_parser(
+        "files",
+        help="read the live directory of one Active ResourceLibrary or MediaLibrary",
+    )
     file_commands = files.add_subparsers(dest="file_command", required=True)
-    file_list = file_commands.add_parser("list")
-    file_list.add_argument("--resource-library")
-    file_list.add_argument("--storage")
-    file_list.add_argument("--scan-status", choices=[item.value for item in FileScanStatus])
-    file_list.add_argument("--query")
+    file_list = file_commands.add_parser(
+        "list",
+        help="list one live library directory (read-only; nothing is recorded)",
+    )
+    library_scope = file_list.add_mutually_exclusive_group(required=True)
+    library_scope.add_argument(
+        "--resource-library",
+        metavar="ID",
+        help="ResourceLibrary ID to read the current live directory from",
+    )
+    library_scope.add_argument(
+        "--media-library",
+        metavar="ID",
+        help="MediaLibrary ID to read the current live directory from",
+    )
+    file_list.add_argument(
+        "--path",
+        default="",
+        help="library-relative directory (default: the library root)",
+    )
     file_list.add_argument("--limit", type=int, default=100)
-    file_list.add_argument("--after")
-    file_list.add_argument("--before")
-    file_list.add_argument("--cursor-file-id")
-    file_list.add_argument("--recognition-type")
-    file_list.add_argument("--provider")
-    file_list.add_argument("--provider-id")
-    file_list.add_argument("--title")
-    file_list.add_argument("--task-id")
-    file_list.add_argument("--year", type=int)
-    file_show = file_commands.add_parser("show")
-    file_show.add_argument("file_id")
-    file_show.add_argument("--resource-library")
-    file_stats = file_commands.add_parser("stats")
-    file_stats.add_argument("--resource-library")
-    file_stats.add_argument("--storage")
+    file_list.add_argument("--cursor")
     jobs = commands.add_parser("jobs", help="persistent DryRun background jobs")
     job_commands = jobs.add_subparsers(dest="job_command", required=True)
     job_list = job_commands.add_parser("list")
@@ -519,6 +521,12 @@ def final_main(
         )
         if _resolved_configuration is not None:
             configuration = _resolved_configuration
+        elif arguments.command == "files":
+            # ``files list`` is a strictly read-only library read.  It resolves
+            # the exact Active revision itself through a ``mode=ro`` connection
+            # and must never create, migrate or write-lock the runtime database,
+            # so it bootstraps only the immutable locator here.
+            configuration = load_management_bootstrap(_configuration_document(arguments.config))
         elif arguments.command in {"worker", "scheduler", "notification-worker"}:
             # Resident services bootstrap from deployment-owned authority alone.
             # The immutable locator is enough to open the durable database, run
@@ -1063,67 +1071,17 @@ def final_main(
                     stdout.write(render_confirmation(value, ()))
             return 0
         if arguments.command == "files":
-            library_ids = tuple(
-                item.library_id for item in configuration.resource_libraries if item.enabled
-            )
-            storage_ids = tuple(item.storage_id for item in configuration.storage_definitions)
-            with ExitStack() as stack:
-                file_index = stack.enter_context(
-                    SQLiteFileIndexRepository(configuration.database_path)
+            # ``files list`` reads one exact Active library directory through the
+            # same application browser the Web Files and MediaLibrary pages use.
+            # It is strictly read-only: it opens no Task/Result repository, creates
+            # or upgrades no database, records no directory entry and grants no
+            # execution authority.
+            if arguments.file_command != "list":
+                raise ValueError(
+                    f"unsupported files command {arguments.file_command!r}; "
+                    "use 'files list' to read one live library directory"
                 )
-                task_repository = stack.enter_context(
-                    SQLiteTaskRepository(configuration.database_path)
-                )
-                service = FileCatalogService(
-                    file_index,
-                    library_ids,
-                    storage_ids,
-                    task_repository=task_repository,
-                )
-                if arguments.file_command == "list":
-                    scan_status = (
-                        FileScanStatus(arguments.scan_status)
-                        if arguments.scan_status is not None
-                        else None
-                    )
-                    after = _file_catalog_cursor(
-                        arguments.after,
-                        arguments.cursor_file_id if arguments.after else None,
-                    )
-                    before = _file_catalog_cursor(
-                        arguments.before,
-                        arguments.cursor_file_id if arguments.before else None,
-                    )
-                    records = service.list(
-                        FileCatalogFilter(
-                            resource_library_id=arguments.resource_library,
-                            storage_id=arguments.storage,
-                            scan_status=scan_status,
-                            query=arguments.query,
-                            limit=arguments.limit,
-                            after=after,
-                            before=before,
-                            recognition_type=arguments.recognition_type,
-                            provider=arguments.provider,
-                            provider_id=arguments.provider_id,
-                            title=arguments.title,
-                            task_id=arguments.task_id,
-                            year=arguments.year,
-                        )
-                    )
-                    stdout.write(render_file_catalog(records))
-                elif arguments.file_command == "stats":
-                    stats = service.stats(
-                        resource_library_id=arguments.resource_library,
-                        storage_id=arguments.storage,
-                    )
-                    stdout.write(render_file_catalog_stats(stats))
-                else:
-                    detail = service.detail(
-                        arguments.file_id,
-                        resource_library_id=arguments.resource_library,
-                    )
-                    stdout.write(render_file_catalog_detail(detail))
+            stdout.write(_render_live_library_directory(configuration, arguments))
             return 0
         if arguments.command == "storage":
             if arguments.storage_command == "list":
@@ -1236,10 +1194,7 @@ def final_main(
             )
             stdout.write(render_strategy_result(result))
             return 0
-        with (
-            SQLiteTaskRepository(configuration.database_path) as repository,
-            SQLiteFileIndexRepository(configuration.database_path) as file_index,
-        ):
+        with SQLiteTaskRepository(configuration.database_path) as repository:
             operational_logger = (
                 SQLiteOperationalLogger(
                     repository,
@@ -1314,7 +1269,7 @@ def final_main(
             analysis_only = bool(_analysis_only_preview and arguments.command == "preview")
             service = MediaOrganizerService(
                 strategy,
-                StorageScanner(storages, file_index, logger=operational_logger),
+                StorageScanner(storages, logger=operational_logger),
                 storages,
                 {item.library_id: item for item in configuration.media_libraries},
                 configuration.strategy.recognition_type_policies,
@@ -1421,7 +1376,6 @@ def final_main(
                         configuration,
                         original,
                         storages,
-                        file_index,
                         coordinator,
                         task.task_id,
                         execute,
@@ -1508,7 +1462,6 @@ def _continue_paused_scope(
     configuration,
     original: PersistentTask,
     storages,
-    file_index,
     coordinator: PersistentTaskCoordinator,
     task_id: str,
     execute: bool,
@@ -1610,112 +1563,170 @@ def render_tasks(tasks: tuple[PersistentTask, ...]) -> str:
     return "\n".join(lines)
 
 
-def render_file_catalog(records) -> str:
-    lines = ["", "FILE CATALOG", ""]
-    for record in records:
-        lines.append(
-            f"{record.file_id} | {record.storage_id}:{record.resource_library_id}:{record.path} | "
-            f"{record.scan_status.value} | size={record.size} | "
-            f"updated={record.updated_at.isoformat()}"
-        )
-    lines.extend(("", f"Total: {len(records)}", ""))
-    return "\n".join(lines)
+def _active_runtime_for_browsing(active, database_path: str):
+    """Resolve the exact Active revision into a runtime configuration for browsing.
 
+    Only configuration is resolved: no Storage adapter is constructed here, and
+    the database locator comes from the immutable bootstrap document, so this can
+    never upgrade or create the store it just read.
+    """
 
-def render_file_catalog_stats(stats) -> str:
-    lines = [
-        "",
-        "FILE CATALOG STATS",
-        "",
-        f"Total: {stats.total}",
-        "",
-        "BY STATUS",
-        "",
-    ]
-    for status in FileScanStatus:
-        lines.append(f"{status.value}: {stats.by_status.get(status, 0)}")
-    lines.append("")
-    return "\n".join(lines)
+    from mediaflow.infrastructure.runtime_configuration import (
+        load_managed_runtime_configuration,
+        with_managed_snapshot,
+    )
 
-
-def render_file_catalog_record(record) -> str:
-    return "\n".join(
-        (
-            "",
-            "FILE CATALOG RECORD",
-            "",
-            f"File ID: {record.file_id}",
-            f"Storage: {record.storage_id}",
-            f"ResourceLibrary: {record.resource_library_id}",
-            f"Path: {record.path}",
-            f"Filename: {record.filename}",
-            f"Extension: {record.extension}",
-            f"Size: {record.size}",
-            f"Modified: {record.modified_at.isoformat()}",
-            f"Stable since: {record.stable_since.isoformat() if record.stable_since else '-'}",
-            f"Scan status: {record.scan_status.value}",
-            f"Change: {record.change.value}",
-            f"First seen: {record.first_seen_at.isoformat()}",
-            f"Last seen: {record.last_seen_at.isoformat()}",
-            f"Missing since: {record.missing_since.isoformat() if record.missing_since else '-'}",
-            f"Last scan ID: {record.last_scan_id or '-'}",
-            "",
-        )
+    runtime = load_managed_runtime_configuration(
+        active.document, bootstrap_database_path=database_path
+    )
+    return with_managed_snapshot(
+        runtime,
+        snapshot_id=active.revision_id,
+        digest=active.digest,
+        version=active.revision_sequence,
     )
 
 
-def render_file_catalog_detail(detail) -> str:
-    record = detail.record
-    result = detail.latest_result
+def _live_list_limit(value: object) -> int:
+    if value is None:
+        return 100
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+        raise ValueError("files list --limit must be between 1 and 100")
+    return value
+
+
+def render_live_library_directory(document) -> str:
+    """Render one bounded live library directory listing."""
+
+    library_kind = str(document.get("libraryKind"))
+    library_label = "ResourceLibrary" if library_kind == "resourceLibrary" else "MediaLibrary"
+    library = document.get(
+        "resourceLibrary" if library_kind == "resourceLibrary" else "mediaLibrary"
+    )
+    library = library if isinstance(library, dict) else {}
+    entries = document.get("entries") or ()
     lines = [
         "",
-        "FILE CATALOG DETAIL",
+        "LIVE DIRECTORY",
         "",
-        f"File ID: {record.file_id}",
-        f"Storage: {record.storage_id}",
-        f"ResourceLibrary: {record.resource_library_id}",
-        f"Path: {record.path}",
-        f"Filename: {record.filename}",
-        f"Extension: {record.extension}",
-        f"Size: {record.size}",
-        f"Modified: {record.modified_at.isoformat()}",
-        f"Stable since: {record.stable_since.isoformat() if record.stable_since else '-'}",
-        f"Scan status: {record.scan_status.value}",
-        f"Change: {record.change.value}",
-        f"First seen: {record.first_seen_at.isoformat()}",
-        f"Last seen: {record.last_seen_at.isoformat()}",
-        f"Missing since: {record.missing_since.isoformat() if record.missing_since else '-'}",
-        f"Last scan ID: {record.last_scan_id or '-'}",
+        f"Library kind: {library_label}",
+        f"Library: {library.get('name') or '-'} ({library.get('id') or '-'})",
+        f"Storage: {document.get('storageName') or '-'} ({document.get('storageId') or '-'})",
+        f"Directory: {document.get('path') or '/'}",
+        f"Revision: {document.get('revisionId') or '-'}",
         "",
-        "LATEST TASK RESULT",
+        "NAME | TYPE | SIZE | MODIFIED",
         "",
     ]
-    if result is None:
-        lines.extend(("None", ""))
-    else:
-        lines.extend(
+    for entry in entries:
+        lines.append(
+            f"{entry.get('name')} | {entry.get('type')} | {entry.get('size')} | "
+            f"{entry.get('modifiedAt')}"
+        )
+    if not entries:
+        lines.append("None")
+    lines.extend(
+        (
+            "",
+            f"Returned: {len(entries)}",
+            f"Limit: {document.get('limit')}",
+            f"More available: {'yes' if document.get('hasNext') else 'no'}",
+            f"Next cursor: {document.get('nextCursor') or '-'}",
+            "Total: unknown (only the requested directory is read)",
+            f"Side effects: {document.get('sideEffects', 'none')}",
+            "",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _render_live_library_directory(configuration, arguments) -> str:
+    """Read one live library directory and render it for the operator.
+
+    This is the CLI twin of the Web Files/MediaLibrary pages: it resolves the
+    exact Active revision, binds the requested library and Storage, and lists the
+    requested directory through the shared application browser.  It records
+    nothing, creates no database, calls no Provider and mutates no media.
+    """
+
+    try:
+        document = _live_library_directory_document(configuration, arguments)
+    except StorageBrowserError as error:
+        return "\n".join(
             (
-                f"Task: {result.task_id}",
-                f"Item: {result.item_id}",
-                f"Status: {result.status}",
-                f"RecognitionType: {result.recognition_type or '-'}",
-                f"Provider: {result.provider or '-'}",
-                f"Provider ID: {result.provider_id or '-'}",
-                f"Title: {result.title or '-'}",
-                f"Metadata policy: {result.metadata_policy_id or '-'}",
-                f"Naming policy: {result.naming_policy_id or '-'}",
-                f"Classification policy: {result.classification_policy_id or '-'}",
-                f"Organize policy: {result.organize_policy_id or '-'}",
-                f"Operation: {result.operation or '-'}",
-                f"Target: {result.destination_storage_id or '-'}:{result.destination_path or '-'}",
-                f"Created: {result.created_at.isoformat()}",
-                f"Retry attempts: {result.retry_attempts}",
-                f"Cleanup status: {result.cleanup_status or '-'}",
-                f"Error: {result.error or '-'}",
+                "",
+                "LIVE DIRECTORY",
+                "",
+                f"Status: {error.code}",
+                f"Reason: {error.message}",
+                f"Durable state: {error.durable_state}",
+                f"Side effects: {error.details['sideEffects']}",
+                f"Repeatable: {'yes' if error.retry_safe else 'no'}",
+                f"Next action: {error.next_action}",
                 "",
             )
         )
-    return "\n".join(lines)
+    return render_live_library_directory(document)
+
+
+def _live_library_directory_document(configuration, arguments) -> dict[str, object]:
+    from mediaflow.application.storage_browser import RuntimeFilesBrowserService
+    from mediaflow.infrastructure.read_only_active_configuration import (
+        ReadOnlyActiveRevisionSource,
+        active_revision_failure_document,
+        read_active_revision_read_only,
+    )
+
+    bootstrap_document = _configuration_document(arguments.config)
+    database_path = _bootstrap_database_path(bootstrap_document)
+    try:
+        active = read_active_revision_read_only(database_path)
+    except RuntimeSnapshotUnavailable as error:
+        raise StorageBrowserError(
+            f"files_list_{getattr(error, 'reason', 'active_unavailable')}",
+            getattr(error, "reason", "active_unavailable"),
+            str(error),
+            status=409,
+            next_action=str(
+                active_revision_failure_document(error).get(
+                    "nextAction",
+                    "complete first setup in the Web Settings page and activate a revision",
+                )
+            ),
+            durable_state="no configuration was created, changed or upgraded",
+        ) from error
+    if active is None:
+        raise StorageBrowserError(
+            "files_list_no_active",
+            "no_active",
+            "no Active configuration revision is published yet",
+            status=409,
+            next_action="complete first setup in the Web Settings page and activate a revision",
+            durable_state="no configuration was created, changed or upgraded",
+        )
+    browser = RuntimeFilesBrowserService(
+        ReadOnlyActiveRevisionSource(active),
+        active_revision=active,
+        runtime_configuration=_active_runtime_for_browsing(active, database_path),
+    )
+    limit = _live_list_limit(arguments.limit)
+    if arguments.resource_library is not None:
+        document = browser.browse_resource_library(
+            resource_library_id=arguments.resource_library,
+            path=arguments.path,
+            limit=limit,
+            cursor=arguments.cursor,
+        )
+        document["libraryKind"] = "resourceLibrary"
+    else:
+        document = browser.browse_media_library(
+            media_library_id=arguments.media_library,
+            path=arguments.path,
+            limit=limit,
+            cursor=arguments.cursor,
+        )
+        document["libraryKind"] = "mediaLibrary"
+    return document
 
 
 def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> str:
@@ -2135,11 +2146,6 @@ def render_dashboard(value) -> str:
         f"As of: {value.as_of.isoformat()}",
         f"Resource libraries: {value.resource_libraries}",
         f"Media libraries: {value.media_libraries}",
-        f"Indexed files: {value.files.total}",
-        f"Ready: {value.files.ready}",
-        f"Unstable: {value.files.unstable}",
-        f"Missing: {value.files.missing}",
-        f"File errors: {value.files.errors}",
         f"Tasks: {value.tasks.total} (running={value.tasks.running}, failed={value.tasks.failed})",
         f"Jobs: {value.jobs.total} (pending={value.jobs.pending}, running={value.jobs.running}, "
         f"failed={value.jobs.failed})",
@@ -2604,7 +2610,6 @@ def _run_definition_scoped_workflow(
         task_repository = repository
         if task_repository is None:
             task_repository = stack.enter_context(SQLiteTaskRepository(configuration.database_path))
-        file_index = stack.enter_context(SQLiteFileIndexRepository(configuration.database_path))
         operational_logger = (
             SQLiteOperationalLogger(
                 task_repository,
@@ -2616,7 +2621,6 @@ def _run_definition_scoped_workflow(
         )
         service = DefinitionScopedExecutionService(
             task_repository,
-            file_index,
             configuration,
             storage_factory=configuration.create_storages,
             provider_factory=metadata_provider_registry_from_environment,
@@ -2654,10 +2658,7 @@ def _fail_metadata_correction_continuation_snapshot(job, configured_path: str | 
 def _run_metadata_correction_continuation(
     job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
 ) -> str | None:
-    with (
-        SQLiteTaskRepository(configuration.database_path) as repository,
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-    ):
+    with SQLiteTaskRepository(configuration.database_path) as repository:
         continuation_service = MetadataCorrectionContinuationWorkerService(repository)
         prepared = None
         started = False
@@ -2665,7 +2666,7 @@ def _run_metadata_correction_continuation(
         try:
             if cancellation_check():
                 raise AutomationCancelled()
-            prepared = continuation_service.prepare(job.job_id, file_index=file_index)
+            prepared = continuation_service.prepare(job.job_id)
             continuation_service.started(job.job_id)
             started = True
             if cancellation_check():
@@ -2727,7 +2728,7 @@ def _run_metadata_correction_continuation(
 
             service = MediaOrganizerService(
                 strategy,
-                StorageScanner(storages, file_index, logger=operational_logger),
+                StorageScanner(storages, logger=operational_logger),
                 storages,
                 {item.library_id: item for item in configuration.media_libraries},
                 configuration.strategy.recognition_type_policies,
@@ -2823,10 +2824,7 @@ def _fail_recovery_continuation_snapshot(job, configured_path: str | None) -> No
 def _run_recovery_continuation(
     job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
 ) -> str | None:
-    with (
-        SQLiteTaskRepository(configuration.database_path) as repository,
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-    ):
+    with SQLiteTaskRepository(configuration.database_path) as repository:
         continuation_service = RecoveryContinuationWorkerService(repository)
         prepared = None
         started = False
@@ -2834,7 +2832,7 @@ def _run_recovery_continuation(
         try:
             if cancellation_check():
                 raise AutomationCancelled()
-            prepared = continuation_service.prepare(job.job_id, file_index=file_index)
+            prepared = continuation_service.prepare(job.job_id)
             continuation_service.started(job.job_id)
             started = True
             if cancellation_check():
@@ -2949,7 +2947,7 @@ def _run_recovery_continuation(
 
             service = MediaOrganizerService(
                 strategy,
-                StorageScanner(storages, file_index, logger=operational_logger),
+                StorageScanner(storages, logger=operational_logger),
                 storages,
                 {item.library_id: item for item in configuration.media_libraries},
                 configuration.strategy.recognition_type_policies,
@@ -2975,6 +2973,12 @@ def _run_recovery_continuation(
                 resource_library=resource,
                 storage_path=prepared.source_item.source_path,
                 execute=False,
+                # The continuation analyzes the exact source occurrence the
+                # original TaskItem was admitted under, so a replacement at the
+                # same path is never mistaken for the reviewed source.
+                source_occurrence_id=prepared.source_item.source_occurrence_id,
+                source_fingerprint=prepared.source_item.source_fingerprint,
+                source_fingerprint_state=prepared.source_item.source_fingerprint_state,
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
@@ -3078,10 +3082,7 @@ def _run_scope_continuation(
     zero new mutation, and completed sibling effects stay durable.
     """
 
-    with (
-        SQLiteTaskRepository(configuration.database_path) as repository,
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-    ):
+    with SQLiteTaskRepository(configuration.database_path) as repository:
         # The Worker reached this handler only by resolving the Job's immutable
         # pin through managed authority, so that resolution *is* the proof the
         # pin is available.  Reusing it as the validator keeps the obstacle
@@ -3180,7 +3181,7 @@ def _run_scope_continuation(
             )
             organizer = MediaOrganizerService(
                 strategy,
-                StorageScanner(storages, file_index, logger=operational_logger),
+                StorageScanner(storages, logger=operational_logger),
                 storages,
                 {item.library_id: item for item in configuration.media_libraries},
                 configuration.strategy.recognition_type_policies,
@@ -3200,7 +3201,6 @@ def _run_scope_continuation(
                 configuration,
                 original,
                 storages,
-                file_index,
                 coordinator,
                 continuation.task_id,
                 original.execute_authorized,
@@ -3359,7 +3359,6 @@ def _continue_scope_from_admission(
     configuration: RuntimeConfiguration,
     original: PersistentTask,
     storages,
-    file_index,
     coordinator: PersistentTaskCoordinator,
     task_id: str,
     execute: bool,
@@ -4296,11 +4295,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
     from mediaflow.interfaces.service_api import MediaFlowApi
 
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-    # FileIndex is durable infrastructure, not a configured business object.
-    # Open it even before the first Active so the same API process can build
-    # Scan/Preview services when a later publication enables them. Opening the
-    # repository neither scans Storage nor creates media work.
-    file_index_context = SQLiteFileIndexRepository(configuration.database_path)
     # The API registers its own durable presence for the same reason the other
     # three services do: "the process is running" must be an observed fact, not
     # an inference from a static configuration file.  This changes nothing
@@ -4317,7 +4311,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
     instance_id = resident_instance_id("api")
     with (
         SQLiteTaskRepository(configuration.database_path) as repository,
-        file_index_context as file_index,
         SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
     ):
         register_resident_process(
@@ -4335,22 +4328,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             bootstrap_database_path=configuration.database_path,
             bootstrap_document=bootstrap_document,
             management_only=management_only,
-        )
-        file_catalog = (
-            FileCatalogService(
-                file_index,
-                tuple(
-                    item.library_id
-                    for item in getattr(configuration, "resource_libraries", ())
-                    if item.enabled
-                ),
-                tuple(
-                    item.storage_id for item in getattr(configuration, "storage_definitions", ())
-                ),
-                task_repository=repository,
-            )
-            if file_index is not None
-            else None
         )
         app = MediaFlowApi(
             repository,
@@ -4372,8 +4349,6 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             system_status=(
                 None if management_only else build_configuration_snapshot(configuration)
             ),
-            file_catalog=file_catalog,
-            file_index=file_index,
             metadata_policies=getattr(
                 getattr(configuration, "strategy", None), "metadata_policies", ()
             ),
@@ -4424,32 +4399,17 @@ def _manual_organize_worker_context(configuration, configured_path: str | None, 
 
     bootstrap_document = _configuration_document(configured_path)
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-    with (
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
-    ):
+    with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
         configuration_service = ManagedConfigurationService(
             configuration_repository,
             bootstrap_database_path=configuration.database_path,
             bootstrap_document=bootstrap_document,
             management_only=management_only,
         )
-        catalog = FileCatalogService(
-            file_index,
-            tuple(
-                item.library_id
-                for item in getattr(configuration, "resource_libraries", ())
-                if item.enabled
-            ),
-            tuple(item.storage_id for item in getattr(configuration, "storage_definitions", ())),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        intents = ManualOrganizeIntentService(repository, configuration_service)
         previews = ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
-            file_index=file_index,
             configuration_service=configuration_service,
             metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
                 metadata_provider_registry_from_environment
@@ -4486,10 +4446,7 @@ def _preview_analysis_worker_context(configuration, configured_path: str | None,
 
     bootstrap_document = _configuration_document(configured_path)
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-    with (
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
-    ):
+    with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
         configuration_service = ManagedConfigurationService(
             configuration_repository,
             bootstrap_database_path=configuration.database_path,
@@ -4502,24 +4459,11 @@ def _preview_analysis_worker_context(configuration, configured_path: str | None,
             metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
                 metadata_provider_registry_from_environment
             ),
-            file_index=file_index,
         )
-        catalog = FileCatalogService(
-            file_index,
-            tuple(
-                item.library_id
-                for item in getattr(configuration, "resource_libraries", ())
-                if item.enabled
-            ),
-            tuple(item.storage_id for item in getattr(configuration, "storage_definitions", ())),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        intents = ManualOrganizeIntentService(repository, configuration_service)
         manual_previews = ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
-            file_index=file_index,
             configuration_service=configuration_service,
             metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
                 metadata_provider_registry_from_environment
@@ -4550,32 +4494,17 @@ def _media_discovery_worker_context(configuration, configured_path: str | None, 
 
     bootstrap_document = _configuration_document(configured_path)
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-    with (
-        SQLiteFileIndexRepository(configuration.database_path) as file_index,
-        SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
-    ):
+    with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
         configuration_service = ManagedConfigurationService(
             configuration_repository,
             bootstrap_database_path=configuration.database_path,
             bootstrap_document=bootstrap_document,
             management_only=management_only,
         )
-        catalog = FileCatalogService(
-            file_index,
-            tuple(
-                item.library_id
-                for item in getattr(configuration, "resource_libraries", ())
-                if item.enabled
-            ),
-            tuple(item.storage_id for item in getattr(configuration, "storage_definitions", ())),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(repository, catalog, configuration_service)
+        intents = ManualOrganizeIntentService(repository, configuration_service)
         previews = ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
-            file_index=file_index,
             configuration_service=configuration_service,
             metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
                 metadata_provider_registry_from_environment
@@ -4750,18 +4679,6 @@ def _read_only_storage_check(storage) -> None:
         if callable(connect):
             connect()
         storage.list("")
-
-
-def _file_catalog_cursor(timestamp: str | None, file_id: str | None):
-    if timestamp is None and file_id is None:
-        return None
-    if timestamp is None or file_id is None:
-        raise ValueError("file catalog cursor requires both timestamp and file ID")
-    try:
-        parsed = datetime.fromisoformat(timestamp)
-    except ValueError as error:
-        raise ValueError("file catalog cursor timestamp must be ISO-8601") from error
-    return parsed, file_id
 
 
 def _safe_preflight_error(error: Exception) -> str:

@@ -47,10 +47,13 @@ describe("real API action matrix documents", () => {
     expect(model.selectionRequired).toBe(false);
     expect(model.runtime.ready).toBe(true);
     expect(model.runtime.condition).toBe("configuration_active");
-    expect(model.actions.preview.available).toBe(true);
-    expect(model.actions.preview.path).toBe("/api/v1/operations/previews");
-    expect(model.source?.filename).toBe("One.2001.mkv");
-    expect(model.source?.path).toBe("One.2001.mkv");
+    // A single-file admission is made from the live directory, so the matrix
+    // states that prerequisite instead of resolving a remembered file ID.
+    expect(model.actions.preview.available).toBe(false);
+    expect(model.actions.preview.reason).toContain("live file");
+    expect(model.actions.organize.available).toBe(false);
+    expect(model.actions.organize.reason).toContain("live file");
+    expect(model.source).toBeNull();
     expect(model.limits.previewMaxItems).toBeGreaterThan(0);
     expect(
       model.resourceLibraries.map((item) => item.resourceLibraryId),

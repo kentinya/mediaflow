@@ -147,7 +147,7 @@ class ManagedOpenListDiscoveryTests(_DiscoveryFixture):
                     bootstrap_database_path=str(self.database),
                 )
                 revision = _activate(managed, document)
-                intents = ManualOrganizeIntentService(repository, None, managed)
+                intents = ManualOrganizeIntentService(repository, managed)
                 discovery = MediaDiscoveryService(
                     repository, intents, configuration_service=managed
                 )

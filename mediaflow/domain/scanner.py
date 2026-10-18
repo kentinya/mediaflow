@@ -13,19 +13,27 @@ from mediaflow.domain.tasks import TaskStatus
 
 
 class FileScanStatus(StrEnum):
+    """The current observation verdict for one source in *this* walk only.
+
+    ``MISSING`` is deliberately absent: there is no global catalog to
+    reconcile, so "no longer present" is expressed by a source simply not being
+    discovered now.  A caller that needs to prove absence does so against the
+    exact scope it just walked.
+    """
+
     DISCOVERED = "discovered"
     UNSTABLE = "unstable"
     READY = "ready"
     IGNORED = "ignored"
-    MISSING = "missing"
     ERROR = "error"
 
 
 class FileChange(StrEnum):
+    """How this observation compares with the caller's own prior observation."""
+
     NEW = "new"
     MODIFIED = "modified"
     UNCHANGED = "unchanged"
-    MISSING = "missing"
 
 
 @dataclass(frozen=True)
@@ -40,10 +48,17 @@ class DiscoveredFile:
     discovered_at: datetime
     status: FileScanStatus
     change: FileChange
-    file_id: str | None = None
+    # The exact observed source evidence an execution admission re-validates.
+    # There is no file-catalog identity: the occurrence names one observed
+    # content state at this path, not a durable catalog row.
     occurrence_id: str | None = None
     fingerprint: str | None = None
-    fingerprint_state: str = "legacy"
+    fingerprint_state: str = "unverified"
+    #: The observation time from which a required stable-size interval is being
+    #: measured for this exact source.  It is only present once an unchanged
+    #: observation exists, so a caller can persist it as its own durable
+    #: observation and prove the configured interval on a later real read.
+    stable_since: datetime | None = None
 
 
 @dataclass(frozen=True)

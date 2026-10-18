@@ -8,9 +8,9 @@ one implementation of the age/stability predicate is the only way that can stay
 true.
 
 Everything here is pure: it reads a ``ResourceLibrary`` policy object and one
-bounded ``StorageEntry`` (plus, for stability, the previously observed
-occurrence).  It never touches Storage, never writes, never calls a Provider and
-never consults the FileIndex.
+bounded ``StorageEntry`` (plus, for stability, the caller's own previously
+observed occurrence).  It never touches Storage, never writes, never calls a
+Provider and never consults any file catalog.
 """
 
 from __future__ import annotations
@@ -183,12 +183,12 @@ def stability_decision(
 ) -> StabilityVerdict:
     """The shared age/stability predicate used by the Scanner and discovery.
 
-    ``unchanged_previous`` is the caller's own proof that the last durable
-    observation of this source had the same observable identity (the Scanner
-    proves it from the FileIndex occurrence; discovery proves it from its own
-    durable observation record).  ``observed_since`` is the timestamp from which
-    a required stable-size interval is measured, and is only meaningful when
-    ``unchanged_previous`` holds.
+    ``unchanged_previous`` is the caller's own proof that its last durable
+    observation of this source had the same observable identity.  Every caller
+    proves it from its own persisted observation of the exact work it is
+    continuing, so no global catalog is consulted.  ``observed_since`` is the
+    timestamp from which a required stable-size interval is measured, and is
+    only meaningful when ``unchanged_previous`` holds.
     """
 
     age = max(0.0, (now - entry.modified_at).total_seconds())
@@ -258,10 +258,9 @@ class ObservedSource:
         """Whether a fresh observation is the same unchanged occurrence.
 
         ``observed_value`` is the *computed* source fingerprint of the fresh
-        entry, exactly as the Scanner compares it against the previous index
-        occurrence.  Size and modification time must be unchanged, and a
-        previously verified digest must still match; a provider that publishes
-        no validator still compares by its observable size/time identity.
+        entry.  Size and modification time must be unchanged, and a previously
+        verified digest must still match; a provider that publishes no validator
+        still compares by its observable size/time identity.
         """
 
         if entry.size != self.size or entry.modified_at != self.modified_at:

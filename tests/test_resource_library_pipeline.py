@@ -24,7 +24,6 @@ from mediaflow.domain.organizer import ExecutionStatus
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
 
@@ -141,7 +140,7 @@ class ResourceLibraryPipelineTests(unittest.TestCase):
         )
         found = []
         batch = ResourceLibraryScanner(
-            StorageScanner({"local": local, "openlist": openlist}, InMemoryFileIndexRepository()),
+            StorageScanner({"local": local, "openlist": openlist}),
             libraries,
             {"local": local, "openlist": openlist},
         ).scan_all(
@@ -205,7 +204,7 @@ class ResourceLibraryPipelineTests(unittest.TestCase):
                     strategy_runner_from_configuration(
                         configuration, MetadataProviderRegistry((provider,))
                     ),
-                    StorageScanner(storages, InMemoryFileIndexRepository()),
+                    StorageScanner(storages),
                     storages,
                     {"movies": MediaLibrary("movies", "Movies", target_id, destination_root)},
                     configuration.recognition_type_policies,

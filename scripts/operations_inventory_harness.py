@@ -88,7 +88,6 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
 from mediaflow.application.conflict_resolution import ConfirmationService  # noqa: E402
-from mediaflow.application.file_catalog import FileCatalogService  # noqa: E402
 from mediaflow.application.manual_organize_worker import (  # noqa: E402
     ManualOrganizeExecutionWorker,
 )
@@ -159,6 +158,11 @@ from mediaflow.domain.recognition import (  # noqa: E402
     RecognitionType,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal  # noqa: E402
+from mediaflow.domain.source_evidence import (  # noqa: E402
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentResultRecord,
     PersistentTask,
@@ -166,12 +170,12 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentTaskStatus,
     TaskItemStatus,
 )
+from mediaflow.final_cli import final_main  # noqa: E402
 from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
     build_configuration_snapshot,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository  # noqa: E402
 from mediaflow.infrastructure.local_storage import LocalStorage  # noqa: E402
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository  # noqa: E402
 from mediaflow.infrastructure.runtime_configuration import (  # noqa: E402
     load_managed_runtime_configuration,
     load_runtime_configuration,
@@ -180,7 +184,6 @@ from mediaflow.infrastructure.runtime_configuration import (  # noqa: E402
 from mediaflow.infrastructure.sqlite_configuration_management import (  # noqa: E402
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository  # noqa: E402
 from mediaflow.infrastructure.sqlite_runtime import (  # noqa: E402
     SCHEMA_VERSION,
     SQLiteTaskRepository,
@@ -255,7 +258,6 @@ def build_api(
     repository: SQLiteTaskRepository,
     *,
     managed: ManagedHarnessContext | None = None,
-    file_index: SQLiteFileIndexRepository | None = None,
     storage_adapters: dict[str, object] | None = None,
 ) -> MediaFlowApi:
     """One real API object over the runtime repository and optional Active pin.
@@ -269,20 +271,11 @@ def build_api(
 
     managed_options: dict[str, object] = {}
     if managed is not None:
-        if file_index is None:
-            raise ValueError("managed browser harness requires its SQLite FileIndex")
         managed_options = {
             "configuration_service": managed.configuration_service,
             "bootstrap_document": managed.bootstrap_document,
             "system_status": build_configuration_snapshot(managed.runtime),
-            "file_index": file_index,
             "storage_adapters": storage_adapters,
-            "file_catalog": FileCatalogService(
-                file_index,
-                ("source",),
-                ("source-storage", "media-target"),
-                task_repository=repository,
-            ),
             "metadata_provider_registry_factory": lambda _policies: managed.metadata_registry,
         }
     api = MediaFlowApi(
@@ -320,11 +313,10 @@ def build_managed_fixture(
     storage_adapters: dict[str, object] | None = None,
 ) -> tuple[
     SQLiteTaskRepository,
-    SQLiteFileIndexRepository,
     ManagedHarnessContext,
     MediaFlowApi,
 ]:
-    """Create the real checked Active/Storage/FileIndex path in temp roots."""
+    """Create the real checked Active/Storage path in temp roots."""
 
     root.mkdir(parents=True, exist_ok=True)
     source_root = root / "source"
@@ -485,13 +477,13 @@ def build_managed_fixture(
         version=active.version,
     )
     repository = SQLiteTaskRepository(database)
-    file_index = SQLiteFileIndexRepository(database)
+    # The fixture records one real observation of the configured scope so a
+    # stability policy with a non-zero interval can be proven on a later read.
     scan = StorageScanner(
         runtime.create_storages(),
-        file_index,
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
     ).scan(runtime.resource_libraries[0])
-    if scan.status.value != "completed":
+    if scan.status != "completed":
         raise RuntimeError("temporary ResourceLibrary scan did not complete")
     # Fresh sources are created after compatibility fixture indexing.
     retirement_root = source_root / "Retirement"
@@ -650,10 +642,9 @@ def build_managed_fixture(
     api = build_api(
         repository,
         managed=managed,
-        file_index=file_index,
         storage_adapters=storage_adapters,
     )
-    return repository, file_index, managed, api
+    return repository, managed, api
 
 
 class AppState:
@@ -666,7 +657,6 @@ class AppState:
         repository: SQLiteTaskRepository,
         api: MediaFlowApi,
         managed: ManagedHarnessContext,
-        file_index: SQLiteFileIndexRepository,
     ) -> None:
         self._database = database
         self._lock = threading.Lock()
@@ -676,7 +666,6 @@ class AppState:
         self.repository = repository
         self.api = api
         self.managed = managed
-        self.file_index = file_index
         self.manual_run: dict[str, str] | None = None
         self.pipeline_run: dict[str, str] | None = None
         #: The paused scan Task of the AC-T7 continuation journey.
@@ -701,14 +690,11 @@ class AppState:
         """
 
         with self._lock:
-            self.file_index.close()
             self.repository.close()
             self.repository = SQLiteTaskRepository(self._database)
-            self.file_index = SQLiteFileIndexRepository(self._database)
             self.api = build_api(
                 self.repository,
                 managed=self.managed,
-                file_index=self.file_index,
             )
             # The registered Worker's heartbeat must stay claimable across a
             # harness restart; a real resident worker heartbeats continuously.
@@ -1472,10 +1458,9 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
             source_files[name] = source
         scan = StorageScanner(
             state.managed.runtime.create_storages(),
-            state.file_index,
             clock=lambda: datetime.now(UTC) + timedelta(hours=2),
         ).scan(state.managed.runtime.resource_libraries[0])
-        if scan.status.value != "completed":
+        if scan.status != "completed":
             raise RuntimeError("batch summary fixture ResourceLibrary scan did not complete")
 
         provider = state.managed.metadata_registry.resolve("tmdb")
@@ -1659,10 +1644,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             source_file.with_suffix(".en.srt").write_bytes(b"subtitle")
         scan = StorageScanner(
             state.managed.runtime.create_storages(),
-            state.file_index,
             clock=lambda: datetime.now(UTC) + timedelta(hours=2),
         ).scan(state.managed.runtime.resource_libraries[0])
-        if scan.status.value != "completed":
+        if scan.status != "completed":
             raise RuntimeError("recovery fixture ResourceLibrary scan did not complete")
 
         provider = state.managed.metadata_registry.resolve("tmdb")
@@ -2213,10 +2197,9 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
 
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
-        state.file_index,
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
     ).scan(state.managed.runtime.resource_libraries[0])
-    if scan.status.value != "completed":
+    if scan.status != "completed":
         raise RuntimeError("recovery batch fixture ResourceLibrary scan did not complete")
 
     provider = state.managed.metadata_registry.resolve("tmdb")
@@ -2276,9 +2259,11 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
     ).encode()
 
     def make_item(item_id: str, path: str, status: TaskItemStatus, stage: str, error=None):
-        record = state.file_index.find_by_path("source-storage", "source", path)
-        if record is None or record.occurrence_id is None or record.fingerprint is None:
+        entry = state.managed.runtime.create_storages()["source-storage"].stat(path)
+        observed = source_fingerprint("source-storage", "source", entry)
+        if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
             raise RuntimeError(f"recovery batch fixture has no verified source identity for {path}")
+        occurrence = occurrence_id_for("source-storage", "source", entry.path, observed.value)
         return PersistentTaskItem(
             item_id=item_id,
             task_id=task.task_id,
@@ -2292,8 +2277,8 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
             created_at=now,
             updated_at=now,
             error=error,
-            source_occurrence_id=record.occurrence_id,
-            source_fingerprint=record.fingerprint,
+            source_occurrence_id=occurrence,
+            source_fingerprint=observed.value,
             source_fingerprint_state="verified",
         )
 
@@ -3382,12 +3367,11 @@ def restore_source_media(state: AppState) -> dict[str, object]:
         target.write_bytes(content)
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
-        state.file_index,
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
     ).scan(state.managed.runtime.resource_libraries[0])
-    if scan.status.value != "completed":
+    if scan.status != "completed":
         raise RuntimeError("restored harness media could not be reindexed")
-    return {"restored": sorted(files), "indexStatus": scan.status.value}
+    return {"restored": sorted(files), "indexStatus": scan.status}
 
 
 def seed_scheduled_worker_scope(state: AppState) -> dict[str, object]:
@@ -3399,16 +3383,16 @@ def seed_scheduled_worker_scope(state: AppState) -> dict[str, object]:
     target.write_bytes(b"scheduled Worker exact Preview fixture")
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
-        state.file_index,
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
     ).scan(state.managed.runtime.resource_libraries[0])
-    if scan.status.value != "completed":
+    if scan.status != "completed":
         raise RuntimeError("scheduled Worker fixture could not be indexed")
+    entry = state.managed.runtime.create_storages()["source-storage"].stat(relative_path)
+    observed = source_fingerprint("source-storage", "source", entry)
     return {
         "sourcePath": relative_path,
-        "scanStatus": scan.status.value,
-        "indexed": state.file_index.find_by_path("source-storage", "source", relative_path)
-        is not None,
+        "scanStatus": scan.status,
+        "observed": observed.state is OccurrenceState.VERIFIED,
     }
 
 
@@ -3425,12 +3409,11 @@ def seed_run_once_mixed_scope(state: AppState) -> dict[str, object]:
         target.write_bytes(content)
     scan = StorageScanner(
         state.managed.runtime.create_storages(),
-        state.file_index,
         clock=lambda: datetime.now(UTC) + timedelta(hours=2),
     ).scan(state.managed.runtime.resource_libraries[0])
-    if scan.status.value != "completed":
+    if scan.status != "completed":
         raise RuntimeError("mixed Run-once fixture could not be indexed")
-    return {"sourcePaths": sorted(files), "scanStatus": scan.status.value}
+    return {"sourcePaths": sorted(files), "scanStatus": scan.status}
 
 
 def reset_automation_definitions(state: AppState) -> dict[str, object]:
@@ -4244,7 +4227,7 @@ def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:
         )
         service = MediaOrganizerService(
             strategy,
-            StorageScanner(storages, InMemoryFileIndexRepository()),
+            StorageScanner(storages),
             storages,
             media_libraries,
             runtime.strategy.recognition_type_policies,
@@ -4325,11 +4308,61 @@ def retirement_stability_state(state: AppState, *, change: bool = False):
     }
 
 
+def cli_files_list(
+    state: AppState,
+    *,
+    kind: str,
+    library_id: str,
+    path: str = "",
+    limit: str = "",
+    cursor: str = "",
+) -> dict[str, object]:
+    """Run the real ``mediaflow files list`` against this harness's Active store.
+
+    Task45.5 requires the CLI and the Web/API to read the same exact Active
+    library directory.  Driving the production ``final_main`` over this one
+    isolated fixture lets the browser journey compare the two real surfaces
+    instead of two independently faked servers.  The read is strictly
+    read-only: it resolves Active through a ``mode=ro`` connection and records
+    nothing.
+    """
+
+    if state.managed.config_path is None:
+        return {"ok": False, "reason": "the harness has no managed config path"}
+    argv = [
+        "--config",
+        str(state.managed.config_path),
+        "files",
+        "list",
+        "--media-library" if kind == "media" else "--resource-library",
+        library_id,
+    ]
+    if path:
+        argv.extend(["--path", path])
+    if limit:
+        argv.extend(["--limit", limit])
+    if cursor:
+        argv.extend(["--cursor", cursor])
+    output = io.StringIO()
+    code = final_main(argv, stdout=output, stderr=io.StringIO())
+    return {"ok": True, "code": code, "output": output.getvalue()}
+
+
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
     if path.startswith("/__harness__/") and STATE is not None:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
-        if path == "/__harness__/retirement-state" and method == "GET":
+        if path == "/__harness__/cli-files-list" and method == "GET":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = cli_files_list(
+                STATE,
+                kind=(query.get("kind") or ["resource"])[0],
+                library_id=(query.get("library") or ["source"])[0],
+                path=(query.get("path") or [""])[0],
+                limit=(query.get("limit") or [""])[0],
+                cursor=(query.get("cursor") or [""])[0],
+            )
+        elif path == "/__harness__/retirement-state" and method == "GET":
             document = retirement_stability_state(STATE)
         elif path == "/__harness__/retirement-change" and method == "POST":
             document = retirement_stability_state(STATE, change=True)
@@ -4494,15 +4527,33 @@ def main(argv: list[str] | None = None) -> int:
     database = args.database or Path(tempfile_dir()) / "operations-inventory.sqlite3"
     database.parent.mkdir(parents=True, exist_ok=True)
     managed_root = database.parent / f"{database.stem}-manual-organize"
-    repository, file_index, managed, api = build_managed_fixture(database, managed_root)
+    repository, managed, api = build_managed_fixture(database, managed_root)
     seed(repository, api)
+    # Task45.5 live-parity fixtures: mixed media/non-media/directories, Unicode,
+    # a long name and boundary whitespace under one directory of each library,
+    # so the production CLI and the production Web/API must list byte-identical
+    # entries with no Organize filtering and no FileIndex identity.  They are
+    # added after the shared fixture (and are only present in this harness), so
+    # the direct-files harness's own root listing stays unchanged.
+    for library_root in (managed_root / "source", managed_root / "destination" / "Movies"):
+        live = library_root / "Live"
+        live.mkdir(parents=True, exist_ok=True)
+        (live / "Alpha.2001.mkv").write_bytes(b"live alpha")
+        (live / "Beta.txt").write_bytes(b"live beta text")
+        (live / "Gamma-Directory").mkdir(exist_ok=True)
+        (live / "Gamma-Directory" / "child.txt").write_bytes(b"child")
+        (live / "长片名.2020.mkv").write_bytes(b"unicode live media")
+        (live / f"{'L' * 120}.mkv").write_bytes(b"long live media")
+        (live / " padded .mkv").write_bytes(b"whitespace live media")
+        # A many-entry directory proves bounded cursor pagination on both sides.
+        for index in range(12):
+            (live / f"Page-{index:02d}.mkv").write_bytes(b"paged live media")
     global STATE
     STATE = AppState(
         database,
         repository=repository,
         api=api,
         managed=managed,
-        file_index=file_index,
     )
     # The AC-T7 continuation fixture is deliberately NOT seeded here: the
     # existing inventory assertions depend on the exact four-run population.

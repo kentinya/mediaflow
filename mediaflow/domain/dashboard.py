@@ -6,15 +6,6 @@ from typing import Protocol
 
 
 @dataclass(frozen=True)
-class DashboardFileCounts:
-    total: int = 0
-    ready: int = 0
-    unstable: int = 0
-    missing: int = 0
-    errors: int = 0
-
-
-@dataclass(frozen=True)
 class DashboardTaskCounts:
     total: int = 0
     pending: int = 0
@@ -47,7 +38,6 @@ class RecentOperationalFailure:
 
 @dataclass(frozen=True)
 class DashboardPersistentState:
-    files: DashboardFileCounts
     tasks: DashboardTaskCounts
     jobs: DashboardJobCounts
     pending_confirmations: int
@@ -62,7 +52,6 @@ class DashboardSnapshot:
     as_of: datetime
     resource_libraries: int
     media_libraries: int
-    files: DashboardFileCounts
     tasks: DashboardTaskCounts
     jobs: DashboardJobCounts
     pending_confirmations: int

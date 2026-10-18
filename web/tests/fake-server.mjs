@@ -170,7 +170,6 @@ const DASHBOARD_SNAPSHOT = {
   as_of: "2026-08-22T12:00:00+00:00",
   resource_libraries: 1,
   media_libraries: 1,
-  files: { total: 12, ready: 9, unstable: 1, missing: 1, errors: 1 },
   tasks: {
     total: 4,
     pending: 1,
@@ -3314,10 +3313,6 @@ function organizeIntentItems(state) {
         choice: organizeChoice(),
         createdAt: MANUAL_RECORDED_AT,
         failure: null,
-        fileIndexReconciliation: organizeFileIndexReconciliation(
-          state,
-          ORGANIZE_EXECUTION_ID,
-        ),
         itemId: ORGANIZE_ITEM_ID,
         nextAction: "continue to a later manual Preview",
         position: 0,
@@ -3804,32 +3799,6 @@ function organizeAdmissionOutcomeDocument(state, url, previewId) {
   };
 }
 
-function organizeFileIndexReconciliation(
-  state,
-  executionId,
-  defaultState = "synchronized",
-) {
-  const current =
-    state.fileIndexReconciled === true ? "synchronized" : defaultState;
-  const nextAction =
-    current === "synchronized"
-      ? "the exact current FileIndex occurrence records this durable Result; no further action is required"
-      : "refresh or rescan this ResourceLibrary, then repeat the bounded FileIndex reconciliation against the durable Result";
-  return {
-    state: current,
-    nextAction,
-    action: {
-      available: current !== "synchronized",
-      durableOutcome:
-        "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
-      method: "POST",
-      nextAction,
-      path: `/api/v1/operations/organize/executions/${executionId}/file-index-reconciliation`,
-      sideEffects: "none",
-    },
-  };
-}
-
 function organizeExecutionDocument(status, state) {
   const finished = status !== "admitted";
   return {
@@ -3999,11 +3968,6 @@ function organizeFailedExecutionDocument(state) {
         effectCertainty: "none",
         effects: [],
         failure,
-        fileIndexReconciliation: organizeFileIndexReconciliation(
-          state,
-          ORGANIZE_FAILED_EXECUTION_ID,
-          "no_matching_occurrence",
-        ),
         itemId: ORGANIZE_ITEM_ID,
         nextAction:
           "inspect the pre-mutation failure, repair it, then request a fresh Preview",
@@ -14875,48 +14839,6 @@ const server = createServer(async (req, res) => {
       first ? 202 : 200,
       organizeExecutionDocument(first ? "admitted" : "completed", state),
     );
-    return;
-  }
-
-  const filesReconciliationMatch = url.pathname.match(
-    /^\/api\/v1\/organize\/executions\/([^/]+)\/file-index-reconciliation$/,
-  );
-  if (filesReconciliationMatch && req.method === "POST") {
-    if (!operationsGuard(res)) {
-      return;
-    }
-    const state = organizeState(session);
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const itemId = parsed.document.itemId;
-    if (typeof itemId !== "string") {
-      sendJson(res, 400, { error: { code: "invalid_request" } });
-      return;
-    }
-    recordManualRequestForSession({
-      body: { itemId },
-      method: "POST",
-      objectId: filesReconciliationMatch[1],
-      objectType: "organize_file_index_reconciliation",
-      path: "/api/v1/organize/executions/:executionId/file-index-reconciliation",
-    });
-    state.fileIndexReconciled = true;
-    const reconciliation = organizeFileIndexReconciliation(
-      state,
-      filesReconciliationMatch[1],
-    );
-    sendJson(res, 200, {
-      durableState: "organize_effect_unchanged",
-      executionId: filesReconciliationMatch[1],
-      fileIndexReconciliation: reconciliation,
-      itemId,
-      journey: "organize",
-      nextAction: reconciliation.nextAction,
-      retrySafe: true,
-      sideEffects: "none",
-    });
     return;
   }
 

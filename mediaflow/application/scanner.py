@@ -1,20 +1,42 @@
+"""Bounded, read-only discovery of one ResourceLibrary scope.
+
+Discovery answers exactly one question: *which current sources inside this
+configured scope satisfy the configured include/exclude/extension/depth and
+stability rules right now?*  It is an ordinary in-workflow stage, not a product:
+
+* every fact comes from one bounded ``list_page``/``stat`` observation through
+  the Storage port;
+* nothing is persisted here.  There is no global file catalog, no
+  New/Modified/Unchanged/Missing reconciliation and no long-lived per-file
+  record, so a newly appearing file at a previously seen path is simply a
+  current candidate;
+* stability is proven from the caller's own durable observation of the same
+  scope (see :mod:`mediaflow.application.scan_filters`), which is what keeps
+  ``stableSizeDurationSeconds`` a real elapsed interval instead of a first-stat
+  shortcut;
+* no content read, no hash, no Provider call, no mutation.
+
+The filter/stability predicates live in one shared pure module so this walk and
+the bounded Files discovery stage cannot drift apart.
+"""
+
 from __future__ import annotations
 
-import fnmatch
-import re
+import fnmatch as _fnmatch
+import re as _re
 import threading
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 # The ResourceLibrary include/exclude/extension/depth and stability semantics
 # live in one shared pure module so the bounded Files discovery stage and this
-# Scanner cannot drift apart.  These names are re-exported for the existing
+# walker cannot drift apart.  These names are re-exported for the existing
 # private helpers below and for any adapter that imports them.
 from mediaflow.application.scan_filters import (  # noqa: F401
     ObservedSource,
@@ -26,14 +48,6 @@ from mediaflow.application.scan_filters import (  # noqa: F401
     included,
     stability_decision,
     stability_verdict,
-)
-from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
-from mediaflow.domain.file_lifecycle import (
-    OccurrenceState,
-    ProcessingDisposition,
-    next_action_for_disposition,
-    occurrence_id_for,
-    source_fingerprint,
 )
 from mediaflow.domain.library import ResourceLibrary, ScanMode, ScanRule, ScanRuleKind
 from mediaflow.domain.logging import Logger, LogLevel
@@ -48,14 +62,27 @@ from mediaflow.domain.scanner import (
     ScanResult,
     ScanStatistics,
 )
+from mediaflow.domain.source_evidence import (
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
     StorageEntryType,
     StorageError,
-    StorageErrorCode,
 )
-from mediaflow.domain.tasks import ScanTask, TaskStatus
+
+__all__ = [
+    "DiscoveryObservation",
+    "ResourceLibraryService",
+    "ScanAlreadyRunningError",
+    "StorageScanner",
+    "normalize_resource_root",
+    "normalize_source_path",
+    "root_entry_error_code",
+]
 
 
 class ScanAlreadyRunningError(RuntimeError):
@@ -79,6 +106,50 @@ class _Counters:
             self.ignored,
             self.unstable,
             self.errors,
+        )
+
+
+@dataclass(frozen=True)
+class DiscoveryObservation:
+    """One bounded, in-workflow observation of a real Storage source.
+
+    It is the *only* thing this module produces for a file: the current entry
+    facts plus the deterministic source evidence an execution admission needs.
+    It is never persisted here and never becomes a catalog row.
+    """
+
+    storage_id: str
+    resource_library_id: str
+    path: str
+    filename: str
+    extension: str
+    size: int
+    modified_at: datetime
+    status: FileScanStatus
+    change: FileChange
+    occurrence_id: str | None
+    fingerprint: str | None
+    fingerprint_algorithm: str | None
+    fingerprint_evidence: dict[str, object] | None
+    occurrence_state: OccurrenceState
+    stable_since: datetime | None
+
+    def discovered_file(self, observed_at: datetime) -> DiscoveredFile:
+        return DiscoveredFile(
+            self.storage_id,
+            self.resource_library_id,
+            self.path,
+            self.filename,
+            self.extension,
+            self.size,
+            self.modified_at,
+            observed_at,
+            self.status,
+            self.change,
+            self.occurrence_id,
+            self.fingerprint,
+            self.occurrence_state.value,
+            self.stable_since,
         )
 
 
@@ -116,18 +187,23 @@ class ResourceLibraryService:
 
 
 class StorageScanner:
-    """Storage-port-only scanner with bounded directory concurrency and batched persistence."""
+    """Storage-port-only, metadata-only, mutation-free discovery walker.
+
+    Despite the historical name it persists nothing.  It exists so that exactly
+    one implementation decides what the configured scope currently contains, and
+    every consumer (the organizer pipeline, bounded Files discovery, recovery)
+    agrees on include/exclude/depth/stability and on the source evidence that an
+    execution admission re-validates later.
+    """
 
     def __init__(
         self,
-        storages: dict[str, Storage],
-        file_index: FileIndexRepository,
+        storages: Mapping[str, Storage] | dict[str, Storage],
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         logger: Logger | None = None,
     ) -> None:
-        self._storages = storages
-        self._file_index = file_index
+        self._storages = dict(storages)
         self._clock = clock
         self._logger = logger
         self._active_libraries: set[str] = set()
@@ -141,7 +217,16 @@ class StorageScanner:
         cancellation: CancellationToken | None = None,
         on_progress: ProgressCallback | None = None,
         on_discovered: DiscoveryCallback | None = None,
+        previous: Mapping[str, ObservedSource] | None = None,
     ) -> ScanResult:
+        """Walk one library and report its current candidates.
+
+        ``previous`` is the caller's own durable observation of this exact
+        scope, used only to prove a stable-size interval.  Passing nothing is
+        legal and honest: a fresh scope then simply stays ``unstable`` until a
+        later observation proves the configured interval.
+        """
+
         self._acquire(resource_library.library_id)
         try:
             return self._scan(
@@ -150,11 +235,12 @@ class StorageScanner:
                 cancellation or CancellationToken(),
                 on_progress,
                 on_discovered,
+                dict(previous or {}),
             )
         finally:
             self._release(resource_library.library_id)
 
-    def scan_file(
+    def observe_file(
         self,
         resource_library: ResourceLibrary,
         path: str,
@@ -166,7 +252,7 @@ class StorageScanner:
         on_progress: ProgressCallback | None = None,
         on_discovered: DiscoveryCallback | None = None,
     ) -> ScanResult:
-        """Refresh exactly one Storage source without traversing or reconciling its library."""
+        """Observe exactly one Storage source without traversing its library."""
 
         if (expected_occurrence_id is None) != (expected_fingerprint is None):
             raise ValueError("expected source occurrence and fingerprint must be provided together")
@@ -179,14 +265,13 @@ class StorageScanner:
             token = cancellation or CancellationToken()
             selected_mode = mode or resource_library.scan_mode
             if token.is_cancelled:
-                completed = self._clock()
                 return ScanResult(
                     scan_id,
                     resource_library.library_id,
                     selected_mode,
-                    TaskStatus.CANCELLED,
+                    "cancelled",
                     started,
-                    completed,
+                    self._clock(),
                     counters.snapshot(),
                     (),
                 )
@@ -199,28 +284,19 @@ class StorageScanner:
             source_path = normalize_source_path(path)
             if not source_path or not _contains(root, source_path) or source_path == root:
                 error = StorageError(
-                    StorageErrorCode.INVALID_PATH,
+                    "invalid_path",
                     "stat",
                     source_path,
                     "source is outside the configured ResourceLibrary",
                 )
-                scan_error = self._scan_error(source_path, error)
-                completed = self._clock()
-                return ScanResult(
-                    scan_id,
-                    resource_library.library_id,
-                    selected_mode,
-                    TaskStatus.FAILED,
-                    started,
-                    completed,
-                    ScanStatistics(errors=1),
-                    (scan_error,),
+                return self._observation_failure(
+                    scan_id, resource_library, selected_mode, started, source_path, error
                 )
             try:
                 entry = storage.stat(source_path)
                 if entry.entry_type is not StorageEntryType.FILE:
                     raise StorageError(
-                        StorageErrorCode.INVALID_PATH,
+                        "invalid_path",
                         "stat",
                         source_path,
                         "manual Scan source is not a file",
@@ -239,31 +315,19 @@ class StorageScanner:
                     or observed_occurrence_id != expected_occurrence_id
                 ):
                     raise StorageError(
-                        StorageErrorCode.INVALID_PATH,
+                        "invalid_path",
                         "stat",
                         source_path,
                         "current source occurrence changed",
                     )
             except StorageError as error:
-                scan_error = self._scan_error(source_path, error)
-                completed = self._clock()
-                return ScanResult(
-                    scan_id,
-                    resource_library.library_id,
-                    selected_mode,
-                    TaskStatus.FAILED,
-                    started,
-                    completed,
-                    ScanStatistics(files_visited=1, errors=1),
-                    (scan_error,),
+                return self._observation_failure(
+                    scan_id, resource_library, selected_mode, started, source_path, error
                 )
             relative = self._relative(entry.path, root)
-            record, discovered = self._process_file(
-                resource_library, storage, entry, relative, scan_id, self._clock()
+            discovered = self._observe(
+                resource_library, storage, entry, relative, now=self._clock()
             )
-            # The FileIndex write is application persistence, never a Storage mutation.  It is
-            # deliberately limited to the one observed source and never calls reconciliation.
-            self._file_index.batch_upsert((record,))
             counters.files_visited = 1
             if discovered.status is FileScanStatus.READY:
                 counters.media_candidates = 1
@@ -275,57 +339,39 @@ class StorageScanner:
                 on_discovered(discovered)
             if on_progress:
                 on_progress(counters.snapshot())
-            completed = self._clock()
-            status = TaskStatus.CANCELLED if token.is_cancelled else TaskStatus.COMPLETED
             return ScanResult(
                 scan_id,
                 resource_library.library_id,
                 selected_mode,
-                status,
+                "cancelled" if token.is_cancelled else "completed",
                 started,
-                completed,
+                self._clock(),
                 counters.snapshot(),
                 tuple(errors),
             )
         finally:
             self._release(resource_library.library_id)
 
-    def run_task(
+    def _observation_failure(
         self,
-        task: ScanTask,
-        resource_library: ResourceLibrary,
-        *,
-        cancellation: CancellationToken | None = None,
-        on_progress: ProgressCallback | None = None,
-        on_discovered: DiscoveryCallback | None = None,
-    ) -> tuple[ScanTask, ScanResult]:
-        if task.resource_library_id != resource_library.library_id:
-            raise ValueError("scan task and resource library do not match")
-        mode = ScanMode(task.mode)
-        result = self.scan(
-            resource_library,
-            mode=mode,
-            cancellation=cancellation,
-            on_progress=on_progress,
-            on_discovered=on_discovered,
+        scan_id: str,
+        library: ResourceLibrary,
+        mode: ScanMode,
+        started: datetime,
+        path: str,
+        error: StorageError,
+    ) -> ScanResult:
+        scan_error = self._scan_error(path, error)
+        return ScanResult(
+            scan_id,
+            library.library_id,
+            mode,
+            "failed",
+            started,
+            self._clock(),
+            ScanStatistics(files_visited=1, errors=1),
+            (scan_error,),
         )
-        statistics = result.statistics
-        completed_task = replace(
-            task,
-            status=result.status,
-            started_at=result.started_at,
-            completed_at=result.completed_at,
-            progress={
-                "directories_visited": statistics.directories_visited,
-                "files_visited": statistics.files_visited,
-                "candidates_found": statistics.media_candidates,
-                "ignored": statistics.ignored,
-                "unstable": statistics.unstable,
-                "errors": statistics.errors,
-            },
-            errors=result.errors,
-        )
-        return completed_task, result
 
     def _scan(
         self,
@@ -334,6 +380,7 @@ class StorageScanner:
         cancellation: CancellationToken,
         on_progress: ProgressCallback | None,
         on_discovered: DiscoveryCallback | None,
+        observations: dict[str, ObservedSource],
     ) -> ScanResult:
         scan_id = uuid.uuid4().hex
         started = self._clock()
@@ -347,7 +394,7 @@ class StorageScanner:
         root = normalize_resource_root(library.root_path)
         self._log(
             LogLevel.INFO,
-            "scan started",
+            "discovery started",
             library=library.library_id,
             storage=storage.storage_id,
             root=root,
@@ -364,24 +411,21 @@ class StorageScanner:
                 )
         except StorageError as error:
             scan_error = self._scan_error(root, error)
-            completed = self._clock()
             result = ScanResult(
                 scan_id,
                 library.library_id,
                 mode,
-                TaskStatus.FAILED,
+                "failed",
                 started,
-                completed,
+                self._clock(),
                 ScanStatistics(errors=1),
                 (scan_error,),
             )
-            self._log(LogLevel.ERROR, "scan failed", library=library.library_id, errors=1)
+            self._log(LogLevel.ERROR, "discovery failed", library=library.library_id, errors=1)
             return result
 
         pending: deque[tuple[str, int]] = deque([(root, 0)])
-        protected: list[str] = []
-        batch: list[FileIndexRecord] = []
-        status = TaskStatus.COMPLETED
+        status = "completed"
         root_failed = False
         with ThreadPoolExecutor(
             max_workers=library.max_scan_concurrency, thread_name_prefix="mediaflow-scan"
@@ -411,12 +455,11 @@ class StorageScanner:
                         errors.append(self._scan_error(directory, error))
                         counters.errors += 1
                         if depth == 0 and directory == root:
-                            status = TaskStatus.FAILED
+                            status = "failed"
                             root_failed = True
                             pending.clear()
                         else:
-                            protected.append(directory)
-                            status = TaskStatus.PARTIAL_SUCCESS
+                            status = "partial_success"
                         continue
                     counters.directories_visited += 1
                     for entry in entries:
@@ -427,24 +470,24 @@ class StorageScanner:
                             if self._excluded(
                                 library.exclude_rules, relative, entry.name, "", True
                             ):
-                                protected.append(entry.path)
                                 continue
                             if not self._directory_may_match(library.include_rules, relative):
-                                protected.append(entry.path)
                                 continue
                             if library.max_depth is None or depth < library.max_depth:
                                 pending.append((entry.path, depth + 1))
-                            else:
-                                protected.append(entry.path)
                             continue
                         if entry.entry_type is not StorageEntryType.FILE:
                             counters.ignored += 1
                             continue
                         counters.files_visited += 1
-                        record, discovered = self._process_file(
-                            library, storage, entry, relative, scan_id, self._clock()
+                        discovered = self._observe(
+                            library,
+                            storage,
+                            entry,
+                            relative,
+                            now=self._clock(),
+                            previous=observations.get(entry.path),
                         )
-                        batch.append(record)
                         if discovered.status is FileScanStatus.READY:
                             counters.media_candidates += 1
                         elif discovered.status is FileScanStatus.UNSTABLE:
@@ -453,9 +496,6 @@ class StorageScanner:
                             counters.ignored += 1
                         if on_discovered:
                             on_discovered(discovered)
-                        if len(batch) >= library.persistence_batch_size:
-                            self._file_index.batch_upsert(tuple(batch))
-                            batch.clear()
                     if on_progress:
                         on_progress(counters.snapshot())
                 if root_failed:
@@ -464,35 +504,23 @@ class StorageScanner:
                     futures.clear()
                     break
             if cancellation.is_cancelled:
-                status = TaskStatus.CANCELLED
+                status = "cancelled"
 
-        if batch:
-            self._file_index.batch_upsert(tuple(batch))
-        completed = self._clock()
-        # A full scan can assert absence only when its complete boundary was observed.  A
-        # partial, failed, or cancelled traversal must leave prior source occurrences intact.
-        if mode is ScanMode.FULL and status is TaskStatus.COMPLETED:
-            self._file_index.reconcile_missing(
-                library.library_id,
-                scan_id,
-                completed,
-                protected_prefixes=tuple(protected),
-            )
         result = ScanResult(
             scan_id,
             library.library_id,
             mode,
             status,
             started,
-            completed,
+            self._clock(),
             counters.snapshot(),
             tuple(errors),
         )
         self._log(
             LogLevel.INFO,
-            "scan completed",
+            "discovery completed",
             library=library.library_id,
-            status=status.value,
+            status=status,
             directories=counters.directories_visited,
             files=counters.files_visited,
             candidates=counters.media_candidates,
@@ -502,29 +530,26 @@ class StorageScanner:
         )
         return result
 
-    def _process_file(
+    def _observe(
         self,
         library: ResourceLibrary,
         storage: Storage,
         entry: StorageEntry,
         relative: str,
-        scan_id: str,
+        *,
         now: datetime,
-    ) -> tuple[FileIndexRecord, DiscoveredFile]:
+        previous: ObservedSource | None = None,
+    ) -> DiscoveredFile:
         extension = PurePosixPath(entry.name).suffix.lower().lstrip(".")
-        previous = self._file_index.find_by_path(storage.storage_id, library.library_id, entry.path)
         observed_fingerprint = source_fingerprint(storage.storage_id, library.library_id, entry)
-        same_occurrence = bool(
-            previous
-            and previous.occurrence_state is OccurrenceState.VERIFIED
-            and previous.fingerprint == observed_fingerprint.value
-            and observed_fingerprint.value is not None
+        unchanged = bool(
+            previous is not None and previous.matches(entry, observed_fingerprint.value)
         )
         change = (
             FileChange.NEW
             if previous is None
             else FileChange.UNCHANGED
-            if same_occurrence
+            if unchanged
             else FileChange.MODIFIED
         )
         ignored = extension not in library.file_extensions
@@ -535,8 +560,8 @@ class StorageScanner:
             library.include_rules, relative, entry.name, extension
         )
         stable_since = None
-        if previous and change is FileChange.UNCHANGED:
-            stable_since = previous.stable_since or previous.last_seen_at
+        if unchanged and previous is not None and not ignored:
+            stable_since = previous.stable_since or previous.observed_at
         if ignored:
             status = FileScanStatus.IGNORED
         else:
@@ -544,87 +569,24 @@ class StorageScanner:
                 library.stability_policy,
                 entry,
                 now=now,
-                unchanged_previous=bool(previous and change is FileChange.UNCHANGED),
+                unchanged_previous=unchanged,
                 observed_since=stable_since,
             )
             if verdict is StabilityVerdict.STABLE:
                 status = FileScanStatus.READY
             else:
                 status = FileScanStatus.UNSTABLE
-                # A not-yet-proven stable-size interval must not record a
-                # fabricated stable_since: the interval starts only once an
-                # unchanged observation exists.
-                if verdict is StabilityVerdict.UNSTABLE_SIZE and not (
-                    previous and change is FileChange.UNCHANGED
-                ):
-                    stable_since = None
-        first_seen = previous.first_seen_at if previous else now
-        created = previous.created_at if previous else now
         occurrence_id = (
-            previous.occurrence_id
-            if same_occurrence and previous is not None
-            else occurrence_id_for(
+            occurrence_id_for(
                 storage.storage_id,
                 library.library_id,
                 entry.path,
                 observed_fingerprint.value,
             )
+            if observed_fingerprint.state is OccurrenceState.VERIFIED
+            else None
         )
-        if same_occurrence and previous is not None:
-            processing_disposition = previous.processing_disposition
-            processing_result_id = previous.processing_result_id
-            processing_effect_certainty = previous.processing_effect_certainty
-            processing_retry_safety = previous.processing_retry_safety
-            processing_next_action = previous.processing_next_action
-            processing_updated_at = previous.processing_updated_at
-        else:
-            processing_disposition = (
-                ProcessingDisposition.UNKNOWN
-                if observed_fingerprint.state is OccurrenceState.VERIFIED
-                else ProcessingDisposition.UNVERIFIED
-            )
-            processing_result_id = None
-            processing_effect_certainty = "unknown"
-            processing_retry_safety = "unknown"
-            processing_next_action = next_action_for_disposition(processing_disposition)
-            processing_updated_at = None
-        record = FileIndexRecord(
-            file_id=(
-                previous.file_id
-                if previous
-                else uuid.uuid5(
-                    uuid.NAMESPACE_URL, f"{storage.storage_id}:{library.library_id}:{entry.path}"
-                ).hex
-            ),
-            storage_id=storage.storage_id,
-            resource_library_id=library.library_id,
-            path=entry.path,
-            filename=entry.name,
-            extension=extension,
-            size=entry.size,
-            modified_at=entry.modified_at,
-            first_seen_at=first_seen,
-            last_seen_at=now,
-            stable_since=stable_since,
-            scan_status=status,
-            change=change,
-            created_at=created,
-            updated_at=now,
-            missing_since=None,
-            last_scan_id=scan_id,
-            occurrence_id=occurrence_id,
-            fingerprint=observed_fingerprint.value,
-            fingerprint_algorithm=observed_fingerprint.algorithm,
-            fingerprint_evidence=observed_fingerprint.evidence,
-            occurrence_state=observed_fingerprint.state,
-            processing_disposition=processing_disposition,
-            processing_result_id=processing_result_id,
-            processing_effect_certainty=processing_effect_certainty,
-            processing_retry_safety=processing_retry_safety,
-            processing_next_action=processing_next_action,
-            processing_updated_at=processing_updated_at,
-        )
-        discovered = DiscoveredFile(
+        observation = DiscoveryObservation(
             storage.storage_id,
             library.library_id,
             entry.path,
@@ -632,15 +594,16 @@ class StorageScanner:
             extension,
             entry.size,
             entry.modified_at,
-            now,
             status,
             change,
-            record.file_id,
-            record.occurrence_id,
-            record.fingerprint,
-            record.occurrence_state.value,
+            occurrence_id,
+            observed_fingerprint.value,
+            observed_fingerprint.algorithm,
+            observed_fingerprint.evidence,
+            observed_fingerprint.state,
+            stable_since,
         )
-        return record, discovered
+        return observation.discovered_file(now)
 
     @staticmethod
     def _included(
@@ -660,28 +623,7 @@ class StorageScanner:
 
     @staticmethod
     def _directory_may_match(rules: tuple[ScanRule | str, ...], path: str) -> bool:
-        if not rules:
-            return True
-        for raw_rule in rules:
-            rule = (
-                raw_rule
-                if isinstance(raw_rule, ScanRule)
-                else ScanRule(ScanRuleKind.GLOB, raw_rule)
-            )
-            if rule.kind is ScanRuleKind.REGEX:
-                return True
-            if rule.kind in {ScanRuleKind.FILENAME, ScanRuleKind.EXTENSION}:
-                return True
-            pattern = rule.pattern.lstrip("/")
-            fixed = re.split(r"[*?[{]", pattern, maxsplit=1)[0].rstrip("/")
-            if (
-                not fixed
-                or fixed == path
-                or fixed.startswith(path + "/")
-                or path.startswith(fixed + "/")
-            ):
-                return True
-        return False
+        return directory_may_match(rules, path)
 
     @staticmethod
     def _relative(path: str, root: str) -> str:
@@ -698,7 +640,7 @@ class StorageScanner:
         with self._active_lock:
             if library_id in self._active_libraries:
                 raise ScanAlreadyRunningError(
-                    f"scan already running for resource library {library_id}"
+                    f"discovery already running for resource library {library_id}"
                 )
             self._active_libraries.add(library_id)
 
@@ -762,7 +704,7 @@ def _matches(
     if rule.kind is ScanRuleKind.DIRECTORY:
         return directory and (path == pattern.strip("/") or filename == pattern.strip("/"))
     if rule.kind is ScanRuleKind.REGEX:
-        return re.search(pattern, path) is not None
+        return _re.search(pattern, path) is not None
     normalized = path.strip("/")
     candidates = (normalized, filename, "/" + normalized)
     patterns = (pattern, pattern.removeprefix("**/"))
@@ -772,7 +714,7 @@ def _matches(
             if base != candidate_pattern and normalized == base:
                 return True
     return any(
-        fnmatch.fnmatchcase(candidate, candidate_pattern)
+        _fnmatch.fnmatchcase(candidate, candidate_pattern)
         for candidate in candidates
         for candidate_pattern in patterns
     )
@@ -782,5 +724,5 @@ def _contains(parent: str, child: str) -> bool:
     return not parent or child == parent or child.startswith(parent.rstrip("/") + "/")
 
 
-def root_entry_error_code() -> StorageErrorCode:
-    return StorageErrorCode.INVALID_PATH
+def root_entry_error_code() -> str:
+    return "invalid_path"

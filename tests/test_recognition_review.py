@@ -30,7 +30,6 @@ from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
@@ -76,7 +75,7 @@ class RecognitionReviewTests(unittest.TestCase):
             storage = LocalStorage("source", directory)
             service = MediaOrganizerService(
                 FakeUnrecognizedStrategy(),
-                StorageScanner({"source": storage}, InMemoryFileIndexRepository()),
+                StorageScanner({"source": storage}),
                 {"source": storage},
                 {"movies": MediaLibrary("movies", "Movies", "source", "target")},
                 configuration.recognition_type_policies,

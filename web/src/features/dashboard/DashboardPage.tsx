@@ -37,9 +37,9 @@ export function DashboardPage() {
           return (
             <StatusBanner variant="info" title="Dashboard is empty">
               <p>
-                No files, tasks or jobs are recorded yet on the connected
-                MediaFlow instance. This is the live state — nothing is
-                estimated or hidden.
+                No tasks or jobs are recorded yet on the connected MediaFlow
+                instance. This is the live state — nothing is estimated or
+                hidden.
               </p>
               <div className="mf-actions">
                 <RefreshControl onRefresh={refresh} refreshing={isFetching} />

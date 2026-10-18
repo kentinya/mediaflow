@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionContinuation,
@@ -68,26 +67,32 @@ class FileMetadataCorrectionContinuationService:
 
     def __init__(
         self,
-        file_catalog: FileCatalogService,
         repository,
         *,
         snapshot_validator: Callable[[str, str], None] | None = None,
     ) -> None:
-        self._file_catalog = file_catalog
         self._repository = repository
         self._snapshot_validator = snapshot_validator
 
-    def context(self, file_id: str, review_id: str) -> MetadataCorrectionContinuationContext:
-        self._identifier(file_id, "File ID")
+    def context(
+        self, task_id: str, item_id: str, review_id: str
+    ) -> MetadataCorrectionContinuationContext:
+        """Resolve exactly one reviewed source from its own durable Task linkage.
+
+        The durable (Task, TaskItem, review) triple *is* the source authority: it
+        carries the exact Storage/library/path and the pinned snapshot, so no
+        file catalog lookup is needed and no current-scope read can silently
+        substitute a different source.
+        """
+
+        self._identifier(task_id, "Task ID")
+        self._identifier(item_id, "Task item ID")
         self._identifier(review_id, "Metadata correction ID")
-        detail = self._file_catalog.detail(file_id)
         review = self._repository.get_metadata_correction(review_id)
         if review is None:
             raise ValueError(f"metadata correction {review_id!r} was not found")
-        if review.source_storage_id != detail.record.storage_id:
-            raise ValueError("Metadata correction is not linked to this File")
-        if review.source_path != detail.record.path:
-            raise ValueError("Metadata correction is not linked to this File")
+        if review.task_id != task_id or review.item_id != item_id:
+            raise ValueError("Metadata correction is not linked to this Task item")
         task = self._repository.get_task(review.task_id)
         item = self._repository.get_item(review.item_id)
         if task is None or item is None or item.task_id != task.task_id:
@@ -113,7 +118,8 @@ class FileMetadataCorrectionContinuationService:
 
     def submit(
         self,
-        file_id: str,
+        task_id: str,
+        item_id: str,
         review_id: str,
         *,
         expected_correction_version: str,
@@ -130,7 +136,7 @@ class FileMetadataCorrectionContinuationService:
             or not 1 <= maximum_active_jobs <= 10_000
         ):
             raise ValueError("maximum active Jobs must be between 1 and 10000")
-        context = self.context(file_id, review_id)
+        context = self.context(task_id, item_id, review_id)
         if context.correction_version != expected_correction_version:
             raise MetadataCorrectionContinuationConflict(
                 "Metadata correction identity is stale; refresh the File detail",
@@ -162,7 +168,7 @@ class FileMetadataCorrectionContinuationService:
         )
         continuation = MetadataCorrectionContinuation(
             str(uuid4()),
-            file_id,
+            item_id,
             context.review.review_id,
             context.review.task_id,
             context.source_item.item_id,
@@ -222,7 +228,7 @@ class MetadataCorrectionContinuationWorkerService:
     def __init__(self, repository) -> None:
         self._repository = repository
 
-    def prepare(self, job_id: str, *, file_index=None) -> PreparedMetadataCorrectionContinuation:
+    def prepare(self, job_id: str) -> PreparedMetadataCorrectionContinuation:
         self._job_identifier(job_id)
         job = self._repository.get_job(job_id)
         if job is None:
@@ -270,14 +276,6 @@ class MetadataCorrectionContinuationWorkerService:
             or job.configuration_snapshot_digest != continuation.configuration_snapshot_digest
         ):
             raise ValueError("continuation Job configuration snapshot changed")
-        if file_index is not None:
-            record = file_index.find_by_path(
-                item.storage_id,
-                item.resource_library_id,
-                item.source_path,
-            )
-            if record is None or record.file_id != continuation.file_id:
-                raise ValueError("metadata correction continuation File identity is stale")
         return PreparedMetadataCorrectionContinuation(
             continuation,
             review,

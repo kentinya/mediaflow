@@ -307,7 +307,6 @@ class _RunOnceFixture(unittest.TestCase):
             )
             intents = ManualOrganizeIntentService(
                 repository,
-                None,
                 managed,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storage_factory=lambda value, ids: dict(storages),
@@ -315,7 +314,6 @@ class _RunOnceFixture(unittest.TestCase):
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                None,
                 configuration=runtime,
                 providers=_provider_registry(),
                 storages=dict(storages),

@@ -54,7 +54,6 @@ from mediaflow.domain.automation_task_definition_preview import (
 )
 from mediaflow.domain.classification import ClassificationStatus
 from mediaflow.domain.configuration_management import ManagedConfigurationStatus
-from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.manual_safety import safe_manual_error
 from mediaflow.domain.metadata import (
     MediaQueryType,
@@ -63,6 +62,7 @@ from mediaflow.domain.metadata import (
 from mediaflow.domain.organizer import PlanStatus
 from mediaflow.domain.preview_analysis import PreviewAnalysisControlRequested
 from mediaflow.domain.recognition import RecognitionStatus
+from mediaflow.domain.source_evidence import source_fingerprint
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
 _MAX_COLLECTION = 64
@@ -102,7 +102,6 @@ class AutomationTaskDefinitionPreviewService:
         metadata_provider_registry_factory: Callable[..., MetadataProviderRegistry] | None = None,
         providers: MetadataProviderRegistry | None = None,
         storages: Mapping[str, Storage] | None = None,
-        file_index=None,
         storage_factory: Callable[..., Mapping[str, Storage]] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         max_items: int = MAX_AUTOMATION_PREVIEW_ITEMS,
@@ -119,7 +118,6 @@ class AutomationTaskDefinitionPreviewService:
         self._provider_factory = metadata_provider_registry_factory
         self._providers = providers
         self._storages = dict(storages or {})
-        self._file_index = file_index
         self._storage_factory = storage_factory
         self._clock = clock
         self._max_items = max_items
@@ -1778,52 +1776,45 @@ class AutomationTaskDefinitionPreviewService:
         )
         if resource_library is None or resource_library.storage_id != preview.storage_id:
             return "the pinned ResourceLibrary or Storage is unavailable"
-        return self._indexed_source_stale_reason(preview, resource_library)
+        return self._recorded_source_stale_reason(preview, resource_library)
 
-    def _indexed_source_stale_reason(self, preview, resource_library) -> str | None:
-        """Compare recorded source facts without contacting the configured Storage."""
+    def _recorded_source_stale_reason(self, preview, resource_library) -> str | None:
+        """Check the recorded source evidence without contacting Storage.
 
-        if self._file_index is None:
-            return None
-        find_by_path = getattr(self._file_index, "find_by_path", None)
-        if not callable(find_by_path):
-            return "the durable FileIndex required to verify source facts is unavailable"
+        A read-only projection must not walk Storage, and it must not consult a
+        remembered directory entry either: the only truthful answer it can give
+        is whether the recorded observation is internally complete enough to be
+        reviewed.  Any later change is decided at the execution admission
+        boundary, which re-observes the live source.
+        """
+
         now = self._clock()
         for item in preview.items:
-            if item.source.scan_status == "excluded":
-                continue
-            try:
-                record = find_by_path(
-                    item.source.storage_id,
-                    item.source.resource_library_id,
-                    item.source.path,
-                )
-            except Exception:
-                return "the durable FileIndex required to verify source facts is unavailable"
-            if record is None:
+            source = item.source
+            if source.scan_status == "excluded":
                 continue
             if (
-                record.filename != item.source.filename
-                or record.extension != item.source.extension
-                or record.size != item.source.size
-                or record.modified_at != item.source.modified_at
+                not source.filename
+                or not source.extension
+                or source.size < 0
+                or source.modified_at is None
             ):
-                return "a plan-affecting source fact changed"
-            if getattr(record.scan_status, "value", record.scan_status) == "missing":
-                return "a plan-affecting source fact changed"
+                return "the recorded source evidence is incomplete"
+            if source.observed_at is None or source.storage_fingerprint is None:
+                return "the recorded source observation is incomplete"
             _, current_stability = self._stable(
                 resource_library,
                 StorageEntry(
-                    item.source.filename,
-                    item.source.path,
+                    source.filename,
+                    source.path,
                     StorageEntryType.FILE,
-                    item.source.size,
-                    item.source.modified_at,
+                    source.size,
+                    source.modified_at,
                 ),
                 now,
-                previous=item.source if item.source.observed_at is not None else record,
+                previous=source,
             )
-            if current_stability != item.source.stability:
+            if current_stability != source.stability:
                 return "a plan-affecting source fact changed"
         return None
 

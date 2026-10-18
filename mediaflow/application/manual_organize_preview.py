@@ -31,6 +31,7 @@ from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.scan_filters import StabilityVerdict, stability_decision
 from mediaflow.application.scope_continuation import remaining_scope as _remaining_scope
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
@@ -39,7 +40,6 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.domain.classification import ClassificationStatus
 from mediaflow.domain.classification_review import ClassificationSelection
-from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
 from mediaflow.domain.manual_organize import (
     ManualChoice,
     ManualIntentError,
@@ -79,6 +79,11 @@ from mediaflow.domain.organizer import (
 )
 from mediaflow.domain.preview_analysis import PreviewAnalysisControlRequested
 from mediaflow.domain.recognition import RecognitionStatus
+from mediaflow.domain.source_evidence import (
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
 _MAX_COLLECTION = 64
@@ -134,10 +139,8 @@ class ManualOrganizePreviewService:
         self,
         repository,
         intent_service,
-        file_catalog=None,
         *,
         configuration_service=None,
-        file_index=None,
         runtime_resolver: Callable[..., object] | None = None,
         configuration: object | None = None,
         strategy_runner_factory: Callable[..., StrategyTestRunner] | None = None,
@@ -154,8 +157,6 @@ class ManualOrganizePreviewService:
             )
         self._repository = repository
         self._intent_service = intent_service
-        self._file_catalog = file_catalog or getattr(intent_service, "_file_catalog", None)
-        self._file_index = file_index or getattr(self._file_catalog, "_repository", None)
         self._configuration_service = configuration_service or getattr(
             intent_service, "_configuration_service", None
         )
@@ -263,17 +264,9 @@ class ManualOrganizePreviewService:
                     details={"itemId": item.item_id, "status": item.status.value},
                 )
             try:
-                if self._is_storage_source_identity(item.source):
-                    runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
-                    self._assert_live_source_identity(runtime, item.source)
-                    record = item.source
-                else:
-                    record = self._resolve_current_file(item.source.file_id)
-                    self._assert_source(
-                        item.source,
-                        record,
-                        allow_unready=bool(source_admission_errors),
-                    )
+                runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
+                self._assert_live_source_identity(runtime, item.source)
+                record = item.source
                 self._validate_choice(intent, item.choice, record)
             except ManualIntentError as error:
                 if tolerate_unready_sources:
@@ -282,7 +275,7 @@ class ManualOrganizePreviewService:
                     # and readable state of every other remaining item.  The
                     # per-item outcome below publishes the exact reason and
                     # next action; nothing is admitted and nothing is mutated.
-                    source_admission_errors[item.source.file_id] = ManualPreviewError(
+                    source_admission_errors[item.source.source_id] = ManualPreviewError(
                         str(error),
                         code=error.code,
                         status=error.status,
@@ -321,7 +314,7 @@ class ManualOrganizePreviewService:
                 analysis_checkpoint, "analysis", len(selected), position, len(selected)
             )
             try:
-                admission_error = source_admission_errors.get(item.source.file_id)
+                admission_error = source_admission_errors.get(item.source.source_id)
                 if admission_error is not None:
                     outcome = self._source_admission_outcome(item, admission_error)
                 else:
@@ -442,119 +435,6 @@ class ManualOrganizePreviewService:
     preview = create
     preview_intent = create
 
-    def create_current(
-        self,
-        *,
-        scope_kind: str,
-        actor: str,
-        file_id: str | None = None,
-        resource_library_id: str | None = None,
-        occurrence_id: str | None = None,
-        fingerprint: str | None = None,
-        snapshot_id: str | None = None,
-        snapshot_digest: str | None = None,
-    ) -> ManualOrganizePreview:
-        """Preview exact current FileIndex source identities.
-
-        The existing manual intent/Preview pipeline remains the single choice,
-        snapshot and planning authority.  This admission adds only the
-        current-source boundary: all identities come from FileIndex, the
-        configured Active ResourceLibrary is checked, and the observed Storage
-        entry must still produce the requested occurrence/fingerprint before an
-        intent or Preview is published.
-        """
-
-        actor = self._actor(actor)
-        kind = self._current_scope_kind(scope_kind)
-        if kind == "file":
-            if not self._valid_scope_id(file_id):
-                raise ManualPreviewError(
-                    "current file Preview requires fileId",
-                    code="malformed_selection",
-                    next_action="select one current FileIndex item and reload its occurrence",
-                )
-            if not self._valid_scope_id(resource_library_id):
-                raise ManualPreviewError(
-                    "current file Preview requires resourceLibraryId",
-                    code="malformed_selection",
-                    next_action=(
-                        "select one current FileIndex item from a configured ResourceLibrary"
-                    ),
-                )
-            if not self._valid_occurrence_id(occurrence_id) or not self._valid_fingerprint(
-                fingerprint
-            ):
-                raise ManualPreviewError(
-                    "current file Preview requires the exact occurrenceId and fingerprint",
-                    code="malformed_selection",
-                    next_action="reload FileIndex and submit the displayed current occurrence",
-                )
-            records = (self._current_file_record(file_id, resource_library_id),)
-            scope_id = file_id
-        else:
-            if not self._valid_scope_id(resource_library_id):
-                raise ManualPreviewError(
-                    "ResourceLibrary Preview requires resourceLibraryId",
-                    code="malformed_selection",
-                    next_action="select one configured ResourceLibrary and retry Preview",
-                )
-            if any(value is not None for value in (file_id, occurrence_id, fingerprint)):
-                raise ManualPreviewError(
-                    "ResourceLibrary Preview cannot contain a file occurrence selection",
-                    code="malformed_selection",
-                    next_action="submit only the configured ResourceLibrary identity",
-                )
-            records = self._current_library_records(resource_library_id)
-            scope_id = resource_library_id
-
-        snapshot = self._current_snapshot(snapshot_id, snapshot_digest)
-        runtime = self._load_runtime(snapshot.snapshot_id, snapshot.digest)
-        self._assert_runtime_library(runtime, resource_library_id, records)
-        source_admission_errors: dict[str, ManualPreviewError] = {}
-        for record in records:
-            try:
-                self._assert_current_record(record)
-                if kind == "file" and (
-                    record.occurrence_id != occurrence_id or record.fingerprint != fingerprint
-                ):
-                    raise ManualPreviewError(
-                        "the requested source occurrence is stale or replaced",
-                        code="source_stale",
-                        status=409,
-                        next_action=(
-                            "refresh FileIndex and submit the current occurrence and fingerprint"
-                        ),
-                        details={
-                            "fileId": record.file_id,
-                            "currentOccurrenceId": record.occurrence_id,
-                            "currentFingerprint": record.fingerprint,
-                        },
-                    )
-                self._assert_live_record(runtime, record)
-            except ManualPreviewError as error:
-                if kind == "file":
-                    raise
-                source_admission_errors[record.file_id] = error
-
-        intent = self._intent_service.create(
-            tuple(record.file_id for record in records),
-            actor=actor,
-            snapshot_id=snapshot.snapshot_id,
-            snapshot_digest=snapshot.digest,
-            allow_unready=bool(source_admission_errors),
-        )
-        return self.create(
-            intent.intent_id,
-            expected_version=intent.version,
-            expected_item_versions={item.item_id: item.version for item in intent.items},
-            snapshot_id=snapshot.snapshot_id,
-            snapshot_digest=snapshot.digest,
-            actor=actor,
-            source_scope=kind,
-            source_scope_id=scope_id,
-            source_admission_errors=source_admission_errors,
-        )
-
     def create_current_from_storage(
         self,
         *,
@@ -629,8 +509,8 @@ class ManualOrganizePreviewService:
             source_scope_id=scope_id,
         )
 
-    create_current_preview = create_current
-    create_source_preview = create_current
+    create_current_preview = create_current_from_storage
+    create_source_preview = create_current_from_storage
 
     def admit_storage_paths(
         self,
@@ -1042,69 +922,6 @@ class ManualOrganizePreviewService:
                     break
         return tuple(sources)
 
-    def create_current_from_index(
-        self,
-        *,
-        scope_kind: str,
-        actor: str,
-        file_id: str | None = None,
-        resource_library_id: str | None = None,
-        snapshot_id: str | None = None,
-        snapshot_digest: str | None = None,
-    ) -> ManualOrganizePreview:
-        """Preview exact current FileIndex source using server-resolved identity.
-
-        The browser never receives or echoes a raw fingerprint or occurrence
-        identity.  At admission the backend resolves the exact current
-        FileIndex record and delegates to ``create_current`` with the
-        server-resolved occurrence/fingerprint, where the existing live
-        recheck rejects stale or replaced sources.
-        """
-        kind = self._current_scope_kind(scope_kind)
-        if kind == "file":
-            if not self._valid_scope_id(file_id):
-                raise ManualPreviewError(
-                    "current file Preview requires fileId",
-                    code="malformed_selection",
-                    next_action="select one current FileIndex item and reload its occurrence",
-                )
-            if not self._valid_scope_id(resource_library_id):
-                raise ManualPreviewError(
-                    "current file Preview requires resourceLibraryId",
-                    code="malformed_selection",
-                    next_action=(
-                        "select one current FileIndex item from a configured ResourceLibrary"
-                    ),
-                )
-            record = self._current_file_record(file_id, resource_library_id)
-            self._assert_current_record(record)
-            self._current_snapshot(snapshot_id, snapshot_digest)
-            return self.create_current(
-                scope_kind="file",
-                actor=actor,
-                file_id=file_id,
-                resource_library_id=resource_library_id,
-                occurrence_id=record.occurrence_id,
-                fingerprint=record.fingerprint,
-                snapshot_id=snapshot_id,
-                snapshot_digest=snapshot_digest,
-            )
-        else:
-            if not self._valid_scope_id(resource_library_id):
-                raise ManualPreviewError(
-                    "ResourceLibrary Preview requires resourceLibraryId",
-                    code="malformed_selection",
-                    next_action="select one configured ResourceLibrary and retry Preview",
-                )
-            self._current_snapshot(snapshot_id, snapshot_digest)
-            return self.create_current(
-                scope_kind="resource_library",
-                actor=actor,
-                resource_library_id=resource_library_id,
-                snapshot_id=snapshot_id,
-                snapshot_digest=snapshot_digest,
-            )
-
     def list_current(
         self, scope_kind: str, scope_id: str, *, limit: int = 100
     ) -> tuple[ManualOrganizePreview, ...]:
@@ -1217,43 +1034,53 @@ class ManualOrganizePreviewService:
                 next_action="refresh Files and retry after the Storage returns stable stat data",
                 details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
             )
+        # A directly selected source has only this one observation, so a
+        # library that requires a stable-size interval cannot be proven stable
+        # here.  Reporting it as ready would fabricate an interval from a first
+        # stat; the honest outcome is that the operator waits and re-selects.
+        verdict = stability_decision(
+            library.stability_policy,
+            entry,
+            now=self._clock(),
+            unchanged_previous=False,
+            observed_since=None,
+        )
+        if verdict is not StabilityVerdict.STABLE:
+            raise ManualPreviewError(
+                "selected source has not yet been observed unchanged for the configured interval",
+                code="source_not_ready",
+                status=409,
+                next_action=(
+                    "wait for the configured stability interval, then refresh the directory and "
+                    "select the source again"
+                ),
+                details={
+                    "resourceLibraryId": library.library_id,
+                    "relativePath": relative_path,
+                    "stability": verdict.value,
+                },
+            )
         now = self._clock()
         path = entry.path or storage_path
         filename = entry.name or path.rsplit("/", 1)[-1]
         extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "media"
         occurrence = occurrence_id_for(library.storage_id, library.library_id, path, observed.value)
-        file_id = hashlib.sha256(
-            json.dumps(
-                {
-                    "resourceLibraryId": library.library_id,
-                    "storageId": library.storage_id,
-                    "path": path,
-                    "fingerprint": observed.value,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
         return ManualSourceIdentity(
-            file_id,
-            library.storage_id,
-            library.library_id,
-            path,
-            filename,
-            extension,
-            entry.size,
-            entry.modified_at,
-            now,
-            now,
-            now,
-            "ready",
-            None,
-            occurrence,
-            observed.value,
-            observed.algorithm,
-            observed.evidence,
-            OccurrenceState.VERIFIED.value,
+            source_id=occurrence,
+            storage_id=library.storage_id,
+            resource_library_id=library.library_id,
+            path=path,
+            filename=filename,
+            extension=extension,
+            size=entry.size,
+            modified_at=entry.modified_at,
+            observed_at=now,
+            stable_since=None,
+            occurrence_id=occurrence,
+            fingerprint=observed.value,
+            fingerprint_algorithm=observed.algorithm,
+            fingerprint_evidence=observed.evidence,
+            occurrence_state=OccurrenceState.VERIFIED.value,
         )
 
     def _enumerate_resource_library_sources(
@@ -1368,7 +1195,7 @@ class ManualOrganizePreviewService:
             raise ManualPreviewError(
                 "Preview scope must be file or resource_library",
                 code="invalid_scope",
-                next_action="choose one current FileIndex item or one configured ResourceLibrary",
+                next_action="choose one configured ResourceLibrary or one live directory",
             )
         value = value.strip()
         if value == "resourceLibrary":
@@ -1377,7 +1204,7 @@ class ManualOrganizePreviewService:
             raise ManualPreviewError(
                 "Preview scope must be file or resource_library",
                 code="invalid_scope",
-                next_action="choose one current FileIndex item or one configured ResourceLibrary",
+                next_action="choose one configured ResourceLibrary or one live directory",
             )
         return value
 
@@ -1438,189 +1265,6 @@ class ManualOrganizePreviewService:
             )
         return current
 
-    def _file_index_repository(self):
-        repository = self._file_index
-        if repository is None:
-            repository = getattr(self._file_catalog, "_repository", None)
-        if repository is None or not callable(
-            getattr(repository, "list_by_resource_library", None)
-        ):
-            raise ManualPreviewUnavailable(
-                "current FileIndex lookup is unavailable",
-                details={"stage": "current_source_selection"},
-            )
-        return repository
-
-    def _current_file_record(self, file_id: str, resource_library_id: str):
-        repository = self._file_index_repository()
-        try:
-            values = tuple(
-                value
-                for value in repository.list_by_resource_library(resource_library_id)
-                if getattr(value, "file_id", None) == file_id
-            )
-        except ManualPreviewError:
-            raise
-        except Exception as error:
-            raise ManualPreviewUnavailable(
-                "current FileIndex lookup is unavailable",
-                details={"stage": "current_source_selection", "reason": type(error).__name__},
-            ) from error
-        if not values:
-            raise ManualPreviewError(
-                "current FileIndex source was not found",
-                code="source_missing",
-                status=404,
-                next_action="refresh FileIndex and select an existing current source item",
-                details={"fileId": file_id, "resourceLibraryId": resource_library_id},
-            )
-        if len(values) != 1:
-            raise ManualPreviewError(
-                "FileIndex file ID is ambiguous in this ResourceLibrary",
-                code="source_ambiguous",
-                status=409,
-                next_action="scope the request to one unambiguous current FileIndex item",
-                details={"fileId": file_id, "resourceLibraryId": resource_library_id},
-            )
-        return values[0]
-
-    def _current_library_records(self, resource_library_id: str) -> tuple[object, ...]:
-        repository = self._file_index_repository()
-        try:
-            values = tuple(repository.list_by_resource_library(resource_library_id))
-        except ManualPreviewError:
-            raise
-        except Exception as error:
-            raise ManualPreviewUnavailable(
-                "current FileIndex lookup is unavailable",
-                details={"stage": "current_source_selection", "reason": type(error).__name__},
-            ) from error
-        if not values:
-            raise ManualPreviewError(
-                "configured ResourceLibrary has no current FileIndex sources",
-                code="selection_empty",
-                next_action="prepare a new organize summary from the live source in Files",
-                details={"resourceLibraryId": resource_library_id},
-            )
-        if len(values) > self._max_items:
-            raise ManualPreviewError(
-                f"ResourceLibrary Preview selection exceeds the bound of {self._max_items}",
-                code="selection_over_limit",
-                next_action=(
-                    "narrow the ResourceLibrary or use one exact FileIndex item for Preview"
-                ),
-                details={
-                    "resourceLibraryId": resource_library_id,
-                    "itemCount": len(values),
-                    "maximum": self._max_items,
-                },
-            )
-        ordered = tuple(
-            sorted(
-                values,
-                key=lambda value: (
-                    str(getattr(value, "path", "")),
-                    str(getattr(value, "file_id", "")),
-                ),
-            )
-        )
-        identities = [
-            (
-                getattr(value, "storage_id", None),
-                getattr(value, "resource_library_id", None),
-                getattr(value, "path", None),
-            )
-            for value in ordered
-        ]
-        if len(set(identities)) != len(identities) or len(
-            {getattr(value, "file_id", None) for value in ordered}
-        ) != len(ordered):
-            raise ManualPreviewError(
-                "the ResourceLibrary current source selection is ambiguous",
-                code="source_ambiguous",
-                next_action="repair the duplicate FileIndex identity, then refresh and retry",
-                details={"resourceLibraryId": resource_library_id},
-            )
-        return ordered
-
-    def _assert_current_record(self, record) -> None:
-        raw_status = getattr(record, "scan_status", None)
-        status = getattr(raw_status, "value", raw_status)
-        raw_state = getattr(record, "occurrence_state", None)
-        state = getattr(raw_state, "value", raw_state)
-        if status != "ready":
-            code = "source_missing" if status == "missing" else "source_not_ready"
-            message = (
-                "current FileIndex source is missing"
-                if code == "source_missing"
-                else "current FileIndex source is not stable and ready"
-            )
-            raise ManualPreviewError(
-                message,
-                code=code,
-                status=409,
-                next_action=(
-                    "prepare a new organize summary in Files with internal stability checks"
-                ),
-                details={
-                    "fileId": getattr(record, "file_id", None),
-                    "scanStatus": str(status),
-                },
-            )
-        if (
-            state != OccurrenceState.VERIFIED.value
-            or not self._valid_occurrence_id(getattr(record, "occurrence_id", None))
-            or not self._valid_fingerprint(getattr(record, "fingerprint", None))
-        ):
-            raise ManualPreviewError(
-                "current FileIndex source occurrence is not verified",
-                code="source_unverified",
-                status=409,
-                next_action="open Files and prepare a new organize summary from the live source",
-                details={"fileId": getattr(record, "file_id", None)},
-            )
-
-    def _assert_runtime_library(self, runtime, resource_library_id: str, records) -> None:
-        values = tuple(
-            value
-            for value in getattr(runtime, "resource_libraries", ())
-            if getattr(value, "library_id", None) == resource_library_id
-        )
-        if len(values) != 1 or not getattr(values[0], "enabled", False):
-            raise ManualPreviewUnavailable(
-                "the selected ResourceLibrary is unavailable in the pinned Active snapshot",
-                details={"resourceLibraryId": resource_library_id},
-            )
-        library = values[0]
-        expected_storage = getattr(library, "storage_id", None)
-        root = str(getattr(library, "root_path", "") or "").replace("\\", "/").strip("/")
-        if any(
-            getattr(record, "storage_id", None) != expected_storage
-            or getattr(record, "resource_library_id", None) != resource_library_id
-            or (root and not str(getattr(record, "path", "")).startswith(root + "/"))
-            for record in records
-        ):
-            raise ManualPreviewError(
-                "current FileIndex source does not belong to the configured ResourceLibrary",
-                code="source_cross_authority",
-                status=409,
-                next_action=(
-                    "refresh FileIndex and select a source from the current Active authority"
-                ),
-                details={"resourceLibraryId": resource_library_id},
-            )
-
-    @staticmethod
-    def _is_storage_source_identity(source: ManualSourceIdentity) -> bool:
-        return (
-            isinstance(source, ManualSourceIdentity)
-            and source.last_scan_id is None
-            and source.scan_status == "ready"
-            and source.fingerprint is not None
-            and source.fingerprint_algorithm is not None
-            and source.occurrence_state == OccurrenceState.VERIFIED.value
-        )
-
     def _assert_live_source_identity(self, runtime, source: ManualSourceIdentity) -> None:
         try:
             storages = self._create_storages(runtime, {source.storage_id})
@@ -1669,58 +1313,6 @@ class ManualOrganizePreviewService:
                 details={"resourceLibraryId": source.resource_library_id, "path": source.path},
             )
 
-    def _assert_live_record(self, runtime, record) -> None:
-        try:
-            storages = self._create_storages(runtime, {record.storage_id})
-            storage = self._guarded_storage(storages, record.storage_id)
-            entry = storage.stat(record.path)
-        except StorageError as error:
-            code = getattr(getattr(error, "code", None), "value", "unknown")
-            if code == "not_found":
-                raise ManualPreviewError(
-                    "current FileIndex source is no longer present in Storage",
-                    code="source_missing",
-                    status=409,
-                    next_action="prepare a new organize summary from the live source in Files",
-                    details={"fileId": record.file_id},
-                ) from error
-            raise ManualPreviewUnavailable(
-                "the current source Storage is unavailable for read-only Preview",
-                details={"storageId": record.storage_id, "reason": code},
-            ) from error
-        except (OSError, ValueError, KeyError) as error:
-            raise ManualPreviewUnavailable(
-                "the current source Storage is unavailable for read-only Preview",
-                details={"storageId": record.storage_id, "reason": type(error).__name__},
-            ) from error
-        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
-            raise ManualPreviewError(
-                "current FileIndex source is no longer a file in Storage",
-                code="source_missing",
-                status=409,
-                next_action="prepare a new organize summary from the live source in Files",
-                details={"fileId": record.file_id},
-            )
-        observed = source_fingerprint(record.storage_id, record.resource_library_id, entry)
-        observed_occurrence = occurrence_id_for(
-            record.storage_id,
-            record.resource_library_id,
-            entry.path,
-            observed.value,
-        )
-        if (
-            observed.state is not OccurrenceState.VERIFIED
-            or observed.value != record.fingerprint
-            or observed_occurrence != record.occurrence_id
-        ):
-            raise ManualPreviewError(
-                "current source occurrence changed or was replaced after discovery",
-                code="source_stale",
-                status=409,
-                next_action="refresh FileIndex and submit the current occurrence and fingerprint",
-                details={"fileId": record.file_id},
-            )
-
     def get(self, preview_id: str) -> ManualOrganizePreview:
         if not isinstance(preview_id, str) or not preview_id.strip():
             raise ManualPreviewError("Preview ID is required", code="invalid_preview_id")
@@ -1741,7 +1333,7 @@ class ManualOrganizePreviewService:
                 "snapshot input changed"
             )
             # Current-source Previews are the immutable analysis evidence for the
-            # Files/FileIndex journey.  A read may project stale evidence, but it
+            # Files journey.  A read may project stale evidence, but it
             # must not publish a lifecycle mutation merely because the operator
             # opened the detail page.  Keep the legacy intent-scoped behavior
             # below for compatibility with the existing manual-organize loop.
@@ -1971,35 +1563,6 @@ class ManualOrganizePreviewService:
                 value, f"expectedItemVersions[{item_id}]"
             )
         return values
-
-    def _resolve_current_file(self, file_id: str):
-        resolver = getattr(self._intent_service, "_resolve_file", None)
-        if callable(resolver):
-            return resolver(file_id)
-        if self._file_catalog is None:
-            raise ManualPreviewUnavailable("File catalog is unavailable")
-        return self._file_catalog.show(file_id)
-
-    def _assert_source(
-        self,
-        source: ManualSourceIdentity,
-        record,
-        *,
-        allow_unready: bool = False,
-    ) -> None:
-        validator = getattr(self._intent_service, "_assert_source_unchanged", None)
-        if callable(validator):
-            validator(source, record, allow_unready=allow_unready)
-            return
-        current = ManualSourceIdentity.from_file_record(record)
-        if current.stable_identity() != source.stable_identity():
-            raise ManualIntentError(
-                "selected FileIndex source changed after intent creation",
-                code="source_stale",
-                next_action=(
-                    "refresh/reopen the intent and create a new selection from current Files"
-                ),
-            )
 
     def _source_admission_outcome(self, item, error: ManualPreviewError) -> _PreviewOutcome:
         stale_codes = {"source_missing", "source_stale", "source_not_ready", "source_unverified"}
@@ -2740,7 +2303,10 @@ class ManualOrganizePreviewService:
                 "choose the normalized identity shown by the current source-linked review, "
                 "then rerun Preview"
             ),
-            details={"fileId": record.file_id},
+            details={
+                "resourceLibraryId": getattr(record, "resource_library_id", None),
+                "path": getattr(record, "path", None),
+            },
         )
 
     @staticmethod
@@ -3384,8 +2950,8 @@ class ManualOrganizePreviewService:
             try:
                 # Preview freshness is based on durable reviewed inputs.
                 # The Worker owns the authoritative live Storage check before
-                # any mutation, so routine FileIndex rescans do not stale this
-                # persisted Preview.
+                # any mutation, so an unrelated later directory read does not
+                # stale this persisted Preview.
                 state = self._input_state(intent, current, current.source)
             except Exception:
                 stale.append(item.item_id)

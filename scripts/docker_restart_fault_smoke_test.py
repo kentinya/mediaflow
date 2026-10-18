@@ -4,8 +4,8 @@
 The script builds the exact image, starts an isolated four-service stack on
 temporary ``/data`` and media mounts, activates a managed runtime containing one
 enabled Preview schedule, proves the Scheduler emits one durable Job across
-restart, lets the Worker produce FileIndex/Task
-evidence, and then injects bounded durable fault fixtures through the installed
+restart, lets the Worker produce Task
+and Result evidence, and then injects bounded durable fault fixtures through the installed
 package repository inside the container.  It restarts API, Worker, Scheduler and
 Notification Worker and verifies durable identities, Worker fencing,
 uncertain-mutation refusal and notification at-least-once behavior.

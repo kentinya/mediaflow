@@ -6,17 +6,16 @@ import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.classification import ClassificationRule
-from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_organize import (
     ManualConfigurationSnapshot,
@@ -38,10 +37,10 @@ from mediaflow.domain.metadata import (
     MetadataErrorCode,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.storage import StorageCapabilities
 from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -50,7 +49,9 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_file_catalog import NOW, file_record
+from tests.source_fixtures import source_identity_from_storage as _source_identity
+
+NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -168,18 +169,8 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             Path(source_root, name).write_bytes(b"x" * 123)
 
         database = source_root / "runtime.sqlite3"
-        index = InMemoryFileIndexRepository()
-        index.batch_upsert(
-            tuple(
-                file_record(
-                    name.split(".", 1)[0].lower(),
-                    "source",
-                    "library",
-                    name,
-                )
-                for name in source_names
-            )
-        )
+        live = LocalStorage("source", source_root)
+        sources = tuple(_source_identity(live, name) for name in source_names)
         configuration = RuntimeConfiguration(
             development_strategy_configuration(),
             (
@@ -219,7 +210,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         )
@@ -227,25 +218,19 @@ class ManualOrganizePreviewTests(unittest.TestCase):
     @staticmethod
     def _services(
         repository,
-        index,
         configuration,
         provider,
         source_root,
         target_root,
     ):
-        catalog = FileCatalogService(
-            index,
-            ("library",),
-            ("source",),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(
-            repository,
-            catalog,
-            configuration_resolver=manual_snapshot,
-        )
         source = MutationSpyStorage(LocalStorage("source", source_root))
         target = MutationSpyStorage(LocalStorage("target", target_root))
+        intents = ManualOrganizeIntentService(
+            repository,
+            configuration_resolver=manual_snapshot,
+            runtime_resolver=lambda snapshot_id, digest: configuration,
+            storage_factory=lambda runtime, ids: {"source": source},
+        )
         previews = ManualOrganizePreviewService(
             repository,
             intents,
@@ -253,7 +238,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             providers=MetadataProviderRegistry((provider,)),
             storages={"source": source, "target": target},
         )
-        return catalog, intents, previews, source, target
+        return intents, previews, source, target
 
     def test_storage_source_preview_succeeds_without_file_index_row(self):
         fixture = self._fixture(("One.2001.mkv",))
@@ -263,15 +248,14 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            _index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                empty_index = InMemoryFileIndexRepository()
-                _, _intents, previews, source, target = self._services(
-                    repository, empty_index, configuration, provider, source_root, target_root
+                _intents, previews, source, target = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
                 preview = previews.create_current_from_storage(
                     scope_kind="file",
@@ -303,16 +287,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, source, target = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, source, target = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 intent = intents.update_choice(
                     intent.intent_id,
                     intent.items[0].item_id,
@@ -361,8 +345,8 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     {"tasks": 0, "automation_jobs": 0, "execution_authorizations": 0}, counts
                 )
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
                 self.assertEqual(preview.document(), previews.get(preview.preview_id).document())
                 self.assertEqual(intent.document(), intents.get(intent.intent_id).document())
@@ -378,16 +362,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one", "unknown"], actor="operator")
+                intent = intents.create((sources[0], sources[1]), actor="operator")
                 preview = previews.create(
                     intent.intent_id,
                     expected_version=1,
@@ -428,16 +412,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one", "unknown"], actor="operator")
+                intent = intents.create((sources[0], sources[1]), actor="operator")
                 preview = previews.create(
                     intent.intent_id,
                     expected_version=1,
@@ -469,16 +453,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 with self.assertRaisesRegex(ManualPreviewConflict, "pinned configuration snapshot"):
                     previews.create(
                         intent.intent_id,
@@ -494,16 +478,24 @@ class ManualOrganizePreviewTests(unittest.TestCase):
 
     def test_provider_failure_is_unavailable_and_secret_free(self):
         fixture = self._fixture(("One.2001.mkv",))
-        directory, target_directory, database, source_root, target_root, index, configuration, _ = (
-            fixture
-        )
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            _,
+        ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                catalog = FileCatalogService(
-                    index, ("library",), ("source",), task_repository=repository
-                )
+                source_storage = MutationSpyStorage(LocalStorage("source", source_root))
                 intents = ManualOrganizeIntentService(
-                    repository, catalog, configuration_resolver=manual_snapshot
+                    repository,
+                    configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {"source": source_storage},
                 )
                 previews = ManualOrganizePreviewService(
                     repository,
@@ -521,7 +513,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                         "target": MutationSpyStorage(LocalStorage("target", target_root)),
                     },
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 preview = previews.create(intent.intent_id, expected_version=1, actor="operator")
                 item = preview.items[0]
                 self.assertEqual(ManualPreviewItemStatus.UNAVAILABLE, item.status)
@@ -584,7 +576,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             _,
         ) = fixture
@@ -612,11 +604,12 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                         title="One",
                     )
                 )
-                catalog = FileCatalogService(
-                    index, ("library",), ("source",), task_repository=repository
-                )
+                source_storage = MutationSpyStorage(LocalStorage("source", source_root))
                 intents = ManualOrganizeIntentService(
-                    repository, catalog, configuration_resolver=manual_snapshot
+                    repository,
+                    configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {"source": source_storage},
                 )
                 source = MutationSpyStorage(LocalStorage("source", source_root))
                 target = MutationSpyStorage(LocalStorage("target", target_root))
@@ -626,7 +619,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     configuration=self._offline_configuration(configuration),
                     storages={"source": source, "target": target},
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 intent = intents.update_choice(
                     intent.intent_id,
                     intent.items[0].item_id,
@@ -678,17 +671,18 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             _,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                catalog = FileCatalogService(
-                    index, ("library",), ("source",), task_repository=repository
-                )
+                source_storage = MutationSpyStorage(LocalStorage("source", source_root))
                 intents = ManualOrganizeIntentService(
-                    repository, catalog, configuration_resolver=manual_snapshot
+                    repository,
+                    configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {"source": source_storage},
                 )
                 source = MutationSpyStorage(LocalStorage("source", source_root))
                 target = MutationSpyStorage(LocalStorage("target", target_root))
@@ -698,7 +692,7 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     configuration=self._offline_configuration(configuration),
                     storages={"source": source, "target": target},
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 # No durable source authority exists for this file, so the Choice
                 # admission itself must reject the ungrounded identity.
                 with self.assertRaises(ManualIntentError) as raised:
@@ -738,16 +732,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 preview = previews.create(intent.intent_id, expected_version=1, actor="operator")
                 repository.list_file_review_links = lambda storage_id, path, limit=100: (
                     FileReviewLink("metadata", "review-1", "pending", "task-1", "item-1"),
@@ -776,9 +770,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
 
     def test_large_provider_identity_is_compacted_to_bounded_plan(self):
         fixture = self._fixture(("One.2001.mkv",))
-        directory, target_directory, database, source_root, target_root, index, configuration, _ = (
-            fixture
-        )
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            sources,
+            configuration,
+            _,
+        ) = fixture
         try:
             huge = "x" * 2048
             provider = SyntheticMetadataProvider(
@@ -796,10 +797,10 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                 )
             )
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 preview = previews.create(intent.intent_id, expected_version=1, actor="operator")
                 plan = preview.items[0].plan
                 self.assertLessEqual(
@@ -819,16 +820,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 preview = previews.create(intent.intent_id, expected_version=1, actor="operator")
                 with self.assertRaises(sqlite3.IntegrityError):
                     repository.create_manual_preview(preview)
@@ -854,16 +855,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, _, _ = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, _, _ = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 viewer = ResolvedApiPrincipal(
                     "viewer", "viewer-token", frozenset({ApiPermission.READ})
                 )
@@ -876,7 +877,6 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(viewer, operator),
-                    file_catalog=intents._file_catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                 )
@@ -936,16 +936,16 @@ class ManualOrganizePreviewTests(unittest.TestCase):
             database,
             source_root,
             target_root,
-            index,
+            sources,
             configuration,
             provider,
         ) = fixture
         try:
             with SQLiteTaskRepository(database) as repository:
-                _, intents, previews, source, target = self._services(
-                    repository, index, configuration, provider, source_root, target_root
+                intents, previews, source, target = self._services(
+                    repository, configuration, provider, source_root, target_root
                 )
-                intent = intents.create(["one"], actor="operator")
+                intent = intents.create((sources[0],), actor="operator")
                 with patch(
                     "mediaflow.application.strategy_test.OrganizerExecutor.execute",
                     side_effect=AssertionError("Preview called OrganizerExecutor"),

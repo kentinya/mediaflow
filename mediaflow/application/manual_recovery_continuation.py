@@ -551,7 +551,7 @@ class ManualRecoveryContinuationService:
             raise ManualRecoveryContinuationError(
                 "the original manual intent is no longer open under the pinned snapshot",
                 code="intent_unavailable",
-                next_action="create a fresh manual intent from the current FileIndex item",
+                next_action="create a fresh manual intent from the current live source selection",
             )
         intent_item = next(
             (value for value in intent.items if value.item_id == manual_item.item_id), None

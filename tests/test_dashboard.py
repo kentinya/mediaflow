@@ -11,13 +11,11 @@ from unittest.mock import patch
 
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
-from mediaflow.domain.file_index import FileIndexRecord
 from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
     NotificationEventType,
 )
-from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
@@ -27,7 +25,6 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
@@ -58,7 +55,6 @@ class DashboardTests(unittest.TestCase):
                 snapshot = DashboardService(
                     repository, resource_library_count=0, media_library_count=0
                 ).snapshot()
-                self.assertEqual(snapshot.files.total, 0)
                 self.assertEqual(snapshot.tasks.total, 0)
                 self.assertEqual(snapshot.jobs.total, 0)
             connection = sqlite3.connect(database)
@@ -71,17 +67,9 @@ class DashboardTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_aggregate_counts_and_redacted_bounded_recent_failures(self) -> None:
+    def test_aggregate_task_job_and_notification_counts_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
-            with SQLiteFileIndexRepository(database) as index:
-                index.batch_upsert(
-                    (
-                        self._file("ready", FileScanStatus.READY),
-                        self._file("missing", FileScanStatus.MISSING),
-                        self._file("error", FileScanStatus.ERROR),
-                    )
-                )
             with SQLiteTaskRepository(database) as repository:
                 repository.create_task(self._task("task-failed", PersistentTaskStatus.FAILED))
                 repository.create_task(self._task("task-running", PersistentTaskStatus.RUNNING))
@@ -94,10 +82,6 @@ class DashboardTests(unittest.TestCase):
                 ).snapshot(recent_limit=2)
 
             self.assertEqual((snapshot.resource_libraries, snapshot.media_libraries), (2, 3))
-            self.assertEqual(snapshot.files.total, 3)
-            self.assertEqual(snapshot.files.ready, 1)
-            self.assertEqual(snapshot.files.missing, 1)
-            self.assertEqual(snapshot.files.errors, 1)
             self.assertEqual(snapshot.tasks.running, 1)
             self.assertEqual(snapshot.tasks.failed, 1)
             self.assertEqual(snapshot.jobs.pending, 1)
@@ -113,27 +97,6 @@ class DashboardTests(unittest.TestCase):
                 [item.identifier for item in snapshot.recent_failures],
                 ["delivery-dead", "job-failed"],
             )
-
-    def test_large_index_uses_aggregate_query_not_repository_enumeration(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory, "runtime.sqlite3")
-            with SQLiteFileIndexRepository(database) as index:
-                index.batch_upsert(
-                    tuple(self._file(str(value), FileScanStatus.READY) for value in range(600))
-                )
-            with (
-                patch.object(
-                    SQLiteFileIndexRepository,
-                    "list_by_resource_library",
-                    side_effect=AssertionError("dashboard must not enumerate FileIndex"),
-                ),
-                SQLiteTaskRepository(database) as repository,
-            ):
-                snapshot = DashboardService(
-                    repository, resource_library_count=1, media_library_count=1
-                ).snapshot()
-            self.assertEqual(snapshot.files.total, 600)
-            self.assertEqual(snapshot.files.ready, 600)
 
     def test_cli_and_api_are_read_only_bounded_and_audited(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -187,26 +150,6 @@ class DashboardTests(unittest.TestCase):
                 self.assertTrue(any(item.route == "/api/v1/dashboard" for item in audit))
                 self.assertNotIn("secret", repr(audit))
                 self.assertNotIn("token-value", repr(audit))
-
-    @staticmethod
-    def _file(identifier: str, status: FileScanStatus) -> FileIndexRecord:
-        return FileIndexRecord(
-            identifier,
-            "storage",
-            "library",
-            f"movies/{identifier}.mkv",
-            f"{identifier}.mkv",
-            "mkv",
-            1,
-            NOW,
-            NOW,
-            NOW,
-            NOW,
-            status,
-            FileChange.NEW,
-            NOW,
-            NOW,
-        )
 
     @staticmethod
     def _task(identifier: str, status: PersistentTaskStatus) -> PersistentTask:

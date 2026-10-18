@@ -82,9 +82,7 @@ describe("DashboardPage", () => {
     expect(
       await screen.findByRole("heading", { name: "Dashboard is empty" }),
     ).toBeVisible();
-    expect(
-      screen.getByText(/No files, tasks or jobs are recorded yet/),
-    ).toBeVisible();
+    expect(screen.getByText(/No tasks or jobs are recorded yet/)).toBeVisible();
   });
 
   it("clears rejected authority and shows bounded recovery on 401", async () => {

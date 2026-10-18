@@ -11,6 +11,7 @@ export default defineConfig({
     "**/automation-lifecycle.python.spec.ts",
     "**/automation-run-once.python.spec.ts",
     "**/direct-files.python.spec.ts",
+    "**/live-files.python.spec.ts",
     "**/operations-inventory.python.spec.ts",
     "**/operations-principal-identity.python.spec.ts",
     "**/operations-task-center-visual.python.spec.ts",

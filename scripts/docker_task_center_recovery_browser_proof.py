@@ -704,38 +704,6 @@ print(json.dumps({"seeded": True}))
 """.replace("__RELATIVE__", SOURCE_RELATIVE).replace("__TARGET__", TARGET_RELATIVE)
 
 
-#: Populate the FileIndex through the real Storage discovery path.  A scan
-#: performs zero Storage mutation; the recovery continuation preflight then
-#: finds the verified current occurrence of the source.
-SCAN_RESOURCE_LIBRARY = r"""
-import json
-import os
-
-from mediaflow.application.scanner import StorageScanner
-from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
-
-with open(os.environ["MEDIAFLOW_CONFIG"], encoding="utf-8") as handle:
-    document = json.load(handle)
-configuration = load_runtime_configuration(document)
-library = next(item for item in configuration.resource_libraries if item.enabled)
-with SQLiteFileIndexRepository(configuration.database_path) as file_index:
-    scanner = StorageScanner(configuration.create_storages(), file_index)
-    scan = scanner.scan(library)
-    print(json.dumps({"status": scan.status.value}))
-"""
-
-
-def scan_resource_library(command: list[str], environment: dict[str, str]) -> None:
-    result = run_docker(
-        [*command, "exec", "-T", "api", "python", "-c", SCAN_RESOURCE_LIBRARY],
-        environment=environment,
-    )
-    scanned = _last_json(result.stdout)
-    if scanned is None or scanned.get("status") != "completed":
-        raise RuntimeError(f"the ResourceLibrary scan did not complete: {result}")
-
-
 def seed_source_linked_result(command: list[str], environment: dict[str, str]) -> None:
     """Ground the reviewed offline identity in durable source-linked evidence."""
 
@@ -841,12 +809,6 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             wait_for_api(base, api_token)
             active = activate_runtime(base, api_token, config)
             seed_source_linked_result(command, environment)
-            # The recovery continuation preflight verifies the current
-            # FileIndex occurrence of the source, so the ResourceLibrary must be
-            # scanned through the real Storage discovery path first (zero
-            # mutation; the same scan the product uses).
-            scan_resource_library(command, environment)
-
             library_id = json.loads(config.read_text(encoding="utf-8"))["resourceLibraries"][0][
                 "id"
             ]

@@ -29,7 +29,6 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
-from mediaflow.domain.file_lifecycle import source_fingerprint
 from mediaflow.domain.library import FileStabilityPolicy
 from mediaflow.domain.manual_organize import ManualSourceIdentity
 from mediaflow.domain.media_discovery import (
@@ -39,6 +38,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryObservation,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.source_evidence import source_fingerprint
 from mediaflow.domain.storage import (
     StorageEntry,
     StorageEntryType,
@@ -357,7 +357,6 @@ class _DiscoveryFixture(unittest.TestCase):
             )
             intents = ManualOrganizeIntentService(
                 repository,
-                None,
                 managed,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storage_factory=lambda value, ids: dict(storages),
@@ -365,7 +364,6 @@ class _DiscoveryFixture(unittest.TestCase):
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                None,
                 configuration=runtime,
                 storages=dict(storages),
                 clock=self.clock,

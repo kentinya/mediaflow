@@ -30,7 +30,6 @@ from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.workflow_retry import RetryCategory, WorkflowRetryPolicy
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
@@ -252,7 +251,7 @@ class WorkflowRetryTests(unittest.TestCase):
                 strategy_runner_from_configuration(
                     configuration, MetadataProviderRegistry((provider,)), storages=storages
                 ),
-                StorageScanner(storages, InMemoryFileIndexRepository()),
+                StorageScanner(storages),
                 storages,
                 {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
                 configuration.recognition_type_policies,

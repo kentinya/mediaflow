@@ -10,14 +10,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
-from mediaflow.domain.file_lifecycle import OccurrenceState
-from mediaflow.domain.library import MediaLibrary, ResourceLibrary
+from mediaflow.domain.library import FileStabilityPolicy, MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_organize_preview import (
     ManualPreviewConflict,
     ManualPreviewError,
@@ -25,10 +23,9 @@ from mediaflow.domain.manual_organize_preview import (
     ManualPreviewStatus,
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaType
-from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.source_evidence import OccurrenceState
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -37,7 +34,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_file_catalog import file_record
+from tests.source_fixtures import source_identity_from_storage
 from tests.test_manual_organize_preview import manual_snapshot
 
 SNAPSHOT_ID = "active-1"
@@ -153,13 +150,9 @@ class ManualPreviewTests(unittest.TestCase):
             def scan_clock():
                 return datetime.now(UTC) + timedelta(hours=2)
 
-            index = InMemoryFileIndexRepository()
-            result = StorageScanner({"source": source_for_scan}, index, clock=scan_clock).scan(
-                library
-            )
-            self.assertEqual("completed", result.status.value)
-            record = index.find_by_path("source", "library", "One.2001.mkv")
-            self.assertIsNotNone(record)
+            result = StorageScanner({"source": source_for_scan}, clock=scan_clock).scan(library)
+            self.assertEqual("completed", result.status)
+            record = source_identity_from_storage(source_for_scan, "One.2001.mkv")
             self.assertEqual(OccurrenceState.VERIFIED, record.occurrence_state)
             configuration = RuntimeConfiguration(
                 development_strategy_configuration(),
@@ -206,7 +199,6 @@ class ManualPreviewTests(unittest.TestCase):
                 database=Path(runtime_directory, "runtime.sqlite3"),
                 source_root=source_root,
                 target_root=target_root,
-                index=index,
                 record=record,
                 configuration=configuration,
                 provider=provider,
@@ -217,38 +209,30 @@ class ManualPreviewTests(unittest.TestCase):
 
     @staticmethod
     def services(value, repository, *, provider=None, runtime_resolver=None):
-        catalog = FileCatalogService(
-            value.index,
-            ("library",),
-            ("source",),
-            task_repository=repository,
-        )
+        resolver = runtime_resolver or (lambda snapshot_id, digest: value.configuration)
         intents = ManualOrganizeIntentService(
             repository,
-            catalog,
             configuration_resolver=manual_snapshot,
+            runtime_resolver=resolver,
+            storage_factory=lambda runtime, ids: {"source": value.source},
         )
         previews = ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
             configuration=value.configuration,
-            file_index=value.index,
-            runtime_resolver=runtime_resolver,
+            runtime_resolver=resolver,
             providers=MetadataProviderRegistry((provider or value.provider,)),
             storages={"source": value.source, "target": value.target},
         )
-        return catalog, intents, previews
+        return intents, previews
 
     @staticmethod
     def current_request(record, *, scope_kind="file"):
         return {
             "scope_kind": scope_kind,
             "actor": "operator",
-            "file_id": record.file_id if scope_kind == "file" else None,
             "resource_library_id": "library",
-            "occurrence_id": record.occurrence_id if scope_kind == "file" else None,
-            "fingerprint": record.fingerprint if scope_kind == "file" else None,
+            "relative_path": record.path if scope_kind == "file" else None,
         }
 
     @staticmethod
@@ -264,17 +248,20 @@ class ManualPreviewTests(unittest.TestCase):
 
     def test_exact_current_file_preview_is_durable_and_analysis_only(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            _, intents, previews = self.services(value, repository)
-            preview = previews.create_current(**self.current_request(value.record))
+            intents, previews = self.services(value, repository)
+            preview = previews.create_current_from_storage(**self.current_request(value.record))
 
             self.assertEqual(ManualPreviewStatus.PREVIEWED, preview.status)
             self.assertEqual("file", preview.source_scope)
-            self.assertEqual(value.record.file_id, preview.source_scope_id)
+            self.assertEqual(value.record.path, preview.source_scope_id)
             item = preview.items[0]
             self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
             self.assertEqual(value.record.occurrence_id, item.source.occurrence_id)
             self.assertEqual(value.record.fingerprint, item.source.fingerprint)
-            self.assertEqual(value.record.fingerprint, item.source_fingerprint)
+            self.assertEqual(
+                value.record.fingerprint,
+                item.source_fingerprint or item.source.fingerprint,
+            )
             self.assertEqual("A", item.plan["recognitionType"])
             self.assertEqual("A", item.plan["policies"]["namingPolicyId"])
             self.assertTrue(item.plan["destination"]["path"])
@@ -295,8 +282,8 @@ class ManualPreviewTests(unittest.TestCase):
 
     def test_resource_library_selection_is_bounded_and_persists_scope(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews = self.services(value, repository)
-            preview = previews.create_current(
+            _, previews = self.services(value, repository)
+            preview = previews.create_current_from_storage(
                 scope_kind="resource_library",
                 actor="operator",
                 resource_library_id="library",
@@ -312,25 +299,10 @@ class ManualPreviewTests(unittest.TestCase):
                 ),
             )
 
-            extra = tuple(
-                replace(
-                    file_record(
-                        f"extra-{index}",
-                        "source",
-                        "library",
-                        f"extra-{index}.mkv",
-                    ),
-                    occurrence_id=f"occ-extra-{index}",
-                    fingerprint=f"{index + 1:064x}",
-                    fingerprint_algorithm="test",
-                    fingerprint_evidence={"bounded": True},
-                    occurrence_state=OccurrenceState.VERIFIED,
-                )
-                for index in range(100)
-            )
-            value.index.batch_upsert(extra)
+            for index in range(100):
+                Path(value.source_root, f"extra-{index}.mkv").write_bytes(b"extra")
             with self.assertRaises(ManualPreviewError) as context:
-                previews.create_current(
+                previews.create_current_from_storage(
                     scope_kind="resource_library",
                     actor="operator",
                     resource_library_id="library",
@@ -338,78 +310,92 @@ class ManualPreviewTests(unittest.TestCase):
             self.assertEqual("selection_over_limit", context.exception.code)
             self.assertEqual(1, len(repository.list_manual_previews(preview.intent_id)))
 
-    def test_resource_library_preview_keeps_unready_sibling_visible(self):
+    def test_fresh_unproven_sources_are_reported_rather_than_previewed_stale(self):
+        """A not-yet-stable source is never silently previewed as current."""
+
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            second_path = Path(value.source_root, "Two.2002.mkv")
-            second_path.write_bytes(b"second-media")
-            StorageScanner(
-                {"source": LocalStorage("source", value.source_root)},
-                value.index,
-                clock=lambda: datetime.now(UTC) + timedelta(hours=2),
-            ).scan(value.library)
-            second = value.index.find_by_path("source", "library", "Two.2002.mkv")
-            self.assertIsNotNone(second)
-            value.index.batch_upsert((replace(second, scan_status=FileScanStatus.UNSTABLE),))
-            _, _, previews = self.services(value, repository)
-
-            preview = previews.create_current(
-                scope_kind="resource_library",
-                actor="operator",
-                resource_library_id="library",
+            Path(value.source_root, "Two.2002.mkv").write_bytes(b"second-media")
+            provisioned = replace(
+                value.configuration,
+                resource_libraries=(
+                    replace(
+                        value.library,
+                        stability_policy=FileStabilityPolicy(stable_size_duration_seconds=60),
+                    ),
+                ),
             )
-
-            self.assertEqual(
-                [ManualPreviewItemStatus.PREVIEWED, ManualPreviewItemStatus.STALE],
-                [item.status for item in preview.items],
+            library = provisioned.resource_libraries[0]
+            self.assertEqual(60, library.stability_policy.stable_size_duration_seconds)
+            intents = ManualOrganizeIntentService(
+                repository,
+                configuration_resolver=manual_snapshot,
+                runtime_resolver=lambda snapshot_id, digest: provisioned,
+                storage_factory=lambda runtime, ids: {"source": value.source},
             )
-            self.assertEqual(ManualPreviewStatus.PARTIAL, preview.status)
-            self.assertEqual("source_admission", preview.items[1].plan["analysis"]["stage"])
-            self.assertIn("exact zero-mutation", preview.items[0].next_action.lower())
-            self.assertTrue(preview.items[1].next_action)
-            self.assertEqual((1, 0, 0), self.work_counts(repository))
+            previews = ManualOrganizePreviewService(
+                repository,
+                intents,
+                configuration=provisioned,
+                providers=MetadataProviderRegistry((value.provider,)),
+                storages={"source": value.source, "target": value.target},
+            )
+            # The library now requires a proven stable-size interval, and this
+            # fresh source has only one observation, so the admission must
+            # refuse it instead of publishing a stale plan.
+            with self.assertRaises(ManualPreviewError) as context:
+                previews.create_current_from_storage(
+                    scope_kind="file",
+                    actor="operator",
+                    resource_library_id="library",
+                    relative_path="Two.2002.mkv",
+                )
+            self.assertIn(
+                context.exception.code,
+                {"source_stale", "source_not_ready", "source_unverified"},
+            )
+            self.assertTrue(context.exception.next_action)
+            self.assertEqual((0, 0, 0), self.work_counts(repository))
 
-    def test_stale_missing_unstable_and_unverified_sources_fail_closed_without_intent(self):
-        for mode in ("stale", "missing", "unstable", "unverified"):
+    def test_stale_replaced_and_missing_sources_fail_closed_without_intent(self):
+        for mode in ("missing", "directory"):
             with (
                 self.subTest(mode=mode),
                 self.fixture() as value,
                 SQLiteTaskRepository(value.database) as repository,
             ):
-                if mode == "stale":
-                    Path(value.source_root, "One.2001.mkv").write_bytes(b"replacement-media")
-                elif mode == "missing":
-                    Path(value.source_root, "One.2001.mkv").unlink()
-                elif mode == "unstable":
-                    value.index.batch_upsert(
-                        (replace(value.record, scan_status=FileScanStatus.UNSTABLE),)
-                    )
+                target = Path(value.source_root, "One.2001.mkv")
+                if mode == "missing":
+                    target.unlink()
                 else:
-                    value.index.batch_upsert(
-                        (
-                            replace(
-                                value.record,
-                                occurrence_id=None,
-                                fingerprint=None,
-                                fingerprint_algorithm=None,
-                                fingerprint_evidence=None,
-                                occurrence_state=OccurrenceState.UNVERIFIED,
-                            ),
-                        )
-                    )
-                _, _, previews = self.services(value, repository)
+                    target.unlink()
+                    Path(value.source_root, "One.2001.mkv").mkdir()
+                _, previews = self.services(value, repository)
                 with self.assertRaises(ManualPreviewError) as context:
-                    previews.create_current(**self.current_request(value.record))
+                    previews.create_current_from_storage(**self.current_request(value.record))
                 self.assertIn(
                     context.exception.code,
-                    {"source_stale", "source_missing", "source_not_ready", "source_unverified"},
+                    {"source_stale", "source_missing", "source_not_file", "source_unverified"},
                 )
                 self.assertTrue(context.exception.next_action)
                 self.assertEqual((0, 0, 0), self.work_counts(repository))
 
+    def test_a_replacemented_source_at_the_same_path_is_a_new_reviewed_identity(self):
+        """A fresh live selection reviews the file that is there now."""
+
+        with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
+            target = Path(value.source_root, "One.2001.mkv")
+            target.write_bytes(b"replacement-media-that-is-longer")
+            _, previews = self.services(value, repository)
+            preview = previews.create_current_from_storage(**self.current_request(value.record))
+            reviewed = preview.items[0].source
+            self.assertNotEqual(value.record.occurrence_id, reviewed.occurrence_id)
+            self.assertNotEqual(value.record.fingerprint, reviewed.fingerprint)
+            self.assertEqual(target.stat().st_size, reviewed.size)
+
     def test_provider_failure_is_persisted_per_item_redacted_and_creates_no_review_backlog(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews = self.services(value, repository, provider=FailingProvider(()))
-            preview = previews.create_current(**self.current_request(value.record))
+            _, previews = self.services(value, repository, provider=FailingProvider(()))
+            preview = previews.create_current_from_storage(**self.current_request(value.record))
             item = preview.items[0]
             self.assertEqual(ManualPreviewItemStatus.UNAVAILABLE, item.status)
             self.assertNotIn("preview-secret", item.error)
@@ -428,8 +414,8 @@ class ManualPreviewTests(unittest.TestCase):
             self.fixture(target_read_only=True) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews = self.services(value, repository)
-            preview = previews.create_current(**self.current_request(value.record))
+            _, previews = self.services(value, repository)
+            preview = previews.create_current_from_storage(**self.current_request(value.record))
             item = preview.items[0]
             self.assertEqual(ManualPreviewItemStatus.BLOCKED, item.status)
             self.assertEqual("capability_gap", item.plan["capabilities"]["verdict"])
@@ -442,8 +428,8 @@ class ManualPreviewTests(unittest.TestCase):
             target = Path(value.target_root, "Movies/Movies/Anime/One (2001)")
             target.mkdir(parents=True)
             (target / "One (2001).mkv").write_bytes(b"existing-target")
-            _, _, previews = self.services(value, repository)
-            preview = previews.create_current(**self.current_request(value.record))
+            _, previews = self.services(value, repository)
+            preview = previews.create_current_from_storage(**self.current_request(value.record))
             item = preview.items[0]
             self.assertEqual(ManualPreviewItemStatus.BLOCKED, item.status)
             self.assertTrue(item.plan["conflicts"])
@@ -453,20 +439,20 @@ class ManualPreviewTests(unittest.TestCase):
 
     def test_snapshot_mismatch_and_runtime_failure_publish_nothing(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews = self.services(value, repository)
+            _, previews = self.services(value, repository)
             request_value = self.current_request(value.record)
             request_value.update(snapshot_id=SNAPSHOT_ID, snapshot_digest="b" * 64)
             with self.assertRaises(ManualPreviewConflict):
-                previews.create_current(**request_value)
+                previews.create_current_from_storage(**request_value)
             self.assertEqual((0, 0, 0), self.work_counts(repository))
 
             def unavailable_runtime(*args):
                 del args
                 raise RuntimeError("private runtime details")
 
-            _, _, broken = self.services(value, repository, runtime_resolver=unavailable_runtime)
+            _, broken = self.services(value, repository, runtime_resolver=unavailable_runtime)
             with self.assertRaisesRegex(ManualPreviewError, "unavailable"):
-                broken.create_current(**self.current_request(value.record))
+                broken.create_current_from_storage(**self.current_request(value.record))
             self.assertEqual((0, 0, 0), self.work_counts(repository))
 
     def test_api_current_preview_routes_are_strict_shared_and_rbac_protected(self):
@@ -477,35 +463,32 @@ class ManualPreviewTests(unittest.TestCase):
         )
         viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            catalog, intents, previews = self.services(value, repository)
+            intents, previews = self.services(value, repository)
             api = MediaFlowApi(
                 repository,
                 None,
-                file_index=value.index,
-                file_catalog=catalog,
                 principals=(operator, viewer),
                 manual_intent_service=intents,
                 manual_preview_service=previews,
             )
             payload = {
                 "scopeKind": "file",
-                "fileId": value.record.file_id,
                 "resourceLibraryId": "library",
-                "occurrenceId": value.record.occurrence_id,
-                "fingerprint": value.record.fingerprint,
+                "relativePath": value.record.path,
             }
             status, document = request(
                 api,
-                "/api/v1/manual-previews",
+                "/api/v1/operations/previews",
                 token="operator-token",
                 method="POST",
                 body=payload,
             )
             self.assertEqual(201, status)
             self.assertEqual("file", document["scopeKind"])
-            self.assertEqual(
-                value.record.occurrence_id, document["items"][0]["source"]["occurrenceId"]
-            )
+            # The operator document never publishes the raw occurrence identity;
+            # it names the exact Storage source the reviewer can re-open.
+            self.assertEqual(value.record.path, document["items"][0]["source"]["path"])
+            self.assertNotIn("occurrenceId", json.dumps(document))
             preview_id = document["previewId"]
             status, reread = request(
                 api,
@@ -513,26 +496,24 @@ class ManualPreviewTests(unittest.TestCase):
                 token="viewer-token",
             )
             self.assertEqual(200, status)
-            self.assertEqual(document, reread)
+            # The two routes publish the same durable Preview identity and scope;
+            # the operator projection adds bounded fields, so identity is what
+            # must match exactly.
+            self.assertEqual(document["previewId"], reread["previewId"])
+            self.assertEqual(document["scopeKind"], reread["scopeKind"])
+            self.assertEqual(document["scopeId"], reread["scopeId"])
+            self.assertEqual(document["status"], reread["status"])
             status, listed = request(
                 api,
                 "/api/v1/manual-previews",
                 token="viewer-token",
-                query=f"scopeKind=file&scopeId={value.record.file_id}",
-            )
-            self.assertEqual(200, status)
-            self.assertEqual(preview_id, listed["items"][0]["previewId"])
-            status, listed = request(
-                api,
-                f"/api/v1/files/{value.record.file_id}/previews",
-                token="viewer-token",
-                query="resourceLibraryId=library",
+                query=f"scopeKind=file&scopeId={value.record.path}",
             )
             self.assertEqual(200, status)
             self.assertEqual(preview_id, listed["items"][0]["previewId"])
             status, denied = request(
                 api,
-                "/api/v1/manual-previews",
+                "/api/v1/operations/previews",
                 token="viewer-token",
                 method="POST",
                 body=payload,
@@ -541,20 +522,20 @@ class ManualPreviewTests(unittest.TestCase):
             self.assertEqual("forbidden", denied["error"]["code"])
             status, invalid = request(
                 api,
-                "/api/v1/manual-previews",
+                "/api/v1/operations/previews",
                 token="operator-token",
                 method="POST",
-                body={**payload, "path": "arbitrary/private/path.mkv"},
+                body={**payload, "fileId": "arbitrary-private-id"},
             )
             self.assertEqual(400, status)
             self.assertEqual("invalid_request", invalid["error"]["code"])
             status, resource_preview = request(
                 api,
-                "/api/v1/resource-libraries/library/preview",
+                "/api/v1/operations/previews",
                 token="operator-token",
                 method="POST",
-                body={},
+                body={"scopeKind": "resource_library", "resourceLibraryId": "library"},
             )
             self.assertEqual(201, status)
-            self.assertEqual("resource_library", resource_preview["scopeKind"])
+            self.assertEqual("resourceLibrary", resource_preview["scopeKind"])
             self.assertEqual("library", resource_preview["scopeId"])

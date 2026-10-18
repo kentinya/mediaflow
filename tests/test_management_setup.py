@@ -253,10 +253,10 @@ class ManagementSetupTests(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertIsNotNone(server.app)
-        # FileIndex is durable infrastructure and is opened before business
-        # Active exists, so later publication can install Scan without an API
-        # restart. No Storage or Provider is constructed by this assertion.
-        self.assertIsNotNone(server.app._file_index)
+        # The API starts from management-only authority: no Storage, Provider,
+        # discovery or per-file catalog is constructed before an Active exists.
+        self.assertFalse(hasattr(server.app, "_file_catalog"))
+        self.assertFalse(hasattr(server.app, "_file_index"))
         self.assertEqual(server.activated[0], 200)
         self.assertFalse(server.scan_service_ready)
         self.assertEqual(server.health, (200, {"processAlive": True, "status": "ok"}))

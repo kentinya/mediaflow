@@ -261,7 +261,6 @@ class _DurableAnalysisFixture(unittest.TestCase):
 
             intents = ManualOrganizeIntentService(
                 repository,
-                None,
                 managed,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storage_factory=lambda value, ids: dict(storages),
@@ -269,7 +268,6 @@ class _DurableAnalysisFixture(unittest.TestCase):
             manual_previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                None,
                 configuration=runtime,
                 storages=dict(storages),
                 clock=self.clock,

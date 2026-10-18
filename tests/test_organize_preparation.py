@@ -238,7 +238,6 @@ class _PreparationFixture(unittest.TestCase):
 
             intents = ManualOrganizeIntentService(
                 repository,
-                None,
                 managed,
                 runtime_resolver=resolve_runtime,
                 storage_factory=lambda value, ids: dict(storages),
@@ -246,7 +245,6 @@ class _PreparationFixture(unittest.TestCase):
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                None,
                 configuration=runtime,
                 runtime_resolver=resolve_runtime,
                 storages=dict(storages),

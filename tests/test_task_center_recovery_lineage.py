@@ -14,10 +14,8 @@ class RecoveryLineageTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         root = Path(self.directory.name)
         database = root / "runtime.sqlite3"
-        repository, index, managed, api = h.build_managed_fixture(database, root / "media")
-        self.state = h.AppState(
-            database, repository=repository, api=api, managed=managed, file_index=index
-        )
+        repository, managed, api = h.build_managed_fixture(database, root / "media")
+        self.state = h.AppState(database, repository=repository, api=api, managed=managed)
         self.addCleanup(self.directory.cleanup)
         self.addCleanup(lambda: self.state.repository.close())
 

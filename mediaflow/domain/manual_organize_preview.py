@@ -128,6 +128,23 @@ def _json_copy(value: object, *, label: str, maximum: int = MAX_MANUAL_PREVIEW_P
     return copy.deepcopy(value)
 
 
+def _relative_scope_path(value: object) -> str:
+    """Validate one bounded, Storage-relative, traversal-free scope path."""
+
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value.encode("utf-8")) > 4096
+        or "\x00" in value
+        or value.startswith(("/", "\\"))
+        or (len(value) > 1 and value[1] == ":")
+    ):
+        raise ValueError("manual Preview source scope path is invalid")
+    if "\\" in value or any(part in {"", ".", ".."} for part in value.split("/")):
+        raise ValueError("manual Preview source scope path is invalid")
+    return value
+
+
 def _identity(value: str, label: str) -> str:
     if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
         raise ValueError(f"manual Preview {label} identity is invalid")
@@ -429,7 +446,13 @@ class ManualOrganizePreview:
                 raise ValueError("manual Preview source scope is invalid")
             if self.source_scope_id is None:
                 raise ValueError("manual Preview source scope ID is required")
-            _identity(self.source_scope_id, "source scope")
+            if self.source_scope == "file":
+                # A file scope is named by its ResourceLibrary-relative path,
+                # which is real filesystem text: Unicode and boundary
+                # whitespace are preserved, never re-encoded into an ASCII ID.
+                _relative_scope_path(self.source_scope_id)
+            else:
+                _identity(self.source_scope_id, "source scope")
         elif self.source_scope_id is not None:
             raise ValueError("manual Preview source scope ID is not allowed without a scope")
         if self.recovery_source_task_id is not None:

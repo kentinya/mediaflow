@@ -46,7 +46,6 @@ from mediaflow.domain.classification_review import (
     ClassificationReviewStatus,
 )
 from mediaflow.domain.dashboard import (
-    DashboardFileCounts,
     DashboardJobCounts,
     DashboardPersistentState,
     DashboardTaskCounts,
@@ -57,13 +56,6 @@ from mediaflow.domain.execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationAudit,
     ExecutionAuthorizationStatus,
-)
-from mediaflow.domain.file_catalog import FileReviewLink
-from mediaflow.domain.file_lifecycle import (
-    ProcessingDisposition,
-    disposition_for_result,
-    next_action_for_disposition,
-    retry_safety_for_effect_certainty,
 )
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.manual_execution import (
@@ -222,6 +214,7 @@ from mediaflow.domain.scope_continuation import (
     ScopeRecoveryLink,
 )
 from mediaflow.domain.security import SecurityAuditRecord
+from mediaflow.domain.source_reviews import FileReviewLink
 from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     TRANSFER_MUTATION_IN_FLIGHT,
@@ -244,10 +237,7 @@ from mediaflow.domain.unattended_execution import (
     UnattendedExecutionGrantAudit,
     UnattendedExecutionGrantStatus,
 )
-from mediaflow.infrastructure.file_index_schema import (
-    ensure_file_index_schema,
-    ensure_task_occurrence_columns,
-)
+from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_columns
 
 # Manual intent, Preview, exact execution, and Automation Task Definition
 # Preview tables are additive migrations on the runtime schema.  The table
@@ -978,10 +968,6 @@ class SQLiteTaskRepository:
         if recent_limit < 1 or recent_limit > 50:
             raise ValueError("dashboard recent limit must be between 1 and 50")
         with self._lock:
-            has_file_index = self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-            ).fetchone()
-            file_counts = self._status_counts("file_index", "scan_status") if has_file_index else {}
             task_counts = self._status_counts("tasks", "status")
             job_counts = self._status_counts("automation_jobs", "status")
             pending_confirmations = self._count_where("conflict_confirmations", "status", "pending")
@@ -992,13 +978,6 @@ class SQLiteTaskRepository:
             dead_letters = self._count_where("notification_deliveries", "status", "dead-letter")
             failures = self._recent_operational_failures(recent_limit)
         return DashboardPersistentState(
-            files=DashboardFileCounts(
-                total=sum(file_counts.values()),
-                ready=file_counts.get("ready", 0),
-                unstable=file_counts.get("unstable", 0),
-                missing=file_counts.get("missing", 0),
-                errors=file_counts.get("error", 0),
-            ),
             tasks=DashboardTaskCounts(
                 total=sum(task_counts.values()),
                 pending=task_counts.get("pending", 0),
@@ -14503,12 +14482,23 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _manual_item_values(item: ManualIntentItem) -> tuple[object, ...]:
+        """Serialize one intent item without inventing catalog history.
+
+        The physical table keeps its historical column names so a supported
+        existing runtime database reopens unchanged, but the *authority* is now
+        the immutable source document written to ``source_identity_json``; the
+        legacy observation-history columns carry only the deterministic source
+        identity and the single observation timestamp this intent was admitted
+        under.  No column fabricates a scan status or a scan ID that no walk
+        actually produced.
+        """
+
         source = item.source
         return (
             item.item_id,
             item.intent_id,
             item.position,
-            source.file_id,
+            source.source_id,
             source.storage_id,
             source.resource_library_id,
             source.path,
@@ -14516,11 +14506,11 @@ class SQLiteTaskRepository:
             source.extension,
             source.size,
             source.modified_at.isoformat(),
-            source.last_seen_at.isoformat(),
-            source.updated_at.isoformat(),
+            source.observed_at.isoformat(),
+            source.observed_at.isoformat(),
             source.stable_since.isoformat() if source.stable_since else None,
-            source.scan_status,
-            source.last_scan_id,
+            "ready" if source.ready else "unverified",
+            None,
             json.dumps(source.document(), ensure_ascii=False, sort_keys=True),
             json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
             item.status.value,
@@ -14535,26 +14525,22 @@ class SQLiteTaskRepository:
         identity_json = (
             row["source_identity_json"] if "source_identity_json" in row.keys() else None
         )
-        if identity_json:
-            source = ManualSourceIdentity.from_document(json.loads(identity_json))
-        else:
-            source = ManualSourceIdentity(
-                row["file_id"],
-                row["storage_id"],
-                row["resource_library_id"],
-                row["source_path"],
-                row["filename"],
-                row["extension"],
-                int(row["source_size"]),
-                datetime.fromisoformat(row["source_modified_at"]),
-                datetime.fromisoformat(row["source_last_seen_at"]),
-                datetime.fromisoformat(row["source_updated_at"]),
-                datetime.fromisoformat(row["source_stable_since"])
-                if row["source_stable_since"]
-                else None,
-                row["source_scan_status"],
-                row["source_last_scan_id"],
+        if not identity_json:
+            # An intent admitted before source evidence was captured has no
+            # observation to re-validate.  It stays readable and is honestly
+            # reported as unverified rather than reconstructed from stale
+            # catalog columns that no longer exist.
+            raise ManualIntentUnavailable(
+                "this manual intent predates exact source evidence and cannot be continued",
+                details={
+                    "intentId": row["intent_id"],
+                    "itemId": row["item_id"],
+                    "nextAction": (
+                        "select the current live source again and prepare a fresh summary"
+                    ),
+                },
             )
+        source = ManualSourceIdentity.from_document(json.loads(identity_json))
         return ManualIntentItem(
             row["item_id"],
             row["intent_id"],
@@ -15670,10 +15656,6 @@ class SQLiteTaskRepository:
             # sqlite does not start a transaction for ALTER/CREATE statements.
             # All additive upgrades and the version marker must fail atomically.
             self._connection.execute("BEGIN IMMEDIATE")
-            if self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-            ).fetchone():
-                ensure_file_index_schema(self._connection)
             ensure_task_occurrence_columns(self._connection)
             if self._connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -16406,8 +16388,8 @@ class SQLiteTaskRepository:
             None,
             # The exact live-Storage occurrence admitted with this reviewed
             # item travels with the TaskItem and Result.  Path-only binding
-            # would silently attach an outcome to whichever FileIndex row
-            # currently occupies the same path.
+            # would silently attach an outcome to whichever later file happens
+            # to occupy the same path.
             source_occurrence_id=value.source.occurrence_id,
             source_fingerprint=value.source.fingerprint,
             source_fingerprint_state=(
@@ -16433,126 +16415,17 @@ class SQLiteTaskRepository:
                       ?, ?, ?, ?, ?, ?, ?)""",
             self._result_values(result),
         )
-        self._apply_result_to_file_index_locked(result)
-
-    def _file_index_available_locked(self) -> bool:
-        """Return whether this database owns the durable FileIndex tables."""
-
-        return (
-            self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-            ).fetchone()
-            is not None
-        )
-
-    def file_index_reconciliation_state(
-        self,
-        *,
-        storage_id: str,
-        path: str,
-        occurrence_id: str | None,
-        fingerprint: str | None,
-        result_id: str | None,
-    ) -> str:
-        """Read the bounded display reconciliation state of one durable Result.
-
-        ``synchronized`` means the current FileIndex occurrence with exactly
-        this Storage/path/occurrence/fingerprint identity already records this
-        Result.  ``no_matching_occurrence`` means the FileIndex has no such
-        occurrence at all.  ``attention_required`` means the FileIndex layer is
-        unavailable or the exact occurrence exists without this Result
-        disposition.  It is display bookkeeping only and never supplies
-        physical authority.
-        """
-
-        with self._lock:
-            return self._file_index_reconciliation_state_locked(
-                storage_id=storage_id,
-                path=path,
-                occurrence_id=occurrence_id,
-                fingerprint=fingerprint,
-                result_id=result_id,
-            )
-
-    def _file_index_reconciliation_state_locked(
-        self,
-        *,
-        storage_id: str,
-        path: str,
-        occurrence_id: str | None,
-        fingerprint: str | None,
-        result_id: str | None,
-    ) -> str:
-        if not occurrence_id or not fingerprint:
-            return "no_matching_occurrence"
-        if not self._file_index_available_locked():
-            return "attention_required"
-        row = self._connection.execute(
-            """SELECT file_id, processing_result_id FROM file_index
-            WHERE storage_id=? AND path=? AND occurrence_id=? AND fingerprint=?""",
-            (storage_id, path, occurrence_id, fingerprint),
-        ).fetchone()
-        if row is None:
-            return "no_matching_occurrence"
-        if result_id and row["processing_result_id"] == result_id:
-            return "synchronized"
-        return "attention_required"
-
-    def reconcile_result_to_file_index(self, result_id: str) -> str:
-        """Re-apply one durable Result to its exact current FileIndex occurrence.
-
-        This is the bounded recovery action for a FileIndex reconciliation miss.
-        It reads the durable Result and applies the same display-only
-        reconciliation used atomically at Result publication: no Storage call,
-        no Organize replay and no fabricated FileIndex row.  A newer processing
-        disposition is never overwritten.
-        """
-
-        if not isinstance(result_id, str) or not result_id.strip():
-            raise ValueError("result ID is required")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                row = self._connection.execute(
-                    "SELECT * FROM task_results WHERE result_id=?", (result_id,)
-                ).fetchone()
-                if row is None:
-                    raise LookupError(f"result {result_id!r} was not found")
-                result = self._result(row)
-                self._apply_result_to_file_index_locked(result)
-                state = self._file_index_reconciliation_state_locked(
-                    storage_id=result.source_storage_id,
-                    path=result.source_path,
-                    occurrence_id=result.source_occurrence_id,
-                    fingerprint=result.source_fingerprint,
-                    result_id=result.result_id,
-                )
-                self._connection.commit()
-            except BaseException:
-                self._connection.rollback()
-                raise
-        return state
 
     def _bind_item_to_current_occurrence(self, item: PersistentTaskItem) -> PersistentTaskItem:
-        if item.source_occurrence_id and item.source_fingerprint:
-            return item
-        if not self._file_index_available_locked():
-            return item
-        row = self._connection.execute(
-            """SELECT occurrence_id, fingerprint, occurrence_state
-            FROM file_index WHERE storage_id=? AND resource_library_id=? AND path=?""",
-            (item.storage_id, item.resource_library_id, item.source_path),
-        ).fetchone()
-        if row is None:
-            return item
-        return replace(
-            item,
-            source_occurrence_id=item.source_occurrence_id or row["occurrence_id"],
-            source_fingerprint=item.source_fingerprint or row["fingerprint"],
-            source_fingerprint_state=item.source_fingerprint_state
-            if item.source_occurrence_id
-            else row["occurrence_state"],
-        )
+        """Return the item unchanged.
+
+        A TaskItem's source occurrence is captured once, by the admission that
+        observed it.  There is no catalog to back-fill from, so an item without
+        occurrence evidence honestly stays that way and is treated as
+        unverified by every later comparison.
+        """
+
+        return item
 
     def _bind_result_to_occurrence(self, result: PersistentResultRecord) -> PersistentResultRecord:
         if result.source_occurrence_id and result.source_fingerprint:
@@ -16562,115 +16435,16 @@ class SQLiteTaskRepository:
             FROM task_items WHERE item_id=?""",
             (result.item_id,),
         ).fetchone()
-        occurrence_id = item["source_occurrence_id"] if item else None
-        fingerprint = item["source_fingerprint"] if item else None
-        state = item["source_fingerprint_state"] if item else "unverified"
-        if not occurrence_id or not fingerprint:
-            if not self._file_index_available_locked():
-                return replace(
-                    result,
-                    source_occurrence_id=result.source_occurrence_id or occurrence_id,
-                    source_fingerprint=result.source_fingerprint or fingerprint,
-                    source_fingerprint_state=(
-                        result.source_fingerprint_state if result.source_occurrence_id else state
-                    ),
-                )
-            current_rows = self._connection.execute(
-                """SELECT occurrence_id, fingerprint, occurrence_state FROM file_index
-                WHERE storage_id=? AND path=? ORDER BY updated_at DESC""",
-                (result.source_storage_id, result.source_path),
-            ).fetchall()
-            # A source path can belong to more than one ResourceLibrary.  Without an exact
-            # TaskItem occurrence binding, silently choosing one would corrupt disposition.
-            current = current_rows[0] if len(current_rows) == 1 else None
-            if current is not None:
-                occurrence_id = occurrence_id or current["occurrence_id"]
-                fingerprint = fingerprint or current["fingerprint"]
-                state = state if occurrence_id and item else current["occurrence_state"]
+        if item is None:
+            return result
         return replace(
             result,
-            source_occurrence_id=result.source_occurrence_id or occurrence_id,
-            source_fingerprint=result.source_fingerprint or fingerprint,
+            source_occurrence_id=result.source_occurrence_id or item["source_occurrence_id"],
+            source_fingerprint=result.source_fingerprint or item["source_fingerprint"],
             source_fingerprint_state=(
-                result.source_fingerprint_state if result.source_occurrence_id else state
-            ),
-        )
-
-    def _apply_result_to_file_index_locked(self, result: PersistentResultRecord) -> None:
-        occurrence_id = result.source_occurrence_id
-        fingerprint = result.source_fingerprint
-        if not occurrence_id or not fingerprint:
-            return
-        if not self._file_index_available_locked():
-            return
-        row = self._connection.execute(
-            """SELECT * FROM file_index
-            WHERE storage_id=? AND path=? AND occurrence_id=? AND fingerprint=?
-            ORDER BY updated_at DESC LIMIT 1""",
-            (result.source_storage_id, result.source_path, occurrence_id, fingerprint),
-        ).fetchone()
-        if (
-            row is None
-            or row["occurrence_id"] != occurrence_id
-            or row["fingerprint"] != fingerprint
-        ):
-            return
-        if row["processing_updated_at"]:
-            try:
-                if result.created_at < datetime.fromisoformat(row["processing_updated_at"]):
-                    return
-            except (TypeError, ValueError):
-                return
-        # Preview/DryRun is deliberately not a processing outcome and cannot suppress later
-        # work.  Only a durable non-preview Result updates the current occurrence disposition.
-        disposition = disposition_for_result(result)
-        if (
-            str(
-                getattr(
-                    result.source_fingerprint_state,
-                    "value",
-                    result.source_fingerprint_state,
-                )
-                or "unverified"
-            ).lower()
-            != "verified"
-        ):
-            disposition = ProcessingDisposition.UNVERIFIED
-        if disposition is ProcessingDisposition.UNKNOWN:
-            return
-        certainty = str(result.effect_certainty or "unknown")
-        retry_safety = retry_safety_for_effect_certainty(certainty)
-        next_action = next_action_for_disposition(disposition)
-        self._connection.execute(
-            """UPDATE file_index SET processing_disposition=?, processing_result_id=?,
-                processing_effect_certainty=?, processing_retry_safety=?,
-                processing_next_action=?, processing_updated_at=?
-            WHERE file_id=? AND occurrence_id=?""",
-            (
-                disposition.value,
-                result.result_id,
-                certainty,
-                retry_safety,
-                next_action,
-                result.created_at.isoformat(),
-                row["file_id"],
-                occurrence_id,
-            ),
-        )
-        self._connection.execute(
-            """UPDATE file_index_occurrences SET processing_disposition=?,
-                processing_result_id=?, processing_effect_certainty=?,
-                processing_retry_safety=?, processing_next_action=?, processing_updated_at=?
-            WHERE file_id=? AND occurrence_id=?""",
-            (
-                disposition.value,
-                result.result_id,
-                certainty,
-                retry_safety,
-                next_action,
-                result.created_at.isoformat(),
-                row["file_id"],
-                occurrence_id,
+                result.source_fingerprint_state
+                if result.source_occurrence_id
+                else item["source_fingerprint_state"]
             ),
         )
 

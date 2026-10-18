@@ -59,7 +59,6 @@ from mediaflow.domain.organizer import ExecutionStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.operational_logging import SQLiteOperationalLogger
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
@@ -137,7 +136,7 @@ class RealPipelineSharedPlanIsolationTests(unittest.TestCase):
                 self.configuration,
                 MetadataProviderRegistry((SyntheticMetadataProvider(CANDIDATES),)),
             ),
-            StorageScanner(self.storages, InMemoryFileIndexRepository()),
+            StorageScanner(self.storages),
             self.storages,
             self.media_libraries,
             self.configuration.recognition_type_policies,
@@ -329,7 +328,7 @@ class OrganizerLogTaskStampingTests(unittest.TestCase):
                 configuration,
                 MetadataProviderRegistry((SyntheticMetadataProvider(CANDIDATES),)),
             ),
-            StorageScanner(storages, InMemoryFileIndexRepository()),
+            StorageScanner(storages),
             storages,
             {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
             configuration.recognition_type_policies,

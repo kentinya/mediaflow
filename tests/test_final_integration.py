@@ -23,7 +23,6 @@ from mediaflow.domain.organizer import ConflictType, ExecutionStatus
 from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStatus
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
@@ -74,7 +73,7 @@ class FinalIntegrationTests(unittest.TestCase):
                     MetadataProviderRegistry((provider,)),
                     storages=storages,
                 ),
-                StorageScanner(storages, InMemoryFileIndexRepository()),
+                StorageScanner(storages),
                 storages,
                 {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
                 configuration.recognition_type_policies,
@@ -191,7 +190,7 @@ class FinalIntegrationTests(unittest.TestCase):
                 strategy_runner_from_configuration(
                     configuration, MetadataProviderRegistry((provider,))
                 ),
-                StorageScanner(storages, InMemoryFileIndexRepository()),
+                StorageScanner(storages),
                 storages,
                 {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
                 configuration.recognition_type_policies,
@@ -280,7 +279,7 @@ class FinalIntegrationTests(unittest.TestCase):
                     configuration,
                     MetadataProviderRegistry((SyntheticMetadataProvider(()),)),
                 ),
-                StorageScanner({"source": source_storage}, InMemoryFileIndexRepository()),
+                StorageScanner({"source": source_storage}),
                 {"source": source_storage, "target": target_storage},
                 {"movies": MediaLibrary("movies", "Movies", "target", "Movies")},
                 configuration.recognition_type_policies,

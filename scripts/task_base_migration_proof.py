@@ -71,7 +71,6 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -87,14 +86,17 @@ from mediaflow.domain.media_evidence import (
     EvidenceSection,
     PipelineEvidence,
 )
-from mediaflow.domain.manual_organize import ManualChoice
+from mediaflow.domain.manual_organize import ManualChoice, ManualSourceIdentity
+from mediaflow.domain.source_evidence import (
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.organizer import ExecutionEffectCertainty, ExecutionResult, ExecutionStatus
 from mediaflow.domain.task_persistence import PersistentResultRecord, TaskItemStatus
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository, SCHEMA_VERSION
 from mediaflow.infrastructure.runtime_configuration import load_managed_runtime_configuration
 
@@ -146,7 +148,6 @@ runtime = load_managed_runtime_configuration(
     active.document,
     bootstrap_database_path=str(database),
 )
-file_index = SQLiteFileIndexRepository(database)
 repository = SQLiteTaskRepository(database)
 
 class FakeProvider(SyntheticMetadataProvider):
@@ -156,18 +157,11 @@ provider = FakeProvider((MediaCandidate(
     "tmdb", "42", MediaType.MOVIE, "Failed", year=2024,
     genres=("Animation",), countries=("JP",), languages=("ja",),
 ),))
-catalog = FileCatalogService(
-    file_index,
-    ("source",),
-    ("source-storage",),
-    task_repository=repository,
-)
 storage_factory = lambda configuration, storage_ids: configuration.create_storages(
     storage_ids=storage_ids
 )
 intents = ManualOrganizeIntentService(
     repository,
-    catalog,
     configuration_service=managed,
     storage_factory=storage_factory,
 )
@@ -189,13 +183,33 @@ execution = ManualOrganizeExecutionService(
 try:
     scan = StorageScanner(
         runtime.create_storages(),
-        file_index,
         clock=lambda: now + timedelta(hours=2),
     ).scan(runtime.resource_libraries[0])
-    assert scan.status.value == "completed", scan.status
-    records = file_index.list_by_resource_library("source")
-    record = next(value for value in records if value.filename == "Failed.2024.mkv")
-    intent = intents.create((record.file_id,), actor="operator")
+    assert scan.status == "completed", scan.status
+    relative_path = "Media/C/Failed.2024.mkv"
+    observed_entry = runtime.create_storages()["source-storage"].stat(relative_path)
+    observed = source_fingerprint("source-storage", "source", observed_entry)
+    occurrence = occurrence_id_for(
+        "source-storage", "source", observed_entry.path, observed.value
+    )
+    record = ManualSourceIdentity(
+        source_id=occurrence,
+        storage_id="source-storage",
+        resource_library_id="source",
+        path=observed_entry.path,
+        filename=observed_entry.name,
+        extension="mkv",
+        size=observed_entry.size,
+        modified_at=observed_entry.modified_at,
+        observed_at=now,
+        stable_since=None,
+        occurrence_id=occurrence,
+        fingerprint=observed.value,
+        fingerprint_algorithm=observed.algorithm,
+        fingerprint_evidence=observed.evidence,
+        occurrence_state=observed.state.value,
+    )
+    intent = intents.create((record,), actor="operator")
     item = intent.items[0]
     choice = ManualChoice("A", None, "A", "A", "A")
     intent = intents.update_choice(
@@ -214,7 +228,7 @@ try:
         snapshot_digest=intent.snapshot_digest,
         actor="operator",
         source_scope="file",
-        source_scope_id=record.file_id,
+        source_scope_id=record.path,
     )
     assert preview.status.value == "previewed", preview.status
     preview_item = preview.items[0]
@@ -284,6 +298,9 @@ try:
         record.resource_library_id,
         record.path,
         record.path,
+        source_occurrence_id=record.occurrence_id,
+        source_fingerprint=record.fingerprint,
+        source_fingerprint_state="verified",
     )
     analysis_item = replace(
         analysis_item,
@@ -412,7 +429,6 @@ try:
     }))
 finally:
     repository.close()
-    file_index.close()
     configuration_repository.close()
 """,
         encoding="utf-8",
@@ -559,7 +575,6 @@ def _candidate_round_trip(database: Path, seeded: dict[str, object]) -> dict[str
 
     sys.path.insert(0, str(ROOT))
     from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-    from mediaflow.application.file_catalog import FileCatalogService
     from mediaflow.application.manual_organize import ManualOrganizeIntentService
     from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
     from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -579,7 +594,6 @@ def _candidate_round_trip(database: Path, seeded: dict[str, object]) -> dict[str
     from mediaflow.infrastructure.sqlite_configuration_management import (
         SQLiteConfigurationRepository,
     )
-    from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
     from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
     class _PreMutationFailureExecutor:
@@ -614,10 +628,7 @@ def _candidate_round_trip(database: Path, seeded: dict[str, object]) -> dict[str
         )
         assert active_before.status.value == "active"
 
-        with (
-            SQLiteTaskRepository(database) as repository,
-            SQLiteFileIndexRepository(database) as file_index,
-        ):
+        with SQLiteTaskRepository(database) as repository:
             assert repository.schema_version == CANDIDATE_SCHEMA, repository.schema_version
             after_open = _read_facts(database)
             for key in (
@@ -688,19 +699,12 @@ def _candidate_round_trip(database: Path, seeded: dict[str, object]) -> dict[str
             assert not tuple(Path(str(seeded["targetRoot"])).rglob("*"))
 
             configuration_service.require(str(seeded["snapshotId"]))
-            catalog = FileCatalogService(
-                file_index,
-                ("source",),
-                ("source-storage",),
-                task_repository=repository,
-            )
 
             def storage_factory(value, storage_ids):
                 return value.create_storages(storage_ids=storage_ids)
 
             intents = ManualOrganizeIntentService(
                 repository,
-                catalog,
                 configuration_service=configuration_service,
                 storage_factory=storage_factory,
             )

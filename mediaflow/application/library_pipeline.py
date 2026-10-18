@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from mediaflow.application.scan_filters import ObservedSource
 from mediaflow.domain.classification import ClassificationResult, ClassificationStatus
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.scanner import (
@@ -105,6 +106,7 @@ class ResourceLibraryScanner:
         on_discovered: LibraryDiscoveryCallback | None = None,
         include_discovered: LibraryDiscoveryFilter | None = None,
         cancellation_check: CancellationCheck | None = None,
+        previous_observations: Mapping[str, ObservedSource] | None = None,
     ) -> ResourceLibraryScanBatch:
         if limit is not None and limit < 1:
             raise ValueError("scan limit must be positive")
@@ -142,6 +144,7 @@ class ResourceLibraryScanner:
                     library,
                     cancellation=cancellation,
                     on_discovered=receive,
+                    previous=previous_observations,
                 )
             )
         return ResourceLibraryScanBatch(tuple(results), discovered)

@@ -31,7 +31,6 @@ class DashboardService:
             as_of=datetime.now(UTC),
             resource_libraries=self._resource_library_count,
             media_libraries=self._media_library_count,
-            files=state.files,
             tasks=state.tasks,
             jobs=state.jobs,
             pending_confirmations=state.pending_confirmations,

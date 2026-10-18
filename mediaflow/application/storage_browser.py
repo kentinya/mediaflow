@@ -790,7 +790,6 @@ class RuntimeFilesBrowserService:
         *,
         active_revision: ManagedConfigurationRevision,
         runtime_configuration,
-        file_index=None,
         storage_adapters: Mapping[str, object] | None = None,
         cursor_secret: bytes | str | None = None,
         clock: Callable[[], float] = time.time,
@@ -806,11 +805,6 @@ class RuntimeFilesBrowserService:
             raise ValueError("runtime Files browser snapshot does not match the Active revision")
         self._revision = active_revision
         self._runtime_configuration = runtime_configuration
-        # FileIndex is intentionally not used by the UI-V2 Files projection.
-        # The argument remains accepted so older composition code can pass the
-        # repository for V1/background capabilities without changing this
-        # browser's authority model.
-        self._file_index = file_index
         self._browser = StorageBrowserService(
             managed,
             storage_adapters=storage_adapters,
@@ -1026,7 +1020,7 @@ class RuntimeFilesBrowserService:
 
         Disabled or missing-Storage libraries stay out of the browseable set,
         mirroring the ResourceLibrary Files list.  No per-library statistics,
-        FileIndex facts or capacity data are collected or published here.
+        per-file catalog facts or capacity data are collected or published here.
         """
 
         storages = {

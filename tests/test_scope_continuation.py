@@ -33,7 +33,6 @@ from pathlib import Path
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
@@ -72,7 +71,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -2382,12 +2380,6 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         )
         intents = ManualOrganizeIntentService(
             self.repository,
-            FileCatalogService(
-                InMemoryFileIndexRepository(),
-                ("source",),
-                ("source-storage",),
-                task_repository=self.repository,
-            ),
             configuration_service=service,
         )
         # The ordinary path resolves the current Active revision, never a
@@ -2478,17 +2470,6 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
                 "media-target": LocalStorage("media-target", self.root / "Target"),
             }
         )
-        # The manual Preview/Intent services require a FileCatalog; the
-        # remaining-scope path itself never reads the FileIndex, so one bounded
-        # catalog over the same runtime is enough to assemble the API.
-        from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
-
-        catalog = FileCatalogService(
-            InMemoryFileIndexRepository(),
-            ("source",),
-            ("source-storage",),
-            task_repository=self.repository,
-        )
         return MediaFlowApi(
             self.repository,
             None,
@@ -2496,7 +2477,6 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             configuration_service=service,
             bootstrap_document=document,
             storage_adapters=storages,
-            file_catalog=catalog,
             # The exact Preview runs the real analysis pipeline; a deterministic
             # in-process provider keeps the journey offline while still proving
             # the plan is produced under the run's own pinned revision.

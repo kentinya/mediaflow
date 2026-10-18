@@ -5,15 +5,12 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.file_catalog import FileCatalogService
-from mediaflow.domain.file_index import FileIndexRecord
-from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import (
     StorageCapabilities,
@@ -24,7 +21,6 @@ from mediaflow.domain.storage import (
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.operator_ui import APP_JS, INDEX_HTML
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -140,26 +136,6 @@ def _document(root: Path, database: Path) -> dict[str, object]:
     return document
 
 
-def _record(file_id: str, path: str) -> FileIndexRecord:
-    return FileIndexRecord(
-        file_id=file_id,
-        storage_id="storage",
-        resource_library_id="resources",
-        path=path,
-        filename=Path(path).name,
-        extension=Path(path).suffix.lstrip("."),
-        size=17,
-        modified_at=NOW - timedelta(hours=2),
-        first_seen_at=NOW - timedelta(days=2),
-        last_seen_at=NOW - timedelta(hours=1),
-        stable_since=NOW - timedelta(hours=1),
-        scan_status=FileScanStatus.READY,
-        change=FileChange.UNCHANGED,
-        created_at=NOW - timedelta(days=2),
-        updated_at=NOW,
-    )
-
-
 def _activate(service: ManagedConfigurationService, document: dict[str, object]):
     draft = service.import_draft(document, actor="tester")
     validated = service.validate(draft.revision_id, actor="tester")
@@ -191,18 +167,11 @@ def _request(api: MediaFlowApi, url: str, *, token: str | None = "viewer-token")
 
 def _api(
     task_repository: SQLiteTaskRepository,
-    file_index: SQLiteFileIndexRepository,
     managed: ManagedConfigurationService,
     document: dict[str, object],
     *,
     storage_adapters: dict[str, object] | None = None,
 ) -> MediaFlowApi:
-    catalog = FileCatalogService(
-        file_index,
-        ("resources",),
-        ("storage",),
-        task_repository=task_repository,
-    )
     return MediaFlowApi(
         task_repository,
         None,
@@ -214,8 +183,6 @@ def _api(
             ),
         ),
         configuration_service=managed,
-        file_catalog=catalog,
-        file_index=file_index,
         bootstrap_document=document,
         storage_adapters=storage_adapters,
         storage_browser_cursor_secret="runtime-files-test-secret",
@@ -277,7 +244,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                         with (
                             SQLiteConfigurationRepository(database) as configuration_repository,
                             SQLiteTaskRepository(database) as task_repository,
-                            SQLiteFileIndexRepository(database) as file_index,
                         ):
                             managed = ManagedConfigurationService(
                                 configuration_repository,
@@ -286,7 +252,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                             _activate(managed, document)
                             api = _api(
                                 task_repository,
-                                file_index,
                                 managed,
                                 document,
                                 storage_adapters={"storage": _PagedStorage()},
@@ -299,7 +264,7 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                             self.assertEqual(result["surface"], "files")
                             self.assertEqual(result["entries"][0]["name"], "fake.mkv")
 
-    def test_files_is_active_storage_and_file_index_is_a_separate_surface(self) -> None:
+    def test_files_is_active_storage_only_and_records_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             first = root / "first"
@@ -313,15 +278,13 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
             with (
                 SQLiteConfigurationRepository(database) as configuration_repository,
                 SQLiteTaskRepository(database) as task_repository,
-                SQLiteFileIndexRepository(database) as file_index,
             ):
                 managed = ManagedConfigurationService(
                     configuration_repository,
                     bootstrap_database_path=str(database),
                 )
                 active = _activate(managed, document)
-                file_index.batch_upsert((_record("indexed-active", "active-only.mkv"),))
-                api = _api(task_repository, file_index, managed, document)
+                api = _api(task_repository, managed, document)
 
                 status, files = _request(api, "/api/v1/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
@@ -335,10 +298,9 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertNotIn("indexMembership", files["entries"][0])
                 self.assertNotIn("fileId", files["entries"][0])
 
-                status, file_index_document = _request(api, "/api/v1/file-index")
-                self.assertEqual(status, 200)
-                self.assertEqual(file_index_document["surface"], "file_index")
-                self.assertEqual(file_index_document["items"][0]["fileId"], "indexed-active")
+                # The retired catalog surface no longer exists at all.
+                status, _ = _request(api, "/api/v1/file-index")
+                self.assertEqual(status, 404)
                 self.assertEqual(task_repository.list_tasks(), ())
                 self.assertEqual(task_repository.list_jobs(), ())
 
@@ -373,14 +335,13 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
             with (
                 SQLiteConfigurationRepository(database) as configuration_repository,
                 SQLiteTaskRepository(database) as task_repository,
-                SQLiteFileIndexRepository(database) as file_index,
             ):
                 managed = ManagedConfigurationService(
                     configuration_repository,
                     bootstrap_database_path=str(database),
                 )
                 _activate(managed, document)
-                api = _api(task_repository, file_index, managed, document)
+                api = _api(task_repository, managed, document)
                 status, files = _request(api, "/api/v1/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
                 entries = {entry["name"]: entry for entry in files["entries"]}
@@ -394,8 +355,8 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertFalse(entries["linked.mkv"]["organizeEligible"])
                 self.assertIsNone(entries["linked.mkv"]["organizeKind"])
                 self.assertTrue(entries["linked.mkv"]["isSymlink"])
-                # Privacy/authority: the projection still publishes no physical
-                # FileIndex identity and performs no Task work.
+                # Privacy/authority: the projection publishes no physical file
+                # identity and performs no Task work.
                 self.assertNotIn("fileId", entries["Movie.2001.mkv"])
                 self.assertEqual((), task_repository.list_tasks())
                 self.assertEqual(storage_root.joinpath("Movie.2001.mkv").read_bytes(), b"media")
@@ -413,14 +374,13 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
             with (
                 SQLiteConfigurationRepository(database) as configuration_repository,
                 SQLiteTaskRepository(database) as task_repository,
-                SQLiteFileIndexRepository(database) as file_index,
             ):
                 managed = ManagedConfigurationService(
                     configuration_repository,
                     bootstrap_database_path=str(database),
                 )
                 _activate(managed, document)
-                api = _api(task_repository, file_index, managed, document)
+                api = _api(task_repository, managed, document)
 
                 status, first_page = _request(
                     api,
@@ -489,7 +449,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
             with (
                 SQLiteConfigurationRepository(database) as configuration_repository,
                 SQLiteTaskRepository(database) as task_repository,
-                SQLiteFileIndexRepository(database) as file_index,
             ):
                 managed = ManagedConfigurationService(
                     configuration_repository,
@@ -498,7 +457,6 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 active = _activate(managed, document)
                 api = _api(
                     task_repository,
-                    file_index,
                     managed,
                     document,
                     storage_adapters={"storage": _PermissionDeniedStorage()},
@@ -521,13 +479,12 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
             with (
                 SQLiteConfigurationRepository(database) as configuration_repository,
                 SQLiteTaskRepository(database) as task_repository,
-                SQLiteFileIndexRepository(database) as file_index,
             ):
                 managed = ManagedConfigurationService(
                     configuration_repository,
                     bootstrap_database_path=str(database),
                 )
-                api = _api(task_repository, file_index, managed, document)
+                api = _api(task_repository, managed, document)
                 status, error = _request(api, "/api/v1/storage/files?storageId=storage")
                 self.assertEqual(status, 503)
                 self.assertEqual(error["error"]["code"], "configuration_unavailable")
@@ -536,17 +493,16 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
 
 
 class RuntimeFilesBrowserUiTests(unittest.TestCase):
-    def test_files_and_file_index_have_distinct_operator_entry_points(self) -> None:
+    def test_files_is_the_only_bounded_live_directory_entry_point(self) -> None:
         html = INDEX_HTML.decode("utf-8")
         script = APP_JS.decode("utf-8")
         self.assertIn('data-view="files"', html)
-        self.assertIn('data-view="file-index"', html)
+        self.assertNotIn('data-view="file-index"', html)
         self.assertIn("/api/v1/storage/files?", script)
-        self.assertIn("/api/v1/file-index?", script)
-        self.assertIn("indexMembership", script)
+        self.assertNotIn("/api/v1/file-index", script)
+        self.assertNotIn("indexMembership", script)
         self.assertIn("Storage root", script)
         self.assertIn("Retry page", script)
-        self.assertIn("FileIndex is not a configured Storage browser", script)
 
 
 if __name__ == "__main__":

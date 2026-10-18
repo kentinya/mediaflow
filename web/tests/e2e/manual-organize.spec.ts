@@ -583,45 +583,38 @@ test.describe("manual organize journey", () => {
       evidence.filter(
         (entry) =>
           entry.method !== "GET" &&
-          [
-            "organize_choice",
-            "organize_preview",
-            "organize_execute",
-            "organize_file_index_reconciliation",
-          ].includes(entry.objectType),
+          ["organize_choice", "organize_preview", "organize_execute"].includes(
+            entry.objectType,
+          ),
       ),
     ).toHaveLength(0);
   });
 
-  test("a reconciliation miss exposes one bounded FileIndex action and never replays Organize", async ({
+  test("the failed execution retires the FileIndex reconciliation surface and never replays Organize", async ({
     page,
   }) => {
-    // The failed execution carries a durable Result whose exact FileIndex
-    // occurrence is missing. The page states that, offers one bounded
-    // reconciliation action and never offers an Organize replay.
+    // Task45.5 RO-7: the FileIndex display reconciliation is retired. A
+    // durable Result no longer offers a "re-check the file index" action, and
+    // the page never offers an Organize replay either.
     await page.goto(
       `/ui-v2/operations/organize/execution/${FAILED_EXECUTION_ID}`,
     );
     await connect(page, VIEWER_TOKEN);
 
-    await expect(page.getByText(/文件索引核对/).first()).toBeVisible();
     await expect(
-      page.getByText(/索引中没有匹配的当前条目/).first(),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
-    const reconcile = page.getByRole("button", { name: "重新核对文件索引" });
-    await expect(reconcile).toBeVisible();
-
-    await reconcile.click();
-    await expect(page.getByText(/索引核对已重试/)).toBeVisible();
-    await expect(page.getByText(/文件索引核对：已同步/).first()).toBeVisible();
+    await expect(page.getByText(/文件索引核对/)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "重新核对文件索引" }),
+    ).toHaveCount(0);
 
     const evidence = await manualEvidence(page);
-    const reconciliationPosts = evidence.filter(
-      (entry) => entry.objectType === "organize_file_index_reconciliation",
-    );
-    expect(reconciliationPosts).toHaveLength(1);
-    expect(reconciliationPosts[0].method).toBe("POST");
-    // The bounded action never submits an execution or preview mutation.
+    expect(
+      evidence.filter(
+        (entry) => entry.objectType === "organize_file_index_reconciliation",
+      ),
+    ).toHaveLength(0);
     expect(
       evidence.filter(
         (entry) =>

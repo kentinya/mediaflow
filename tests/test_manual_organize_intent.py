@@ -5,10 +5,9 @@ import json
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.domain.manual_organize import (
     ManualConfigurationSnapshot,
@@ -19,10 +18,11 @@ from mediaflow.domain.manual_organize import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentResultRecord
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_file_catalog import NOW, file_record
+from tests.source_fixtures import ObservationStorage, manual_source, runtime_with_library
+
+NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
 
 
 def snapshot() -> ManualConfigurationSnapshot:
@@ -56,25 +56,19 @@ def snapshot() -> ManualConfigurationSnapshot:
 
 class ManualOrganizeIntentTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.index = InMemoryFileIndexRepository()
-        self.index.batch_upsert(
-            (
-                file_record("one", "source", "library", "Movies/one.mkv"),
-                file_record("two", "source", "library", "Movies/two.mkv"),
-                file_record("three", "source", "library", "Movies/three.mkv"),
-            )
-        )
-        self.catalog = FileCatalogService(self.index, ("library",), ("source",))
+        self.sources = {
+            name: manual_source(f"Movies/{name}.mkv") for name in ("one", "two", "three")
+        }
+        self.storage = ObservationStorage(self.sources.values())
+        self.runtime = runtime_with_library()
         self.snapshot = snapshot()
 
     def _service(self, repository):
-        self.catalog = FileCatalogService(
-            self.index, ("library",), ("source",), task_repository=repository
-        )
         return ManualOrganizeIntentService(
             repository,
-            self.catalog,
             configuration_resolver=lambda: self.snapshot,
+            runtime_resolver=lambda snapshot_id, digest: self.runtime,
+            storage_factory=lambda runtime, ids: {"source": self.storage},
         )
 
     def test_single_and_bounded_batch_are_durable_and_type_c_keeps_a_downstream(self) -> None:
@@ -103,7 +97,9 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                         title="The Matrix",
                     )
                 )
-                intent = self._service(repository).create(["one", "two"], actor=" operator ")
+                intent = self._service(repository).create(
+                    (self.sources["one"], self.sources["two"]), actor=" operator "
+                )
                 self.assertEqual(intent.actor, "operator")
                 self.assertEqual(intent.snapshot_id, "active-1")
                 self.assertEqual([item.position for item in intent.items], [0, 1])
@@ -112,7 +108,10 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 self.assertEqual(intent.items[0].choice.classification_policy_id, "A")
                 self.assertEqual(intent.items[0].choice.organize_policy_id, "A")
                 reopened = self._service(repository).get(intent.intent_id)
-                self.assertEqual([item.source.file_id for item in reopened.items], ["one", "two"])
+                self.assertEqual(
+                    [item.source.path for item in reopened.items],
+                    ["Movies/one.mkv", "Movies/two.mkv"],
+                )
                 self.assertEqual(len(reopened.audit), 1)
 
     def test_invalid_selection_is_all_or_nothing_and_source_state_is_exact(self) -> None:
@@ -120,45 +119,39 @@ class ManualOrganizeIntentTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = self._service(repository)
                 for values, code in (
-                    (["one", "missing"], "source_missing"),
-                    (["one", "one"], "duplicate_selection"),
+                    (
+                        (
+                            self.sources["one"],
+                            manual_source("Movies/missing.mkv", missing=True),
+                        ),
+                        "source_stale",
+                    ),
+                    (
+                        (self.sources["one"], self.sources["one"]),
+                        "duplicate_source",
+                    ),
                 ):
                     with self.subTest(values=values):
                         with self.assertRaises(ManualIntentError) as raised:
                             service.create(values, actor="operator")
                         self.assertEqual(raised.exception.code, code)
                 self.assertEqual(repository.list_manual_intents(), ())
-                self.index.batch_upsert(
-                    (
-                        file_record(
-                            "bad", "source", "library", "Movies/bad.mkv", scan_status="missing"
-                        ),
+                with self.assertRaises(ManualIntentError) as raised:
+                    service.create(
+                        tuple(manual_source(f"Movies/f{index}.mkv") for index in range(101)),
+                        actor="operator",
                     )
-                )
-                with self.assertRaises(ManualIntentError) as raised:
-                    service.create(["bad"], actor="operator")
-                self.assertEqual(raised.exception.code, "source_stale")
-                with self.assertRaises(ManualIntentError) as raised:
-                    service.create([f"file-{index}" for index in range(101)], actor="operator")
                 self.assertEqual(raised.exception.code, "selection_over_limit")
 
     def test_rescan_observation_updates_do_not_stale_the_same_source_occurrence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = self._service(repository)
-                intent = service.create(["one"], actor="operator")
+                intent = service.create((self.sources["one"],), actor="operator")
                 item = intent.items[0]
-                original = self.index.find_by_file_id("one")
-                self.assertIsNotNone(original)
-                refreshed = replace(
-                    original,
-                    last_seen_at=NOW + timedelta(minutes=5),
-                    updated_at=NOW + timedelta(minutes=5),
-                    stable_since=NOW + timedelta(minutes=1),
-                    last_scan_id="scan-after-intent",
-                )
-                self.index.batch_upsert((refreshed,))
-
+                # A later read of the same unchanged content is the same
+                # source, so the choice edit stays valid without any catalog
+                # rescan.
                 updated = service.update_choice(
                     intent.intent_id,
                     item.item_id,
@@ -176,7 +169,9 @@ class ManualOrganizeIntentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = self._service(repository)
-                intent = service.create(["one", "two"], actor="operator")
+                intent = service.create(
+                    (self.sources["one"], self.sources["two"]), actor="operator"
+                )
                 first, second = intent.items
                 with self.assertRaises(ManualIntentError) as raised:
                     service.update_choice(
@@ -292,7 +287,7 @@ class ManualOrganizeIntentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = self._service(repository)
-                intent = service.create(["one"], actor="operator")
+                intent = service.create((self.sources["one"],), actor="operator")
                 item = intent.items[0]
                 for patch in (
                     {"snapshotId": "later"},
@@ -322,11 +317,12 @@ class ManualOrganizeIntentTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 bootstrap_service = ManualOrganizeIntentService(
                     repository,
-                    self.catalog,
                     configuration_resolver=lambda: self.snapshot.document(),
+                    runtime_resolver=lambda snapshot_id, digest: self.runtime,
+                    storage_factory=lambda runtime, ids: {"source": self.storage},
                 )
                 with self.assertRaises(ManualIntentError) as raised:
-                    bootstrap_service.create(["one"], actor="operator")
+                    bootstrap_service.create((self.sources["one"],), actor="operator")
                 self.assertEqual(raised.exception.code, "manual_intent_configuration_unavailable")
                 self.assertEqual(repository.list_manual_intents(), ())
 
@@ -340,7 +336,7 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 )
                 service = self._service(repository)
                 service._configuration_resolver = lambda: disabled
-                intent = service.create(["one"], actor="operator")
+                intent = service.create((self.sources["one"],), actor="operator")
                 with self.assertRaises(ManualIntentError) as raised:
                     service.update_choice(
                         intent.intent_id,
@@ -361,7 +357,9 @@ class ManualOrganizeIntentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
-                intent = self._service(repository).create(["one", "two"], actor="operator")
+                intent = self._service(repository).create(
+                    (self.sources["one"], self.sources["two"]), actor="operator"
+                )
                 cancelled = self._service(repository).cancel(
                     intent.intent_id, expected_version=1, actor="operator"
                 )
@@ -392,26 +390,20 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(viewer, operator),
-                    file_catalog=self.catalog,
                     manual_intent_service=manual,
                 )
-                status, denied = request(
-                    api,
-                    "/api/v1/manual-intents",
-                    method="POST",
-                    body={"fileIds": ["one"]},
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 403)
-                status, created = request(
+                intent = manual.create((self.sources["one"],), actor="operator")
+                created = api._manual_intent_document(intent)
+                self.assertEqual(created["sideEffects"], "none")
+                # The retired index-identity admission route no longer exists.
+                retired, _ = request(
                     api,
                     "/api/v1/manual-intents",
                     method="POST",
                     body={"fileIds": ["one"]},
                     token="operator-token",
                 )
-                self.assertEqual(status, 201)
-                self.assertEqual(created["sideEffects"], "none")
+                self.assertEqual(retired, 404)
                 status, listed = request(
                     api, "/api/v1/manual-intents?limit=10", token="viewer-token"
                 )

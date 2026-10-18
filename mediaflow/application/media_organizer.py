@@ -15,6 +15,7 @@ from mediaflow.application.failure_explanation import (
 )
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
+from mediaflow.application.scan_filters import ObservedSource
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
 from mediaflow.application.workflow_retry import (
     RetryExhausted,
@@ -131,6 +132,7 @@ class MediaOrganizerService:
         logger: Logger | None = None,
         task_coordinator: PersistentTaskCoordinator | None = None,
         task_id: str | None = None,
+        previous_observations: dict[str, ObservedSource] | None = None,
         conflict_decisions: dict[tuple[str, str], ConflictConfirmation] | None = None,
         metadata_selections: dict[tuple[str, str], MetadataSelection] | None = None,
         classification_selections: dict[tuple[str, str], ClassificationSelection] | None = None,
@@ -158,6 +160,10 @@ class MediaOrganizerService:
         self._logger = logger
         self._task_coordinator = task_coordinator
         self._task_id = task_id
+        # The caller's own durable observations of this exact scope.  Only used
+        # to prove a configured stable-size interval across two real
+        # observations; it is never a substitute for a first observation.
+        self._previous_observations = dict(previous_observations or {})
         self._conflict_decisions = conflict_decisions or {}
         self._metadata_selections = metadata_selections or {}
         self._classification_selections = classification_selections or {}
@@ -178,6 +184,9 @@ class MediaOrganizerService:
         resource_library: ResourceLibrary,
         storage_path: str,
         execute: bool = False,
+        source_occurrence_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_fingerprint_state: str = "unverified",
     ) -> MediaOrganizerItemResult:
         tracked_item: PersistentTaskItem | None = None
         try:
@@ -188,6 +197,9 @@ class MediaOrganizerService:
                     resource_library.library_id,
                     storage_path,
                     source,
+                    source_occurrence_id=source_occurrence_id,
+                    source_fingerprint=source_fingerprint,
+                    source_fingerprint_state=source_fingerprint_state,
                 )
             retry_outcome = self._retry_controller.execute(
                 lambda: self._run_read_only_strategy(
@@ -580,7 +592,12 @@ class MediaOrganizerService:
                 bound_reached = True
                 cancellation.cancel()
 
-        scan = self._scanner.scan(library, cancellation=cancellation, on_discovered=discovered)
+        scan = self._scanner.scan(
+            library,
+            cancellation=cancellation,
+            on_discovered=discovered,
+            previous=self._previous_observations,
+        )
         self._log(
             LogLevel.INFO,
             "library scan completed",

@@ -22,12 +22,12 @@ describe("normalizeDashboard", () => {
     ["null payload", null],
     ["missing as_of", { ...dashboardPayload, as_of: undefined }],
     ["non-string as_of", { ...dashboardPayload, as_of: 42 }],
-    ["missing files group", { ...dashboardPayload, files: undefined }],
+    ["missing tasks group", { ...dashboardPayload, tasks: undefined }],
     [
       "missing count field",
       {
         ...dashboardPayload,
-        files: { ...(dashboardPayload.files as object), ready: undefined },
+        tasks: { ...(dashboardPayload.tasks as object), running: undefined },
       },
     ],
     ["string count", { ...dashboardPayload, media_libraries: "3" }],
@@ -46,10 +46,9 @@ describe("normalizeDashboard", () => {
 });
 
 describe("isDashboardEmpty", () => {
-  it("is empty when files, tasks and jobs are all zero", () => {
+  it("is empty when tasks and jobs are all zero", () => {
     const model = normalizeDashboard({
       ...dashboardPayload,
-      files: { total: 0, ready: 0, unstable: 0, missing: 0, errors: 0 },
       tasks: {
         total: 0,
         pending: 0,
@@ -73,7 +72,7 @@ describe("isDashboardEmpty", () => {
     expect(isDashboardEmpty(model)).toBe(true);
   });
 
-  it("is not empty when any recorded file, task or job exists", () => {
+  it("is not empty when any recorded task or job exists", () => {
     expect(isDashboardEmpty(dashboardModel)).toBe(false);
   });
 });

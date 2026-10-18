@@ -24,7 +24,6 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     metadata_provider_registry_from_environment,
 )
@@ -285,7 +284,7 @@ def _run_directory(
         guard.storage_id,
         "",
     )
-    scanner = StorageScanner({guard.storage_id: guard}, InMemoryFileIndexRepository())
+    scanner = StorageScanner({guard.storage_id: guard})
     return StrategyDirectoryRunner(scanner, library, strategy, guard).run(
         live_metadata=live_metadata,
         limit=limit,

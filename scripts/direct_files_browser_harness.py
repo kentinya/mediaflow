@@ -327,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         "source-storage": FingerprintlessStorage("source-storage", managed_root / "source"),
         "media-target": FingerprintlessStorage("media-target", managed_root / "destination"),
     }
-    repository, file_index, managed, api = inventory.build_managed_fixture(
+    repository, managed, api = inventory.build_managed_fixture(
         database,
         managed_root,
         include_cross_storage_destinations=True,
@@ -392,7 +392,6 @@ def main(argv: list[str] | None = None) -> int:
         repository=repository,
         api=api,
         managed=managed,
-        file_index=file_index,
     )
     with make_server(
         args.host,
@@ -407,7 +406,6 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             pass
         finally:
-            file_index.close()
             repository.close()
             managed.configuration_repository.close()
     return 0

@@ -46,7 +46,6 @@ from mediaflow.infrastructure.runtime_configuration import create_storage_from_d
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document
@@ -1440,22 +1439,15 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 self.assertEqual(runtime.list_tasks(limit=10), ())
             self.assertEqual(list((root / "target" / "media-vault").iterdir()), [])
 
-    def test_media_rows_never_surface_as_resource_file_detail_work(self) -> None:
-        """A media Task stays out of a ResourceLibrary file's history.
+    def test_media_rows_keep_their_namespaced_identity_and_never_become_source_work(self) -> None:
+        """A media Task stays attributable to its own namespaced library identity.
 
         Both libraries share one Storage and one overlapping root here, so a
         media direct-command row addresses exactly the same
-        ``(storage, storage-relative path)`` a FileIndex record uses.  The
-        persisted identity keeps the media namespace, so neither the source
-        lookup nor File/Media detail can present that maintenance as this
-        source file's processing work.
+        ``(storage, storage-relative path)`` a ResourceLibrary row would use.
+        The persisted identity keeps the media namespace, so no source-scoped
+        lookup can present that maintenance as a ResourceLibrary source's work.
         """
-
-        from mediaflow.application.file_catalog import (
-            FileCatalogService,
-        )
-        from mediaflow.domain.file_index import FileScanStatus
-        from tests.test_file_catalog import file_record
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1474,38 +1466,14 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             item = runtime.list_items(task.task_id)[0]
             self.assertEqual(item.storage_id, "media-target")
             self.assertEqual(item.resource_library_id, f"media:{SHARED_ID}")
+            # The persisted identity is namespaced by library kind, so an equal
+            # ResourceLibrary ID never reads this media row as its own work.
+            from mediaflow.domain.direct_files import LibraryKind, split_library_identity
 
-            # FileIndex carries a ResourceLibrary record for the same Storage and
-            # the same storage-relative path the media command just mutated.
-            with SQLiteFileIndexRepository(root / "file-index.sqlite3") as file_index:
-                file_index.batch_upsert(
-                    (
-                        file_record(
-                            "shared-file",
-                            "media-target",
-                            SHARED_ID,
-                            "media-vault/shared.mkv",
-                            scan_status=FileScanStatus.READY,
-                        ),
-                    )
-                )
-                catalog = FileCatalogService(
-                    file_index,
-                    (SHARED_ID,),
-                    ("media-target",),
-                    task_repository=runtime,
-                )
-                detail = catalog.detail("shared-file")
-                # The media maintenance row never becomes this file's history.
-                self.assertEqual([item.item_id for item in detail.items], [])
-                # The source lookup still resolves the ResourceLibrary record.
-                record, reason = catalog.resolve_by_source(
-                    "media-target",
-                    "media-vault/shared.mkv",
-                    resource_library_id=SHARED_ID,
-                )
-                self.assertEqual(reason, None)
-                self.assertIsNotNone(record)
+            self.assertEqual(
+                split_library_identity(item.resource_library_id),
+                (LibraryKind.MEDIA, SHARED_ID),
+            )
             # The media Task remains durable and attributable on its own, and it
             # persists only bounded library-relative identities.
             self.assertEqual(task.command, "media_files_direct_command")

@@ -169,16 +169,6 @@ export function DashboardView({
           { label: "Media libraries", value: model.mediaLibraries },
         ]}
       />
-      <CountGrid
-        title="Files"
-        counts={[
-          { label: "Total", value: model.files.total },
-          { label: "Ready", value: model.files.ready },
-          { label: "Unstable", value: model.files.unstable },
-          { label: "Missing", value: model.files.missing },
-          { label: "Errors", value: model.files.errors },
-        ]}
-      />
       <LinkedCounts
         title="Tasks"
         to="/operations/tasks"

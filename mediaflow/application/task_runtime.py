@@ -167,6 +167,9 @@ class PersistentTaskCoordinator:
         *,
         transfer_fence: tuple[str, str, datetime] | None = None,
         adopt_existing: bool = False,
+        source_occurrence_id: str | None = None,
+        source_fingerprint: str | None = None,
+        source_fingerprint_state: str = "unverified",
     ) -> PersistentTaskItem:
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
@@ -251,6 +254,13 @@ class PersistentTaskCoordinator:
                 attempts=previous.attempts + 1,
                 updated_at=now,
                 error=None,
+                source_occurrence_id=(source_occurrence_id or previous.source_occurrence_id),
+                source_fingerprint=(source_fingerprint or previous.source_fingerprint),
+                source_fingerprint_state=(
+                    source_fingerprint_state
+                    if source_occurrence_id
+                    else previous.source_fingerprint_state
+                ),
             )
         else:
             started = PersistentTaskItem(
@@ -265,6 +275,9 @@ class PersistentTaskCoordinator:
                 (previous.attempts if previous else 0) + 1,
                 previous.created_at if previous else now,
                 now,
+                source_occurrence_id=source_occurrence_id,
+                source_fingerprint=source_fingerprint,
+                source_fingerprint_state=source_fingerprint_state,
             )
         if not self._publish_item_start(started, fenced):
             # The claim lapsed between the acquisition and this publication.

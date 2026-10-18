@@ -39,7 +39,6 @@ from uuid import uuid4
 
 from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -63,7 +62,6 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import ConfirmationStatus, ConflictConfirmation
 from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -72,11 +70,11 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.in_memory_storage import InMemoryStorage
+from tests.source_fixtures import LiveLibraryView, source_identity_from_storage
 from tests.storage_fixtures import PagedMemoryStorage
 from tests.test_configuration_objects import example_document
 from tests.test_manual_organize_preview import manual_snapshot
@@ -247,9 +245,9 @@ class _JourneyFixtureMixin:
             def scan_clock() -> datetime:
                 return datetime.now(UTC) + timedelta(hours=2)
 
-            index = InMemoryFileIndexRepository()
-            scan = StorageScanner({"source": source_storage}, index, clock=scan_clock).scan(library)
-            self.assertEqual("completed", scan.status.value)
+            scan = StorageScanner({"source": source_storage}, clock=scan_clock).scan(library)
+            self.assertEqual("completed", scan.status)
+            library_view = LiveLibraryView(source_storage, library)
 
             strategy = development_strategy_configuration()
             type_policies = list(strategy.recognition_type_policies)
@@ -289,15 +287,8 @@ class _JourneyFixtureMixin:
             source = RecordingStorage(source_storage)
             target = RecordingStorage(target_storage, can_hard_link=target_hard_link)
             repository = SQLiteTaskRepository(Path(runtime_directory, "runtime.sqlite3"))
-            catalog = FileCatalogService(
-                index,
-                ("library",),
-                ("source",),
-                task_repository=repository,
-            )
             intents = ManualOrganizeIntentService(
                 repository,
-                catalog,
                 configuration_resolver=manual_snapshot,
                 runtime_resolver=lambda snapshot_id, digest: configuration,
                 storage_factory=lambda runtime, ids: runtime.create_storages(
@@ -307,9 +298,7 @@ class _JourneyFixtureMixin:
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                catalog,
                 configuration=configuration,
-                file_index=index,
                 providers=MetadataProviderRegistry((provider,)),
                 storages={"source": source, "target": target},
             )
@@ -370,8 +359,6 @@ class _JourneyFixtureMixin:
                     ),
                 ),
                 system_status=build_configuration_snapshot(configuration),
-                file_catalog=catalog,
-                file_index=index,
                 configuration_snapshot_id=SNAPSHOT_ID,
                 configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 manual_intent_service=intents,
@@ -379,7 +366,9 @@ class _JourneyFixtureMixin:
                 manual_execution_service=execution,
                 worker_service=worker_service,
             )
-            file_ids = tuple(record.file_id for record in index.list_by_resource_library("library"))
+            listed = library_view.list_by_resource_library("library")
+            file_ids = tuple(record.file_id for record in listed)
+            file_paths = tuple(record.path for record in listed)
             value = SimpleNamespace(
                 api=api,
                 repository=repository,
@@ -389,8 +378,7 @@ class _JourneyFixtureMixin:
                 worker=worker,
                 worker_service=worker_service,
                 configuration=configuration,
-                index=index,
-                catalog=catalog,
+                index=library_view,
                 source=source,
                 target=target,
                 source_root=source_root,
@@ -398,6 +386,8 @@ class _JourneyFixtureMixin:
                 runtime_path=Path(runtime_directory, "runtime.sqlite3"),
                 file_ids=file_ids,
                 file_id=file_ids[0] if file_ids else None,
+                file_paths=file_paths,
+                path_for_file_id={record.file_id: record.path for record in listed},
             )
             yield value
 
@@ -428,18 +418,15 @@ class _JourneyFixtureMixin:
         response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
         return int(statuses[0].split()[0]), json.loads(response)
 
-    def _create_reviewed_intent(self, value, *, file_id=None):
-        """Create one file-scoped intent and pin the RecognitionType C choices."""
+    def _create_reviewed_intent(self, value, *, path=None):
+        """Admit one live file and pin the RecognitionType C choices."""
 
+        relative = path or value.file_paths[0]
         status, intent = self._request(
             value,
-            "/api/v1/operations/organize/intents",
+            "/api/v1/resource-libraries/library/files/organize",
             "POST",
-            {
-                "scopeKind": "file",
-                "fileId": value.file_id if file_id is None else file_id,
-                "resourceLibraryId": "library",
-            },
+            {"paths": [relative]},
         )
         self.assertEqual(201, status, intent)
         item = intent["items"][0]
@@ -517,20 +504,11 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         for path in (short_path, long_path):
             source.add_file(path, size=123)
         with self.journey(names=(short_path, long_path), source_storage=source) as value:
-            long_record = next(
-                record
-                for record in value.index.list_by_resource_library("library")
-                if record.path == long_path
-            )
             status, intent = self._request(
                 value,
-                "/api/v1/operations/organize/intents",
+                "/api/v1/resource-libraries/library/files/organize",
                 "POST",
-                {
-                    "scopeKind": "file",
-                    "fileId": long_record.file_id,
-                    "resourceLibraryId": "library",
-                },
+                {"paths": [long_path]},
             )
             self.assertEqual(201, status, intent)
             self.assertEqual([long_path], [item["source"]["path"] for item in intent["items"]])
@@ -629,12 +607,14 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             status, matrix = self._request(
                 value,
                 "/api/v1/operations/manual-actions"
-                f"?scopeKind=file&fileId={value.file_id}&resourceLibraryId=library",
+                "?scopeKind=resourceLibrary&resourceLibraryId=library",
             )
             self.assertEqual(200, status)
             organize = matrix["actions"]["organize"]
             self.assertTrue(organize["available"], organize)
-            self.assertEqual("/api/v1/operations/organize/intents", organize["path"])
+            self.assertEqual(
+                "/api/v1/resource-libraries/library/files/discoveries", organize["path"]
+            )
 
             intent = self._create_reviewed_intent(value)
             self.assertEqual("organize", intent["journey"])
@@ -792,13 +772,9 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             # A viewer cannot even create the durable intent.
             status, error = self._request(
                 value,
-                "/api/v1/operations/organize/intents",
+                "/api/v1/resource-libraries/library/files/organize",
                 "POST",
-                {
-                    "scopeKind": "file",
-                    "fileId": value.file_id,
-                    "resourceLibraryId": "library",
-                },
+                {"paths": [value.file_paths[0]]},
                 token=VIEWER_TOKEN,
             )
             self.assertEqual(403, status)
@@ -814,13 +790,9 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIn("execute_manual_organize", matrix["actions"]["organize"]["reason"])
             status, error = self._request(
                 value,
-                "/api/v1/operations/organize/intents",
+                "/api/v1/resource-libraries/library/files/organize",
                 "POST",
-                {
-                    "scopeKind": "file",
-                    "fileId": value.file_id,
-                    "resourceLibraryId": "library",
-                },
+                {"paths": [value.file_paths[0]]},
                 token=MANAGER_TOKEN,
             )
             self.assertEqual(201, status)
@@ -869,25 +841,16 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     def test_malformed_authority_fields_are_rejected_before_any_durable_state(self) -> None:
         with self.journey() as value:
             for body in (
-                {
-                    "scopeKind": "file",
-                    "fileId": value.file_id,
-                    "resourceLibraryId": "library",
-                    "sourceFingerprint": "0" * 64,
-                },
-                {
-                    "scopeKind": "file",
-                    "fileId": value.file_id,
-                    "resourceLibraryId": "library",
-                    "snapshotDigest": "0" * 64,
-                },
-                {
-                    "scopeKind": "resourceLibrary",
-                    "resourceLibraryId": "library",
-                },
+                {"paths": [value.file_paths[0]], "sourceFingerprint": "0" * 64},
+                {"paths": [value.file_paths[0]], "snapshotDigest": "0" * 64},
+                {"resourceLibraryId": "library"},
+                {"paths": "not-an-array"},
             ):
                 status, error = self._request(
-                    value, "/api/v1/operations/organize/intents", "POST", body
+                    value,
+                    "/api/v1/resource-libraries/library/files/organize",
+                    "POST",
+                    body,
                 )
                 self.assertEqual(400, status, error)
             self.assertEqual((), value.repository.list_manual_intents())
@@ -1036,7 +999,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             status, matrix = self._request(
                 value,
                 "/api/v1/operations/manual-actions"
-                f"?scopeKind=file&fileId={value.file_id}&resourceLibraryId=library",
+                "?scopeKind=resourceLibrary&resourceLibraryId=library",
             )
             self.assertEqual(200, status)
             self.assertFalse(matrix["actions"]["organize"]["available"])
@@ -1157,8 +1120,9 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
         with self.journey() as value:
             status, body = self._request(
                 value,
-                f"/api/v1/files/{value.file_id}/manual-organize",
+                "/api/v1/resource-libraries/library/files/organize",
                 "POST",
+                {"paths": [value.file_paths[0]]},
             )
             self.assertEqual(201, status, body)
             self.assertIn("intentId", body)
@@ -1179,13 +1143,13 @@ class _ExactAdmissionMixin:
     def _reviewed_multi_item(self, value, names):
         """One ResourceLibrary-scoped intent over several reviewed files."""
 
-        body = {
-            "scopeKind": "resourceLibrary",
-            "resourceLibraryId": "library",
-            "itemIds": list(value.file_ids),
-        }
-        self.assertEqual(len(names), len(value.file_ids))
-        status, intent = self._request(value, "/api/v1/operations/organize/intents", "POST", body)
+        self.assertEqual(len(names), len(value.file_paths))
+        status, intent = self._request(
+            value,
+            "/api/v1/resource-libraries/library/files/organize",
+            "POST",
+            {"paths": list(value.file_paths)},
+        )
         self.assertEqual(201, status, intent)
         self.assertEqual(len(names), len(intent["items"]))
         for item in intent["items"]:
@@ -1890,23 +1854,14 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
             try:
                 # Every service is rebuilt on the reopened repository, exactly
                 # as an API/Worker process restart would do.
-                catalog = FileCatalogService(
-                    value.index,
-                    ("library",),
-                    ("source",),
-                    task_repository=repository,
-                )
                 intents = ManualOrganizeIntentService(
                     repository,
-                    catalog,
                     configuration_resolver=manual_snapshot,
                 )
                 previews = ManualOrganizePreviewService(
                     repository,
                     intents,
-                    catalog,
                     configuration=value.configuration,
-                    file_index=value.index,
                     providers=MetadataProviderRegistry((SyntheticMetadataProvider(()),)),
                     storages={"source": value.source, "target": value.target},
                 )
@@ -2042,13 +1997,12 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             source_storage = LocalStorage("source", source_root)
             target_storage = LocalStorage("target", target_root)
             library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-            index = SQLiteFileIndexRepository(runtime_path)
             scan = StorageScanner(
                 {"source": source_storage},
-                index,
                 clock=lambda: datetime.now(UTC) + timedelta(hours=2),
             ).scan(library)
-            self.assertEqual("completed", scan.status.value)
+            self.assertEqual("completed", scan.status)
+            library_view = LiveLibraryView(source_storage, library)
             configuration = RuntimeConfiguration(
                 development_strategy_configuration(),
                 (
@@ -2068,15 +2022,8 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             repository = SQLiteTaskRepository(runtime_path)
             source = RecordingStorage(source_storage)
             target = RecordingStorage(target_storage)
-            catalog = FileCatalogService(
-                index,
-                ("library",),
-                ("source",),
-                task_repository=repository,
-            )
             intents = ManualOrganizeIntentService(
                 repository,
-                catalog,
                 configuration_resolver=manual_snapshot,
                 runtime_resolver=lambda snapshot_id, digest: configuration,
                 storage_factory=lambda runtime, ids: runtime.create_storages(
@@ -2086,9 +2033,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             previews = ManualOrganizePreviewService(
                 repository,
                 intents,
-                catalog,
                 configuration=configuration,
-                file_index=index,
                 providers=MetadataProviderRegistry((provider,)),
                 storages={"source": source, "target": target},
             )
@@ -2134,8 +2079,6 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                     ),
                 ),
                 system_status=build_configuration_snapshot(configuration),
-                file_catalog=catalog,
-                file_index=index,
                 configuration_snapshot_id=SNAPSHOT_ID,
                 configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 manual_intent_service=intents,
@@ -2152,15 +2095,13 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                     execution=execution,
                     worker=worker,
                     configuration=configuration,
-                    index=index,
-                    catalog=catalog,
+                    index=library_view,
                     source=source,
                     target=target,
                     source_root=source_root,
                     target_root=target_root,
                 )
             finally:
-                index.close()
                 repository.close()
 
     @staticmethod
@@ -2279,6 +2220,13 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
         with self.journey() as value:
             status, intent = self.admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
             self.assertEqual(201, status, intent)
+            # Capture the exact live observation before execution moves the
+            # sources away.
+            records = {
+                name: value.index.find_by_path("source", "library", name)
+                for name in ("Movies/One.2001.mkv", "Movies/Two.2002.mkv")
+            }
+            self.assertTrue(all(records.values()), records)
             status, preview = self.request(
                 value,
                 f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
@@ -2302,10 +2250,6 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             self.assertIsNotNone(completed)
             self.assertIsNone(value.worker.run_next())
 
-            records = {
-                name: value.index.find_by_path("source", "library", name)
-                for name in ("Movies/One.2001.mkv", "Movies/Two.2002.mkv")
-            }
             task = value.repository.get_task(execution["taskId"])
             self.assertIsNotNone(task)
             items = value.repository.list_items(execution["taskId"])
@@ -2320,30 +2264,30 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                 self.assertEqual(record.occurrence_id, results[0].source_occurrence_id)
                 self.assertEqual(record.fingerprint, results[0].source_fingerprint)
                 self.assertEqual("verified", results[0].source_fingerprint_state)
-            # The durable Result reconciled the exact FileIndex occurrence it executed.
-            for name, record in records.items():
-                current = value.index.find_by_path("source", "library", name)
-                self.assertEqual(record.occurrence_id, current.occurrence_id)
-                self.assertNotEqual("unknown", current.processing_disposition.value, name)
-                self.assertIsNotNone(current.processing_result_id)
+            # Each durable Result keeps the exact observed occurrence and
+            # fingerprint it executed, so a later file at the same path can
+            # never be mistaken for the organized source.
+            for result in value.repository.list_results(execution["taskId"]):
+                self.assertTrue(result.source_occurrence_id)
+                self.assertTrue(result.source_fingerprint)
+                self.assertEqual("verified", result.source_fingerprint_state)
 
             status, document = self.request(
                 value,
                 f"/api/v1/operations/organize/executions/{execution['executionId']}",
             )
             self.assertEqual(200, status, document)
-            reconciliation = {
-                item["itemId"]: item["fileIndexReconciliation"] for item in document["items"]
-            }
-            self.assertEqual(2, len(reconciliation))
-            for state in reconciliation.values():
-                self.assertEqual("synchronized", state["state"])
-                self.assertFalse(state["action"]["available"])
+            self.assertEqual(2, len(document["items"]))
+            for item in document["items"]:
+                self.assertIsNotNone(item["taskItemId"])
+                self.assertNotIn("fileIndexReconciliation", item)
             encoded = json.dumps(document)
             for forbidden in ("fingerprint", "occurrenceId", "executionPlan"):
                 self.assertNotIn(forbidden, encoded)
 
-    def test_same_path_replacement_never_receives_the_older_occurrence_result(self) -> None:
+    def test_same_path_replacement_keeps_the_older_result_bound_to_its_occurrence(self) -> None:
+        """A replacement at the same path never inherits the earlier Result."""
+
         with self.journey(names=("Movies/One.2001.mkv",)) as value:
             status, intent = self.admit(value, ["Movies/One.2001.mkv"])
             self.assertEqual(201, status, intent)
@@ -2367,49 +2311,27 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             self.assertEqual(202, status, execution)
             self.assertIsNotNone(value.worker.run_next())
 
-            original = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
-            self.assertNotEqual("unknown", original.processing_disposition.value)
+            task_items = value.repository.list_items(execution["taskId"])
+            self.assertEqual(1, len(task_items))
+            executed = task_items[0]
+            self.assertEqual("verified", executed.source_fingerprint_state)
+            self.assertTrue(executed.source_occurrence_id)
 
-            # A different file now occupies the same live path.  A routine
-            # rescan records a new occurrence; the older Result must never bind
-            # to it.
+            # A different file now occupies the same live path.  The exact
+            # occurrence the Result executed is preserved, so the replacement
+            # can never be treated as the source that was organized.
             (value.source_root / "Movies" / "One.2001.mkv").write_bytes(b"replacement" * 40)
-            scan = StorageScanner(
-                {"source": LocalStorage("source", value.source_root)},
-                value.index,
-                clock=lambda: datetime.now(UTC) + timedelta(hours=4),
-            ).scan(ResourceLibrary("library", "Library", "source", "", exclude_rules=()))
-            self.assertEqual("completed", scan.status.value)
-            replacement = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
-            self.assertNotEqual(original.occurrence_id, replacement.occurrence_id)
-            self.assertEqual("unknown", replacement.processing_disposition.value)
-            self.assertIsNone(replacement.processing_result_id)
-
-            status, document = self.request(
-                value,
-                f"/api/v1/operations/organize/executions/{execution['executionId']}",
-            )
-            self.assertEqual(200, status, document)
-            item = document["items"][0]
-            self.assertEqual("no_matching_occurrence", item["fileIndexReconciliation"]["state"])
-            self.assertTrue(item["fileIndexReconciliation"]["action"]["available"])
-
-            # The bounded reconciliation action re-applies the durable Result
-            # only to a matching current occurrence; the replacement keeps its
-            # own untouched disposition and no mutation is replayed.
-            status, result = self.request(
-                value,
-                f"/api/v1/operations/organize/executions/{execution['executionId']}"
-                "/file-index-reconciliation",
-                "POST",
-                {"itemId": item["itemId"]},
-            )
-            self.assertEqual(200, status, result)
-            self.assertEqual("no_matching_occurrence", result["fileIndexReconciliation"]["state"])
-            self.assertEqual("organize_effect_unchanged", result["durableState"])
-            after = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
-            self.assertEqual("unknown", after.processing_disposition.value)
-            self.assertIsNone(after.processing_result_id)
+            live = LocalStorage("source", value.source_root)
+            current = source_identity_from_storage(live, "Movies/One.2001.mkv")
+            self.assertNotEqual(executed.source_occurrence_id, current.occurrence_id)
+            self.assertNotEqual(executed.source_fingerprint, current.fingerprint)
+            results = value.repository.list_results_for_item(executed.item_id)
+            self.assertEqual(1, len(results))
+            self.assertEqual(executed.source_occurrence_id, results[0].source_occurrence_id)
+            self.assertEqual(executed.source_fingerprint, results[0].source_fingerprint)
+            # The moved primary is a durable effect, and nothing replays it
+            # against the replacement that now occupies the source path.
+            self.assertEqual(2, len(value.target.mutations))
 
     def save_choice(self, value, intent, item, body, *, token: str = OPERATOR_TOKEN):
         return self.request(
@@ -2436,11 +2358,8 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             # The admitted intent really carries the live-Storage authority,
             # not a FileIndex-derived identity.
             stored = value.repository.get_manual_intent(intent["intentId"])
-            self.assertTrue(stored.items[0].source.is_storage_source)
-            # Remove every FileIndex row: the Files selection is still the
-            # current live Storage source and must keep its authority.
-            value.index.close()
-            value.index = InMemoryFileIndexRepository()
+            self.assertTrue(stored.items[0].source.ready)
+            self.assertIsNotNone(stored.items[0].source.occurrence_id)
 
             status, updated = self.save_choice(
                 value,
@@ -2492,41 +2411,6 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             # The rejection never leaks internal identity implementation detail.
             self.assertNotIn("fingerprint", json.dumps(document))
             self.assertNotIn("occurrenceId", json.dumps(document))
-
-    def test_file_index_intent_keeps_its_scoped_file_index_validation(self) -> None:
-        """The legacy FileIndex-originated path keeps its existing behavior."""
-
-        with self.journey(names=("Movies/One.2001.mkv",)) as value:
-            record = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
-            status, intent = self.request(
-                value,
-                "/api/v1/operations/organize/intents",
-                "POST",
-                {
-                    "scopeKind": "file",
-                    "fileId": record.file_id,
-                    "resourceLibraryId": "library",
-                },
-            )
-            self.assertEqual(201, status, intent)
-            item = intent["items"][0]
-            stored = value.repository.get_manual_intent(intent["intentId"])
-            self.assertFalse(stored.items[0].source.is_storage_source)
-            version_before = (stored.version, stored.items[0].version)
-
-            # The FileIndex-originated path still requires its scoped FileIndex
-            # occurrence: with every row gone it fails closed as source_missing.
-            empty_index = InMemoryFileIndexRepository()
-            value.index.close()
-            value.index = empty_index
-            value.catalog._repository = empty_index
-            status, document = self.save_choice(value, intent, item, {"recognitionTypeId": "C"})
-            self.assertEqual(404, status, document)
-            self.assertEqual("source_missing", document["error"]["code"])
-            after = value.repository.get_manual_intent(intent["intentId"])
-            self.assertEqual(version_before, (after.version, after.items[0].version))
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
 
     def test_files_source_choice_is_optimistic_and_keeps_preview_invalidation(self) -> None:
         """Optimistic versions and prior-Preview invalidation stay unchanged."""
@@ -2628,27 +2512,16 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
 
             runtime_path = root / "runtime.sqlite3"
             repository = SQLiteTaskRepository(runtime_path)
-            index = SQLiteFileIndexRepository(runtime_path)
-            catalog = FileCatalogService(
-                index,
-                ("source",),
-                ("source-storage",),
-                task_repository=repository,
-            )
             api = MediaFlowApi(
                 repository,
                 None,
                 principals=(self.OPERATOR,),
                 configuration_service=service,
-                file_catalog=catalog,
-                file_index=index,
             )
             try:
                 yield SimpleNamespace(
                     api=api,
                     repository=repository,
-                    index=index,
-                    catalog=catalog,
                     service=service,
                     configuration_repository=configuration_repository,
                     active=active,
@@ -2656,7 +2529,6 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
                     media=media,
                 )
             finally:
-                index.close()
                 repository.close()
                 configuration_repository.close()
 
@@ -2693,9 +2565,8 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
             self.assertEqual(201, status, intent)
             item = intent["items"][0]
             stored = value.repository.get_manual_intent(intent["intentId"])
-            self.assertTrue(stored.items[0].source.is_storage_source)
-            # The Files authority is live Storage: no FileIndex row exists.
-            self.assertEqual((), value.index.list_by_resource_library("source"))
+            self.assertTrue(stored.items[0].source.ready)
+            self.assertIsNotNone(stored.items[0].source.occurrence_id)
             versions_before = (stored.version, stored.items[0].version)
             audits_before = value.repository.list_manual_intent_audit(intent["intentId"])
 

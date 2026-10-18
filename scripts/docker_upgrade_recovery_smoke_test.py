@@ -279,15 +279,12 @@ from mediaflow.domain.automation import (
     AutomationJob,
     AutomationJobStatus,
 )
-from mediaflow.domain.file_index import FileIndexRecord
-from mediaflow.domain.file_lifecycle import OccurrenceState, ProcessingDisposition
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
 from mediaflow.domain.notification import (
     NotificationDelivery,
     NotificationDeliveryStatus,
     NotificationEventType,
 )
-from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
@@ -299,7 +296,6 @@ from mediaflow.domain.task_persistence import (
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
 DATABASE = "/data/mediaflow.sqlite3"
@@ -313,10 +309,7 @@ with SQLiteConfigurationRepository(DATABASE) as configuration:
     snapshot_digest = active.digest
     active_revision = active
 
-with (
-    SQLiteTaskRepository(DATABASE) as repository,
-    SQLiteFileIndexRepository(DATABASE) as file_index,
-):
+with SQLiteTaskRepository(DATABASE) as repository:
     if repository.get_task("upgrade-task") is None:
         repository.create_task(
             PersistentTask(
@@ -467,33 +460,6 @@ with (
             100,
         )
 
-    file_index.batch_upsert(
-        (
-            FileIndexRecord(
-                "upgrade-file",
-                "source-storage",
-                "source",
-                "电影/One.2001.mkv",
-                "One.2001.mkv",
-                "mkv",
-                4096,
-                NOW - timedelta(hours=2),
-                NOW - timedelta(hours=2),
-                NOW - timedelta(hours=1),
-                NOW - timedelta(hours=1),
-                FileScanStatus.READY,
-                FileChange.NEW,
-                NOW - timedelta(hours=2),
-                NOW - timedelta(hours=1),
-                occurrence_id="upgrade-file-occurrence",
-                fingerprint="a" * 64,
-                fingerprint_algorithm="sha256",
-                fingerprint_evidence={"sample": "fixture"},
-                occurrence_state=OccurrenceState.VERIFIED,
-                processing_disposition=ProcessingDisposition.UNKNOWN,
-            ),
-        )
-    )
 
     for index, (delivery_id, status) in enumerate(
         (
@@ -1222,7 +1188,6 @@ def upgrade_recovery_smoke(
 
             baseline = {
                 "active": identity,
-                "files": collection_items(base, token, "/api/v1/file-index?limit=20"),
                 "jobs": collection_items(base, token, "/api/v1/jobs?limit=100"),
                 "tasks": collection_items(base, token, "/api/v1/tasks?limit=100"),
                 "notifications": collection_items(base, token, "/api/v1/notifications?limit=100"),
@@ -1384,11 +1349,6 @@ def upgrade_recovery_smoke(
             if (management.get("active") or {}).get("revisionId") != identity["revisionId"]:
                 raise RuntimeError("candidate Active identity changed after upgrade")
 
-            final_files = collection_items(base, token, "/api/v1/file-index?limit=20")
-            if [item.get("file_id") for item in final_files] != [
-                item.get("file_id") for item in baseline["files"]
-            ]:
-                raise RuntimeError("FileIndex identities changed after upgrade")
             final_jobs = collection_items(base, token, "/api/v1/jobs?limit=100")
             baseline_job_ids = {item["job_id"] for item in baseline["jobs"]}
             final_job_ids = {item["job_id"] for item in final_jobs}

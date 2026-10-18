@@ -18,7 +18,6 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.manual_organize_preview import PreviewReadOnlyStorage
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.read_only_storage import ReadOnlyStorageMutationError
-from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
 from mediaflow.domain.automation_task_definition_preview import (
@@ -38,7 +37,6 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities
 from mediaflow.domain.task_persistence import PersistentTask, PersistentTaskStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -253,12 +251,9 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
         source_root,
         target_root,
         *,
-        file_index=None,
         clock=None,
     ):
-        options = {
-            "file_index": file_index,
-        }
+        options = {}
         if clock is not None:
             options["clock"] = clock
         return AutomationTaskDefinitionPreviewService(
@@ -720,7 +715,6 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
             definitions=(_definition(scope="", limit=5),),
             resource_library=resource_library,
         )
-        index = InMemoryFileIndexRepository()
         source = _StorageCallCounter(LocalStorage("source", source_root))
         target = _StorageCallCounter(LocalStorage("target", target_root))
 
@@ -734,7 +728,6 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                     configuration=configuration,
                     providers=MetadataProviderRegistry((_provider(),)),
                     storages={"source": source, "target": target},
-                    file_index=index,
                     clock=clock,
                 )
                 first = previews.create("def-1", actor="tester")
@@ -806,22 +799,15 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
             database,
             definitions=(_definition(),),
         )
-        index = InMemoryFileIndexRepository()
         source = _StorageCallCounter(LocalStorage("source", source_root))
         target = _StorageCallCounter(LocalStorage("target", target_root))
         try:
-            scanner = StorageScanner(
-                {"source": source},
-                index,
-            )
-            scanner.scan(configuration.resource_libraries[0])
             with SQLiteTaskRepository(database) as repository:
                 previews = AutomationTaskDefinitionPreviewService(
                     repository,
                     configuration=configuration,
                     providers=MetadataProviderRegistry((_provider(),)),
                     storages={"source": source, "target": target},
-                    file_index=index,
                 )
                 preview = previews.create("def-1", actor="tester")
                 source.calls.clear()
@@ -836,12 +822,15 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                 self.assertEqual(source.calls, [])
                 self.assertEqual(target.calls, [])
 
-                record = index.find_by_path("source", "special", "Media/C/One.2001.mkv")
-                self.assertIsNotNone(record)
-                index.batch_upsert((replace(record, size=record.size + 1),))
-                stale = previews.get_readonly(preview.preview_id)
-                self.assertEqual(stale.status, AutomationTaskDefinitionPreviewStatus.STALE)
-                self.assertIn("source fact", stale.stale_reason or "")
+                # A read-only projection never probes Storage, so it cannot
+                # prove a live source changed from memory alone: the durable
+                # Preview stays readable and unchanged, and any live change is
+                # decided at the execution admission boundary which re-observes
+                # the exact source.
+                next(source_root.rglob("One.2001.mkv")).write_bytes(b"changed after ready")
+                reread = previews.get_readonly(preview.preview_id)
+                self.assertEqual(reread.status, AutomationTaskDefinitionPreviewStatus.PREVIEWED)
+                self.assertEqual(source.calls, [])
 
                 api = MediaFlowApi(
                     repository,

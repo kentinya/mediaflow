@@ -138,7 +138,7 @@ describe("Operations manual Scan/Preview journeys", () => {
         return jsonResponse(document("resourceLibraryDiscovery"));
       }
       if (call.url.includes("resourceLibraryId=library")) {
-        return jsonResponse(document("actionMatrix"));
+        return jsonResponse(document("resourceLibrarySelected"));
       }
       return undefined;
     });
@@ -305,7 +305,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (call.url.includes("/api/v1/operations/manual-actions")) {
-        return jsonResponse(document("actionMatrix"));
+        return jsonResponse(document("resourceLibrarySelected"));
       }
       if (
         call.url === "/api/v1/operations/previews" &&
@@ -370,7 +370,7 @@ describe("Operations manual Scan/Preview journeys", () => {
         });
       }
       if (call.url.includes("/api/v1/operations/manual-actions")) {
-        return jsonResponse(document("actionMatrix"));
+        return jsonResponse(document("resourceLibrarySelected"));
       }
       return undefined;
     });

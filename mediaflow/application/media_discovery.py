@@ -10,7 +10,7 @@ Safety invariants:
 
 * the whole stage is **metadata only** -- ``stat``/``list_page`` through the
   existing read-only Storage guard; no content read, no hash, no Provider call,
-  no FileIndex lookup and no mutation;
+  no per-file catalog lookup and no mutation;
 * discovery creates **no execution authority**.  Finalizing only freezes an
   ordinary deduplicated ``ManualSourceIdentity`` list and hands it to the
   existing ``create_from_sources`` admission, which still requires a separate
@@ -22,8 +22,6 @@ Safety invariants:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -46,11 +44,6 @@ from mediaflow.application.scan_filters import (
     stability_wait_seconds,
 )
 from mediaflow.domain.automation import AutomationTaskDefinition
-from mediaflow.domain.file_lifecycle import (
-    OccurrenceState,
-    occurrence_id_for,
-    source_fingerprint,
-)
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
     ManualSourceIdentity,
@@ -89,6 +82,11 @@ from mediaflow.domain.media_discovery import (
 )
 from mediaflow.domain.organizer import StorageLocation
 from mediaflow.domain.preview_analysis import PreviewAnalysisConflict
+from mediaflow.domain.source_evidence import (
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.storage import (
     Storage,
     StorageEntry,
@@ -2874,38 +2872,22 @@ class MediaDiscoveryService:
         occurrence = occurrence_id_for(
             library.storage_id, library.library_id, storage_path, observed.value
         )
-        file_id = hashlib.sha256(
-            json.dumps(
-                {
-                    "resourceLibraryId": library.library_id,
-                    "storageId": library.storage_id,
-                    "path": storage_path,
-                    "fingerprint": observed.value,
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
         identity = ManualSourceIdentity(
-            file_id,
-            library.storage_id,
-            library.library_id,
-            storage_path,
-            filename,
-            extension,
-            entry.size,
-            entry.modified_at,
-            now,
-            now,
-            now,
-            "ready",
-            None,
-            occurrence,
-            observed.value,
-            observed.algorithm,
-            observed.evidence,
-            OccurrenceState.VERIFIED.value,
+            source_id=occurrence,
+            storage_id=library.storage_id,
+            resource_library_id=library.library_id,
+            path=storage_path,
+            filename=filename,
+            extension=extension,
+            size=entry.size,
+            modified_at=entry.modified_at,
+            observed_at=now,
+            stable_since=None,
+            occurrence_id=occurrence,
+            fingerprint=observed.value,
+            fingerprint_algorithm=observed.algorithm,
+            fingerprint_evidence=observed.evidence,
+            occurrence_state=observed.state.value,
         )
         return identity.document()
 

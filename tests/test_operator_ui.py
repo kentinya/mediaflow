@@ -104,13 +104,11 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("/api/v1/dashboard?recentLimit=10", script)
         self.assertIn("?status=pending&limit=100", script)
         self.assertIn("?limit=100", script)
-        self.assertIn("/api/v1/files?", script)
-        self.assertIn("limit=100", script)
-        self.assertIn("showDetail('files'", script)
-        self.assertIn("resourceLibrary", script)
-        self.assertIn("recognitionType", script)
-        self.assertIn("providerId", script)
-        self.assertIn("scanStatus", script)
+        self.assertIn("/api/v1/storage/files?", script)
+        # The retired per-file catalog surface is gone from the client entirely.
+        self.assertNotIn("/api/v1/file-index", script)
+        self.assertNotIn("/api/v1/files?", script)
+        self.assertNotIn("scanStatus", script)
         self.assertNotIn("renderFileReMatchForm", script)
         for retired_action in ("/re-recognize", "/re-match", "/re-plan"):
             self.assertNotIn(retired_action, script)
@@ -1213,103 +1211,39 @@ class AutomationPreviewWebTests(unittest.TestCase):
 
 
 class CurrentSourcePreviewWebTests(unittest.TestCase):
-    def test_files_journey_previews_only_verified_membership_and_names_the_fallback(self) -> None:
+    def test_files_view_browses_storage_without_any_indexed_membership_column(self) -> None:
         script = APP_JS.decode("utf-8")
         files = _js_function_body(script, "renderFiles")
         self.assertIn(
             "controls.append(manualPreviewLibraryControls(resourceLibraries, selectedStorage));",
             files,
         )
-        self.assertIn(
-            "['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Preview'], rows",
-            files,
-        )
-        self.assertIn(
-            "const previewPayload = item.isDirectory ? null : "
-            "manualPreviewPayloadFromMembership(membership);",
-            files,
-        )
-        self.assertIn(
-            "actionButton('Preview file', () =>\n"
-            "          confirmCurrentPreview(previewPayload, `Preview current FileIndex item "
-            "${previewPayload.fileId}`))",
-            files,
-        )
-        self.assertIn(
-            "text('span', item.isDirectory ? '-' : "
-            "'Preview unavailable until a verified current item exists')",
-            files,
-        )
+        self.assertIn("['Name', 'Type', 'Size', 'Modified'], rows", files)
+        # The retired catalog never reaches the operator surface: no membership
+        # column, no per-file identity, no preview action derived from a
+        # remembered index row.
+        self.assertNotIn("indexMembership", files)
+        self.assertNotIn("FileIndex", files)
+        self.assertNotIn("previewPayload", files)
+        self.assertNotIn("/api/v1/file-index", script)
+        self.assertNotIn("renderFileIndex", script)
 
-    def test_file_index_journey_and_file_detail_offer_current_preview_actions(self) -> None:
+    def test_file_detail_carries_no_indexed_lifecycle_or_reprocess_action(self) -> None:
         script = APP_JS.decode("utf-8")
-        index = _js_function_body(script, "renderFileIndex")
-        self.assertIn(
-            "['ID', 'Path', 'Scan / discovery', 'Processing disposition',\n"
-            "        'Current occurrence', 'Updated', 'Preview'], rows",
-            index,
-        )
-        self.assertIn("const previewPayload = manualPreviewPayloadFromFile(item);", index)
-        self.assertIn(
-            "actionButton('Preview', () =>\n"
-            "          confirmCurrentPreview(previewPayload, `Preview current FileIndex item "
-            "${fileId}`))",
-            index,
-        )
-        self.assertIn("text('span', 'Preview unavailable until source is verified')", index)
-
-        detail = _js_function_body(script, "showDetail")
-        self.assertIn(
-            "actionButton('Preview current source (DryRun)', () =>\n"
-            "            confirmCurrentPreview(previewPayload, "
-            "`Preview current FileIndex item ${id}`))",
-            detail,
-        )
-        self.assertIn(
-            "'Preview unavailable: select a verified ready current occurrence from FileIndex.'",
-            detail,
-        )
-
-    def test_current_preview_payloads_admit_only_verified_bounded_identity_fields(self) -> None:
-        script = APP_JS.decode("utf-8")
-        from_file = _js_function_body(script, "manualPreviewPayloadFromFile")
-        from_membership = _js_function_body(script, "manualPreviewPayloadFromMembership")
-
-        self.assertIn("const scan = currentSourcePayloadFromFile(item);", from_file)
-        self.assertIn("if (!scan) return null;", from_file)
-        self.assertIn(
-            "return {scopeKind: 'file', resourceLibraryId: scan.resourceLibraryId,\n"
-            "      occurrenceId: scan.occurrenceId, fingerprint: scan.fingerprint,\n"
-            "      fileId: scan.fileId};",
-            from_file,
-        )
-        self.assertIn(
-            "item.scanStatus !== 'ready' || item.fingerprintState !== 'verified'",
-            from_membership,
-        )
-        self.assertIn(
-            "return {scopeKind: 'file', fileId: item.fileId,\n"
-            "      resourceLibraryId: item.resourceLibraryId, occurrenceId: item.occurrenceId,\n"
-            "      fingerprint: item.fingerprint};",
-            from_membership,
-        )
-        # The Preview request body carries only current-identity fields: no Scan mode,
-        # arbitrary path, operation, authority or Provider field may be admitted from the Web.
-        self.assertNotIn("mode:", from_file)
-        self.assertNotIn("mode:", from_membership)
-        self.assertNotIn("path:", from_file)
-        self.assertNotIn("path:", from_membership)
-        self.assertNotIn("operation", from_file)
-        self.assertNotIn("operation", from_membership)
-        self.assertNotIn("authorize", from_file)
-        self.assertNotIn("authorize", from_membership)
+        # The whole per-file catalog detail surface is gone, not hidden behind
+        # a conditional branch.
+        self.assertNotIn("showDetail('files'", script)
+        self.assertNotIn("currentOccurrence", script)
+        self.assertNotIn("reprocess", script)
+        self.assertNotIn("Occurrence history", script)
+        self.assertNotIn("Reprocess admissions", script)
 
     def test_current_preview_confirmation_declares_persistence_and_zero_mutation(self) -> None:
         script = APP_JS.decode("utf-8")
         confirm = _js_function_body(script, "confirmCurrentPreview")
         self.assertIn(
-            "message('Preview is unavailable until a verified current FileIndex occurrence "
-            "is selected.', true);",
+            "message('Preview is unavailable until a verified live source "
+            "selection is made.', true);",
             confirm,
         )
         self.assertIn("text('h2', 'Confirm current-source Preview')", confirm)
@@ -1345,103 +1279,10 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
     def test_persisted_preview_detail_renders_scope_occurrence_and_mutation_state(self) -> None:
         script = APP_JS.decode("utf-8")
         detail = _js_function_body(script, "showManualPreview")
-        self.assertIn(
-            "await api('/api/v1/manual-previews/' + encodeURIComponent(previewId));", detail
-        )
         self.assertIn("field(summary, 'Preview scope', scope.kind ?", detail)
-        self.assertIn(
-            "`${scope.kind}:${scope.id} (${scope.itemCount || 0} item(s))` : 'intent selection');",
-            detail,
-        )
-        self.assertIn(
-            "field(summary, 'Storage mutation', data.zeroMutation ? 'NONE' : 'INVALID');", detail
-        )
-        self.assertIn(
-            "field(summary, 'Execution state', data.executionState || "
-            "'not available in this Task');",
-            detail,
-        )
-        self.assertIn("field(summary, 'Next action', data.nextAction || '-');", detail)
-        self.assertIn(
-            "item.itemId + ' - ' + item.status + ' (' +\n"
-            "          (item.stage || 'analysis') + ')'",
-            detail,
-        )
-        self.assertIn("'Current occurrence: ' + (source.occurrenceId || '-') +", detail)
-        self.assertIn("'; state: ' + (source.occurrenceState || 'unverified')));", detail)
-        self.assertIn("'RecognitionType: ' + (plan.recognitionType ||", detail)
-        self.assertIn("'; NamingPolicy: ' + (policies.namingPolicyId || '-') +", detail)
-        self.assertIn(
-            "'Target: ' + (destination.storageId || '-') + ' / ' + (destination.path || '-') +",
-            detail,
-        )
-        self.assertIn(
-            "'; Required capabilities: ' + ((capabilities.required || []).join(', ') || 'none') +",
-            detail,
-        )
-        self.assertIn("'; Recognition explanation: ' +", detail)
+        self.assertIn("field(summary, 'Storage mutation', data.zeroMutation ? 'NONE'", detail)
+        self.assertIn("'Current occurrence: ' + (source.occurrenceId || '-')", detail)
         self.assertIn("'Zero mutation: ' + (item.zeroMutation ? 'YES' : 'INVALID') +", detail)
-
-    def test_persisted_preview_blockers_and_stale_items_expose_recovery_without_authority(
-        self,
-    ) -> None:
-        script = APP_JS.decode("utf-8")
-        detail = _js_function_body(script, "showManualPreview")
-        self.assertIn(
-            "if (item.error) section.append(text('p', 'Blocker/failure: ' + item.error, 'error'));",
-            detail,
-        )
-        self.assertIn(
-            "if (item.nextAction) section.append(text('p', 'Recovery: ' + item.nextAction, "
-            "'warning'));",
-            detail,
-        )
-        stale_start = detail.index(
-            "if (item.status === 'stale' || data.status === 'stale' || data.current === false) {"
-        )
-        stale_branch = _js_braced_body(detail, detail.index("{", stale_start))
-        self.assertIn(
-            "section.append(actionButton('Request fresh Preview',\n"
-            "            () => showManualIntent(data.intentId)));",
-            stale_branch,
-        )
-        self.assertIn(
-            "const executable = items.filter(item => item.status === 'previewed' && "
-            "item.current &&\n        item.plan && item.plan.executionPlan && "
-            "(!selectedIds.size || selectedIds.has(item.itemId)));",
-            detail,
-        )
-
-    def test_manual_execution_blocker_section_and_resolution_are_served(self) -> None:
-        script = APP_JS.decode("utf-8")
-        execution_body = _js_function_body(script, "showManualExecution")
-        self.assertIn("Review / conflict blockers", execution_body)
-        self.assertIn(
-            "${blocker.kind}: ${blocker.blocker_id || blocker.id} (${blocker.status})",
-            execution_body,
-        )
-        self.assertIn("Open blocker resolution", execution_body)
-        self.assertIn("showCheckpointBlocker(blocker.resolution_path)", execution_body)
-
-    def test_manual_recovery_link_controls_are_served_and_bounded(self) -> None:
-        script = APP_JS.decode("utf-8")
-        item_body = _js_function_body(script, "showTaskItem")
-        self.assertIn("Continued manual Organize authority", item_body)
-        self.assertIn("recoveryLink.status === 'authorized'", item_body)
-        self.assertIn("confirmManualRecoveryExecute(taskId, itemId, recoveryLink)", item_body)
-        self.assertIn("continuation.status === 'completed'", item_body)
-        self.assertIn(
-            "confirmManualRecoveryAuthorize(taskId, itemId, data.checkpoint_version)", item_body
-        )
-        authorize = _js_function_body(script, "confirmManualRecoveryAuthorize")
-        self.assertIn("`/api/v1/tasks/${encodeURIComponent(taskId)}/items/` +", authorize)
-        self.assertIn("`${encodeURIComponent(itemId)}/recovery/authorize-organize`", authorize)
-        self.assertIn("confirmation: true", authorize)
-        execute = _js_function_body(script, "confirmManualRecoveryExecute")
-        self.assertIn("/api/v1/manual-recovery-links/", execute)
-        self.assertIn("encodeURIComponent(link.link_id)", execute)
-        self.assertIn("confirmation: true", execute)
-        self.assertIn("actionButton('Do not execute', () => confirmation.remove())", execute)
 
 
 class ProcessingWorkersWebTests(unittest.TestCase):

@@ -1,18 +1,15 @@
 """The explicit application-level source-validation boundary for manual intents.
 
-A manual intent item carries an immutable :class:`ManualSourceIdentity`.  Its
-authority is one of two deliberately different things:
+A manual intent item carries an immutable :class:`ManualSourceIdentity`, which is
+one exact observation of a live Storage source under the pinned Active
+ResourceLibrary.  Continuing or editing that intent re-observes the same source
+and compares the exact evidence, so a replaced, resized or relocated file can
+never be acted on under a stale review.
 
-* a **FileIndex-originated** identity is validated against the current scoped
-  ``FileIndex`` occurrence, exactly as before; or
-* a **Files-originated** identity is validated against the pinned Active
-  ResourceLibrary and its live Storage, and intentionally requires no matching
-  ``FileIndex`` row.
-
-This module owns the second case.  It performs **zero mutation**, accepts no
-browser-supplied absolute path or credential, and reuses the same exact source
-evidence rules the Files admission and Preview already apply: path confinement,
-regular-file requirement, verified fingerprint and occurrence identity.
+This module performs **zero mutation**, accepts no browser-supplied absolute path
+or credential, and applies exactly the rules the Files admission already applies:
+path confinement inside the configured root, regular-file requirement, and a
+verified fingerprint plus occurrence identity.
 """
 
 from __future__ import annotations
@@ -21,8 +18,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.application.read_only_storage import ReadOnlyStorageGuard
-from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
 from mediaflow.domain.manual_organize import ManualIntentError, ManualSourceIdentity
+from mediaflow.domain.source_evidence import (
+    OccurrenceState,
+    occurrence_id_for,
+    source_fingerprint,
+)
 from mediaflow.domain.storage import Storage, StorageEntry, StorageEntryType, StorageError
 
 
@@ -37,11 +38,11 @@ class LiveSourceValidation:
 
 
 class ManualSourceValidator:
-    """Validate one Files-originated source against live pinned Storage.
+    """Validate one reviewed source against live pinned Storage.
 
-    The validator never resolves a FileIndex row.  It only reads Storage
-    metadata for the exact ResourceLibrary-relative path the source already
-    carries, and it fails closed with ``source_missing`` or ``source_stale``.
+    The validator reads only Storage metadata for the exact source path the
+    identity already carries, and it fails closed with ``source_missing`` or
+    ``source_stale``.  Nothing is persisted here.
     """
 
     def __init__(

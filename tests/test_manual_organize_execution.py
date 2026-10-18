@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import (
     ManualOrganizeExecutionService,
@@ -70,7 +69,6 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -81,6 +79,7 @@ from mediaflow.infrastructure.strategy_configuration import (
     development_strategy_configuration,
 )
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.source_fixtures import source_identity_from_storage
 from tests.test_manual_organize_preview import manual_snapshot
 
 SNAPSHOT_ID = "active-1"
@@ -95,7 +94,7 @@ class Fixture:
     database: Path
     source_root: Path
     target_root: Path
-    index: InMemoryFileIndexRepository
+    records: dict
     configuration: RuntimeConfiguration
     provider: SyntheticMetadataProvider
 
@@ -174,18 +173,12 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 Path(source_root, name).write_bytes(self._media_bytes(name))
             library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
             source = LocalStorage("source", source_root)
-            index = InMemoryFileIndexRepository()
             result = StorageScanner(
                 {"source": source},
-                index,
                 clock=lambda: datetime.now(UTC) + timedelta(hours=2),
             ).scan(library)
-            self.assertEqual("completed", result.status.value)
-            records = {}
-            for name in names:
-                record = index.find_by_path("source", "library", name)
-                self.assertIsNotNone(record)
-                records[name] = record
+            self.assertEqual("completed", result.status)
+            records = {name: source_identity_from_storage(source, name) for name in names}
             candidates = []
             for offset, name in enumerate(names, start=1):
                 title = Path(name).stem.split(".", 1)[0]
@@ -225,7 +218,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 database=Path(runtime_directory, "runtime.sqlite3"),
                 source_root=source_root,
                 target_root=target_root,
-                index=index,
                 records=records,
                 configuration=configuration,
                 provider=provider,
@@ -234,39 +226,32 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
 
     @staticmethod
     def services(value, repository):
-        catalog = FileCatalogService(
-            value.index,
-            ("library",),
-            ("source",),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(
-            repository, catalog, configuration_resolver=manual_snapshot
-        )
         source = LocalStorage("source", value.source_root)
         target = LocalStorage("target", value.target_root)
         storages = {"source": source, "target": target}
+        intents = ManualOrganizeIntentService(
+            repository,
+            configuration_resolver=manual_snapshot,
+            runtime_resolver=lambda snapshot_id, digest: value.configuration,
+            storage_factory=lambda runtime, ids: {"source": source},
+        )
         previews = ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
             configuration=value.configuration,
-            file_index=value.index,
             providers=MetadataProviderRegistry((value.provider,)),
             storages=storages,
         )
         execution = ManualOrganizeExecutionService(repository, previews, executor=None)
-        return catalog, intents, previews, execution, storages
+        return intents, previews, execution, storages
 
     @staticmethod
     def current_request(record, *, scope_kind: str = "file") -> dict:
         return {
             "scope_kind": scope_kind,
             "actor": "operator",
-            "file_id": record.file_id if scope_kind == "file" else None,
             "resource_library_id": record.resource_library_id,
-            "occurrence_id": record.occurrence_id if scope_kind == "file" else None,
-            "fingerprint": record.fingerprint if scope_kind == "file" else None,
+            "relative_path": record.path if scope_kind == "file" else None,
         }
 
     @staticmethod
@@ -293,9 +278,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             self.assertEqual(ManualPreviewStatus.PREVIEWED, preview.status)
             item = preview.items[0]
             self.assertTrue(item.current)
@@ -319,29 +304,17 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
 
             authority = self._authorize_selected(execution, preview, [item.item_id])
-            with (
-                patch.object(
-                    value.index,
-                    "find_by_file_id",
-                    side_effect=AssertionError("exact execution must not read FileIndex"),
-                ),
-                patch.object(
-                    value.index,
-                    "list_by_resource_library",
-                    side_effect=AssertionError("exact execution must not list FileIndex"),
-                ),
-            ):
-                run = execution.execute(
-                    authority.authorization_id,
-                    actor="operator",
-                    confirmation=True,
-                )
+            run = execution.execute(
+                authority.authorization_id,
+                actor="operator",
+                confirmation=True,
+            )
 
             self.assertEqual("completed", run.status.value)
             self.assertFalse(Path(value.source_root, "One.2001.mkv").exists())
@@ -352,9 +325,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             replaced = b"replacement-content-not-reviewed"
             Path(value.source_root, "One.2001.mkv").write_bytes(replaced)
@@ -379,9 +352,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             authority = self._authorize_selected(execution, preview, [item.item_id])
             replaced = b"replacement-content-during-execution-race"
@@ -409,9 +382,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             Path(value.source_root, "One.2001.mkv").unlink()
             with self.assertRaises(ManualExecutionError) as raised:
@@ -436,9 +409,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, storages = self.services(value, repository)
+            _, previews, execution, storages = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             target_storage = storages["target"]
             target_storage._read_only = True
@@ -462,9 +435,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            _, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             target_path = Path(value.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv")
             target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -490,8 +463,8 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
     def test_current_source_resource_library_partial_organize_isolates_siblings(self):
         names = ("One.2001.mkv", "Two.2002.mkv")
         with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews, execution, _ = self.services(value, repository)
-            preview = previews.create_current(
+            _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current_from_storage(
                 scope_kind="resource_library",
                 actor="operator",
                 resource_library_id="library",
@@ -523,8 +496,8 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
     def test_current_source_batch_replaced_sibling_fails_closed_before_mutation(self):
         names = ("One.2001.mkv", "Two.2002.mkv")
         with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews, execution, _ = self.services(value, repository)
-            preview = previews.create_current(
+            _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current_from_storage(
                 scope_kind="resource_library",
                 actor="operator",
                 resource_library_id="library",
@@ -552,8 +525,8 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
     ):
         names = ("One.2001.mkv", "Two.2002.mkv")
         with self.fixture(names=names) as value, SQLiteTaskRepository(value.database) as repository:
-            _, _, previews, execution, _ = self.services(value, repository)
-            preview = previews.create_current(
+            _, previews, execution, _ = self.services(value, repository)
+            preview = previews.create_current_from_storage(
                 scope_kind="resource_library",
                 actor="operator",
                 resource_library_id="library",
@@ -586,9 +559,9 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             self.fixture(names=("One.2001.mkv",)) as value,
             SQLiteTaskRepository(value.database) as repository,
         ):
-            catalog, _, previews, execution, _ = self.services(value, repository)
+            _, previews, execution, _ = self.services(value, repository)
             record = value.records["One.2001.mkv"]
-            preview = previews.create_current(**self.current_request(record))
+            preview = previews.create_current_from_storage(**self.current_request(record))
             item = preview.items[0]
             viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
             operator = ResolvedApiPrincipal(
@@ -606,7 +579,6 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
                 repository,
                 None,
                 principals=(viewer, operator),
-                file_catalog=catalog,
                 manual_intent_service=previews._intent_service,
                 manual_preview_service=previews,
                 manual_execution_service=execution,
@@ -716,20 +688,20 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     countries=("JP",),
                 )
             )
-        index = InMemoryFileIndexRepository()
+        source_storage = LocalStorage("source", source_root)
         scan_result = StorageScanner(
-            {"source": LocalStorage("source", source_root)},
-            index,
+            {"source": source_storage},
             clock=lambda: datetime.now(UTC) + timedelta(hours=2),
         ).scan(ResourceLibrary("library", "Library", "source", "", exclude_rules=()))
-        self.assertEqual("completed", scan_result.status.value)
-        records = []
-        for name, file_id in expected_ids.items():
-            record = index.find_by_path("source", "library", name)
-            self.assertIsNotNone(record)
-            records.append(replace(record, file_id=file_id))
-        index = InMemoryFileIndexRepository()
-        index.batch_upsert(tuple(records))
+        self.assertEqual("completed", scan_result.status)
+        # Key each reviewed source by its casefolded title so the tests can
+        # keep addressing selections as "one"/"two".
+        records = {
+            Path(name).stem.split(".", 1)[0].casefold(): source_identity_from_storage(
+                source_storage, name
+            )
+            for name in names
+        }
 
         strategy = development_strategy_configuration()
         type_policies = list(strategy.recognition_type_policies)
@@ -783,23 +755,20 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
             Path(configuration.database_path),
             source_root,
             target_root,
-            index,
+            records,
             configuration,
             provider,
         )
 
     @staticmethod
     def _services(repository, fixture: Fixture):
-        catalog = FileCatalogService(
-            fixture.index,
-            ("library",),
-            ("source",),
-            task_repository=repository,
-        )
-        intents = ManualOrganizeIntentService(
-            repository, catalog, configuration_resolver=manual_snapshot
-        )
         source = LocalStorage("source", fixture.source_root)
+        intents = ManualOrganizeIntentService(
+            repository,
+            configuration_resolver=manual_snapshot,
+            runtime_resolver=lambda snapshot_id, digest: fixture.configuration,
+            storage_factory=lambda runtime, ids: {"source": source},
+        )
         storages = {"source": source}
         if fixture.target_root != fixture.source_root:
             target_definition = next(
@@ -818,12 +787,13 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
             storages=storages,
         )
         execution = ManualOrganizeExecutionService(repository, previews, executor=None)
-        return catalog, intents, previews, execution, storages
+        return intents, previews, execution, storages
 
     @staticmethod
-    def _intent_and_preview(intents, previews, *, item_ids=None, recognition_type="C"):
-        file_ids = item_ids or ["one"]
-        intent = intents.create(file_ids, actor="operator")
+    def _intent_and_preview(intents, previews, *, sources, item_ids=None, recognition_type="C"):
+        selected = item_ids or ["one"]
+        reviewed = tuple(sources[key] for key in selected)
+        intent = intents.create(reviewed, actor="operator")
         if recognition_type == "C":
             for item in intent.items:
                 intent = intents.update_choice(
@@ -880,8 +850,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                intent, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(
+                    intents, previews, sources=fixture.records
+                )
                 item = preview.items[0]
                 authority = self._authorize(execution, preview)
                 run = execution.execute(
@@ -931,8 +903,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=(source_path,))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 item = preview.items[0]
                 self.assertGreater(len(item.source.path), 512)
                 self.assertEqual(item.source.path, item.plan["executionPlan"]["sourcePath"])
@@ -952,8 +924,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=("One.2001.mkv", "Unknown.2024.mkv"))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                intent = intents.create(["one", "unknown"], actor="operator")
+                intents, previews, execution, _ = self._services(repository, fixture)
+                intent = intents.create(
+                    (fixture.records["one"], fixture.records["unknown"]), actor="operator"
+                )
                 preview = previews.create(intent.intent_id, expected_version=1, actor="operator")
                 first = preview.items[0]
                 with self.assertRaisesRegex(Exception, "confirmation"):
@@ -994,8 +968,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 item = preview.items[0]
                 with self.assertRaisesRegex(Exception, "permission"):
                     execution.authorize(
@@ -1017,8 +991,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                intent = intents.create(["one", "two"], actor="operator")
+                intents, previews, execution, _ = self._services(repository, fixture)
+                intent = intents.create(
+                    (fixture.records["one"], fixture.records["two"]), actor="operator"
+                )
                 preview = previews.create(
                     intent.intent_id,
                     [intent.items[0].item_id],
@@ -1053,9 +1029,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intents, previews, service, _ = self._services(repository, fixture)
                 intent, preview = self._intent_and_preview(
-                    intents, previews, item_ids=["one", "two"]
+                    intents, previews, sources=fixture.records, item_ids=["one", "two"]
                 )
                 selected = preview.items[0]
                 authority = service.authorize(
@@ -1086,7 +1062,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1120,8 +1095,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
-                intent, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(
+                    intents, previews, sources=fixture.records
+                )
                 run = service.execute(
                     self._authorize(service, preview).authorization_id,
                     actor="operator",
@@ -1133,7 +1110,7 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 task_id = run.task_id
 
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intents, previews, service, _ = self._services(repository, fixture)
                 operator = ResolvedApiPrincipal(
                     "operator",
                     "operator-token",
@@ -1143,7 +1120,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1188,8 +1164,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 pass
 
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
-                intent, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                intent, preview = self._intent_and_preview(
+                    intents, previews, sources=fixture.records
+                )
                 authority = self._authorize(service, preview)
                 with patch.object(
                     repository,
@@ -1205,7 +1183,7 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 intent_id = intent.intent_id
 
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
+                intents, previews, service, _ = self._services(repository, fixture)
                 operator = ResolvedApiPrincipal(
                     "operator",
                     "operator-token",
@@ -1215,7 +1193,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1250,8 +1227,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         secret = "closure-review-secret"
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 item = preview.items[0]
                 with self.assertRaisesRegex(Exception, "note"):
                     service.authorize(
@@ -1284,7 +1261,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1315,8 +1291,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, _, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, _, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 now = [NOW]
                 service = ManualOrganizeExecutionService(repository, previews, clock=lambda: now[0])
                 item = preview.items[0]
@@ -1339,7 +1315,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1369,8 +1344,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, _, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, _, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 now = [NOW]
                 service = ManualOrganizeExecutionService(repository, previews, clock=lambda: now[0])
                 item = preview.items[0]
@@ -1415,8 +1390,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 fixture = self._fixture(operation=operation, same_storage=same_storage)
                 try:
                     with SQLiteTaskRepository(fixture.database) as repository:
-                        _, intents, previews, execution, _ = self._services(repository, fixture)
-                        _, preview = self._intent_and_preview(intents, previews)
+                        intents, previews, execution, _ = self._services(repository, fixture)
+                        _, preview = self._intent_and_preview(
+                            intents, previews, sources=fixture.records
+                        )
                         self.assertEqual(ManualPreviewItemStatus.PREVIEWED, preview.items[0].status)
                         authority = self._authorize(execution, preview)
                         run = execution.execute(
@@ -1447,8 +1424,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 "sub", encoding="utf-8"
             )
             with SQLiteTaskRepository(attachment_fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, attachment_fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, attachment_fixture)
+                _, preview = self._intent_and_preview(
+                    intents, previews, sources=attachment_fixture.records
+                )
                 self.assertEqual(1, len(preview.items[0].plan["attachments"]))
                 run = execution.execute(
                     self._authorize(execution, preview).authorization_id,
@@ -1486,8 +1465,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     target.parent.mkdir(parents=True)
                     target.write_text("existing", encoding="utf-8")
                 with SQLiteTaskRepository(fixture.database) as repository:
-                    _, intents, previews, execution, _ = self._services(repository, fixture)
-                    _, preview = self._intent_and_preview(intents, previews)
+                    intents, previews, execution, _ = self._services(repository, fixture)
+                    _, preview = self._intent_and_preview(
+                        intents, previews, sources=fixture.records
+                    )
                     if issue == "existing_collision":
                         attachment = preview.items[0].plan["attachments"][0]
                         self.assertEqual(attachment["blockedReason"], "attachment_collision")
@@ -1538,8 +1519,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         try:
             Path(fixture.source_root, "One.2001.en.srt").write_bytes(b"subtitle")
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, storages = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, storages = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 plan = execution._recovery_plan(preview.items[0])
 
                 def authority(_plan, boundary):
@@ -1572,8 +1553,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         cleanup_fixture = self._fixture(names=("folder/One.2001.mkv",), cleanup=cleanup_policy)
         try:
             with SQLiteTaskRepository(cleanup_fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, cleanup_fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, cleanup_fixture)
+                _, preview = self._intent_and_preview(
+                    intents, previews, sources=cleanup_fixture.records
+                )
                 with self.assertRaisesRegex(Exception, "source-cleanup"):
                     self._authorize(execution, preview)
                 authority = self._authorize(execution, preview, allow_source_cleanup=True)
@@ -1590,8 +1573,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         read_only = self._fixture(read_only_target=True)
         try:
             with SQLiteTaskRepository(read_only.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, read_only)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, read_only)
+                _, preview = self._intent_and_preview(intents, previews, sources=read_only.records)
                 self.assertEqual(ManualPreviewItemStatus.BLOCKED, preview.items[0].status)
                 with self.assertRaisesRegex(Exception, "not executable|capability"):
                     execution.authorize(
@@ -1614,8 +1597,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         unsupported = self._fixture(operation=OrganizeOperationType.HARD_LINK)
         try:
             with SQLiteTaskRepository(unsupported.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, unsupported)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, unsupported)
+                _, preview = self._intent_and_preview(
+                    intents, previews, sources=unsupported.records
+                )
                 self.assertEqual(ManualPreviewItemStatus.BLOCKED, preview.items[0].status)
                 self.assertIn("same_storage_link", preview.items[0].plan["capabilities"]["missing"])
                 self.assertEqual(0, len(repository.list_tasks()))
@@ -1626,8 +1611,10 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                intent, blocked = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                intent, blocked = self._intent_and_preview(
+                    intents, previews, sources=fixture.records
+                )
                 item = blocked.items[0]
                 self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
                 destination = item.plan["destination"]["path"]
@@ -1685,9 +1672,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, _, storages = self._services(repository, fixture)
+                intents, previews, _, storages = self._services(repository, fixture)
                 intent, preview = self._intent_and_preview(
-                    intents, previews, item_ids=["one", "two"]
+                    intents, previews, sources=fixture.records, item_ids=["one", "two"]
                 )
                 executor = _SelectiveExecutor(failed_suffix="Two.2001.mkv")
                 service = ManualOrganizeExecutionService(repository, previews, executor=executor)
@@ -1717,8 +1704,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, _, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, _, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 executor = _SelectiveExecutor(failed_suffix="One.2001.mkv", uncertain=True)
                 service = ManualOrganizeExecutionService(repository, previews, executor=executor)
                 run = service.execute(
@@ -1743,8 +1730,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, service, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 authority = self._authorize(service, preview)
                 with patch.object(
                     repository,
@@ -1783,8 +1770,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, service, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 authority = self._authorize(service, preview)
 
                 class ProcessInterrupted(BaseException):
@@ -1817,7 +1804,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(operator,),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=service,
@@ -1843,8 +1829,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, service, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 authority = self._authorize(service, preview)
                 with patch.object(
                     repository,
@@ -1894,8 +1880,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, service, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, service, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 authority = self._authorize(service, preview)
 
                 class ProcessInterrupted(BaseException):
@@ -1952,8 +1938,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, execution, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 authority = self._authorize(execution, preview)
             active_reads = Barrier(2)
             winner_done = Event()
@@ -1964,7 +1950,7 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
             def worker(role: str) -> None:
                 try:
                     with SQLiteTaskRepository(fixture.database) as repository:
-                        _, _, previews, execution, _ = self._services(repository, fixture)
+                        _, previews, execution, _ = self._services(repository, fixture)
                         execution._executor = executor
                         get_authorization = execution.get_authorization
 
@@ -2060,8 +2046,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture()
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                catalog, intents, previews, execution, _ = self._services(repository, fixture)
-                _, preview = self._intent_and_preview(intents, previews)
+                intents, previews, execution, _ = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews, sources=fixture.records)
                 viewer = ResolvedApiPrincipal(
                     "viewer", "viewer-token", frozenset({ApiPermission.READ})
                 )
@@ -2080,7 +2066,6 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                     repository,
                     None,
                     principals=(viewer, operator),
-                    file_catalog=catalog,
                     manual_intent_service=intents,
                     manual_preview_service=previews,
                     manual_execution_service=execution,
@@ -2140,9 +2125,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         fixture = self._fixture(names=("One.2001.mkv", "Two.2001.mkv"))
         try:
             with SQLiteTaskRepository(fixture.database) as repository:
-                _, intents, previews, _, storages = self._services(repository, fixture)
+                intents, previews, _, storages = self._services(repository, fixture)
                 intent, preview = self._intent_and_preview(
-                    intents, previews, item_ids=["one", "two"]
+                    intents, previews, sources=fixture.records, item_ids=["one", "two"]
                 )
                 executor = _SelectiveExecutor(failed_suffix="Two.2001.mkv")
                 service = ManualOrganizeExecutionService(repository, previews, executor=executor)
@@ -2302,7 +2287,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 )
 
                 # Execute an uncertain failure with ATTEMPTED_UNVERIFIED
-                intent_u, preview_u = self._intent_and_preview(intents, previews, item_ids=["two"])
+                intent_u, preview_u = self._intent_and_preview(
+                    intents, previews, sources=fixture.records, item_ids=["two"]
+                )
                 executor_u = _SelectiveExecutor(failed_suffix="Two.2001.mkv", uncertain=True)
                 service_u = ManualOrganizeExecutionService(
                     repository, previews, executor=executor_u

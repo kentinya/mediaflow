@@ -207,7 +207,6 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                             for name in (
                                 "_configuration",
                                 "SQLiteTaskRepository",
-                                "SQLiteFileIndexRepository",
                                 "SQLiteConfigurationRepository",
                                 "RuntimeDatabaseLease",
                                 "metadata_provider_registry_from_environment",

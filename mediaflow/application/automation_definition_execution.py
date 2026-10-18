@@ -46,7 +46,6 @@ class DefinitionScopedExecutionService:
     def __init__(
         self,
         repository,
-        file_index,
         configuration,
         *,
         storage_factory: StorageFactory | None = None,
@@ -57,7 +56,6 @@ class DefinitionScopedExecutionService:
         logger=None,
     ) -> None:
         self._repository = repository
-        self._file_index = file_index
         self._configuration = configuration
         self._storage_factory = storage_factory or configuration.create_storages
         self._provider_factory = provider_factory
@@ -391,7 +389,6 @@ class DefinitionScopedExecutionService:
         definition=None,
         job=None,
     ) -> None:
-        self._require_file_index()
         if self._provider_factory is None or self._strategy_factory is None:
             raise RuntimeError("definition-scoped analysis factories are unavailable")
         if self._history_factory is None:
@@ -428,7 +425,7 @@ class DefinitionScopedExecutionService:
 
         service = MediaOrganizerService(
             strategy,
-            StorageScanner(storages, self._file_index, logger=self._logger),
+            StorageScanner(storages, logger=self._logger),
             storages,
             {item.library_id: item for item in getattr(self._configuration, "media_libraries", ())},
             self._configuration.strategy.recognition_type_policies,
@@ -461,10 +458,6 @@ class DefinitionScopedExecutionService:
             coordinator.acknowledge_pause(task.task_id)
             return
         coordinator.finish(task.task_id, summary)
-
-    def _require_file_index(self) -> None:
-        if self._file_index is None:
-            raise RuntimeError("definition-scoped Task requires the persistent FileIndex")
 
     def _cancel_task_if_running(self, coordinator, task_id: str) -> None:
         task = self._repository.get_task(task_id)

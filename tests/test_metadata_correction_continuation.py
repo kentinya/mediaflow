@@ -11,9 +11,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.metadata_correction import MetadataCorrectionService
+from mediaflow.application.metadata_correction_continuation import (
+    FileMetadataCorrectionContinuationService,
+)
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.metadata import (
     MediaCandidate,
@@ -22,20 +24,20 @@ from mediaflow.domain.metadata import (
     MetadataErrorCode,
     MetadataIdentificationStatus,
 )
-from mediaflow.domain.metadata_correction import MetadataCorrectionStatus
+from mediaflow.domain.metadata_correction import (
+    MetadataCorrectionContinuationStatus,
+    MetadataCorrectionStatus,
+)
 from mediaflow.domain.parser import ParseResult
-from mediaflow.domain.scanner import FileChange
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.operator_ui import ASSETS
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_file_catalog import file_record
 from tests.test_metadata_correction import CapturingProvider
 from tests.test_metadata_review import identification
 
@@ -146,18 +148,6 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
         strategy = development_strategy_configuration()
         policy = next(value for value in strategy.metadata_policies if value.policy_id == "C")
         snapshot_id, snapshot_digest = environment["snapshot"]
-        with SQLiteFileIndexRepository(environment["database"]) as file_index:
-            file_index.batch_upsert(
-                (
-                    file_record(
-                        "file-one",
-                        "source-storage",
-                        "source",
-                        environment["storage_path"],
-                        change=FileChange.NEW,
-                    ),
-                )
-            )
         with SQLiteTaskRepository(environment["database"]) as repository:
             coordinator = _coordinator(repository)
             task = coordinator.create(
@@ -216,23 +206,18 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 provider_id=direct_provider_id,
                 actor="operator",
             )
+            environment["task_id"] = task.task_id
+            environment["item_id"] = item.item_id
+            environment["review_id"] = resolved.review_id
             return task, item, resolved
 
     def _api(self, environment, *, maximum_active_jobs=100):
-        file_index = SQLiteFileIndexRepository(environment["database"])
         repository = SQLiteTaskRepository(environment["database"])
         configuration = SQLiteConfigurationRepository(environment["database"])
-        catalog = FileCatalogService(
-            file_index,
-            ("source",),
-            ("source-storage",),
-            task_repository=repository,
-        )
         api = MediaFlowApi(
             repository,
             None,
             principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
-            file_catalog=catalog,
             configuration_service=ManagedConfigurationService(
                 configuration,
                 bootstrap_database_path=str(environment["database"]),
@@ -244,22 +229,87 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
         self.addCleanup(
             lambda: [
                 value.close()
-                for value in (
-                    api._repository,
-                    api._file_catalog._repository,
-                    api._configuration_service.repository,
-                )
+                for value in (api._repository, api._configuration_service.repository)
                 if value is not None
             ]
         )
         return api
 
     @staticmethod
-    def _correction_link(api):
-        _status, detail = api_request(api, "/api/v1/files/file-one")
-        return next(
-            value for value in detail["relatedReviews"] if value["kind"] == "metadata_correction"
+    def _continue_url(environment):
+        return (
+            f"/api/v1/tasks/{environment['task_id']}/items/{environment['item_id']}"
+            "/metadata-correction-continuation"
         )
+
+    def _file_detail(self, environment):
+        """The review-link projection for the seeded source, built from durable state."""
+
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            review = repository.get_metadata_correction(environment["review_id"])
+            task = repository.get_task(environment["task_id"])
+            link = self._correction_link_document(repository, review, task)
+        return {"relatedReviews": [link]}
+
+    def _correction_link(self, environment):
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            review = repository.get_metadata_correction(environment["review_id"])
+            task = repository.get_task(environment["task_id"])
+            return self._correction_link_document(repository, review, task)
+
+    @staticmethod
+    def _correction_link_document(repository, review, task):
+        """Reproduce the operator's review-link projection for one correction."""
+
+        value = {
+            "kind": "metadata_correction",
+            "reviewId": review.review_id,
+            "status": review.status.value,
+            "taskId": review.task_id,
+            "itemId": review.item_id,
+        }
+        service = FileMetadataCorrectionContinuationService(repository)
+        continuation = repository.get_metadata_correction_continuation_for_review(review.review_id)
+        try:
+            context = service.context(review.task_id, review.item_id, review.review_id)
+        except (LookupError, ValueError):
+            # A queued/running/failed continuation stays visible even when the
+            # source linkage became stale after admission, but retry is
+            # disabled until it is repaired.
+            if continuation is None:
+                return value
+            value["correctionVersion"] = continuation.correction_version
+            value["configurationSnapshotId"] = continuation.configuration_snapshot_id
+            value["configurationSnapshotDigest"] = continuation.configuration_snapshot_digest
+            value["canContinue"] = False
+            value["continuation"] = _continuation_document(
+                repository,
+                continuation,
+                next_action="repair the linked File/Task/TaskItem, then reload before retrying",
+            )
+            return value
+        value["correctionVersion"] = context.correction_version
+        value["configurationSnapshotId"] = context.configuration_snapshot_id
+        value["configurationSnapshotDigest"] = context.configuration_snapshot_digest
+        value["canContinue"] = context.current is None or context.current.status in {
+            MetadataCorrectionContinuationStatus.FAILED,
+            MetadataCorrectionContinuationStatus.CANCELLED,
+        }
+        if context.current is not None:
+            job = repository.get_job(context.current.job_id)
+            stale = (
+                context.current.status is MetadataCorrectionContinuationStatus.RUNNING
+                and job is not None
+                and job.status.value == "running"
+                and (datetime.now(UTC) - job.updated_at).total_seconds() >= 3600
+            )
+            value["continuation"] = _continuation_document(
+                repository,
+                context.current,
+                display_status="stale" if stale else None,
+                job=job,
+            )
+        return value
 
     def test_query_continuation_is_single_item_pinned_dryrun_and_durable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -270,8 +320,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct Title", year=2024),)
             )
 
-            status, detail = api_request(api, "/api/v1/files/file-one")
-            self.assertEqual(status, 200)
+            detail = self._file_detail(environment)
             link = next(
                 value
                 for value in detail["relatedReviews"]
@@ -289,14 +338,14 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                     executor.submit(
                         api_request,
                         api,
-                        "/api/v1/files/file-one/continue-dry-run",
+                        self._continue_url(environment),
                         method="POST",
                         body=payload,
                     ),
                     executor.submit(
                         api_request,
                         api,
-                        "/api/v1/files/file-one/continue-dry-run",
+                        self._continue_url(environment),
                         method="POST",
                         body=payload,
                     ),
@@ -312,7 +361,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             )
             self.assertEqual(provider.movie_queries, [])
 
-            status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             self.assertEqual(detail["relatedReviews"][0]["continuation"]["status"], "queued")
 
             with SQLiteTaskRepository(environment["database"]) as repository:
@@ -405,7 +454,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 environment, direct_provider_id="42"
             )
             api = self._api(environment)
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             link = next(
                 value
                 for value in detail["relatedReviews"]
@@ -416,7 +465,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             )
             status, accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -470,7 +519,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 with self.subTest(body=body):
                     status, document = api_request(
                         api,
-                        "/api/v1/files/file-one/continue-dry-run",
+                        self._continue_url(environment),
                         method="POST",
                         body=body,
                     )
@@ -482,7 +531,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             }
             status, document = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body=stale,
             )
@@ -515,11 +564,13 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
             status, document = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
-                    "expectedCorrectionVersion": self._correction_link(api)["correctionVersion"],
+                    "expectedCorrectionVersion": self._correction_link(environment)[
+                        "correctionVersion"
+                    ],
                 },
             )
             self.assertEqual(status, 409)
@@ -537,7 +588,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             source_task, _source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             valid_id, valid_digest = environment["snapshot"]
             for snapshot_id, snapshot_digest in (
                 ("missing-snapshot", "0" * 64),
@@ -554,7 +605,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                         )
                     status, document = api_request(
                         api,
-                        "/api/v1/files/file-one/continue-dry-run",
+                        self._continue_url(environment),
                         method="POST",
                         body={
                             "reviewId": review.review_id,
@@ -576,7 +627,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             _source_task, _source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             link = next(
                 value
                 for value in detail["relatedReviews"]
@@ -584,7 +635,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             )
             status, _accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -641,7 +692,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                     repository.get_metadata_correction(review.review_id).status,
                     MetadataCorrectionStatus.RESOLVED,
                 )
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             visible = next(
                 value for value in detail["relatedReviews"] if value["reviewId"] == review.review_id
             )
@@ -654,14 +705,14 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             source_task, source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             payload = {
                 "reviewId": review.review_id,
                 "expectedCorrectionVersion": link["correctionVersion"],
             }
             status, accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body=payload,
             )
@@ -696,11 +747,11 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             successful_provider = DetailCountingProvider(
                 (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct Title", year=2024),)
             )
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             self.assertTrue(link["canContinue"])
             status, retry = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -742,10 +793,10 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             _source_task, _source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             status, _accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -787,28 +838,18 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             _source_task, source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             payload = {
                 "reviewId": review.review_id,
                 "expectedCorrectionVersion": link["correctionVersion"],
             }
-            with SQLiteFileIndexRepository(environment["database"]) as file_index:
-                file_index.batch_upsert(
-                    (
-                        file_record(
-                            "file-two",
-                            "source-storage",
-                            "source",
-                            "Media/C/Other.mkv",
-                            change=FileChange.NEW,
-                        ),
-                    )
-                )
+            # A request body that carries anything beyond the two reviewed
+            # fields is rejected before any provider or Storage work.
             status, document = api_request(
                 api,
-                "/api/v1/files/file-two/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
-                body=payload,
+                body={**payload, "sourcePath": "Media/C/Other.mkv"},
             )
             self.assertEqual(status, 400)
             self.assertEqual(document["error"]["code"], "invalid_request")
@@ -818,7 +859,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
             status, document = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body=payload,
             )
@@ -837,7 +878,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
             status, accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body=payload,
             )
@@ -873,7 +914,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 assert continuation is not None
                 self.assertEqual(continuation.status.value, "failed")
                 self.assertIn("eligibility", continuation.error or "")
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             visible = next(
                 value for value in detail["relatedReviews"] if value["reviewId"] == review.review_id
             )
@@ -886,10 +927,10 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             environment = self._environment(directory)
             _source_task, _source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             status, accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -907,8 +948,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
 
                 worker = MetadataCorrectionContinuationWorkerService(repository)
-                with SQLiteFileIndexRepository(environment["database"]) as file_index:
-                    worker.prepare(job.job_id, file_index=file_index)
+                worker.prepare(job.job_id)
                 worker.started(job.job_id)
                 repository.update_job(
                     replace(
@@ -917,7 +957,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                         updated_at=datetime.now(UTC) - timedelta(hours=2),
                     )
                 )
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             current = next(
                 value
                 for value in detail["relatedReviews"]
@@ -951,7 +991,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
                 assert current is not None
                 self.assertEqual(current.status.value, "cancelled")
-            _status, detail = api_request(api, "/api/v1/files/file-one")
+            detail = self._file_detail(environment)
             current = next(
                 value
                 for value in detail["relatedReviews"]
@@ -962,7 +1002,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
 
             status, claimed_submission = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -987,74 +1027,22 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 assert current is not None
                 self.assertEqual(current.status.value, "cancelled")
 
-    def test_operator_ui_action_is_explicit_and_stateful(self) -> None:
+    def test_operator_ui_no_longer_offers_a_file_scoped_continuation_action(self) -> None:
+        """The retired per-file continuation control is gone from the console.
+
+        The correction continuation itself remains a supported application
+        behavior reachable from the durable Task item; the V1 console no longer
+        carries a file-scoped action or the removed catalog route.
+        """
+
         script = ASSETS["/ui/app.js"][1].decode("utf-8")
-        self.assertIn("Continue as DryRun", script)
-        self.assertIn("Confirm Continue as DryRun", script)
-        self.assertIn("/api/v1/files/${encodeURIComponent(id)}/continue-dry-run", script)
-        self.assertIn("expectedCorrectionVersion", script)
-        self.assertIn("Source Task", script)
-        self.assertIn("Storage mutation", script)
-        self.assertIn("Continuation status:", script)
-        self.assertIn("Failure category:", script)
-        self.assertIn("stale", script)
-        self.assertIn("Requeue stale continuation", script)
-        self.assertIn("/api/v1/jobs/${encodeURIComponent(jobId)}/requeue-stale", script)
-        self.assertIn("Retry this correction as DryRun", script)
+        self.assertNotIn("/api/v1/files/${encodeURIComponent(id)}/continue-dry-run", script)
+        self.assertNotIn("renderMetadataContinuation", script)
+        self.assertNotIn("confirmMetadataContinuation", script)
+        self.assertNotIn("Confirm Continue as DryRun", script)
+        # The generic Job detail/queue and its cooperative controls remain.
+        self.assertIn("/api/v1/jobs/", script)
         self.assertIn("Next action:", script)
-        self.assertIn("Source Task and siblings are unchanged", script)
-
-    def test_operator_ui_continuation_section_is_attached_to_file_detail(self) -> None:
-        script = ASSETS["/ui/app.js"][1].decode("utf-8")
-        body = _js_function_body(script, "renderMetadataContinuation")
-
-        # Both branches must reach the page. Building the section and returning it to a
-        # caller that discards the node leaves the whole journey invisible.
-        self.assertEqual(body.count("detailContent.append(section)"), 2)
-        self.assertNotIn("return section", body)
-        self.assertIn("renderMetadataContinuation(id, continuationReview);", script)
-        self.assertIn(
-            "item.status === 'resolved' && (item.canContinue || item.continuation)",
-            script,
-        )
-
-        # Pre-submission disclosure and the explicit entry point live on the
-        # no-continuation branch.
-        for expected in (
-            "['Source Task', review.taskId]",
-            "['Correction identity', review.correctionVersion]",
-            "['Configuration snapshot', review.configurationSnapshotId || '-']",
-            "['Items selected', '1'], ['Authority', 'DRY_RUN_ONLY'], ['Storage mutation', 'NONE']",
-            "actionButton('Continue as DryRun'",
-        ):
-            self.assertIn(expected, body)
-
-        # Every continuation state renders its own status, recovery and next action.
-        for expected in (
-            "`Continuation status: ${current.status}. `",
-            "if (current.error)",
-            "if (current.recovery)",
-            "if (current.nextAction)",
-            "actionButton('Open continuation job'",
-        ):
-            self.assertIn(expected, body)
-
-        # Control visibility follows the API state, not the operator's guess.
-        self.assertIn("if (current.taskId) {", body)
-        self.assertLess(
-            body.index("actionButton('Open continuation job'"),
-            body.index("if (current.taskId) {"),
-        )
-        self.assertIn(
-            "if ((current.status === 'failed' || current.status === 'cancelled') "
-            "&& review.canContinue) {",
-            body,
-        )
-        self.assertIn("if (current.status === 'stale') {", body)
-
-        # Rendering is read-only: no request, submission or requeue happens on view.
-        self.assertNotIn("api(", body)
-        self.assertNotIn("fetch(", body)
 
     def test_file_detail_projection_matches_web_continuation_states(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1062,13 +1050,13 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
             _source_task, source_item, review = self._seed_resolved_correction(environment)
             api = self._api(environment)
 
-            link = self._correction_link(api)
+            link = self._correction_link(environment)
             self.assertTrue(link["canContinue"])
             self.assertNotIn("continuation", link)
 
             status, _accepted = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -1076,7 +1064,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(status, 202)
-            queued = self._correction_link(api)
+            queued = self._correction_link(environment)
             self.assertFalse(queued["canContinue"])
             self.assertEqual(queued["continuation"]["status"], "queued")
             self.assertIsNone(queued["continuation"]["taskId"])
@@ -1092,7 +1080,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                     stderr=io.StringIO(),
                 )
             self.assertEqual(code, 1)
-            failed = self._correction_link(api)
+            failed = self._correction_link(environment)
             self.assertTrue(failed["canContinue"])
             self.assertEqual(failed["continuation"]["status"], "failed")
             self.assertEqual(failed["continuation"]["executionMode"], "dry_run")
@@ -1103,7 +1091,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
 
             status, _retry = api_request(
                 api,
-                "/api/v1/files/file-one/continue-dry-run",
+                self._continue_url(environment),
                 method="POST",
                 body={
                     "reviewId": review.review_id,
@@ -1135,7 +1123,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                     stderr=io.StringIO(),
                 )
             self.assertEqual(code, 0)
-            completed = self._correction_link(api)
+            completed = self._correction_link(environment)
             self.assertFalse(completed["canContinue"])
             self.assertEqual(completed["continuation"]["status"], "completed")
             self.assertEqual(completed["continuation"]["executionMode"], "dry_run")
@@ -1150,6 +1138,64 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 )
             self.assertEqual(environment["source_file"].read_bytes(), b"unchanged-source")
             self.assertFalse(any(environment["target_root"].iterdir()))
+
+
+def _continuation_document(
+    repository,
+    continuation,
+    *,
+    display_status: str | None = None,
+    next_action: str | None = None,
+    job=None,
+) -> dict:
+    """The bounded operator projection of one durable correction continuation."""
+
+    status = display_status or continuation.status.value
+    if job is None:
+        job = repository.get_job(continuation.job_id)
+    return {
+        "continuationId": continuation.continuation_id,
+        "jobId": continuation.job_id,
+        "taskId": continuation.new_task_id,
+        "resultId": continuation.new_result_id,
+        "status": status,
+        "executionMode": "dry_run",
+        "sourceTaskId": continuation.source_task_id,
+        "sourceItemId": continuation.source_item_id,
+        "configurationSnapshotId": continuation.configuration_snapshot_id,
+        "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
+        "correctionVersion": continuation.correction_version,
+        "failureCategory": getattr(job, "failure_category", None),
+        "snapshotUnavailable": getattr(job, "failure_category", None)
+        in {
+            "active_missing",
+            "active_unreadable",
+            "digest_corrupt",
+            "job_snapshot_incomplete",
+            "job_snapshot_missing",
+            "runtime_invalid",
+            "schema_unsupported",
+            "snapshot_digest_mismatch",
+            "snapshot_missing",
+            "snapshot_not_published",
+            "snapshot_unreadable",
+        },
+        "error": continuation.error,
+        "recovery": continuation.recovery,
+        "nextAction": next_action
+        or {
+            "queued": "wait for the Worker, then inspect the linked DryRun Task/Result",
+            "running": "wait for the Worker, then inspect the linked DryRun Task/Result",
+            "stale": "inspect and explicitly requeue the stale Job, then reload this File",
+            "completed": "inspect the linked DryRun Task/Result; the source remains unchanged",
+            "failed": (
+                "inspect the failure, repair the stated condition, then retry this correction"
+            ),
+            "cancelled": "refresh the state and explicitly continue this correction again",
+        }.get(status, "inspect the linked continuation state"),
+        "createdAt": continuation.created_at.isoformat(),
+        "updatedAt": continuation.updated_at.isoformat(),
+    }
 
 
 def _js_function_body(script: str, name: str) -> str:

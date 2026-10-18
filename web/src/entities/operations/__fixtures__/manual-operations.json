@@ -2,23 +2,23 @@
   "actionMatrix": {
     "actions": {
       "organize": {
-        "available": true,
+        "available": false,
         "method": "POST",
         "modes": [],
-        "nextAction": "create a durable manual intent, then request an exact Preview",
-        "path": "/api/v1/operations/organize/intents",
-        "reason": null
+        "nextAction": "select the live file from the ResourceLibrary directory to organize it",
+        "path": "",
+        "reason": "select the live file from the ResourceLibrary directory to organize it"
       },
       "preview": {
-        "available": true,
+        "available": false,
         "method": "POST",
         "modes": [],
-        "nextAction": "run a zero-mutation Preview",
+        "nextAction": "select the live file from the ResourceLibrary directory to prepare a summary",
         "path": "/api/v1/operations/previews",
-        "reason": null
+        "reason": "select the live file from the ResourceLibrary directory to prepare a summary"
       }
     },
-    "fileId": "<hex-id>",
+    "fileId": "One.2001.mkv",
     "limits": {
       "previewMaxItems": 100
     },
@@ -36,19 +36,10 @@
       "nextAction": null,
       "ready": true
     },
-    "scopeId": "<hex-id>",
+    "scopeId": "One.2001.mkv",
     "scopeKind": "file",
     "selectionRequired": false,
-    "source": {
-      "fileId": "<hex-id>",
-      "filename": "One.2001.mkv",
-      "occurrenceState": "verified",
-      "path": "One.2001.mkv",
-      "resourceLibraryId": "library",
-      "scanStatus": "ready",
-      "sizeBytes": 12,
-      "storageId": "source"
-    }
+    "source": null
   },
   "organizeExecution": {
     "actions": {
@@ -100,18 +91,6 @@
         "effectCertainty": "unknown",
         "effects": [],
         "failure": null,
-        "fileIndexReconciliation": {
-          "action": {
-            "available": false,
-            "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
-            "method": "POST",
-            "nextAction": "wait for this item's durable Result before checking FileIndex reconciliation",
-            "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
-            "sideEffects": "none"
-          },
-          "nextAction": "wait for this item's durable Result before checking FileIndex reconciliation",
-          "state": "pending"
-        },
         "itemId": "<uuid>",
         "nextAction": "admission committed; reconcile this execution before any mutation if startup is interrupted",
         "position": 0,
@@ -208,18 +187,6 @@
           }
         ],
         "failure": null,
-        "fileIndexReconciliation": {
-          "action": {
-            "available": true,
-            "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
-            "method": "POST",
-            "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
-            "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
-            "sideEffects": "none"
-          },
-          "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
-          "state": "attention_required"
-        },
         "itemId": "<uuid>",
         "nextAction": "inspect the verified Result; no recovery replay is required",
         "position": 0,
@@ -318,18 +285,6 @@
               }
             ],
             "failure": null,
-            "fileIndexReconciliation": {
-              "action": {
-                "available": true,
-                "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
-                "method": "POST",
-                "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
-                "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
-                "sideEffects": "none"
-              },
-              "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
-              "state": "attention_required"
-            },
             "itemId": "<uuid>",
             "nextAction": "inspect the verified Result; no recovery replay is required",
             "position": 0,
@@ -426,12 +381,12 @@
         "position": 0,
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -444,7 +399,7 @@
     "limits": {
       "intentMaxItems": 100
     },
-    "nextAction": "continue to a later manual Preview",
+    "nextAction": "continue to an exact zero-mutation Preview",
     "optionLimit": 100,
     "options": {
       "classificationPolicies": [
@@ -640,12 +595,12 @@
         "position": 0,
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -1009,12 +964,12 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -1262,12 +1217,12 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -1492,12 +1447,12 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -1719,12 +1674,12 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+          "fileId": null,
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
           "resourceLibraryId": "library",
-          "scanStatus": "ready",
+          "scanStatus": null,
           "size": 12,
           "storageId": "source"
         },
@@ -1952,12 +1907,12 @@
             "sideEffects": "none",
             "source": {
               "extension": "mkv",
-              "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+              "fileId": null,
               "filename": "One.2001.mkv",
               "occurrenceState": "verified",
               "path": "One.2001.mkv",
               "resourceLibraryId": "library",
-              "scanStatus": "ready",
+              "scanStatus": null,
               "size": 12,
               "storageId": "source"
             },
@@ -2000,7 +1955,7 @@
         "method": "POST",
         "modes": [],
         "nextAction": "select an exact ResourceLibrary scope before organizing",
-        "path": "/api/v1/operations/organize/intents",
+        "path": "/api/v1/resource-libraries/None/files/discoveries",
         "reason": "select an exact ResourceLibrary scope before organizing"
       },
       "preview": {
@@ -2034,5 +1989,50 @@
     "scopeKind": "resourceLibrary",
     "selectionRequired": true,
     "source": null
+  },
+  "resourceLibrarySelected": {
+    "actions": {
+      "organize": {
+        "available": true,
+        "method": "POST",
+        "modes": [],
+        "nextAction": "select the live files in the library directory, then review the prepared summary",
+        "path": "/api/v1/resource-libraries/library/files/discoveries",
+        "reason": null
+      },
+      "preview": {
+        "available": true,
+        "method": "POST",
+        "modes": [],
+        "nextAction": "run a zero-mutation Preview",
+        "path": "/api/v1/operations/previews",
+        "reason": null
+      }
+    },
+    "fileId": null,
+    "limits": {
+      "previewMaxItems": 100
+    },
+    "resourceLibraries": [
+      {
+        "enabled": true,
+        "reason": null,
+        "resourceLibraryId": "library",
+        "storageId": "source"
+      }
+    ],
+    "resourceLibraryId": "library",
+    "runtime": {
+      "condition": "configuration_active",
+      "nextAction": null,
+      "ready": true
+    },
+    "scopeId": "library",
+    "scopeKind": "resourceLibrary",
+    "selectionRequired": false,
+    "source": {
+      "resourceLibraryId": "library",
+      "storageId": "source"
+    }
   }
 }

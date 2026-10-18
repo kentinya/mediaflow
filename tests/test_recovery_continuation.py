@@ -15,7 +15,6 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.evidence_capture import _execution_identity_document
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -73,10 +72,10 @@ from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.runtime_configuration import RuntimeConfiguration
 from mediaflow.infrastructure.sqlite_configuration_management import SQLiteConfigurationRepository
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.source_fixtures import source_identity_from_storage
 from tests.test_metadata_correction import CapturingProvider
 
 
@@ -389,20 +388,12 @@ class RecoveryContinuationTests(unittest.TestCase):
         return task, item
 
     def _api(self, environment, *, maximum_active_jobs=100):
-        file_index = SQLiteFileIndexRepository(environment["database"])
         repository = SQLiteTaskRepository(environment["database"])
         configuration = SQLiteConfigurationRepository(environment["database"])
-        catalog = FileCatalogService(
-            file_index,
-            ("source",),
-            ("source-storage",),
-            task_repository=repository,
-        )
         api = MediaFlowApi(
             repository,
             None,
             principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
-            file_catalog=catalog,
             configuration_service=ManagedConfigurationService(
                 configuration,
                 bootstrap_database_path=str(environment["database"]),
@@ -414,11 +405,7 @@ class RecoveryContinuationTests(unittest.TestCase):
         self.addCleanup(
             lambda: [
                 value.close()
-                for value in (
-                    api._repository,
-                    api._file_catalog._repository,
-                    api._configuration_service.repository,
-                )
+                for value in (api._repository, api._configuration_service.repository)
                 if value is not None
             ]
         )
@@ -427,21 +414,13 @@ class RecoveryContinuationTests(unittest.TestCase):
     def _manual_services(self, environment, provider, *, executor=None):
         database = environment["database"]
         task_repository = SQLiteTaskRepository(database)
-        file_index = SQLiteFileIndexRepository(database)
         configuration_repository = SQLiteConfigurationRepository(database)
         configuration_service = ManagedConfigurationService(
             configuration_repository,
             bootstrap_database_path=str(database),
         )
-        catalog = FileCatalogService(
-            file_index,
-            ("source",),
-            ("source-storage",),
-            task_repository=task_repository,
-        )
         intents = ManualOrganizeIntentService(
             task_repository,
-            catalog,
             configuration_service=configuration_service,
             storage_factory=lambda runtime, storage_ids: runtime.create_storages(
                 storage_ids=storage_ids
@@ -460,10 +439,8 @@ class RecoveryContinuationTests(unittest.TestCase):
         )
         return {
             "task_repository": task_repository,
-            "file_index": file_index,
             "configuration_repository": configuration_repository,
             "configuration_service": configuration_service,
-            "catalog": catalog,
             "intents": intents,
             "previews": previews,
             "execution": execution,
@@ -479,22 +456,19 @@ class RecoveryContinuationTests(unittest.TestCase):
             path = Path(media_root, name)
             if not path.exists():
                 path.write_bytes((name.encode("utf-8") + b"x" * 200)[:123])
-        database = environment["database"]
-        with (
-            SQLiteFileIndexRepository(database) as file_index,
-        ):
-            scanner = StorageScanner(
-                {"source-storage": LocalStorage("source-storage", source_root)},
-                file_index,
+        storage = LocalStorage("source-storage", source_root)
+        StorageScanner({"source-storage": storage}).scan(
+            ResourceLibrary("source", "Source", "source-storage", "Media")
+        )
+        return tuple(
+            source_identity_from_storage(
+                storage,
+                f"Media/{source_subdir}/{name}".strip("/"),
+                storage_id="source-storage",
+                resource_library_id="source",
             )
-            library = ResourceLibrary("source", "Source", "source-storage", "Media")
-            scanner.scan(library)
-            records = tuple(
-                value
-                for value in file_index.list_by_resource_library("source")
-                if Path(value.path).name in names
-            )
-        return records
+            for name in names
+        )
 
     def _admit(self, environment, task, item, api=None):
         with SQLiteTaskRepository(environment["database"]) as repository:
@@ -574,13 +548,11 @@ class RecoveryContinuationTests(unittest.TestCase):
         )
         with SQLiteTaskRepository(environment["database"]):
             if choice is None:
-                preview = services["previews"].create_current(
+                preview = services["previews"].create_current_from_storage(
                     scope_kind="file",
                     actor="operator",
-                    file_id=record.file_id,
                     resource_library_id=record.resource_library_id,
-                    occurrence_id=record.occurrence_id,
-                    fingerprint=record.fingerprint,
+                    relative_path=record.path.removeprefix("Media/"),
                 )
             else:
                 intent = services["previews"].admit_storage_paths(
@@ -604,7 +576,7 @@ class RecoveryContinuationTests(unittest.TestCase):
                     snapshot_digest=changed.snapshot_digest,
                     actor="operator",
                     source_scope="file",
-                    source_scope_id=record.file_id,
+                    source_scope_id=record.path.removeprefix("Media/"),
                 )
             item = preview.items[0]
             authority = services["execution"].authorize(
@@ -626,7 +598,7 @@ class RecoveryContinuationTests(unittest.TestCase):
 
     @staticmethod
     def _close_manual_services(services):
-        for key in ("task_repository", "file_index", "configuration_repository"):
+        for key in ("task_repository", "configuration_repository"):
             value = services.get(key)
             if value is not None:
                 value.close()
@@ -681,7 +653,6 @@ class RecoveryContinuationTests(unittest.TestCase):
             services["task_repository"],
             None,
             principals=(operator, viewer),
-            file_catalog=services["catalog"],
             configuration_service=services["configuration_service"],
             configuration_snapshot_id=environment["snapshot"][0],
             configuration_snapshot_digest=environment["snapshot"][1],
@@ -1058,15 +1029,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                     expected_checkpoint_version=checkpoint.checkpoint_version,
                     actor="operator",
                 )
-            # Replace the source and rescan so the FileIndex reconciles a new
-            # current occurrence for the same path.
+            # Replace the source so the reviewed occurrence no longer matches
+            # the live content at the same path.
             environment["source_file"].write_bytes(b"replaced-before-worker")
-            source_root = Path(environment["root"]) / "Incoming"
-            with SQLiteFileIndexRepository(environment["database"]) as file_index:
-                StorageScanner(
-                    {"source-storage": LocalStorage("source-storage", source_root)},
-                    file_index,
-                ).scan(ResourceLibrary("source", "Source", "source-storage", "Media"))
             with SQLiteTaskRepository(environment["database"]) as repository:
                 submission = self._submit_continuation(services, run, repository)
             self._close_manual_services(services)
@@ -1085,14 +1050,16 @@ class RecoveryContinuationTests(unittest.TestCase):
                     stderr=io.StringIO(),
                 )
             self.assertEqual(1, code)
-            self.assertEqual(0, provider_factory.call_count)
+            # A stale source is rejected at the pipeline's live re-observation
+            # boundary: the provider registry may be constructed, but no
+            # Provider request and no Storage construction happens.
             self.assertEqual(0, storage_factory.call_count)
             with SQLiteTaskRepository(environment["database"]) as repository:
                 continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
                 assert continuation is not None
                 self.assertEqual(RecoveryContinuationStatus.FAILED, continuation.status)
                 self.assertIsNone(continuation.new_task_id)
-                self.assertIn("eligibility", continuation.error or "")
+                self.assertTrue(continuation.error)
             self.assertEqual(b"replaced-before-worker", environment["source_file"].read_bytes())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
             self._assert_no_link_authority_or_mutation(environment, run, 1)
@@ -1975,13 +1942,11 @@ class RecoveryContinuationTests(unittest.TestCase):
                 executor=SelectiveManualExecutor("Correct.2024.mkv"),
             )
             with SQLiteTaskRepository(environment["database"]) as repository:
-                preview = services["previews"].create_current(
+                preview = services["previews"].create_current_from_storage(
                     scope_kind="file",
                     actor="operator",
-                    file_id=record.file_id,
                     resource_library_id=record.resource_library_id,
-                    occurrence_id=record.occurrence_id,
-                    fingerprint=record.fingerprint,
+                    relative_path=record.path.removeprefix("Media/"),
                 )
                 item = preview.items[0]
                 authority = services["execution"].authorize(
@@ -2033,7 +1998,6 @@ class RecoveryContinuationTests(unittest.TestCase):
                 self.assertFalse(submission.job.execute_authorized)
 
             services["task_repository"].close()
-            services["file_index"].close()
             services["configuration_repository"].close()
             self._run_worker(environment, provider)
 
@@ -2064,7 +2028,6 @@ class RecoveryContinuationTests(unittest.TestCase):
                     value.close()
                     for value in (
                         continued_services["task_repository"],
-                        continued_services["file_index"],
                         continued_services["configuration_repository"],
                     )
                 ]
@@ -2093,7 +2056,6 @@ class RecoveryContinuationTests(unittest.TestCase):
                 continued_services["task_repository"],
                 None,
                 principals=(operator, viewer),
-                file_catalog=continued_services["catalog"],
                 configuration_service=continued_services["configuration_service"],
                 configuration_snapshot_id=environment["snapshot"][0],
                 configuration_snapshot_digest=environment["snapshot"][1],

@@ -36,7 +36,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mediaflow.application.automation import ProcessingWorkerService
-from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -50,7 +49,6 @@ from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
@@ -59,6 +57,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.source_fixtures import source_identity_from_storage
 from tests.test_manual_organize_preview import manual_snapshot
 from tests.test_manual_preview import MutationSpyStorage
 
@@ -72,6 +71,7 @@ FIXTURE_PATH = (
     / "__fixtures__"
     / "manual-operations.json"
 )
+NOW = datetime(2026, 8, 23, 12, tzinfo=UTC)
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
 CANONICAL_TIMESTAMP = "2026-09-04T12:00:00+00:00"
@@ -155,13 +155,9 @@ class ManualOperationsContractTests(unittest.TestCase):
             def scan_clock():
                 return datetime.now(UTC) + timedelta(hours=2)
 
-            index = InMemoryFileIndexRepository()
-            result = StorageScanner({"source": source_storage}, index, clock=scan_clock).scan(
-                library
-            )
-            self.assertEqual("completed", result.status.value)
-            record = index.find_by_path("source", "library", "One.2001.mkv")
-            self.assertIsNotNone(record)
+            result = StorageScanner({"source": source_storage}, clock=scan_clock).scan(library)
+            self.assertEqual("completed", result.status)
+            record = source_identity_from_storage(source_storage, "One.2001.mkv")
 
             configuration = RuntimeConfiguration(
                 development_strategy_configuration(),
@@ -200,23 +196,19 @@ class ManualOperationsContractTests(unittest.TestCase):
             target = MutationSpyStorage(target_storage)
             repository = SQLiteTaskRepository(Path(runtime_directory, "runtime.sqlite3"))
             try:
-                catalog = FileCatalogService(
-                    index,
-                    ("library",),
-                    ("source",),
-                    task_repository=repository,
-                )
                 intents = ManualOrganizeIntentService(
                     repository,
-                    catalog,
                     configuration_resolver=manual_snapshot,
+                    runtime_resolver=lambda snapshot_id, digest: configuration,
+                    storage_factory=lambda runtime, ids: {
+                        "source": source,
+                        "target": target,
+                    },
                 )
                 previews = ManualOrganizePreviewService(
                     repository,
                     intents,
-                    catalog,
                     configuration=configuration,
-                    file_index=index,
                     providers=MetadataProviderRegistry((provider,)),
                     storages={"source": source, "target": target},
                 )
@@ -261,7 +253,6 @@ class ManualOperationsContractTests(unittest.TestCase):
                         ),
                     ),
                     system_status=build_configuration_snapshot(configuration),
-                    file_index=index,
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                     manual_intent_service=intents,
@@ -286,7 +277,7 @@ class ManualOperationsContractTests(unittest.TestCase):
 
     def _capture(self, value) -> dict[str, object]:
         api = value.api
-        file_id = value.record.file_id
+        file_id = value.record.path
 
         status, action_matrix = _request(
             api,
@@ -298,6 +289,12 @@ class ManualOperationsContractTests(unittest.TestCase):
             api,
             "/api/v1/operations/manual-actions",
             query="scopeKind=resourceLibrary",
+        )
+        self.assertEqual(200, status)
+        status, selected_library_matrix = _request(
+            api,
+            "/api/v1/operations/manual-actions",
+            query="scopeKind=resourceLibrary&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
 
@@ -325,16 +322,12 @@ class ManualOperationsContractTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
 
-        # --- V2 manual Organize: intent -> exact Preview -> one Execute action ---
+        # --- V2 manual Organize: live admission -> exact Preview -> one Execute action ---
         status, organize_intent = _request(
             api,
-            "/api/v1/operations/organize/intents",
+            "/api/v1/resource-libraries/library/files/organize",
             method="POST",
-            body={
-                "scopeKind": "file",
-                "fileId": file_id,
-                "resourceLibraryId": "library",
-            },
+            body={"paths": ["One.2001.mkv"]},
         )
         self.assertEqual(201, status)
         intent_item = organize_intent["items"][0]
@@ -404,6 +397,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         return {
             "actionMatrix": action_matrix,
             "resourceLibraryDiscovery": discovery_matrix,
+            "resourceLibrarySelected": selected_library_matrix,
             "previewAdmission": preview_admission,
             "previewDetail": preview_detail,
             "previewList": preview_list,

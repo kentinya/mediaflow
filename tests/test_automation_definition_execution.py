@@ -60,7 +60,6 @@ from mediaflow.infrastructure.runtime_configuration import (
     StorageDefinition,
     with_managed_snapshot,
 )
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import smoke_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -290,7 +289,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
     def _service(
         self,
         repository,
-        file_index,
         configuration,
         storage_factory,
         provider=None,
@@ -304,7 +302,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
         return DefinitionScopedExecutionService(
             repository,
-            file_index,
             configuration,
             storage_factory=storage_factory,
             provider_factory=provider_factory,
@@ -433,7 +430,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -441,7 +437,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -529,7 +524,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 drifted = replace(configuration, automation_task_definitions=(recorded,))
                 service = DefinitionScopedExecutionService(
                     repository,
-                    object(),
                     drifted,
                     storage_factory=guarded_storage_factory,
                     provider_factory=guarded_provider_factory,
@@ -873,7 +867,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -881,7 +874,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         SyntheticMetadataProvider(()),
@@ -937,7 +929,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -945,7 +936,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -1030,7 +1020,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -1038,7 +1027,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -1076,13 +1064,11 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
                 service = DefinitionScopedExecutionService(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory=storage_factory,
                     provider_factory=lambda _ids: MetadataProviderRegistry(
@@ -1174,7 +1160,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self._emit(repository, definition)
                 service = DefinitionScopedExecutionService(
                     repository,
-                    object(),
                     configuration,
                     storage_factory=storage_factory,
                     provider_factory=provider_factory,
@@ -1257,7 +1242,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -1275,7 +1259,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 service = self._service(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory,
                     provider,
@@ -1372,7 +1355,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -1392,7 +1374,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     DefinitionScopedExecutionService(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory=storage_factory,
                         provider_factory=lambda _ids: MetadataProviderRegistry((provider,)),
@@ -1493,7 +1474,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                 with (
                     SQLiteTaskRepository(configuration.database_path) as repository,
-                    SQLiteFileIndexRepository(configuration.database_path) as file_index,
                 ):
                     job = self._emit(repository, definition)
                     preview_id, preview_reader = _preview_for(definition, job)
@@ -1513,7 +1493,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         repository,
                         self._service(
                             repository,
-                            file_index,
                             configuration,
                             storage_factory,
                             SyntheticMetadataProvider(candidates),
@@ -1637,7 +1616,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -1657,7 +1635,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -1745,7 +1722,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -1765,7 +1741,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -1880,7 +1855,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -1900,7 +1874,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -2003,7 +1976,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -2023,7 +1995,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         provider,
@@ -2080,7 +2051,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -2099,7 +2069,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 grant_service.revoke(grant.grant_id, actor="admin")
                 service = self._service(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory,
                     unattended_grant_service=grant_service,
@@ -2165,7 +2134,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -2200,7 +2168,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 revoking = RevokingGrantService(repository, preview_service=preview_reader)
                 service = self._service(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory,
                     provider,
@@ -2305,7 +2272,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 preview_id, preview_reader = _preview_for(definition, job)
@@ -2341,7 +2307,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 service = self._service(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory,
                     provider,
@@ -2471,13 +2436,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 with (
                     SQLiteTaskRepository(configuration.database_path) as repository,
-                    SQLiteFileIndexRepository(configuration.database_path) as file_index,
                 ):
                     self._emit(repository, definition)
                     drifted = mutate(configuration, definition)
                     finished = self._run(
                         repository,
-                        self._service(repository, file_index, drifted, storage_factory),
+                        self._service(repository, drifted, storage_factory),
                     )
                     self.assertEqual(finished.status, AutomationJobStatus.FAILED)
                     self.assertEqual(finished.failure_category, category)
@@ -2507,7 +2471,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 with (
                     SQLiteTaskRepository(configuration.database_path) as repository,
-                    SQLiteFileIndexRepository(configuration.database_path) as file_index,
                 ):
                     job = self._emit(repository, definition)
                     grant_service = self._grant(repository, definition, job)
@@ -2515,7 +2478,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         repository,
                         self._service(
                             repository,
-                            file_index,
                             configuration,
                             storage_factory,
                             SyntheticMetadataProvider(()),
@@ -2536,10 +2498,9 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 emitted = self._emit(repository, definition)
-                service = self._service(repository, file_index, configuration, storage_factory)
+                service = self._service(repository, configuration, storage_factory)
                 altered_job = replace(emitted, source_scope="../outside")
                 with self.assertRaises(AutomationConfigurationUnavailable) as raised:
                     service.run(altered_job, lambda: False)
@@ -2660,7 +2621,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -2677,7 +2637,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                 service = self._service(
                     repository,
-                    file_index,
                     configuration,
                     storage_factory,
                     CancellingProvider((candidate,)),
@@ -2726,7 +2685,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             storage_factory = self._writable_storage_factory(configuration)
             with (
                 SQLiteTaskRepository(configuration.database_path) as repository,
-                SQLiteFileIndexRepository(configuration.database_path) as file_index,
             ):
                 job = self._emit(repository, definition)
                 grant_service = self._grant(repository, definition, job)
@@ -2734,7 +2692,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     repository,
                     self._service(
                         repository,
-                        file_index,
                         configuration,
                         storage_factory,
                         SyntheticMetadataProvider(

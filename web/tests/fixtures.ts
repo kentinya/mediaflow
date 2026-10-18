@@ -5,7 +5,6 @@ export const dashboardPayload: Record<string, unknown> = {
   as_of: "2026-08-22T12:00:00+00:00",
   resource_libraries: 2,
   media_libraries: 3,
-  files: { total: 12, ready: 9, unstable: 1, missing: 1, errors: 1 },
   tasks: {
     total: 4,
     pending: 1,
@@ -44,7 +43,6 @@ export const dashboardModel: DashboardModel = {
   asOf: "2026-08-22T12:00:00+00:00",
   resourceLibraries: 2,
   mediaLibraries: 3,
-  files: { total: 12, ready: 9, unstable: 1, missing: 1, errors: 1 },
   tasks: {
     total: 4,
     pending: 1,
@@ -81,7 +79,6 @@ export const dashboardModel: DashboardModel = {
 export function emptyDashboardPayload(): Record<string, unknown> {
   return {
     ...dashboardPayload,
-    files: { total: 0, ready: 0, unstable: 0, missing: 0, errors: 0 },
     tasks: {
       total: 0,
       pending: 0,

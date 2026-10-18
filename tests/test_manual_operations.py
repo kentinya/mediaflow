@@ -21,7 +21,6 @@ from pathlib import Path
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.configuration_snapshot import ConfigurationSnapshot
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_scanner import FakeStorage
@@ -103,13 +102,11 @@ def _api(
     permissions: frozenset[ApiPermission] = frozenset(
         {ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN, ApiPermission.MANAGE_MANUAL_ORGANIZE}
     ),
-    index: InMemoryFileIndexRepository | None = None,
     library_value: ResourceLibrary | None = None,
     storage: FakeStorage | None = None,
     include_manual_scan: bool = True,
     include_manual_preview: bool = True,
 ) -> MediaFlowApi:
-    from mediaflow.application.file_catalog import FileCatalogService
     from mediaflow.application.manual_organize import ManualOrganizeIntentService
     from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
     from mediaflow.domain.manual_organize import ManualConfigurationSnapshot
@@ -119,17 +116,8 @@ def _api(
     library_value = library_value or ResourceLibrary(
         "library", "Library", "source", "", exclude_rules=()
     )
-    index = index or InMemoryFileIndexRepository()
     snapshot = _system_status_snapshot((library_value,))
     repository = SQLiteTaskRepository(Path(tempfile.mkdtemp(), "test.sqlite3"))
-
-    # Wire up the manual pipeline.
-    catalog = FileCatalogService(
-        index,
-        ("library",),
-        ("source",),
-        task_repository=repository,
-    )
 
     manual_snapshot = ManualConfigurationSnapshot(
         "active-snap",
@@ -146,16 +134,13 @@ def _api(
 
     intents = ManualOrganizeIntentService(
         repository,
-        catalog,
         configuration_resolver=_config_resolver,
     )
     previews = (
         ManualOrganizePreviewService(
             repository,
             intents,
-            catalog,
             configuration=manual_snapshot,
-            file_index=index,
             storages={"source": storage},
         )
         if include_manual_preview
@@ -166,7 +151,6 @@ def _api(
         None,
         principals=(principal,),
         system_status=snapshot,
-        file_index=index,
         configuration_snapshot_id="active-snap",
         configuration_snapshot_digest="active-digest",
         manual_intent_service=intents,
@@ -179,11 +163,6 @@ class BoundedDocumentTests(unittest.TestCase):
         self.storage = FakeStorage("source")
         self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
         self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        self.index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
-        self.scanner.scan(self.library_value)
 
     def test_preview_operator_document_strips_fingerprint(self) -> None:
         from mediaflow.application.operations_lifecycle import manual_preview_operator_document
@@ -469,11 +448,6 @@ class ActionMatrixTests(unittest.TestCase):
         self.storage = FakeStorage("source")
         self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
         self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        self.index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
-        self.scanner.scan(self.library_value)
 
     def _make_api(self, permissions=None):
         if permissions is None:
@@ -486,23 +460,27 @@ class ActionMatrixTests(unittest.TestCase):
             )
         return _api(
             permissions=permissions,
-            index=self.index,
             library_value=self.library_value,
             storage=self.storage,
         )
 
-    def test_file_scope_action_matrix(self) -> None:
-        record = self.index.find_by_path("source", "library", "current.mkv")
+    def test_file_scope_action_matrix_points_at_live_selection(self) -> None:
+        """A single-file admission now names the live directory, not an ID."""
+
         api = self._make_api()
         status, body = _get(
             api,
-            f"/api/v1/operations/manual-actions?scopeKind=file&fileId={record.file_id}&resourceLibraryId=library",
+            "/api/v1/operations/manual-actions?scopeKind=file&fileId=any-id"
+            "&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
         self.assertEqual("file", body["scopeKind"])
-        self.assertIsNotNone(body["source"])
+        self.assertIsNone(body["source"])
         self.assertNotIn("scan", body["actions"])
-        self.assertTrue(body["actions"]["preview"]["available"])
+        self.assertFalse(body["actions"]["preview"]["available"])
+        self.assertIn("live file", body["actions"]["preview"]["reason"])
+        self.assertFalse(body["actions"]["organize"]["available"])
+        self.assertIn("live file", body["actions"]["organize"]["reason"])
 
     def test_action_matrix_with_unavailable_scan_service_offers_no_submission(self) -> None:
         """An advertised action must have a callable bound application service."""
@@ -515,7 +493,6 @@ class ActionMatrixTests(unittest.TestCase):
                     ApiPermission.MANAGE_MANUAL_ORGANIZE,
                 }
             ),
-            index=self.index,
             library_value=self.library_value,
             storage=self.storage,
             include_manual_scan=False,
@@ -550,7 +527,6 @@ class ActionMatrixTests(unittest.TestCase):
                     ApiPermission.MANAGE_MANUAL_ORGANIZE,
                 }
             ),
-            index=self.index,
             library_value=self.library_value,
             storage=self.storage,
             include_manual_preview=False,
@@ -607,10 +583,10 @@ class ActionMatrixTests(unittest.TestCase):
 
     def test_viewer_without_scan_permission(self) -> None:
         api = self._make_api(permissions=frozenset({ApiPermission.READ}))
-        record = self.index.find_by_path("source", "library", "current.mkv")
         status, body = _get(
             api,
-            f"/api/v1/operations/manual-actions?scopeKind=file&fileId={record.file_id}&resourceLibraryId=library",
+            "/api/v1/operations/manual-actions?scopeKind=file&fileId=any-id"
+            "&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
         self.assertNotIn("scan", body["actions"])
@@ -648,7 +624,6 @@ class ActionMatrixTests(unittest.TestCase):
         )
         api = _api(
             permissions=frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
-            index=self.index,
             library_value=disabled,
             storage=self.storage,
         )
@@ -660,30 +635,19 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertNotIn("scan", body["actions"])
 
     def test_action_matrix_redacts_credential_shaped_file_labels(self) -> None:
-        """A FileIndex filename cannot bypass the Operations redaction boundary."""
+        """A credential-shaped file label cannot bypass the redaction boundary."""
 
         self.storage.add_file("Bearer hidden-token.mkv", 10, NOW - timedelta(hours=2))
-        from mediaflow.application.scanner import StorageScanner
-
-        StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW).scan(
-            self.library_value
-        )
-        record = self.index.find_by_path("source", "library", "Bearer hidden-token.mkv")
-        self.assertIsNotNone(record)
         api = self._make_api()
         status, body = _get(
             api,
-            f"/api/v1/operations/manual-actions?scopeKind=file&fileId={record.file_id}&resourceLibraryId=library",
+            "/api/v1/operations/manual-actions?scopeKind=file&fileId=Bearer%20hidden-token.mkv"
+            "&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
         serialized = json.dumps(body)
         self.assertNotIn("hidden-token", serialized)
         self.assertNotIn("Bearer hidden-token", serialized)
-        self.assertEqual(
-            "[redacted: the recorded evidence contained a credential, private endpoint "
-            "or absolute host path]",
-            body["source"]["filename"],
-        )
 
 
 class ServerBoundPreviewTests(unittest.TestCase):
@@ -691,11 +655,6 @@ class ServerBoundPreviewTests(unittest.TestCase):
         self.storage = FakeStorage("source")
         self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
         self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        self.index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
-        self.scanner.scan(self.library_value)
 
     def _make_api(self, permissions=None):
         if permissions is None:
@@ -708,7 +667,6 @@ class ServerBoundPreviewTests(unittest.TestCase):
             )
         return _api(
             permissions=permissions,
-            index=self.index,
             library_value=self.library_value,
             storage=self.storage,
         )
@@ -782,11 +740,6 @@ class ZeroMutationInvariantTests(unittest.TestCase):
         self.storage = FakeStorage("source")
         self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
         self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        self.index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
-        self.scanner.scan(self.library_value)
 
     def test_preview_operator_document_declares_zero_mutation(self) -> None:
         """Verify that bounded preview documents always declare zero mutation."""

@@ -429,8 +429,8 @@ def redact_persistent_result(
 ) -> PersistentResultRecord:
     """Return a secret-free Result while preserving its identity fields.
 
-    Source and destination paths are also used as FileIndex and plan lookup
-    keys, so they remain exact by default. Display projections can opt into
+    Source and destination paths are also used as plan lookup keys, so they
+    remain exact by default. Display projections can opt into
     redacting those identity strings without changing the persisted lookup
     values or execution behavior.
     """

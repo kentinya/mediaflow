@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from mediaflow.application.scan_filters import ObservedSource
 from mediaflow.application.scanner import (
     ResourceLibraryService,
     ScanAlreadyRunningError,
@@ -30,10 +31,8 @@ from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
 )
-from mediaflow.domain.tasks import ScanTask, TaskStatus
+from mediaflow.domain.tasks import TaskStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)
 
@@ -186,22 +185,46 @@ class FakeStorage:
 
 
 class ScannerTests(unittest.TestCase):
+    """Discovery is a read-only observation stage, not a durable catalog.
+
+    A walk reports the current candidates of one scope.  "How did this compare
+    with the previous observation" is answered by the caller's own durable
+    observation, which these tests model explicitly.
+    """
+
     def setUp(self) -> None:
         self.storage = FakeStorage()
-        self.index = InMemoryFileIndexRepository()
         self.clock = MutableClock()
-        self.scanner = StorageScanner({"fake": self.storage}, self.index, clock=self.clock)
+        self.scanner = StorageScanner({"fake": self.storage}, clock=self.clock)
+        self.observations: dict[str, ObservedSource] = {}
 
     def library(self, **changes) -> ResourceLibrary:
         base = ResourceLibrary("library", "Library", "fake", "", exclude_rules=())
         return replace(base, **changes)
 
-    def records(self, library_id: str = "library"):
-        return {record.path: record for record in self.index.list_by_resource_library(library_id)}
+    def scan(self, library=None, **kwargs):
+        records: dict[str, object] = {}
+        result = self.scanner.scan(
+            library or self.library(),
+            on_discovered=lambda value: records.setdefault(value.path, value),
+            previous=self.observations,
+            **kwargs,
+        )
+        self.records = records
+        for value in records.values():
+            self.observations[value.path] = ObservedSource(
+                value.path,
+                value.size,
+                value.modified_at,
+                value.fingerprint,
+                value.discovered_at,
+                value.stable_since,
+            )
+        return result
 
     def test_complete_scan_has_zero_mutation_calls(self) -> None:
         self.storage.add_file("Movies/A.mkv")
-        result = self.scanner.scan(self.library())
+        result = self.scan()
         self.assertEqual(TaskStatus.COMPLETED, result.status)
         self.assertEqual(
             {
@@ -216,28 +239,38 @@ class ScannerTests(unittest.TestCase):
             self.storage.mutations,
         )
 
-    def test_scan_task_receives_status_progress_and_errors(self) -> None:
-        self.storage.add_file("A.mkv")
-        task, result = self.scanner.run_task(
-            ScanTask("task-1", "library", ScanMode.FULL.value), self.library()
+    def test_discovery_persists_nothing(self) -> None:
+        self.storage.add_file("Movies/A.mkv")
+        self.scan()
+        # The walker owns no store at all: there is no catalog object to inspect
+        # and no write path except the injected Storage port, whose mutations are
+        # asserted to be zero above.
+        self.assertFalse(hasattr(self.scanner, "_file_index"))
+        self.assertEqual(
+            {
+                "write": 0,
+                "create_directory": 0,
+                "move": 0,
+                "copy": 0,
+                "delete": 0,
+                "hard_link": 0,
+                "soft_link": 0,
+            },
+            self.storage.mutations,
         )
-        self.assertEqual(TaskStatus.COMPLETED, task.status)
-        self.assertEqual(result.started_at, task.started_at)
-        self.assertEqual(1, task.progress["candidates_found"])
-        self.assertEqual((), task.errors)
 
     def test_extensions_are_configurable_and_case_insensitive(self) -> None:
         for name in ("movie.mkv", "upper.MKV", "mixed.MkV", "note.txt"):
             self.storage.add_file(name)
-        result = self.scanner.scan(self.library(file_extensions=(".MKV",)))
+        result = self.scan(self.library(file_extensions=(".MKV",)))
         self.assertEqual(3, result.statistics.media_candidates)
-        self.assertEqual(FileScanStatus.IGNORED, self.records()["note.txt"].scan_status)
+        self.assertEqual(FileScanStatus.IGNORED, self.records["note.txt"].status)
 
     def test_include_rules_limit_results_and_prune_directories(self) -> None:
         self.storage.add_file("Movies/A.mkv")
         self.storage.add_file("TV/B.mkv")
         library = self.library(include_rules=("Movies/**",))
-        result = self.scanner.scan(library)
+        result = self.scan(library)
         self.assertEqual(1, result.statistics.media_candidates)
         self.assertNotIn("TV", self.storage.list_calls)
 
@@ -246,7 +279,7 @@ class ScannerTests(unittest.TestCase):
         self.storage.add_file("sample/B.mkv")
         self.storage.add_file("download.mkv.part")
         library = self.library(exclude_rules=("**/sample/**", "*.part"))
-        result = self.scanner.scan(library)
+        result = self.scan(library)
         self.assertEqual(1, result.statistics.media_candidates)
         self.assertNotIn("sample", self.storage.list_calls)
 
@@ -262,14 +295,14 @@ class ScannerTests(unittest.TestCase):
         )
         for index, rule in enumerate(cases):
             library = replace(self.library(), library_id=f"rules-{index}", include_rules=(rule,))
-            result = self.scanner.scan(library)
+            result = self.scan(library)
             self.assertEqual(1, result.statistics.media_candidates)
         excluded = replace(
             self.library(),
             library_id="directory-rule",
             exclude_rules=(ScanRule(ScanRuleKind.DIRECTORY, "Keep"),),
         )
-        self.assertEqual(0, self.scanner.scan(excluded).statistics.files_visited)
+        self.assertEqual(0, self.scan(excluded).statistics.files_visited)
 
     def test_max_depth_zero_one_two_and_unlimited(self) -> None:
         self.storage.add_file("a.mkv")
@@ -278,7 +311,7 @@ class ScannerTests(unittest.TestCase):
         expected = {0: 1, 1: 2, 2: 3, None: 3}
         for depth, count in expected.items():
             library = replace(self.library(), library_id=f"depth-{depth}", max_depth=depth)
-            self.assertEqual(count, self.scanner.scan(library).statistics.media_candidates)
+            self.assertEqual(count, self.scan(library).statistics.media_candidates)
 
     def test_symlinks_are_ignored_and_never_followed(self) -> None:
         original = self.storage.list
@@ -290,7 +323,7 @@ class ScannerTests(unittest.TestCase):
             return tuple(entries)
 
         self.storage.list = list_with_symlink
-        result = self.scanner.scan(self.library())
+        result = self.scan()
         self.assertEqual(1, result.statistics.ignored)
         self.assertEqual([""], self.storage.list_calls)
 
@@ -298,118 +331,120 @@ class ScannerTests(unittest.TestCase):
         self.storage.add_file("recent.mkv", modified_at=NOW - timedelta(seconds=30))
         self.storage.add_file("old.mkv", modified_at=NOW - timedelta(seconds=120))
         library = self.library(stability_policy=FileStabilityPolicy(minimum_age_seconds=60))
-        result = self.scanner.scan(library)
+        result = self.scan(library)
         self.assertEqual(1, result.statistics.unstable)
-        self.assertEqual(FileScanStatus.READY, self.records()["old.mkv"].scan_status)
+        self.assertEqual(FileScanStatus.READY, self.records["old.mkv"].status)
 
-    def test_stable_size_progresses_across_scans_and_reaches_ready(self) -> None:
+    def test_stable_size_requires_two_real_observations(self) -> None:
         self.storage.add_file("movie.mkv", size=10)
         policy = FileStabilityPolicy(stable_size_duration_seconds=60)
         library = self.library(stability_policy=policy)
-        first = self.scanner.scan(library)
+        first = self.scan(library)
         self.assertEqual(1, first.statistics.unstable)
+        self.assertEqual(FileScanStatus.UNSTABLE, self.records["movie.mkv"].status)
         self.clock.advance(30)
-        second = self.scanner.scan(library)
+        second = self.scan(library)
         self.assertEqual(1, second.statistics.unstable)
-        self.assertEqual(NOW, self.records()["movie.mkv"].stable_since)
         self.clock.advance(31)
-        third = self.scanner.scan(library)
+        third = self.scan(library)
         self.assertEqual(1, third.statistics.media_candidates)
+        self.assertEqual(FileScanStatus.READY, self.records["movie.mkv"].status)
 
     def test_size_or_modified_change_resets_stability(self) -> None:
         self.storage.add_file("movie.mkv", size=10)
         library = self.library(
             stability_policy=FileStabilityPolicy(stable_size_duration_seconds=60)
         )
-        self.scanner.scan(library)
+        self.scan(library)
         self.clock.advance(30)
-        self.scanner.scan(library)
+        self.scan(library)
         self.storage.files["movie.mkv"] = (11, self.storage.files["movie.mkv"][1])
         self.clock.advance(40)
-        self.scanner.scan(library)
-        record = self.records()["movie.mkv"]
-        self.assertEqual(FileChange.MODIFIED, record.change)
-        self.assertIsNone(record.stable_since)
-        self.storage.files["movie.mkv"] = (11, NOW)
-        self.clock.advance(60)
-        self.scanner.scan(library)
-        self.assertIsNone(self.records()["movie.mkv"].stable_since)
+        self.scan(library)
+        self.assertEqual(FileChange.MODIFIED, self.records["movie.mkv"].change)
+        self.assertEqual(FileScanStatus.UNSTABLE, self.records["movie.mkv"].status)
+        self.assertIsNone(self.records["movie.mkv"].stable_since)
+        # The interval restarts from the *changed* observation: one more
+        # unchanged observation a full configured interval later is required
+        # before the source can be called stable again.
+        self.clock.advance(59)
+        still_unstable = self.scan(library)
+        self.assertEqual(1, still_unstable.statistics.unstable)
+        self.clock.advance(1)
+        self.scan(library)
+        self.assertEqual(FileScanStatus.READY, self.records["movie.mkv"].status)
 
     def test_incremental_new_unchanged_modified(self) -> None:
         self.storage.add_file("A.mkv", 1)
         self.storage.add_file("B.mkv", 1)
         library = self.library(scan_mode=ScanMode.INCREMENTAL)
-        self.scanner.scan(library)
-        self.assertEqual(FileChange.NEW, self.records()["A.mkv"].change)
+        self.scan(library)
+        self.assertEqual(FileChange.NEW, self.records["A.mkv"].change)
         self.clock.advance(1)
-        self.scanner.scan(library)
-        self.assertEqual(FileChange.UNCHANGED, self.records()["A.mkv"].change)
+        self.scan(library)
+        self.assertEqual(FileChange.UNCHANGED, self.records["A.mkv"].change)
         self.storage.files["A.mkv"] = (2, NOW)
         self.clock.advance(1)
-        self.scanner.scan(library)
-        records = self.records()
-        self.assertEqual(FileChange.MODIFIED, records["A.mkv"].change)
-        self.assertEqual(FileChange.UNCHANGED, records["B.mkv"].change)
+        self.scan(library)
+        self.assertEqual(FileChange.MODIFIED, self.records["A.mkv"].change)
+        self.assertEqual(FileChange.UNCHANGED, self.records["B.mkv"].change)
 
-    def test_full_scan_marks_missing_but_incremental_does_not(self) -> None:
+    def test_absent_source_is_simply_not_discovered(self) -> None:
         self.storage.add_file("A.mkv")
         self.storage.add_file("B.mkv")
         library = self.library()
-        self.scanner.scan(library)
+        self.scan(library)
         del self.storage.files["B.mkv"]
         self.clock.advance(1)
-        self.scanner.scan(library, mode=ScanMode.INCREMENTAL)
-        self.assertNotEqual(FileScanStatus.MISSING, self.records()["B.mkv"].scan_status)
-        self.scanner.scan(library, mode=ScanMode.FULL)
-        missing = self.records()["B.mkv"]
-        self.assertEqual(FileScanStatus.MISSING, missing.scan_status)
-        self.assertIsNotNone(missing.missing_since)
+        self.scan(library, mode=ScanMode.INCREMENTAL)
+        self.assertNotIn("B.mkv", self.records)
+        self.scan(library, mode=ScanMode.FULL)
+        # There is no global catalog to reconcile, so a full walk reports only
+        # what it observed.  Removing a file never publishes a "missing" record.
+        self.assertNotIn("B.mkv", self.records)
+        self.assertEqual(("A.mkv",), tuple(self.records))
 
-    def test_partial_directory_failure_protects_old_index(self) -> None:
+    def test_partial_directory_failure_is_reported(self) -> None:
         self.storage.add_file("good/A.mkv")
         self.storage.add_file("blocked/B.mkv")
         library = self.library()
-        self.scanner.scan(library)
-        del self.storage.files["good/A.mkv"]
+        self.scan(library)
         self.storage.list_errors["blocked"] = StorageErrorCode.PERMISSION_DENIED
-        result = self.scanner.scan(library)
+        result = self.scan(library)
         self.assertEqual(TaskStatus.PARTIAL_SUCCESS, result.status)
-        records = self.records()
-        # An incomplete full scan cannot prove that an unvisited source is missing.
-        self.assertEqual(FileScanStatus.READY, records["good/A.mkv"].scan_status)
-        self.assertNotEqual(FileScanStatus.MISSING, records["blocked/B.mkv"].scan_status)
+        self.assertEqual(1, result.statistics.errors)
+        self.assertEqual(FileScanStatus.READY, self.records["good/A.mkv"].status)
+        self.assertNotIn("blocked/B.mkv", self.records)
 
-    def test_pruned_directory_is_not_reconciled_as_missing(self) -> None:
+    def test_pruned_directory_is_not_reported(self) -> None:
         self.storage.add_file("Keep/A.mkv")
         self.storage.add_file("Excluded/B.mkv")
         library = self.library()
-        self.scanner.scan(library)
+        self.scan(library)
         restricted = replace(library, exclude_rules=("Excluded/**",))
-        self.scanner.scan(restricted)
-        self.assertNotEqual(FileScanStatus.MISSING, self.records()["Excluded/B.mkv"].scan_status)
+        self.scan(restricted)
+        self.assertNotIn("Excluded/B.mkv", self.records)
 
-    def test_failed_root_scan_does_not_reconcile_missing(self) -> None:
+    def test_failed_root_scan_reports_failure(self) -> None:
         self.storage.add_file("A.mkv")
         library = self.library()
-        self.scanner.scan(library)
+        self.scan(library)
         del self.storage.files["A.mkv"]
         self.storage.list_errors[""] = StorageErrorCode.AUTHENTICATION_FAILED
-        result = self.scanner.scan(library)
+        result = self.scan(library)
         self.assertEqual(TaskStatus.FAILED, result.status)
-        self.assertNotEqual(FileScanStatus.MISSING, self.records()["A.mkv"].scan_status)
+        self.assertEqual({}, self.records)
 
-    def test_cancelled_scan_stops_new_lists_and_never_marks_missing(self) -> None:
+    def test_cancelled_scan_stops_new_lists(self) -> None:
         self.storage.add_file("old.mkv")
         library = self.library()
-        self.scanner.scan(library)
-        del self.storage.files["old.mkv"]
+        self.scan(library)
         self.storage.add_file("one/A.mkv")
         token = CancellationToken()
         result = self.scanner.scan(
             library, cancellation=token, on_progress=lambda _: token.cancel()
         )
         self.assertEqual(TaskStatus.CANCELLED, result.status)
-        self.assertNotEqual(FileScanStatus.MISSING, self.records()["old.mkv"].scan_status)
         self.assertNotIn("one", self.storage.list_calls[-1:])
 
     def test_concurrency_is_bounded(self) -> None:
@@ -417,15 +452,9 @@ class ScannerTests(unittest.TestCase):
             self.storage.add_file(f"dir-{index}/A.mkv")
         self.storage.list_delay = 0.01
         library = self.library(max_scan_concurrency=3)
-        self.scanner.scan(library)
+        self.scan(library)
         self.assertGreater(self.storage.max_active_lists, 1)
         self.assertLessEqual(self.storage.max_active_lists, 3)
-
-    def test_batch_persistence_limits_batch_size(self) -> None:
-        for index in range(7):
-            self.storage.add_file(f"file-{index}.mkv")
-        self.scanner.scan(self.library(persistence_batch_size=3))
-        self.assertEqual([3, 3, 1], self.index.batch_sizes)
 
     def test_duplicate_scan_lock(self) -> None:
         self.storage.block_list = threading.Event()
@@ -443,18 +472,23 @@ class ScannerTests(unittest.TestCase):
         thread.join(2)
         self.assertEqual(1, len(result))
 
-    def test_multiple_and_overlapping_libraries_have_distinct_identity(self) -> None:
+    def test_multiple_and_overlapping_libraries_have_distinct_scope(self) -> None:
         self.storage.add_file("Downloads/Movies/A.mkv")
         first = ResourceLibrary("all", "All", "fake", "Downloads", exclude_rules=())
         second = ResourceLibrary("movies", "Movies", "fake", "Downloads/Movies", exclude_rules=())
         self.assertEqual(
             ("all", "movies"), ResourceLibraryService.overlapping_pairs((first, second))[0]
         )
-        self.scanner.scan(first)
-        self.scanner.scan(second)
-        records = self.index.snapshot()
-        self.assertEqual(2, len(records))
-        self.assertNotEqual(records[0].identity, records[1].identity)
+        first_records: dict[str, object] = {}
+        second_records: dict[str, object] = {}
+        self.scanner.scan(first, on_discovered=lambda v: first_records.setdefault(v.path, v))
+        self.scanner.scan(second, on_discovered=lambda v: second_records.setdefault(v.path, v))
+        self.assertEqual(("Downloads/Movies/A.mkv",), tuple(first_records))
+        self.assertEqual(("Downloads/Movies/A.mkv",), tuple(second_records))
+        self.assertNotEqual(
+            first_records["Downloads/Movies/A.mkv"].resource_library_id,
+            second_records["Downloads/Movies/A.mkv"].resource_library_id,
+        )
 
     def test_resource_library_validation(self) -> None:
         self.storage.add_directory("Downloads")
@@ -487,8 +521,7 @@ class LocalStorageScannerIntegrationTests(unittest.TestCase):
                 old = time.time() - 3600
                 os.utime(target, (old, old))
             storage = LocalStorage("local", root, read_only=True)
-            repository = InMemoryFileIndexRepository()
-            scanner = StorageScanner({"local": storage}, repository)
+            scanner = StorageScanner({"local": storage})
             library = ResourceLibrary(
                 "downloads",
                 "Downloads",
@@ -497,28 +530,36 @@ class LocalStorageScannerIntegrationTests(unittest.TestCase):
                 exclude_rules=("Ignore/**", "*.part"),
                 file_extensions=("mkv", "mp4"),
             )
-            result = scanner.scan(library)
+            discovered: dict[str, object] = {}
+            result = scanner.scan(
+                library, on_discovered=lambda value: discovered.setdefault(value.path, value)
+            )
             ready = {
-                record.path
-                for record in repository.list_by_resource_library("downloads")
-                if record.scan_status is FileScanStatus.READY
+                path for path, value in discovered.items() if value.status is FileScanStatus.READY
             }
             self.assertEqual({"Movies/A.mkv", "Movies/B.mp4", "TV/Show.S01E01.mkv"}, ready)
             self.assertEqual(3, result.statistics.media_candidates)
 
-    def test_sqlite_file_index_persists_across_repository_instances(self) -> None:
+    def test_discovery_reports_only_what_it_observed_and_keeps_no_store(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            database = Path(temporary) / "file-index.sqlite3"
-            storage = FakeStorage("durable")
-            storage.add_file("A.mkv")
+            root = Path(temporary)
+            target = root / "A.mkv"
+            target.write_bytes(b"a")
+            old = time.time() - 3600
+            os.utime(target, (old, old))
+            storage = LocalStorage("durable", root, read_only=True)
             library = ResourceLibrary("durable-library", "Durable", "durable", "")
-            with SQLiteFileIndexRepository(database) as repository:
-                result = StorageScanner({"durable": storage}, repository).scan(library)
-                self.assertEqual(TaskStatus.COMPLETED, result.status)
-                del storage.files["A.mkv"]
-                StorageScanner({"durable": storage}, repository).scan(library)
-            with SQLiteFileIndexRepository(database) as reopened:
-                records = reopened.list_by_resource_library("durable-library")
-                self.assertEqual(1, len(records))
-                self.assertEqual("A.mkv", records[0].path)
-                self.assertEqual(FileScanStatus.MISSING, records[0].scan_status)
+            first: dict[str, object] = {}
+            result = StorageScanner({"durable": storage}).scan(
+                library, on_discovered=lambda value: first.setdefault(value.path, value)
+            )
+            self.assertEqual(TaskStatus.COMPLETED, result.status)
+            self.assertEqual(("A.mkv",), tuple(first))
+            target.unlink()
+            second: dict[str, object] = {}
+            StorageScanner({"durable": storage}).scan(
+                library, on_discovered=lambda value: second.setdefault(value.path, value)
+            )
+            # Nothing durable survived the walk, so an absent source is simply
+            # not reported and never becomes a "missing" catalog row.
+            self.assertEqual({}, second)

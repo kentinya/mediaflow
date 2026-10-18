@@ -835,8 +835,6 @@ def assert_v2_manual_organize(
     # a metadata identity for it, so it carries the fail-closed legs below.
     unseeded = source_root / "Release Fail Closed.2001.mkv"
     unseeded.write_bytes(b"release-security-fail-closed" * 8)
-    # The compatibility metadata fixture still needs index association until
-    # RO-7. Seed it through the shared internal Scanner, never standalone admission.
     status, refused = json_request(
         base,
         "/api/v1/operations/scans",
@@ -846,53 +844,12 @@ def assert_v2_manual_organize(
     )
     if status != 404 or refused.get("error", {}).get("code") != "not_found":
         raise RuntimeError("unknown Scan route did not return ordinary not-found")
-    discovery_code = r"""
-import os
-from mediaflow.application.scanner import StorageScanner
-from mediaflow.final_cli import _configuration
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
-runtime = _configuration(os.environ['MEDIAFLOW_CONFIG'])
-library = runtime.resource_libraries[0]
-with SQLiteFileIndexRepository(runtime.database_path) as index:
-    storages = runtime.create_storages(storage_ids={library.storage_id})
-    result = StorageScanner(storages, index).scan(library)
-    if result.status.value != 'completed':
-        raise RuntimeError('shared fixture discovery failed')
-"""
-    internal = subprocess.run(
-        [*command, "exec", "-T", "api", "python", "-c", discovery_code],
-        cwd=ROOT,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if internal.returncode:
-        raise RuntimeError("shared fixture discovery failed before release-security checks")
-    status, files = json_request(base, "/api/v1/files?resourceLibrary=source&limit=100", admin)
-    if status != 200:
-        raise RuntimeError(f"manual Organize FileIndex listing returned HTTP {status}")
-    item = next(
-        (value for value in files.get("items", []) if value.get("filename") == source.name),
-        None,
-    )
-    if item is None:
-        raise RuntimeError("manual Organize scan did not index its temporary source")
-    unseeded_item = next(
-        (value for value in files.get("items", []) if value.get("filename") == unseeded.name),
-        None,
-    )
-    if unseeded_item is None:
-        raise RuntimeError("manual Organize scan did not index its fail-closed source")
     # The isolated release harness has no live Provider. Seed only a bounded,
     # source-linked dry-run Result so the normal API intent authority can use
     # an already reviewed identity without contacting an external service.
     seed = r"""
 from datetime import UTC, datetime
-from dataclasses import replace
-from mediaflow.domain.file_lifecycle import ProcessingDisposition
 from mediaflow.domain.task_persistence import PersistentResultRecord
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 
 with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
@@ -902,22 +859,6 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
         "Movies/Release Manual Organize/Release Manual Organize (2001).mkv",
         "A", "tmdb", "603", "A", "A", "A", "A", "MOVE", "dry_run",
         datetime.now(UTC), title="Release Manual Organize",
-    ))
-with (
-    SQLiteFileIndexRepository("/data/mediaflow.sqlite3") as file_index,
-    SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository,
-):
-    record = file_index.find_by_path(
-        "source-storage", "source", "Release Manual Organize.2001.mkv"
-    )
-    if record is None:
-        raise RuntimeError("manual source disappeared before metadata fixture linkage")
-    file_index.batch_upsert((
-        replace(
-            record,
-            processing_result_id="release-manual-result",
-            processing_disposition=ProcessingDisposition.ORGANIZED,
-        ),
     ))
 """
     seeded = subprocess.run(
@@ -934,22 +875,18 @@ with (
 
     status, intent = json_request(
         base,
-        "/api/v1/operations/organize/intents",
+        "/api/v1/resource-libraries/source/files/organize",
         admin,
         method="POST",
-        body={
-            "scopeKind": "file",
-            "fileId": item["fileId"],
-            "resourceLibraryId": "source",
-        },
+        body={"paths": [source.name]},
     )
     if status != 201:
         raise RuntimeError(f"manual Organize intent returned HTTP {status}")
     assert_manual_organize_fails_closed(
         base,
         admin,
-        seeded_file_id=item["fileId"],
-        unseeded_file_id=unseeded_item["fileId"],
+        seeded_path=source.name,
+        unseeded_path=unseeded.name,
         resource_library_id="source",
     )
     intent_item = intent["items"][0]
@@ -1060,8 +997,8 @@ def assert_manual_organize_fails_closed(
     base: str,
     admin: str,
     *,
-    seeded_file_id: str,
-    unseeded_file_id: str,
+    seeded_path: str,
+    unseeded_path: str,
     resource_library_id: str,
 ) -> None:
     """A genuine Provider failure must stay an unavailable/fail-closed Preview.
@@ -1076,14 +1013,10 @@ def assert_manual_organize_fails_closed(
     # invented identity must remain unverified at Choice admission.
     status, intent = json_request(
         base,
-        "/api/v1/operations/organize/intents",
+        f"/api/v1/resource-libraries/{resource_library_id}/files/organize",
         admin,
         method="POST",
-        body={
-            "scopeKind": "file",
-            "fileId": seeded_file_id,
-            "resourceLibraryId": resource_library_id,
-        },
+        body={"paths": [seeded_path]},
     )
     if status != 201:
         raise RuntimeError(f"manual Organize negative intent returned HTTP {status}")
@@ -1121,14 +1054,10 @@ def assert_manual_organize_fails_closed(
     # authority leaves the offline pinned-identity path inapplicable.
     status, intent = json_request(
         base,
-        "/api/v1/operations/organize/intents",
+        f"/api/v1/resource-libraries/{resource_library_id}/files/organize",
         admin,
         method="POST",
-        body={
-            "scopeKind": "file",
-            "fileId": unseeded_file_id,
-            "resourceLibraryId": resource_library_id,
-        },
+        body={"paths": [unseeded_path]},
     )
     if status != 201:
         raise RuntimeError(f"manual Organize live-policy intent returned HTTP {status}")

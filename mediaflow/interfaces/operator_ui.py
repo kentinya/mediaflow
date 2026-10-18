@@ -19,7 +19,6 @@ INDEX_HTML = b"""<!doctype html>
     <button data-view="dashboard" class="active">Dashboard</button>
     <button data-view="tasks">Tasks</button>
     <button data-view="files">Files</button>
-    <button data-view="file-index">FileIndex</button>
     <button data-view="jobs">Jobs</button>
     <button data-view="schedules">Schedules</button>
     <button data-view="automation">Automation</button>
@@ -1130,7 +1129,7 @@ APP_JS = b"""(() => {
     detailContent.append(text('h2', `Storage browser: ${item.name || item.id || '-'}`));
     detailContent.append(text('p',
       'This setup-only browser is read-only and scoped to the selected configured Storage. ' +
-      'It does not inspect FileIndex entries or provide arbitrary host filesystem access.', 'warning'));
+      'It does not provide arbitrary host filesystem access.', 'warning'));
     const fields = {
       storageId: {value: item.id},
       browserPath: {value: ''}
@@ -2306,89 +2305,6 @@ APP_JS = b"""(() => {
     if (previousCursor) target.append(actionButton(`Previous ${noun}`, previous));
     if (nextCursor) target.append(actionButton(`Next ${noun}`, next));
   }
-  function renderMetadataContinuation(id, review) {
-    const current = review.continuation;
-    const section = text('div', '', 'choices');
-    section.append(text('h3', 'Metadata correction DryRun continuation'));
-    section.append(cards([
-      ['Source Task', review.taskId], ['Source item', review.itemId || '-'],
-      ['Correction', review.reviewId], ['Correction identity', review.correctionVersion],
-      ['Configuration snapshot', review.configurationSnapshotId || '-'],
-      ['Configuration digest', review.configurationSnapshotDigest || '-'],
-      ['Items selected', '1'], ['Authority', 'DRY_RUN_ONLY'], ['Storage mutation', 'NONE']
-    ]));
-    if (current) {
-      section.append(text('p', `Continuation status: ${current.status}. ` +
-        `Job: ${current.jobId}. Task: ${current.taskId || '-'}. ` +
-        `Result: ${current.resultId || '-'}.`, current.status === 'failed' ? 'error' : 'warning'));
-      if (current.failureCategory) {
-        section.append(text('p', `Failure category: ${current.failureCategory}.` +
-          ' Restore the pinned snapshot before retrying.', 'error'));
-      }
-      if (current.error) section.append(text('p', `Failure: ${current.error}`, 'error'));
-      if (current.recovery) section.append(text('p', `Recovery: ${current.recovery}`));
-      if (current.nextAction) section.append(text('p', `Next action: ${current.nextAction}`));
-      const links = text('div', '', 'choices');
-      links.append(actionButton('Open continuation job', () => showJob(current.jobId)));
-      if (current.taskId) {
-        links.append(actionButton('Open linked Task/Result', () => showTask(current.taskId)));
-      }
-      if ((current.status === 'failed' || current.status === 'cancelled') && review.canContinue) {
-        links.append(actionButton('Retry this correction as DryRun', () =>
-          confirmMetadataContinuation(id, review)));
-      }
-      if (current.status === 'stale') {
-        links.append(actionButton('Requeue stale continuation', () =>
-          confirmStaleMetadataContinuation(id, current.jobId)));
-      }
-      section.append(links);
-      detailContent.append(section);
-      return;
-    }
-    section.append(text('p',
-      'Only this TaskItem will be analyzed. Source media is not modified and no execute authority is inherited.',
-      'warning'));
-    section.append(actionButton('Continue as DryRun', () =>
-      confirmMetadataContinuation(id, review)));
-    detailContent.append(section);
-  }
-  function confirmMetadataContinuation(id, review) {
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('p',
-      `Continue only Metadata correction ${review.reviewId} as a new DryRun? ` +
-      `The pinned configuration is ${review.configurationSnapshotId || 'unavailable'}. ` +
-      'No media mutation or execute authority is inherited.'));
-    confirmation.append(actionButton('Confirm Continue as DryRun', async () => {
-      try {
-        await api(`/api/v1/files/${encodeURIComponent(id)}/continue-dry-run`, {
-          method: 'POST',
-          body: JSON.stringify({
-            reviewId: review.reviewId,
-            expectedCorrectionVersion: review.correctionVersion
-          })
-        });
-        detail.hidden = true;
-        message('One-item DryRun continuation queued. Source Task and siblings are unchanged.');
-        await load();
-      } catch (error) { message(errorText(error), true); }
-    }), actionButton('Keep source unchanged', () => confirmation.remove()));
-    detailContent.append(confirmation);
-  }
-  function confirmStaleMetadataContinuation(id, jobId) {
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('p',
-      'Stale is an age observation, not proof that the Worker stopped. Inspect the Job, then explicitly requeue it? ' +
-      'The continuation remains DryRun-only and the source stays unchanged.'));
-    confirmation.append(actionButton('Confirm requeue stale Job', async () => {
-      try {
-        await api(`/api/v1/jobs/${encodeURIComponent(jobId)}/requeue-stale`, {method: 'POST'});
-        detail.hidden = true;
-        message('Stale continuation requeued. Reloading the File state.');
-        await load();
-      } catch (error) { message(errorText(error), true); }
-    }), actionButton('Keep stale Job', () => confirmation.remove()));
-    detailContent.append(confirmation);
-  }
   async function renderFiles() {
     let status;
     try {
@@ -2407,7 +2323,7 @@ APP_JS = b"""(() => {
       librarySection.items : [];
     clear(content); content.append(text('h2', 'Files'));
     content.append(text('p',
-      'Browse immediate entries from the configured Active Storage. This is read-only and separate from FileIndex.',
+      'Browse immediate entries from the configured Active Storage. This is read-only and records nothing.',
       'warning'));
     if (!storages.length) {
       content.append(text('p', 'No configured Storage is available in the current Active runtime.', 'warning'),
@@ -2441,7 +2357,7 @@ APP_JS = b"""(() => {
       clear(content); content.append(text('h2', 'Files'));
       content.append(text('p',
         `Active runtime ${data.configuration && data.configuration.revisionId || '-'}; ` +
-        'Storage browsing is read-only. Use FileIndex for indexed discovery state.', 'warning'));
+        'Storage browsing is read-only; nothing about these entries is recorded.', 'warning'));
       clear(controls);
       const storageLabel = text('label', 'Storage '); storageLabel.append(storageSelect);
       controls.append(storageLabel, actionButton('Refresh Files', () => loadPage(null)));
@@ -2456,20 +2372,12 @@ APP_JS = b"""(() => {
       const items = Array.isArray(data.entries) ? data.entries : [];
       if (!items.length) content.append(text('p', 'This configured directory is empty.', 'warning'));
       const rows = items.map(item => {
-        const membership = item.indexMembership || {};
-        const membershipText = !membership.available ? 'FileIndex unavailable' :
-          membership.indexed ? `Indexed (${membership.total || 0})` : 'Not indexed';
-        const previewPayload = item.isDirectory ? null : manualPreviewPayloadFromMembership(membership);
-        const previewAction = previewPayload ? actionButton('Preview file', () =>
-          confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${previewPayload.fileId}`)) :
-          text('span', item.isDirectory ? '-' : 'Preview unavailable until a verified current item exists');
-        return [item.isDirectory ? actionButton(`Open ${item.name}`, () => {
+        const openAction = item.isDirectory ? actionButton(`Open ${item.name}`, () => {
           currentPath = item.path; loadPage(null);
-        }) : item.name, item.type, item.size, item.modifiedAt, membershipText,
-          previewAction];
+        }) : text('span', item.name);
+        return [openAction, item.type, item.size, item.modifiedAt];
       });
-      if (items.length) content.append(table(
-        ['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Preview'], rows));
+      if (items.length) content.append(table(['Name', 'Type', 'Size', 'Modified'], rows));
       if (data.nextCursor) content.append(actionButton('Next page', () => loadPage(data.nextCursor)));
     };
     storageSelect.addEventListener('change', () => {
@@ -2477,126 +2385,17 @@ APP_JS = b"""(() => {
     });
     await loadPage();
   }
-  async function renderFileIndex() {
-    clear(content); content.append(text('h2', 'FileIndex'));
-    content.append(text('p',
-      'FileIndex separates Storage discovery/stability from current-source processing disposition. ' +
-      'FileIndex is not a configured Storage browser.',
-      'warning'));
-    const selectedFileIds = new Set();
-    const filters = [
-      ['resourceLibrary', 'Resource library'], ['storage', 'Storage'],
-      ['query', 'Path/filename'], ['recognitionType', 'Recognition type'],
-      ['provider', 'Provider'], ['providerId', 'Provider ID'], ['title', 'Title'],
-      ['taskId', 'Task ID'], ['year', 'Year']
-    ].map(([name, label]) => {
-      const labelNode = text('label', label); const input = document.createElement('input');
-      input.setAttribute('aria-label', label); input.name = name; labelNode.append(input);
-      return labelNode;
-    });
-    const status = document.createElement('select'); status.setAttribute('aria-label', 'Scan status');
-    ['', 'discovered', 'unstable', 'ready', 'ignored', 'missing', 'error'].forEach(value => {
-      const option = text('option', value || 'All scan statuses'); option.value = value;
-      status.append(option);
-    });
-    const form = text('div', '', 'choices'); filters.forEach(item => form.append(item));
-    form.append(status);
-    const loadFiles = async () => {
-      const parts = ['limit=100'];
-      filters.forEach(node => {
-        const input = node.querySelector('input');
-        if (input && input.value.trim()) parts.push(`${input.name}=${encodeURIComponent(input.value.trim())}`);
-      });
-      if (status.value) parts.push(`scanStatus=${encodeURIComponent(status.value)}`);
-      // The server keeps /api/v1/files? as a compatibility alias for this FileIndex request.
-      const data = await api(`/api/v1/file-index?${parts.join('&')}`);
-      const items = data.items || [];
-      clear(content); content.append(text('h2', 'FileIndex'));
-      content.append(text('p',
-        'These are indexed discovery records; use Files to browse the configured Storage directly.',
-        'warning'));
-      const rows = items.map(item => {
-        const fileId = item.fileId || item.file_id;
-        const checkbox = document.createElement('input'); checkbox.type = 'checkbox';
-        checkbox.checked = selectedFileIds.has(fileId); checkbox.value = fileId;
-        checkbox.setAttribute('aria-label', `Select file ${fileId}`);
-        checkbox.addEventListener('click', event => event.stopPropagation());
-        checkbox.addEventListener('change', () => {
-          if (checkbox.checked) selectedFileIds.add(fileId); else selectedFileIds.delete(fileId);
-          message(`${selectedFileIds.size} file(s) selected; selection is bounded to 100 items.`);
-        });
-        const cell = text('span', ''); cell.append(checkbox, text('span', ` ${fileId}`));
-        const occurrence = item.currentOccurrence || {};
-        const previewPayload = manualPreviewPayloadFromFile(item);
-        const previewAction = previewPayload ? actionButton('Preview', () =>
-          confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${fileId}`)) :
-          text('span', 'Preview unavailable until source is verified');
-        return [cell, item.path, item.scanStatus || item.scan_status,
-          item.processingDisposition || '-', occurrence.occurrenceId || 'unverified',
-          item.updatedAt || item.updated_at, previewAction];
-      });
-      content.append(table(['ID', 'Path', 'Scan / discovery', 'Processing disposition',
-        'Current occurrence', 'Updated', 'Preview'], rows,
-        index => showDetail('files', items[index].fileId || items[index].file_id)));
-      content.append(actionButton('Start manual organize for selected files', () =>
-        confirmManualIntent(Array.from(selectedFileIds))));
-      content.append(actionButton('Refresh FileIndex', loadFiles));
-    };
-    content.append(form, actionButton('Search files', loadFiles));
-  }
-  function currentSourcePayloadFromMembership(membership) {
-    const item = membership && Array.isArray(membership.memberships) &&
-      membership.memberships.length === 1 ? membership.memberships[0] : null;
-    if (!item || item.scanStatus !== 'ready' || item.fingerprintState !== 'verified' ||
-        !item.fileId || !item.resourceLibraryId || !item.occurrenceId || !item.fingerprint) {
-      return null;
-    }
-    return {
-      scopeKind: 'file', mode: 'incremental', fileId: item.fileId,
-      resourceLibraryId: item.resourceLibraryId, occurrenceId: item.occurrenceId,
-      fingerprint: item.fingerprint
-    };
-  }
-  function currentSourcePayloadFromFile(item) {
-    const occurrence = item && (item.currentOccurrence || {});
-    if (!item || item.scanStatus !== 'ready' || occurrence.state !== 'verified' ||
-        !item.fileId || !item.resourceLibraryId || !occurrence.occurrenceId ||
-        !occurrence.fingerprint) return null;
-    return {
-      scopeKind: 'file', mode: 'incremental', fileId: item.fileId,
-      resourceLibraryId: item.resourceLibraryId, occurrenceId: occurrence.occurrenceId,
-      fingerprint: occurrence.fingerprint
-    };
-  }
-  function manualPreviewPayloadFromFile(item) {
-    const scan = currentSourcePayloadFromFile(item);
-    if (!scan) return null;
-    return {scopeKind: 'file', resourceLibraryId: scan.resourceLibraryId,
-      occurrenceId: scan.occurrenceId, fingerprint: scan.fingerprint,
-      fileId: scan.fileId};
-  }
-  function manualPreviewPayloadFromMembership(membership) {
-    const item = membership && Array.isArray(membership.memberships) &&
-      membership.memberships.length === 1 ? membership.memberships[0] : null;
-    if (!item || item.scanStatus !== 'ready' || item.fingerprintState !== 'verified' ||
-        !item.fileId || !item.resourceLibraryId || !item.occurrenceId || !item.fingerprint) {
-      return null;
-    }
-    return {scopeKind: 'file', fileId: item.fileId,
-      resourceLibraryId: item.resourceLibraryId, occurrenceId: item.occurrenceId,
-      fingerprint: item.fingerprint};
-  }
   function confirmCurrentPreview(payload, label, onDone = null) {
     if (!payload || !payload.scopeKind || !payload.resourceLibraryId ||
         (payload.scopeKind === 'file' &&
           (!payload.fileId || !payload.occurrenceId || !payload.fingerprint))) {
-      message('Preview is unavailable until a verified current FileIndex occurrence is selected.', true);
+      message('Preview is unavailable until a verified live source selection is made.', true);
       return;
     }
     clear(detailContent);
     const confirmation = text('div', '', 'choices');
     confirmation.append(text('h2', 'Confirm current-source Preview'), text('p',
-      `${label || 'Run this bounded Preview'}? The current FileIndex occurrence and immutable ` +
+      `${label || 'Run this bounded Preview'}? The current source and immutable ` +
       'Active snapshot will be checked. The complete analysis is persisted for inspection; ' +
       'no Task, review backlog, execution authority or Storage mutation is created.', 'warning'));
     confirmation.append(actionButton('Confirm Preview', async () => {
@@ -2623,55 +2422,6 @@ APP_JS = b"""(() => {
           `Preview ResourceLibrary ${item.id}`)));
     });
     return section;
-  }
-  function confirmFileReprocess(id, data) {
-    const occurrence = data && data.currentOccurrence || {};
-    const required = data && data.reprocess && data.reprocess.required || occurrence;
-    const occurrenceId = required.occurrenceId || occurrence.occurrenceId;
-    const fingerprint = required.fingerprint || occurrence.fingerprint;
-    if (!occurrenceId || !fingerprint) {
-      message('Reprocess is unavailable because current source evidence is not verified.', true);
-      return;
-    }
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('p',
-      `Request bounded Reprocess for occurrence ${occurrenceId} with fingerprint ${fingerprint}? ` +
-      'This admits an auditable request only. It creates no Task, calls no Provider, and performs no Storage mutation.',
-      'warning'));
-    confirmation.append(actionButton('Confirm Reprocess admission', async () => {
-      try {
-        const result = await api(`/api/v1/files/${encodeURIComponent(id)}/reprocess`, {
-          method: 'POST', body: JSON.stringify({occurrenceId, fingerprint})
-        });
-        confirmation.remove();
-        message(`Reprocess admitted for ${result.occurrenceId}. No Task or media side effect occurred. ` +
-          `${result.nextAction || 'Create an organize summary in the task center.'}`);
-        await showDetail('files', id);
-      } catch (error) { message(errorText(error), true); }
-    }), actionButton('Keep current occurrence unchanged', () => confirmation.remove()));
-    detailContent.append(confirmation);
-  }
-  function confirmManualIntent(fileIds) {
-    const values = Array.from(new Set(fileIds || []));
-    if (!values.length || values.length > 100) {
-      message('Select between 1 and 100 current indexed files before starting manual organize.', true);
-      return;
-    }
-    clear(detailContent);
-    detailContent.append(text('h2', 'Confirm manual-organize intent'),
-      text('p', `Create one durable intent for ${values.length} indexed file(s)? ` +
-        'The exact FileIndex identities and current Managed Active snapshot will be pinned. ' +
-        'No Preview, Provider request, Task, authorization or media mutation occurs now.', 'warning'),
-      actionButton('Confirm create intent', async () => {
-        try {
-          const intent = await api('/api/v1/manual-intents', {
-            method: 'POST', body: JSON.stringify({fileIds: values})
-          });
-          message('Manual intent created. Review the pinned snapshot and choices below.');
-          await showManualIntent(intent.intentId);
-        } catch (error) { message(errorText(error), true); }
-      }), actionButton('Keep files unchanged', () => { detail.hidden = true; }));
-    detail.hidden = false;
   }
   function manualOption(options, id) {
     return (Array.isArray(options) ? options : []).find(item => item.id === id) || null;
@@ -2795,7 +2545,7 @@ APP_JS = b"""(() => {
     const confirmation = text('div', '', 'choices');
     confirmation.append(text('p',
       'Request a zero-mutation Preview for ' + values.length + ' item(s) at intent version ' +
-      intent.version + '? The pinned snapshot and exact FileIndex source identities will be ' +
+      intent.version + '? The pinned snapshot and exact live source identities will be ' +
       'checked. No file is renamed, moved, copied, deleted or overwritten.', 'warning'));
     confirmation.append(actionButton('Confirm Preview', async () => {
       try {
@@ -3829,16 +3579,11 @@ APP_JS = b"""(() => {
       pageNavigation(detailContent, 'items', data.previous_item_cursor, data.next_item_cursor,
         () => showTask(id, data.previous_item_cursor, resultCursor),
         () => showTask(id, data.next_item_cursor, resultCursor));
-      const results = (data.results || []).map(item => {
-        const sourceItem = (data.items || []).find(value => value.item_id === item.item_id) || {};
-        return [item.result_id, item.status, item.recognition_type || '-', item.title || '-',
-          item.operation || '-', item.destination_path || '-', item.created_at,
-          actionButton('Open file', () => openFileFromSource(item.source_storage_id ||
-            sourceItem.storage_id, sourceItem.resource_library_id, item.source_path ||
-            sourceItem.source_path))];
-      });
+      const results = (data.results || []).map(item => [item.result_id, item.status,
+        item.recognition_type || '-', item.title || '-', item.operation || '-',
+        item.destination_path || '-', item.created_at]);
       detailContent.append(text('h3', 'Results'), table(
-        ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created', 'File'],
+        ['ID', 'Status', 'Type', 'Title', 'Operation', 'Destination', 'Created'],
         results));
       if (data.results_truncated) detailContent.append(text('p',
         `Results truncated at ${data.result_limit}.`, 'warning'));
@@ -3969,9 +3714,6 @@ APP_JS = b"""(() => {
       field(list, 'Refusal reason', data.refusal_reason || 'none');
       detailContent.append(list);
       renderManualExecutionDiscovery(data.manualExecutionDiscovery);
-      detailContent.append(actionButton('Open File/Media detail',
-        () => openFileFromSource(data.source_storage_id, data.resource_library_id,
-          data.source_path)));
       const blocker = data.blocker && typeof data.blocker === 'object' ? data.blocker : null;
       if (blocker) {
         const blockerSection = text('div', '', 'choices');
@@ -4095,145 +3837,6 @@ APP_JS = b"""(() => {
       }
       detail.hidden = false;
     } catch (error) { message(errorText(error), true); }
-  }
-  function renderFileMediaSections(data) {
-    const evidence = Array.isArray(data.evidence) ? data.evidence : [];
-    detailContent.append(text('h3', `Captured pipeline evidence (${evidence.length})`));
-    if (!evidence.length) {
-      detailContent.append(text('p',
-        'No captured evidence is available for this legacy record. Unavailable fields are ' +
-        'shown explicitly and are never inferred from the current state.', 'warning'));
-    }
-    evidence.forEach(record => {
-      const sections = record.sections || {};
-      detailContent.append(text('h4',
-        `Attempt ${record.attempts || '-'} - ${record.outcome || '-'} (${record.evidenceId || '-'})`));
-      detailContent.append(table(['Field', 'Value'], [
-        ['Task', record.taskId], ['Item', record.itemId],
-        ['Configuration snapshot', record.configurationSnapshotId || '-'],
-        ['Configuration digest', record.configurationSnapshotDigest || '-'],
-        ['Captured', record.capturedAt], ['Error', record.error || 'none']
-      ]));
-      Object.keys(sections).forEach(name => {
-        const section = sections[name];
-        if (!section) return;
-        detailContent.append(text('h4',
-          `${name} - ${section.available ? 'available' : 'unavailable'}`));
-        if (section.unavailableReason) {
-          detailContent.append(text('p', section.unavailableReason, 'warning'));
-        }
-        if (section.value && Object.keys(section.value).length) {
-          const rows = Object.entries(section.value).map(([key, value]) => [key,
-            Array.isArray(value) ? value.join(', ') :
-              value === null || value === undefined ? '-' : String(value)]);
-          detailContent.append(table(['Field', 'Value'], rows));
-        }
-        if (Array.isArray(section.items) && section.items.length) {
-          detailContent.append(table(['Item'],
-            section.items.map(item => [JSON.stringify(item)])));
-        }
-        if (section.truncated) {
-          detailContent.append(text('p', 'This evidence section is truncated.', 'warning'));
-        }
-      });
-    });
-    const items = Array.isArray(data.items) ? data.items : [];
-    detailContent.append(text('h3', `Related TaskItems / checkpoints (${items.length})`));
-    if (items.length) {
-      detailContent.append(table(
-        ['Task', 'Item', 'Status', 'Stage', 'Updated', 'Checkpoint', 'TaskItem'],
-        items.map(item => [item.taskId, item.itemId, item.status, item.stage, item.updatedAt,
-          item.checkpoint && item.checkpoint.checkpoint_version || '-',
-          actionButton('Open checkpoint', () => showTaskItem(item.taskId, item.itemId))])));
-      items.forEach(item => {
-        const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ?
-          item.checkpoint : null;
-        if (!checkpoint) {
-          detailContent.append(text('p',
-            `Checkpoint for TaskItem ${item.itemId} is unavailable; no state is inferred.`,
-            'warning'));
-          return;
-        }
-        const effects = checkpoint.effects && typeof checkpoint.effects === 'object' ?
-          checkpoint.effects : {};
-        detailContent.append(text('h4', `Checkpoint history - ${item.itemId}`));
-        detailContent.append(table(['Field', 'Value'], [
-          ['Status', checkpoint.status || item.status],
-          ['Durable stage', checkpoint.stage || item.stage],
-          ['Raw stage', checkpoint.raw_stage || '-'],
-          ['Attempts', checkpoint.attempts],
-          ['Effect certainty', effects.certainty || 'unknown'],
-          ['Completed effects', Array.isArray(effects.completed_operations) &&
-            effects.completed_operations.length ? effects.completed_operations.join(', ') : 'none'],
-          ['Uncertain effects', Array.isArray(effects.uncertain_effects) &&
-            effects.uncertain_effects.length ? effects.uncertain_effects.join(', ') : 'none'],
-          ['Error category', checkpoint.error_category || 'none'],
-          ['Retry safety', checkpoint.retry_safety || 'unknown'],
-          ['Refusal reason', checkpoint.refusal_reason || 'none']
-        ]));
-        if (checkpoint.blocker) {
-          const blocker = checkpoint.blocker;
-          const blockerControls = text('div', '', 'choices');
-          blockerControls.append(text('p',
-            `${blocker.kind}: ${blocker.id} (${blocker.status})`));
-          if (blocker.resolution_path) blockerControls.append(actionButton('Open resolution',
-            () => showCheckpointBlocker(blocker.resolution_path)));
-          detailContent.append(blockerControls);
-        }
-        const audits = Array.isArray(checkpoint.audits) ? checkpoint.audits : [];
-        if (audits.length) {
-          detailContent.append(text('h5', `Checkpoint audits (${audits.length})`), table(
-            ['Audit', 'Kind', 'Occurred', 'Actor'],
-            audits.map(audit => [audit.audit_id, audit.kind, audit.occurred_at,
-              audit.actor || '-'])));
-        }
-        const recovery = Array.isArray(checkpoint.recovery_requests) ?
-          checkpoint.recovery_requests : [];
-        if (recovery.length) {
-          detailContent.append(text('h5', `Recovery requests (${recovery.length})`), table(
-            ['Request', 'Action', 'Status', 'Next action'],
-            recovery.map(request => [request.request_id, request.action_id, request.status,
-              request.next_action || '-'])));
-        }
-      });
-    }
-    const results = Array.isArray(data.results) ? data.results : [];
-    detailContent.append(text('h3', `Results / effects (${results.length})`));
-    if (results.length) {
-      detailContent.append(table(
-        ['Result', 'Status', 'Type', 'Operation', 'Destination', 'Effect certainty',
-          'Completed effects', 'Uncertain effects', 'Error', 'Created'],
-        results.map(result => [result.resultId, result.status, result.recognitionType || '-',
-          result.operation || '-', result.destinationPath || '-',
-          result.effectCertainty || 'unknown',
-          Array.isArray(result.completedOperations) && result.completedOperations.length ?
-            result.completedOperations.join(', ') : 'none',
-          Array.isArray(result.uncertainEffects) && result.uncertainEffects.length ?
-            result.uncertainEffects.join(', ') : 'none',
-          result.error || 'none', result.createdAt])));
-    }
-    const actions = Array.isArray(data.currentActions) ? data.currentActions : [];
-    detailContent.append(text('h3', `Current valid actions (${actions.length})`));
-    if (actions.length) {
-      detailContent.append(table(
-        ['Action', 'Item', 'Admissible', 'Confirmation', 'Authority', 'Resolution', 'Open'],
-        actions.map(action => [action.label || action.actionId, action.itemId,
-          action.admissible ? 'yes' : 'no',
-          action.confirmationRequired ? 'required' : 'not required',
-          action.requiredAuthority || '-', action.resolutionSurface || '-',
-          actionButton('Open checkpoint', () => action.resolutionSurface ?
-            showCheckpointBlocker(action.resolutionSurface) :
-            showTaskItem(action.taskId, action.itemId))])));
-    } else {
-      detailContent.append(text('p', items.length ?
-        'No replay control is exposed for the current terminal or ineligible state.' :
-        'No durable TaskItem state is available for this file.', 'warning'));
-    }
-    if (data.truncated && typeof data.truncated === 'object') {
-      Object.entries(data.truncated).filter(([, value]) => value).forEach(([name]) => {
-        detailContent.append(text('p', `${name} truncated; showing a bounded set.`, 'warning'));
-      });
-    }
   }
   function confirmRecoveryContinuation(taskId, itemId, checkpointVersion, action) {
     const confirmation = text('div', '', 'choices');
@@ -4370,90 +3973,6 @@ APP_JS = b"""(() => {
       const list = document.createElement('dl');
       Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== 'object')
         .forEach(([key, value]) => field(list, key, value)); detailContent.append(list);
-      if (kind === 'files') {
-        const discovery = data.discovery || {};
-        const processing = data.processing || {};
-        const occurrence = data.currentOccurrence || {};
-        detailContent.append(text('h3', 'Current-source lifecycle'));
-        detailContent.append(table(['Dimension', 'State', 'Evidence / next action'], [
-          ['Scan / discovery', discovery.status || data.scanStatus || '-',
-            `change ${discovery.change || data.change || '-'}; ` +
-            `last seen ${discovery.lastSeenAt || data.lastSeenAt || '-'}`],
-          ['Processing disposition', processing.disposition || data.processingDisposition || '-',
-            processing.nextAction || '-'],
-          ['Current occurrence', occurrence.occurrenceId || '-',
-            `fingerprint ${occurrence.fingerprint || '-'}; state ${occurrence.state || 'unverified'}`]
-        ]));
-        const previewPayload = manualPreviewPayloadFromFile(data);
-        if (previewPayload) {
-          detailContent.append(actionButton('Preview current source (DryRun)', () =>
-            confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${id}`)));
-        } else {
-          detailContent.append(text('p',
-            'Preview unavailable: select a verified ready current occurrence from FileIndex.',
-            'warning'));
-        }
-        const reprocess = data.reprocess || {};
-        if (reprocess.eligible === true) {
-          detailContent.append(actionButton('Request explicit Reprocess', () =>
-            confirmFileReprocess(id, data)));
-        } else {
-          detailContent.append(text('p',
-            `Reprocess unavailable: ${reprocess.reason || 'current occurrence is not eligible'}. ` +
-            'Refresh discovery or resolve the durable processing state before retrying.', 'warning'));
-        }
-        const history = Array.isArray(data.occurrenceHistory) ? data.occurrenceHistory : [];
-        if (history.length) {
-          detailContent.append(text('h3', `Occurrence history (${history.length})`), table(
-            ['Occurrence', 'State', 'Current', 'Processing disposition', 'First seen', 'Superseded'],
-            history.map(item => [item.occurrenceId, item.state, item.current ? 'yes' : 'no',
-              item.processingDisposition || '-', item.firstSeenAt || '-', item.supersededAt || '-'])));
-        }
-        const reprocessRequests = Array.isArray(data.reprocessRequests) ? data.reprocessRequests : [];
-        if (reprocessRequests.length) {
-          detailContent.append(text('h3', `Reprocess admissions (${reprocessRequests.length})`), table(
-            ['Request', 'Status', 'Actor', 'Occurrence', 'Next action'],
-            reprocessRequests.map(item => [item.requestId, item.status, item.actor,
-              item.occurrenceId, item.nextAction || '-'])));
-        }
-        renderManualExecutionDiscovery(data.manualExecutionDiscovery);
-        detailContent.append(actionButton('Start manual organize for this file', () =>
-          confirmManualIntent([id])));
-        if (data.latestResult && data.latestResult.taskId) {
-          detailContent.append(actionButton('Open linked task',
-            () => showTask(data.latestResult.taskId)));
-        }
-        const continuationReview = Array.isArray(data.relatedReviews)
-          ? data.relatedReviews.find(item => item.kind === 'metadata_correction' &&
-              item.status === 'resolved' && (item.canContinue || item.continuation))
-          : null;
-        if (continuationReview) renderMetadataContinuation(id, continuationReview);
-        if (Array.isArray(data.relatedReviews) && data.relatedReviews.length) {
-          const rows = data.relatedReviews.map(item => [item.kind, item.reviewId,
-            item.status, item.taskId, item.itemId || '-', item.continuation ?
-              item.continuation.status : '-',
-            actionButton('Open review', () => showDetail(
-              item.kind === 'conflict' ? 'confirmations' :
-                item.kind === 'metadata_correction' ? 'metadata-corrections' :
-                `${item.kind}-reviews`, item.reviewId))]);
-          detailContent.append(text('h3', 'Related reviews'),
-            table(['Kind', 'Review', 'Status', 'Task', 'Item', 'Continuation', 'Open'], rows));
-        }
-        renderFileMediaSections(data);
-      }
-      if (['confirmations', 'recognition-reviews', 'metadata-reviews',
-        'classification-reviews', 'metadata-corrections'].includes(kind) &&
-        (data.source_storage_id || data.sourceStorageId)) {
-        detailContent.append(actionButton('Open File/Media detail',
-          () => openFileFromSource(data.source_storage_id || data.sourceStorageId,
-            data.resource_library_id || data.resourceLibraryId,
-            data.source_path || data.sourcePath)));
-      } else if (['confirmations', 'recognition-reviews', 'metadata-reviews',
-        'classification-reviews', 'metadata-corrections'].includes(kind)) {
-        detailContent.append(text('p',
-          'File/Media link unavailable: this review has no durable source identity; no File ID is guessed.',
-          'warning'));
-      }
       if (kind === 'confirmations' && data.status === 'pending') renderConflictActions(id);
       if (kind === 'metadata-reviews' && data.status === 'pending') renderRankActions(kind, id, data.candidates || [],
         'candidateRank', ['rank', 'title', 'year', 'provider_id']);
@@ -4474,24 +3993,6 @@ APP_JS = b"""(() => {
     const link = text('a', 'Return to Storage management');
     link.href = '/ui-v2/storage';
     return link;
-  }
-  async function openFileFromSource(storageId, resourceLibraryId, path) {
-    if (!storageId || !path) {
-      message('File source identity is unavailable; the current file cannot be resolved.', true);
-      return;
-    }
-    const parts = [`storageId=${encodeURIComponent(storageId)}`,
-      `path=${encodeURIComponent(path)}`];
-    if (resourceLibraryId) parts.push(`resourceLibrary=${encodeURIComponent(resourceLibraryId)}`);
-    try {
-      const data = await api(`/api/v1/files/by-source?${parts.join('&')}`);
-      if (!data.available || !data.fileId) {
-        message(`File link unavailable: ${data.unavailableReason || 'no current indexed file'}`,
-          true);
-        return;
-      }
-      await showDetail('files', data.fileId);
-    } catch (error) { message(errorText(error), true); }
   }
   function renderConflictActions(id) {
     const actions = text('div', '', 'choices');
@@ -4527,7 +4028,6 @@ APP_JS = b"""(() => {
       else if (view === 'workers') await renderWorkers();
       else if (view === 'configuration') await renderConfiguration();
       else if (view === 'files') await renderFiles();
-      else if (view === 'file-index') await renderFileIndex();
       else await renderQueue(view); message('Connected.');
     } catch (error) { clear(content); message(errorText(error), true); }
   }

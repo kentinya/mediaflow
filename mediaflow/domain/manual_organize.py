@@ -248,7 +248,16 @@ class ManualChoice:
 
 @dataclass(frozen=True)
 class ManualSourceIdentity:
-    file_id: str
+    """One exact, bounded observation of a live Storage source.
+
+    ``source_id`` is a deterministic identity derived from the observed
+    Storage/library/path/fingerprint facts.  It exists so one operator selection
+    can be referred to within its own intent; it is not a catalog row, is not
+    looked up later and never makes an old selection authoritative.  Execution
+    admission re-observes the live source and compares the exact evidence below.
+    """
+
+    source_id: str
     storage_id: str
     resource_library_id: str
     path: str
@@ -256,24 +265,17 @@ class ManualSourceIdentity:
     extension: str
     size: int
     modified_at: datetime
-    last_seen_at: datetime
-    updated_at: datetime
+    observed_at: datetime
     stable_since: datetime | None
-    scan_status: str
-    last_scan_id: str | None
-    # These fields are optional for compatibility with pre-Slice-27 intents.  A
-    # current-source Preview must provide the verified occurrence identity and
-    # the Storage-derived fingerprint; legacy intents remain readable but are
-    # never promoted to an exact current-source selection.
     occurrence_id: str | None = None
     fingerprint: str | None = None
     fingerprint_algorithm: str | None = None
     fingerprint_evidence: dict[str, object] | None = None
-    occurrence_state: str = "legacy"
+    occurrence_state: str = "unverified"
 
     def __post_init__(self) -> None:
         for name, value, bound in (
-            ("file ID", self.file_id, MAX_MANUAL_ID_LENGTH),
+            ("source ID", self.source_id, MAX_MANUAL_ID_LENGTH),
             ("Storage ID", self.storage_id, MAX_MANUAL_ID_LENGTH),
             ("ResourceLibrary ID", self.resource_library_id, MAX_MANUAL_ID_LENGTH),
             # A real Storage filename uses its own filesystem bound; the exact
@@ -304,16 +306,6 @@ class ManualSourceIdentity:
             or len(self.extension) > 32
         ):
             raise ValueError("manual source extension is invalid")
-        if (
-            not isinstance(self.scan_status, str)
-            or not self.scan_status.strip()
-            or len(self.scan_status) > 32
-        ):
-            raise ValueError("manual source scan status is invalid")
-        if self.last_scan_id is not None and (
-            not isinstance(self.last_scan_id, str) or not _SAFE_ID.fullmatch(self.last_scan_id)
-        ):
-            raise ValueError("manual source scan ID is invalid")
         if self.occurrence_id is not None and (
             not isinstance(self.occurrence_id, str) or not _SAFE_ID.fullmatch(self.occurrence_id)
         ):
@@ -343,55 +335,32 @@ class ManualSourceIdentity:
                 raise ValueError("manual source fingerprint evidence is invalid") from error
             if len(encoded_evidence.encode("utf-8")) > 16 * 1024:
                 raise ValueError("manual source fingerprint evidence is too large")
-        if self.occurrence_state not in {"verified", "unverified", "legacy"}:
+        if self.occurrence_state not in {"verified", "unverified"}:
             raise ValueError("manual source occurrence state is invalid")
-        for value in (self.modified_at, self.last_seen_at, self.updated_at):
+        for value in (self.modified_at, self.observed_at):
             if not isinstance(value, datetime) or value.tzinfo is None:
                 raise ValueError("manual source timestamps must include timezone")
         if self.stable_since is not None and self.stable_since.tzinfo is None:
             raise ValueError("manual source stable timestamp must include timezone")
 
-    @classmethod
-    def from_file_record(cls, record) -> ManualSourceIdentity:
-        status = getattr(record.scan_status, "value", record.scan_status)
-        return cls(
-            record.file_id,
-            record.storage_id,
-            record.resource_library_id,
-            record.path,
-            record.filename,
-            record.extension,
-            record.size,
-            record.modified_at,
-            record.last_seen_at,
-            record.updated_at,
-            record.stable_since,
-            str(status),
-            record.last_scan_id,
-            getattr(record, "occurrence_id", None),
-            getattr(record, "fingerprint", None),
-            getattr(record, "fingerprint_algorithm", None),
-            copy.deepcopy(getattr(record, "fingerprint_evidence", None)),
-            str(
-                getattr(
-                    getattr(record, "occurrence_state", "legacy"),
-                    "value",
-                    getattr(record, "occurrence_state", "legacy"),
-                )
-            ),
+    @property
+    def ready(self) -> bool:
+        return (
+            self.occurrence_state == "verified"
+            and self.fingerprint is not None
+            and self.occurrence_id is not None
         )
 
     def stable_identity(self) -> tuple[object, ...]:
-        """Return source identity fields that do not change on a routine rescan.
+        """Return the exact observed identity that must not change.
 
-        ``last_seen_at``, ``updated_at``, ``stable_since`` and ``last_scan_id``
-        describe FileIndex observation history, not the media occurrence. The
-        occurrence ID and Storage-derived fingerprint are the authoritative
-        evidence for deciding whether the reviewed source is still the same.
+        The observation timestamps (``observed_at``/``stable_since``) describe
+        when the source was looked at, not what it is, so they are excluded: a
+        later observation of the *same* content is the same source.
         """
 
         return (
-            self.file_id,
+            self.source_id,
             self.storage_id,
             self.resource_library_id,
             self.path,
@@ -406,30 +375,12 @@ class ManualSourceIdentity:
             self.occurrence_state,
         )
 
-    @property
-    def is_storage_source(self) -> bool:
-        """Whether this identity came from live Storage instead of FileIndex.
-
-        A Files-originated source is built directly from the pinned
-        ResourceLibrary Storage (``create_from_sources``); it has no FileIndex
-        observation history and therefore must never be validated against a
-        FileIndex row.  A FileIndex-originated source keeps ``last_scan_id``.
-        """
-
-        return (
-            self.last_scan_id is None
-            and self.scan_status == "ready"
-            and self.fingerprint is not None
-            and self.fingerprint_algorithm is not None
-            and self.occurrence_state == "verified"
-        )
-
     @classmethod
     def from_document(cls, value: object) -> ManualSourceIdentity:
         if not isinstance(value, dict):
             raise ValueError("manual source identity must be an object")
         allowed = {
-            "fileId",
+            "sourceId",
             "storageId",
             "resourceLibraryId",
             "path",
@@ -437,11 +388,8 @@ class ManualSourceIdentity:
             "extension",
             "size",
             "modifiedAt",
-            "lastSeenAt",
-            "updatedAt",
+            "observedAt",
             "stableSince",
-            "scanStatus",
-            "lastScanId",
             "occurrenceId",
             "fingerprint",
             "fingerprintAlgorithm",
@@ -459,34 +407,37 @@ class ManualSourceIdentity:
             if not isinstance(raw, str):
                 raise ValueError(f"manual source {name} timestamp is invalid")
             try:
-                return datetime.fromisoformat(raw)
+                parsed = datetime.fromisoformat(raw)
             except ValueError as error:
                 raise ValueError(f"manual source {name} timestamp is invalid") from error
+            if parsed.tzinfo is None:
+                raise ValueError(f"manual source {name} timestamp must include timezone")
+            return parsed
 
-        return cls(
-            value.get("fileId", ""),
-            value.get("storageId", ""),
-            value.get("resourceLibraryId", ""),
-            value.get("path", ""),
-            value.get("filename", ""),
-            value.get("extension", ""),
-            value.get("size", -1),
-            timestamp("modifiedAt"),
-            timestamp("lastSeenAt"),
-            timestamp("updatedAt"),
-            timestamp("stableSince", optional=True),
-            value.get("scanStatus", ""),
-            value.get("lastScanId"),
-            value.get("occurrenceId"),
-            value.get("fingerprint"),
-            value.get("fingerprintAlgorithm"),
-            copy.deepcopy(value.get("fingerprintEvidence")),
-            value.get("occurrenceState", "legacy"),
-        )
+        try:
+            return cls(
+                value.get("sourceId", ""),
+                value.get("storageId", ""),
+                value.get("resourceLibraryId", ""),
+                value.get("path", ""),
+                value.get("filename", ""),
+                value.get("extension", ""),
+                value.get("size", -1),
+                timestamp("modifiedAt"),
+                timestamp("observedAt"),
+                timestamp("stableSince", optional=True),
+                value.get("occurrenceId"),
+                value.get("fingerprint"),
+                value.get("fingerprintAlgorithm"),
+                copy.deepcopy(value.get("fingerprintEvidence")),
+                value.get("occurrenceState", "unverified"),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("manual source identity document is invalid") from error
 
     def document(self) -> dict[str, object]:
         return {
-            "fileId": self.file_id,
+            "sourceId": self.source_id,
             "storageId": self.storage_id,
             "resourceLibraryId": self.resource_library_id,
             "path": self.path,
@@ -494,17 +445,46 @@ class ManualSourceIdentity:
             "extension": self.extension,
             "size": self.size,
             "modifiedAt": self.modified_at.isoformat(),
-            "lastSeenAt": self.last_seen_at.isoformat(),
-            "updatedAt": self.updated_at.isoformat(),
+            "observedAt": self.observed_at.isoformat(),
             "stableSince": self.stable_since.isoformat() if self.stable_since else None,
-            "scanStatus": self.scan_status,
-            "lastScanId": self.last_scan_id,
             "occurrenceId": self.occurrence_id,
             "fingerprint": self.fingerprint,
             "fingerprintAlgorithm": self.fingerprint_algorithm,
             "fingerprintEvidence": copy.deepcopy(self.fingerprint_evidence),
             "occurrenceState": self.occurrence_state,
         }
+
+    @classmethod
+    def from_discovered_file(cls, file) -> ManualSourceIdentity:
+        """Build the identity of one source observed by this walk.
+
+        All facts come from that single bounded Storage observation, so the
+        identity describes exactly what was seen and never implies the source is
+        still stable at a later time.
+        """
+
+        from mediaflow.domain.source_evidence import occurrence_id_for
+
+        source_id = occurrence_id_for(
+            file.storage_id, file.resource_library_id, file.path, file.fingerprint
+        )
+        return cls(
+            source_id,
+            file.storage_id,
+            file.resource_library_id,
+            file.path,
+            file.filename,
+            file.extension,
+            file.size,
+            file.modified_at,
+            file.discovered_at,
+            None,
+            file.occurrence_id,
+            file.fingerprint,
+            "storage-entry-sha256" if file.fingerprint else None,
+            None,
+            file.fingerprint_state,
+        )
 
 
 @dataclass(frozen=True)

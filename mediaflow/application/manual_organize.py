@@ -25,13 +25,37 @@ from mediaflow.domain.manual_organize import (
 )
 
 
+def _validate_snapshot_pair(snapshot_id: str | None, snapshot_digest: str | None) -> None:
+    """Require one complete, non-empty snapshot identity or none at all."""
+
+    if (snapshot_id is None) != (snapshot_digest is None):
+        raise ManualIntentError(
+            "configuration snapshot ID and digest must be supplied together",
+            code="malformed_snapshot",
+            next_action="reload the current Active snapshot and retry the bounded selection",
+        )
+    if snapshot_id is not None and (
+        not isinstance(snapshot_id, str)
+        or not snapshot_id.strip()
+        or not isinstance(snapshot_digest, str)
+        or not snapshot_digest.strip()
+    ):
+        raise ManualIntentError(
+            "configuration snapshot identity is invalid",
+            code="malformed_snapshot",
+            next_action="reload the current Active snapshot and retry the bounded selection",
+        )
+
+
 class ManualOrganizeIntentService:
     """Admit and persist the side-effect-free manual-organize intent boundary.
 
-    This service deliberately consumes only indexed FileIndex records and a
-    normalized configuration snapshot.  It never constructs a Storage adapter,
-    calls a Metadata provider, creates a Task/Plan, or grants execution
-    authority.
+    Every source arrives as an exact ``ManualSourceIdentity`` that the caller
+    observed from live Storage under the pinned Active ResourceLibrary.  This
+    service never enumerates Storage, never consults a file catalog, never calls
+    a Metadata provider, never creates a Task/Plan and never grants execution
+    authority.  It only validates the bounded selection against the pinned
+    configuration and persists the durable intent.
     """
 
     MAX_ITEMS = MAX_MANUAL_INTENT_ITEMS
@@ -39,7 +63,6 @@ class ManualOrganizeIntentService:
     def __init__(
         self,
         repository,
-        file_catalog,
         configuration_service=None,
         *,
         configuration_resolver: Callable[[], object] | None = None,
@@ -53,7 +76,6 @@ class ManualOrganizeIntentService:
         if isinstance(max_items, bool) or not 1 <= max_items <= MAX_MANUAL_INTENT_ITEMS:
             raise ValueError(f"manual intent limit must be between 1 and {MAX_MANUAL_INTENT_ITEMS}")
         self._repository = repository
-        self._file_catalog = file_catalog
         self._configuration_service = configuration_service
         self._configuration_resolver = configuration_resolver
         self._configuration = configuration
@@ -69,176 +91,38 @@ class ManualOrganizeIntentService:
 
     def create(
         self,
-        file_ids: Iterable[str],
+        sources: Iterable[ManualSourceIdentity],
         *,
         actor: str,
         snapshot_id: str | None = None,
         snapshot_digest: str | None = None,
         allow_unready: bool = False,
     ) -> ManualOrganizeIntent:
-        actor = self._actor(actor)
-        if not isinstance(allow_unready, bool):
-            raise ManualIntentError("manual intent allow_unready flag is invalid")
-        if (snapshot_id is None) != (snapshot_digest is None):
-            raise ManualIntentError(
-                "configuration snapshot ID and digest must be supplied together",
-                code="malformed_snapshot",
-                next_action="reload the current Active snapshot and retry the bounded selection",
-            )
-        if snapshot_id is not None and (
-            not isinstance(snapshot_id, str)
-            or not snapshot_id.strip()
-            or not isinstance(snapshot_digest, str)
-            or not snapshot_digest.strip()
-        ):
-            raise ManualIntentError(
-                "configuration snapshot identity is invalid",
-                code="malformed_snapshot",
-                next_action="reload the current Active snapshot and retry the bounded selection",
-            )
-        ids = self._selection(file_ids)
-        records = []
-        identities: set[tuple[str, str, str]] = set()
-        for file_id in ids:
-            record = self._resolve_file(file_id)
-            self._assert_selectable(record, allow_unready=allow_unready)
-            identity = (record.storage_id, record.resource_library_id, record.path)
-            if identity in identities:
-                raise ManualIntentError(
-                    "the selected files contain a duplicate source identity",
-                    code="duplicate_source",
-                    next_action="remove the duplicate and resubmit the bounded selection",
-                    details={"fileId": record.file_id},
-                )
-            identities.add(identity)
-            records.append(record)
+        """Create one durable intent from already-observed live sources.
 
-        snapshot = self._active_snapshot()
-        if snapshot_id is not None and (
-            snapshot.snapshot_id != snapshot_id or snapshot.digest != snapshot_digest
-        ):
-            raise ManualIntentConflict(
-                "the Active configuration changed before the manual intent was created",
-                next_action="reload the current Active configuration and resubmit the same files",
-                details={
-                    "currentSnapshotId": snapshot.snapshot_id,
-                    "currentSnapshotDigest": snapshot.digest,
-                },
-            )
-        now = self._clock()
-        intent_id = str(uuid4())
-        items: list[ManualIntentItem] = []
-        for position, record in enumerate(records):
-            choice = self.default_choice_for_source(record, snapshot)
-            try:
-                source = ManualSourceIdentity.from_file_record(record)
-            except ValueError as error:
-                raise ManualIntentError(
-                    "selected FileIndex source identity is malformed",
-                    code="source_invalid",
-                    next_action="repair the indexed source identity, then reload Files",
-                ) from error
-            items.append(
-                ManualIntentItem(
-                    str(uuid4()),
-                    intent_id,
-                    position,
-                    source,
-                    choice,
-                    ManualIntentItemStatus.READY,
-                    None,
-                    1,
-                    now,
-                    now,
-                )
-            )
-        intent = ManualOrganizeIntent(
-            intent_id,
-            actor,
-            snapshot.snapshot_id,
-            snapshot.digest,
-            ManualIntentStatus.OPEN,
-            1,
-            now,
-            now,
-            tuple(items),
-            snapshot,
-            "continue to a later manual Preview",
-            None,
-            (),
-        )
-        audit = ManualIntentAudit(
-            str(uuid4()),
-            intent_id,
-            None,
-            actor,
-            "created",
-            {},
-            {
-                "intentId": intent_id,
-                "configurationSnapshotId": snapshot.snapshot_id,
-                "configurationSnapshotDigest": snapshot.digest,
-                "itemIds": [item.item_id for item in items],
-                "fileIds": [item.source.file_id for item in items],
-            },
-            now,
-        )
-        persisted = self._persist_create(intent, audit)
-        return self._with_options(
-            persisted if isinstance(persisted, ManualOrganizeIntent) else intent,
-            snapshot,
-            self._repository.list_manual_intent_audit(intent_id),
-        )
-
-    def prepare_from_sources(
-        self,
-        sources: Iterable[ManualSourceIdentity],
-        *,
-        actor: str,
-        snapshot_id: str | None = None,
-        snapshot_digest: str | None = None,
-        pinned_snapshot: bool = False,
-    ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
-        """Build one manual intent projection without persisting it.
-
-        This is the validation/construction half of ``create_from_sources``:
-        it resolves the exact pinned snapshot, verifies every server-built
-        source identity and default choice, and returns the intent projection
-        plus its creation audit.  The ordinary Files path persists the result
-        through ``create_from_sources``; the bounded discovery finalize path
-        persists this exact projection inside the same repository transaction
-        that links it to its discovery, so a concurrent or lost-response
-        finalize can never leave an orphan intent behind.
+        ``sources`` must come from a bounded live Storage observation of the
+        pinned Active ResourceLibrary.  A source that is not verified, or that
+        lives outside a selected library, is rejected before anything is
+        persisted; ``allow_unready`` only relaxes the stability/readiness verdict
+        for a selection the operator has already seen, never the source identity.
         """
 
         actor = self._actor(actor)
-        if (snapshot_id is None) != (snapshot_digest is None):
-            raise ManualIntentError(
-                "configuration snapshot ID and digest must be supplied together",
-                code="malformed_snapshot",
-                next_action="reload the current Active snapshot and retry the bounded selection",
-            )
-        if pinned_snapshot and snapshot_id is None:
-            raise ManualIntentError(
-                "a pinned manual intent requires the exact configuration snapshot identity",
-                code="malformed_snapshot",
-                next_action="reload the paused run and request a fresh exact Preview",
-            )
-        values = tuple(sources)
-        if not 1 <= len(values) <= self._max_items:
-            raise ManualIntentError(
-                f"manual intent selection must contain between 1 and {self._max_items} files",
-                code="selection_empty" if not values else "selection_over_limit",
-            )
+        if not isinstance(allow_unready, bool):
+            raise ManualIntentError("manual intent allow_unready flag is invalid")
+        _validate_snapshot_pair(snapshot_id, snapshot_digest)
+        values = self._selection(sources)
         identities: set[tuple[str, str, str]] = set()
         for source in values:
-            if not isinstance(source, ManualSourceIdentity):
-                raise ManualIntentError("manual source identity is invalid", code="source_invalid")
-            if source.scan_status != "ready" or source.fingerprint is None:
+            if not self._source_selectable(source, allow_unready=allow_unready):
                 raise ManualIntentError(
-                    "manual source identity is not verified and ready",
-                    code="source_unverified",
-                    next_action="refresh Files and request a fresh Preview",
+                    "the selected source is not a verified ready live Storage item",
+                    code="source_stale",
+                    next_action="refresh the current directory and resubmit the bounded selection",
+                    details={
+                        "resourceLibraryId": source.resource_library_id,
+                        "path": source.path,
+                    },
                 )
             identity = (source.storage_id, source.resource_library_id, source.path)
             if identity in identities:
@@ -246,9 +130,31 @@ class ManualOrganizeIntentService:
                     "the selected files contain a duplicate source identity",
                     code="duplicate_source",
                     next_action="remove the duplicate and resubmit the bounded selection",
-                    details={"resourceLibraryId": source.resource_library_id, "path": source.path},
+                    details={"path": source.path},
                 )
             identities.add(identity)
+        intent, audit = self._build_intent(
+            values,
+            actor=actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+        )
+        persisted = self._persist_create(intent, audit)
+        return self._with_options(
+            persisted if isinstance(persisted, ManualOrganizeIntent) else intent,
+            intent.options,
+            self._repository.list_manual_intent_audit(intent.intent_id),
+        )
+
+    def _build_intent(
+        self,
+        values: tuple[ManualSourceIdentity, ...],
+        *,
+        actor: str,
+        snapshot_id: str | None,
+        snapshot_digest: str | None,
+        pinned_snapshot: bool = False,
+    ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
         if pinned_snapshot:
             # The pinned path never consults the current Active revision: the
             # exact historical revision the paused run was admitted under is the
@@ -336,6 +242,64 @@ class ManualOrganizeIntentService:
         )
         return intent, audit
 
+    def prepare_from_sources(
+        self,
+        sources: Iterable[ManualSourceIdentity],
+        *,
+        actor: str,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+        pinned_snapshot: bool = False,
+    ) -> tuple[ManualOrganizeIntent, ManualIntentAudit]:
+        """Build one manual intent projection without persisting it.
+
+        This is the validation/construction half of ``create_from_sources``:
+        it resolves the exact pinned snapshot, verifies every server-built
+        source identity and default choice, and returns the intent projection
+        plus its creation audit.  The ordinary Files path persists the result
+        through ``create_from_sources``; the bounded discovery finalize path
+        persists this exact projection inside the same repository transaction
+        that links it to its discovery, so a concurrent or lost-response
+        finalize can never leave an orphan intent behind.
+        """
+
+        actor = self._actor(actor)
+        _validate_snapshot_pair(snapshot_id, snapshot_digest)
+        if pinned_snapshot and snapshot_id is None:
+            raise ManualIntentError(
+                "a pinned manual intent requires the exact configuration snapshot identity",
+                code="malformed_snapshot",
+                next_action="reload the paused run and request a fresh exact Preview",
+            )
+        values = self._selection(sources)
+        identities: set[tuple[str, str, str]] = set()
+        for source in values:
+            if not self._source_selectable(source, allow_unready=False):
+                raise ManualIntentError(
+                    "manual source identity is not verified and ready",
+                    code="source_unverified",
+                    next_action="refresh the current directory and request a fresh summary",
+                )
+            identity = (source.storage_id, source.resource_library_id, source.path)
+            if identity in identities:
+                raise ManualIntentError(
+                    "the selected files contain a duplicate source identity",
+                    code="duplicate_source",
+                    next_action="remove the duplicate and resubmit the bounded selection",
+                    details={
+                        "resourceLibraryId": source.resource_library_id,
+                        "path": source.path,
+                    },
+                )
+            identities.add(identity)
+        return self._build_intent(
+            values,
+            actor=actor,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            pinned_snapshot=pinned_snapshot,
+        )
+
     def create_from_sources(
         self,
         sources: Iterable[ManualSourceIdentity],
@@ -348,9 +312,9 @@ class ManualOrganizeIntentService:
         """Create a manual intent from server-built live Storage source identities.
 
         This is the UI-V2 ResourceLibrary Files admission path.  The browser
-        supplies only ResourceLibrary-relative source selection; Preview builds
-        immutable SourceIdentity from Storage.stat and passes it here.  No
-        FileIndex row or fileId lookup is required on this path.
+        supplies only ResourceLibrary-relative source selection; the preparation
+        builds immutable SourceIdentity values from live Storage observations and
+        passes them here.  No file catalog or source lookup is required.
 
         ``pinned_snapshot`` is the one explicit opt-in for a *historical*
         published revision: the caller must supply both ``snapshot_id`` and
@@ -627,31 +591,28 @@ class ManualOrganizeIntentService:
 
     cancel_intent = cancel
 
-    def _selection(self, file_ids: Iterable[str]) -> tuple[str, ...]:
-        if isinstance(file_ids, (str, bytes)):
-            raise ManualIntentError("fileIds must be a bounded array", code="malformed_selection")
+    def _selection(
+        self, sources: Iterable[ManualSourceIdentity]
+    ) -> tuple[ManualSourceIdentity, ...]:
+        if isinstance(sources, (str, bytes)):
+            raise ManualIntentError(
+                "the source selection must be a bounded array", code="malformed_selection"
+            )
         try:
-            values = tuple(file_ids)
+            values = tuple(sources)
         except TypeError as error:
             raise ManualIntentError(
-                "fileIds must be a bounded array", code="malformed_selection"
+                "the source selection must be a bounded array", code="malformed_selection"
             ) from error
         if not 1 <= len(values) <= self._max_items:
             raise ManualIntentError(
                 f"manual selection must contain between 1 and {self._max_items} files",
                 code="selection_over_limit" if values else "selection_empty",
-                next_action="return to Files and select a non-empty bounded set of current files",
+                next_action="return to the current directory and select a non-empty bounded set",
             )
-        if any(not isinstance(value, str) or not value.strip() for value in values):
-            raise ManualIntentError(
-                "fileIds must contain non-empty strings", code="malformed_selection"
-            )
-        if len(set(values)) != len(values):
-            raise ManualIntentError(
-                "fileIds must not contain duplicates",
-                code="duplicate_selection",
-                next_action="remove duplicate file IDs and resubmit the bounded selection",
-            )
+        for value in values:
+            if not isinstance(value, ManualSourceIdentity):
+                raise ManualIntentError("manual source identity is invalid", code="source_invalid")
         return values
 
     @staticmethod
@@ -666,36 +627,32 @@ class ManualOrganizeIntentService:
             raise ManualIntentError(f"{name} must be a positive integer", code="malformed_version")
 
     def _resolve_choice_source(self, item, intent):
-        """Resolve one item's current source authority for a choice edit.
+        """Re-observe one item's live source before a choice edit is saved.
 
-        The two intent origins keep deliberately different authorities:
-
-        * a FileIndex-originated item is re-resolved against its current scoped
-          FileIndex occurrence, exactly as before; and
-        * a Files-originated item (created from the pinned Active
-          ResourceLibrary and live Storage) is re-observed against that live
-          Storage and deliberately needs no matching FileIndex row.
-
-        Both paths are zero-mutation and preserve the previous intent/item
-        versions on every rejection.
+        The item's immutable source identity is the reviewed authority: editing a
+        choice re-reads that exact source from the pinned Active ResourceLibrary
+        and rejects the edit if the observed content changed.  Saving a decision
+        never grants execution authority.
         """
 
-        source = item.source
-        if not isinstance(source, ManualSourceIdentity) or not source.is_storage_source:
-            record = self._resolve_file(source.file_id)
-            self._assert_source_unchanged(source, record)
-            return record
-        return self._validate_storage_source(source, intent)
+        return self._validate_storage_source(item.source, intent)
+
+    def _source_selectable(self, source: ManualSourceIdentity, *, allow_unready: bool) -> bool:
+        if not isinstance(source, ManualSourceIdentity):
+            return False
+        if source.ready:
+            return True
+        # An unready source may still be persisted as an explicit operator
+        # selection, but only when the caller observed it in the current
+        # directory; it can never carry execution authority in that state.
+        return bool(allow_unready and source.occurrence_state == "verified")
 
     def _validate_storage_source(
         self, source: ManualSourceIdentity, intent
     ) -> ManualSourceIdentity:
         # The effective resolver is the explicit injection when present and the
         # managed pinned-runtime resolver otherwise, exactly the authority the
-        # default validator was built with.  Checking the raw optional
-        # constructor field here would reject every Files-originated choice
-        # made through the production MediaFlowApi composition, which supplies
-        # only configuration_service and storage_factory.
+        # default validator was built with.
         if self._source_validator is None or self._effective_runtime_resolver() is None:
             raise ManualIntentUnavailable(
                 "the live Storage source authority required by this intent is unavailable",
@@ -758,107 +715,6 @@ class ManualOrganizeIntentService:
             snapshot_id=snapshot_id,
             digest=snapshot_digest,
         )
-
-    def _resolve_file(self, file_id: str):
-        repository = getattr(self._file_catalog, "_repository", None)
-        libraries = tuple(getattr(self._file_catalog, "_resource_library_ids", ()))
-        if repository is not None and libraries:
-            matches = []
-            finder = getattr(repository, "find_by_file_id", None)
-            if callable(finder):
-                for library_id in libraries:
-                    value = finder(file_id, resource_library_id=library_id)
-                    if value is not None:
-                        matches.append(value)
-            else:
-                # Compatibility fallback for older in-memory adapters that only
-                # expose the ResourceLibrary listing operation.
-                for library_id in libraries:
-                    values = repository.list_by_resource_library(library_id)
-                    matches.extend(value for value in values if value.file_id == file_id)
-            if not matches:
-                raise ManualIntentError(
-                    f"FileIndex record {file_id!r} was not found",
-                    code="source_missing",
-                    status=404,
-                    next_action="return to Files and select a current indexed file",
-                )
-            if len(matches) > 1:
-                raise ManualIntentError(
-                    "the FileIndex identity is ambiguous across ResourceLibraries",
-                    code="source_ambiguous",
-                    next_action="scope the Files selection to one ResourceLibrary and reload",
-                    details={"fileId": file_id},
-                )
-            return matches[0]
-        try:
-            return self._file_catalog.show(file_id)
-        except LookupError as error:
-            raise ManualIntentError(
-                str(error),
-                code="source_missing",
-                status=404,
-                next_action="return to Files and select a current indexed file",
-            ) from error
-
-    def _assert_selectable(self, record, *, allow_unready: bool = False) -> None:
-        configured_storages = tuple(getattr(self._file_catalog, "_storage_ids", ()))
-        if configured_storages and record.storage_id not in configured_storages:
-            raise ManualIntentError(
-                "selected FileIndex source belongs to an unconfigured Storage authority",
-                code="source_cross_authority",
-                next_action=(
-                    "return to Files and select a source from the current configured authority"
-                ),
-                details={"fileId": record.file_id, "storageId": record.storage_id},
-            )
-        status = getattr(record.scan_status, "value", record.scan_status)
-        if status != "ready" and not allow_unready:
-            raise ManualIntentError(
-                "selected FileIndex record is not currently ready",
-                code="source_stale",
-                next_action="refresh the File detail and select the current ready source",
-                details={"fileId": record.file_id, "scanStatus": str(status)},
-            )
-        if (
-            not isinstance(record.path, str)
-            or record.path.startswith(("/", "\\"))
-            or "\x00" in record.path
-        ):
-            raise ManualIntentError(
-                "selected source path is not a safe indexed Storage-relative identity",
-                code="source_invalid",
-                next_action="repair the FileIndex record, then reload Files",
-            )
-
-    def _assert_source_unchanged(
-        self,
-        source: ManualSourceIdentity,
-        record,
-        *,
-        allow_unready: bool = False,
-    ) -> None:
-        try:
-            self._assert_selectable(record, allow_unready=allow_unready)
-        except ManualIntentError as error:
-            raise error
-        try:
-            current = ManualSourceIdentity.from_file_record(record)
-        except ValueError as error:
-            raise ManualIntentError(
-                "selected FileIndex source identity is malformed",
-                code="source_invalid",
-                next_action="repair the indexed source identity, then reload Files",
-            ) from error
-        if current.stable_identity() != source.stable_identity():
-            raise ManualIntentError(
-                "selected FileIndex source changed after intent creation",
-                code="source_stale",
-                next_action=(
-                    "refresh/reopen the intent and create a new selection from current Files"
-                ),
-                details={"fileId": source.file_id},
-            )
 
     def _active_snapshot(self) -> ManualConfigurationSnapshot:
         try:
@@ -1049,12 +905,18 @@ class ManualOrganizeIntentService:
             ),
         )
 
-    def _default_choice(self, record, snapshot: ManualConfigurationSnapshot) -> ManualChoice:
+    def _default_choice(self, source, snapshot: ManualConfigurationSnapshot) -> ManualChoice:
         result = None
-        try:
-            result = self._file_catalog.detail(record.file_id).latest_result
-        except (LookupError, ValueError, AttributeError):
-            result = None
+        results = self._source_results(source)
+        if results:
+            ordered = sorted(
+                results,
+                key=lambda value: (
+                    getattr(value, "created_at", None),
+                    getattr(value, "result_id", ""),
+                ),
+            )
+            result = ordered[-1]
         by_type = {item.type_id: item for item in snapshot.recognition_types}
         selected_type = None
         if result is not None and result.recognition_type in by_type:
@@ -1360,7 +1222,11 @@ class ManualOrganizeIntentService:
                     "choose the normalized identity shown by this source's Result/evidence or "
                     "linked metadata review, then retry"
                 ),
-                details={"fileId": record.file_id, "authority": "source_linked_only"},
+                details={
+                    "resourceLibraryId": getattr(record, "resource_library_id", None),
+                    "path": getattr(record, "path", None),
+                    "authority": "source_linked_only",
+                },
             )
 
     def _metadata_authorities(
