@@ -223,7 +223,14 @@ class AuthorizedOperationMatrixTests(unittest.TestCase):
                 )
                 result = OrganizerExecutor().execute(plan, {"local": storage}, execute=True)
                 self.assertEqual(result.status, ExecutionStatus.SUCCESS, result.errors)
-                self.assertEqual(result.completed_operations[-1], operation.value)
+                self.assertLess(
+                    result.completed_operations.index(operation.value),
+                    next(
+                        index
+                        for index, step in enumerate(result.completed_operations)
+                        if step.startswith("ATTACHMENT:")
+                    ),
+                )
                 primary = root / "Movies/Movie/Movie.mkv"
                 subtitle = root / "Movies/Movie/Movie.en.srt"
                 self.assertEqual(primary.read_bytes(), b"video")
@@ -331,12 +338,10 @@ class AuthorizedOperationMatrixTests(unittest.TestCase):
                 {"source": source, "target": target},
                 execute=True,
             )
-            self.assertEqual(collision.status, ExecutionStatus.FAILED)
-            self.assertEqual(
-                classify_failure(execution=collision).category,
-                "attachment_collision",
-            )
-            self.assertFalse((target_root / "Movies/Movie/Movie.mkv").exists())
+            self.assertEqual(collision.status, ExecutionStatus.PARTIAL)
+            self.assertTrue(collision.primary_completed)
+            self.assertEqual(collision.attachment_results[0]["reason"], "attachment_collision")
+            self.assertTrue((target_root / "Movies/Movie/Movie.mkv").exists())
             self.assertEqual((target_root / "Movies/Movie/Movie.en.srt").read_bytes(), b"existing")
 
     def test_partial_failure_is_durable_and_refuses_automatic_replay(self) -> None:

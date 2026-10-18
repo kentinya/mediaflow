@@ -1507,6 +1507,16 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
     with state._manual_lock:
         if kind in state.recovery_runs:
             return dict(state.recovery_runs[kind])
+        if kind == "attachment":
+            # Earlier sequential browser cases intentionally leave admitted work.
+            # Settle only never-started fixture executions without running media effects.
+            for task in state.repository.list_tasks(limit=1000, command="manual_organize"):
+                for pending in state.repository.list_manual_executions_for_task(task.task_id):
+                    if pending.status.value == "admitted":
+                        state.api._manual_execution.fail_unstarted_execution(
+                            pending.execution_id,
+                            RuntimeError("prior browser fixture settled before next case"),
+                        )
         active = state.managed.active
         titles = {
             "recognition": "Recovery",

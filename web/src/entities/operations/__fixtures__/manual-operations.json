@@ -104,6 +104,7 @@
     "itemCount": 1,
     "items": [
       {
+        "attachmentResults": [],
         "completedOperations": [],
         "effectCertainty": "unknown",
         "effects": [],
@@ -123,6 +124,7 @@
         "itemId": "<uuid>",
         "nextAction": "admission committed; reconcile this execution before any mutation if startup is interrupted",
         "position": 0,
+        "primaryCompleted": false,
         "resultId": null,
         "stage": "admitted",
         "status": "admitted",
@@ -193,6 +195,7 @@
     "itemCount": 1,
     "items": [
       {
+        "attachmentResults": [],
         "completedOperations": ["CREATE_DIRECTORY", "MOVE"],
         "effectCertainty": "verified_complete",
         "effects": [
@@ -229,6 +232,7 @@
         "itemId": "<uuid>",
         "nextAction": "inspect the verified Result; no recovery replay is required",
         "position": 0,
+        "primaryCompleted": true,
         "resultId": "<uuid>",
         "stage": "completed",
         "status": "success",
@@ -301,6 +305,7 @@
         "itemCount": 1,
         "items": [
           {
+            "attachmentResults": [],
             "completedOperations": ["CREATE_DIRECTORY", "MOVE"],
             "effectCertainty": "verified_complete",
             "effects": [
@@ -337,6 +342,7 @@
             "itemId": "<uuid>",
             "nextAction": "inspect the verified Result; no recovery replay is required",
             "position": 0,
+            "primaryCompleted": true,
             "resultId": "<uuid>",
             "stage": "completed",
             "status": "success",

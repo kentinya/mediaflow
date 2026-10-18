@@ -588,6 +588,9 @@ class OrganizerExecutor:
                 tuple(created),
                 tuple(completed),
                 warnings=("primary verified complete; inspect independent attachment results",),
+                errors=("unattended authority refused before attachment mutation",)
+                if any(value["reason"] == "authority_refused" for value in attachment_results)
+                else (),
                 rollback_status=RollbackStatus.NOT_NEEDED
                 if plan.rollback_policy.enabled
                 else RollbackStatus.DISABLED,
