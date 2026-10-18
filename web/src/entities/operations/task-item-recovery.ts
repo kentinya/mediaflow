@@ -116,6 +116,7 @@ export interface TaskItemRecoveryModel {
   readonly manualRecoveryLink: ManualRecoveryLinkModel | null;
   readonly manualRecoveryPreparation: ManualRecoveryPreparationModel | null;
   readonly manualRecoveryAvailable: boolean;
+  readonly manualRecoveryAnalysisReady: boolean;
   readonly nextAction: string;
 }
 
@@ -465,10 +466,11 @@ export function normalizeTaskItemRecovery(
   const rawPreparation =
     source["manualRecoveryPreparation"] ??
     source["manual_recovery_preparation"];
+  const checkpoint = readCheckpoint(source["checkpoint"]);
   return {
     taskId: text(source, "task_id"),
     itemId: text(source, "item_id"),
-    checkpoint: readCheckpoint(source["checkpoint"]),
+    checkpoint,
     decision:
       rawDecision === null || rawDecision === undefined
         ? null
@@ -485,6 +487,10 @@ export function normalizeTaskItemRecovery(
       source["manualRecoveryAvailable"],
       "manualRecoveryAvailable",
     ),
+    manualRecoveryAnalysisReady:
+      source["manualRecoveryAnalysisReady"] === true ||
+      (source["manualRecoveryAnalysisReady"] === undefined &&
+        checkpoint.continuationStatus === "completed"),
     nextAction: text(source, "next_action"),
   };
 }

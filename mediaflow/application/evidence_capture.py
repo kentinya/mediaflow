@@ -11,6 +11,10 @@ from typing import Any
 from mediaflow.domain.manual_safety import contains_manual_secret, redact_evidence_text
 from mediaflow.domain.media_evidence import (
     EVIDENCE_SECTION_NAMES,
+    EXECUTION_IDENTITY_BYTE_LIMIT,
+    EXECUTION_IDENTITY_ITEM_LIMIT,
+    EXECUTION_IDENTITY_SIZE_LIMIT_REASON,
+    EXECUTION_IDENTITY_TEXT_LIMIT,
     EvidenceSection,
     PipelineEvidence,
 )
@@ -27,9 +31,6 @@ _MAX_ITEM_TEXT = 256
 _MAX_ERROR = 1000
 _MAX_ITEMS = 64
 _MAX_SCORE_COMPONENTS = 16
-_MAX_EXECUTION_IDENTITY_TEXT = 4096
-_MAX_EXECUTION_IDENTITY_ITEMS = 256
-_MAX_EXECUTION_IDENTITY_BYTES = 131072
 
 PREVIEW_CONFLICT_NEXT_ACTION = (
     "this analysis-only finding is not execution authority; run the explicit real "
@@ -80,6 +81,12 @@ def build_pipeline_evidence(
     }
     warnings = _collect_warnings(sections)
     truncated = any(section.truncated for section in sections.values())
+    identity = (
+        strategy.metadata.identity
+        if strategy is not None and strategy.metadata is not None
+        else None
+    )
+    execution_identity, identity_unavailable_reason = _execution_identity_document(identity)
     return PipelineEvidence(
         evidence_id=evidence_id,
         task_id=task.task_id,
@@ -92,11 +99,8 @@ def build_pipeline_evidence(
         configuration_snapshot_digest=getattr(task, "configuration_snapshot_digest", None),
         outcome=outcome,
         sections=sections,
-        execution_identity=_execution_identity_document(
-            strategy.metadata.identity
-            if strategy is not None and strategy.metadata is not None
-            else None
-        ),
+        execution_identity=execution_identity,
+        execution_identity_unavailable_reason=identity_unavailable_reason,
         warnings=warnings,
         error=_safe_error(error),
         truncated=truncated,
@@ -386,7 +390,11 @@ def _metadata_section(strategy) -> EvidenceSection:
     )
 
 
-def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
+class _ExecutionIdentityTooLarge(ValueError):
+    """The normalized identity exceeded an explicit persistence size bound."""
+
+
+def _execution_identity_document(identity: Any) -> tuple[dict[str, Any] | None, str | None]:
     """Capture a bounded normalized identity separate from display evidence.
 
     Values outside this snapshot's explicit size/type limits are not clipped:
@@ -395,20 +403,24 @@ def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
     """
 
     if identity is None:
-        return None
+        return None, None
 
     def exact_text(value: Any, *, optional: bool = False) -> str | None:
         if value is None and optional:
             return None
         if not isinstance(value, str) or (not optional and not value):
             raise ValueError("identity text is missing")
-        if len(value) > _MAX_EXECUTION_IDENTITY_TEXT or contains_manual_secret(value):
+        if len(value) > EXECUTION_IDENTITY_TEXT_LIMIT:
+            raise _ExecutionIdentityTooLarge
+        if contains_manual_secret(value):
             raise ValueError("identity text is outside the safe persistence bound")
         return value
 
     def exact_texts(values: Any) -> list[str]:
-        if not isinstance(values, (list, tuple)) or len(values) > _MAX_EXECUTION_IDENTITY_ITEMS:
+        if not isinstance(values, (list, tuple)):
             raise ValueError("identity list is outside the safe persistence bound")
+        if len(values) > EXECUTION_IDENTITY_ITEM_LIMIT:
+            raise _ExecutionIdentityTooLarge
         result = []
         for value in values:
             normalized = exact_text(value)
@@ -418,11 +430,10 @@ def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
 
     try:
         external_ids = []
-        if (
-            not isinstance(identity.external_ids, (list, tuple))
-            or len(identity.external_ids) > _MAX_EXECUTION_IDENTITY_ITEMS
-        ):
-            return None
+        if not isinstance(identity.external_ids, (list, tuple)):
+            return None, None
+        if len(identity.external_ids) > EXECUTION_IDENTITY_ITEM_LIMIT:
+            raise _ExecutionIdentityTooLarge
         for provider, provider_id in identity.external_ids:
             external_ids.append(
                 {
@@ -432,20 +443,19 @@ def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
             )
 
         episodes = list(identity.episodes)
-        if len(episodes) > _MAX_EXECUTION_IDENTITY_ITEMS or any(
-            not isinstance(value, int) or isinstance(value, bool) for value in episodes
-        ):
-            return None
+        if len(episodes) > EXECUTION_IDENTITY_ITEM_LIMIT:
+            raise _ExecutionIdentityTooLarge
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in episodes):
+            return None, None
 
         episode_metadata = []
-        if (
-            not isinstance(identity.episode_metadata, (list, tuple))
-            or len(identity.episode_metadata) > _MAX_EXECUTION_IDENTITY_ITEMS
-        ):
-            return None
+        if not isinstance(identity.episode_metadata, (list, tuple)):
+            return None, None
+        if len(identity.episode_metadata) > EXECUTION_IDENTITY_ITEM_LIMIT:
+            raise _ExecutionIdentityTooLarge
         for episode in identity.episode_metadata:
             if not isinstance(episode.episode, int) or isinstance(episode.episode, bool):
-                return None
+                return None, None
             episode_metadata.append(
                 {
                     "episode": episode.episode,
@@ -461,7 +471,7 @@ def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
             or isinstance(confidence, bool)
             or not math.isfinite(confidence)
         ):
-            return None
+            return None, None
         document = {
             "version": 1,
             "provider": exact_text(identity.provider),
@@ -495,15 +505,17 @@ def _execution_identity_document(identity: Any) -> dict[str, Any] | None:
         encoded = json.dumps(
             document, ensure_ascii=False, allow_nan=False, separators=(",", ":")
         ).encode("utf-8")
-        if len(encoded) > _MAX_EXECUTION_IDENTITY_BYTES:
-            return None
+        if len(encoded) > EXECUTION_IDENTITY_BYTE_LIMIT:
+            return None, EXECUTION_IDENTITY_SIZE_LIMIT_REASON
         # The standard evidence redactor must leave this execution snapshot
         # byte-for-byte intact or it is not safe to reuse.
         if redact_evidence_text(encoded.decode("utf-8")) != encoded.decode("utf-8"):
-            return None
-        return document
+            return None, None
+        return document, None
+    except _ExecutionIdentityTooLarge:
+        return None, EXECUTION_IDENTITY_SIZE_LIMIT_REASON
     except (AttributeError, TypeError, ValueError):
-        return None
+        return None, None
 
 
 def _bounded_episode_metadata(values: Any) -> list[dict[str, Any]]:

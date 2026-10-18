@@ -7,7 +7,8 @@ database with the *actual Task Base code* (schema 45, no
 ``manual_recovery_preparations`` table), seeds representative durable state,
 then reopens that database with the current candidate repository and verifies:
 
-* the additive schema bump (45 -> 46) and the new preparation columns exist;
+* the additive schema bump (45 -> 46), new preparation columns, and bounded
+  parent-continuation lookup index exist;
 * the seeded **real** published configuration revision, manual intent/item,
   exact Preview/PreviewItem, one-shot authorization (one active, one already
   consumed), recovery continuation/link and Task/Result facts are byte-for-byte
@@ -509,6 +510,16 @@ def _read_facts(database: Path) -> dict[str, object]:
             if "manual_recovery_preparations" in tables
             else set()
         )
+        continuation_indexes = (
+            {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA index_list(recovery_continuations)"
+                ).fetchall()
+            }
+            if "recovery_continuations" in tables
+            else set()
+        )
         task_pins = [
             dict(row)
             for row in connection.execute(
@@ -528,6 +539,7 @@ def _read_facts(database: Path) -> dict[str, object]:
         "schema": marker,
         "hasPreparationTable": "manual_recovery_preparations" in tables,
         "preparationColumns": sorted(columns),
+        "recoveryContinuationIndexes": sorted(continuation_indexes),
         "results": results,
         "links": link,
         "authorizations": authorizations,
@@ -882,6 +894,7 @@ def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> 
     before = _read_facts(target)
     assert before["schema"] == BASE_SCHEMA
     assert before["hasPreparationTable"] is True
+    assert "recovery_continuations_task_created" not in before["recoveryContinuationIndexes"]
     assert "selected_item_ids_json" not in before["preparationColumns"]
     assert before["preparationColumns"] == [
         "actor",
@@ -940,6 +953,7 @@ def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> 
     # every old durable fact is untouched.
     assert after["schema"] == BASE_SCHEMA, after["schema"]
     assert after["preparationColumns"] == before["preparationColumns"]
+    assert after["recoveryContinuationIndexes"] == before["recoveryContinuationIndexes"]
     assert after["results"] == before["results"]
     assert after["links"] == before["links"]
     assert after["authorizations"] == before["authorizations"]
@@ -955,6 +969,7 @@ def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> 
     recovered = _read_facts(target)
     assert recovered["schema"] == CANDIDATE_SCHEMA
     assert "selected_item_ids_json" in recovered["preparationColumns"]
+    assert "recovery_continuations_task_created" in recovered["recoveryContinuationIndexes"]
     assert recovered["links"] == before["links"]
     assert recovered["authorizations"] == before["authorizations"]
     assert recovered["results"] == before["results"]
@@ -990,6 +1005,7 @@ def main() -> int:
             old = _read_facts(database)
             report["oldDatabase"] = old
             assert old["schema"] == BASE_SCHEMA, old["schema"]
+            assert "recovery_continuations_task_created" not in old["recoveryContinuationIndexes"]
             assert old["hasPreparationTable"] is False
             assert old["manualExecutions"] == 1
             assert {value["status"] for value in old["authorizations"]} == {
@@ -1011,6 +1027,9 @@ def main() -> int:
             after_open = migrated["afterOpen"]
             final_facts = migrated["facts"]
             assert after_open["schema"] == CANDIDATE_SCHEMA
+            assert (
+                "recovery_continuations_task_created" in after_open["recoveryContinuationIndexes"]
+            )
             assert after_open["hasPreparationTable"] is True
             assert "selected_item_ids_json" in after_open["preparationColumns"]
             assert "allow_overwrite" in after_open["preparationColumns"]
@@ -1033,6 +1052,9 @@ def main() -> int:
             assert final_facts["taskPins"] == old["taskPins"]
             assert final_facts["intentPins"] == old["intentPins"]
             assert final_facts["manualExecutions"] == old["manualExecutions"]
+            assert (
+                "recovery_continuations_task_created" in final_facts["recoveryContinuationIndexes"]
+            )
             report["legacyIdentityHandling"] = (
                 "fresh Worker analysis required; no Provider fallback or old authorization use"
             )

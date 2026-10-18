@@ -476,7 +476,7 @@ export function TaskItemRecoveryPanel({
   const linked = model?.manualRecoveryLink ?? null;
   const canPreparePreview =
     model?.manualRecoveryAvailable === true &&
-    checkpoint?.continuationStatus === "completed" &&
+    model.manualRecoveryAnalysisReady &&
     confirmedPreparation === null &&
     (linked === null || linked.status === "stale");
 
@@ -669,6 +669,30 @@ export function TaskItemRecoveryPanel({
             )}
         </StatusBanner>
       )}
+      {checkpoint?.continuationStatus === "failed" &&
+        checkpoint.continuationTaskId &&
+        checkpoint.continuationItemId && (
+          <StatusBanner variant="warning" title="单项分析发现新的审核事项">
+            <p>
+              原恢复记录仍保留为失败。请在关联条目处理新问题并继续安全分析；
+              分析完成后返回此条目生成新的计划摘要。
+            </p>
+            {onOpenLinkedAnalysis && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  onOpenLinkedAnalysis(
+                    checkpoint.continuationTaskId!,
+                    checkpoint.continuationItemId!,
+                  )
+                }
+              >
+                查看关联分析条目
+              </button>
+            )}
+          </StatusBanner>
+        )}
       {canPreparePreview && checkpoint !== null && (
         <div className="mf-count-section">
           <h6>原手动整理恢复</h6>

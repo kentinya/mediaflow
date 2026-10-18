@@ -1,5 +1,11 @@
-import { readFileSync } from "node:fs";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { mkdirSync, readFileSync } from "node:fs";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 /**
  * Real-Python browser proof for the unified run inventory (Task 42.1) and the
@@ -34,6 +40,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 const TOKEN = "harness-viewer-token";
 const ADMIN_TOKEN = "harness-admin-token";
 const BASE = "http://127.0.0.1:4183";
+const TASK45_RECOVERY_EVIDENCE = "test-results/task45.3-recovery-evidence";
 
 /** The four runs seeded by real producers: two Jobs and two Tasks. */
 const SEEDED_RUN_TOTAL = 4;
@@ -104,6 +111,176 @@ function recordApiCalls(
     }
   });
   return api;
+}
+
+type NativeRecoveryKind =
+  "metadata" | "metadata_correction" | "classification" | "conflict";
+
+type NativeRecoverySeed = {
+  readonly runId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly sourcePath: string;
+  readonly providerId: string;
+  readonly targetPath: string;
+};
+
+async function seedNativeRecovery(
+  request: APIRequestContext,
+  kind: NativeRecoveryKind | "technical",
+): Promise<NativeRecoverySeed> {
+  const response = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery?kind=${kind}`,
+  );
+  expect(response.ok()).toBeTruthy();
+  return (await response.json()) as NativeRecoverySeed;
+}
+
+async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page
+    .getByRole("row")
+    .filter({ hasText: seeded.sourcePath });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  const sourceItem = items.getByRole("row").filter({
+    hasText: seeded.sourcePath,
+  });
+  await expect(sourceItem).toHaveCount(1);
+  await sourceItem.getByRole("button", { name: "查看证据" }).click();
+  return {
+    detail,
+    recovery: detail.getByRole("region", { name: "条目审核与恢复" }),
+  };
+}
+
+async function chooseNativeRecoveryDecision(
+  page: Page,
+  recovery: Locator,
+  seeded: NativeRecoverySeed,
+  kind: NativeRecoveryKind,
+): Promise<void> {
+  if (kind === "metadata_correction") {
+    const searchResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/metadata-search`,
+    );
+    await recovery
+      .getByRole("button", { name: "显式搜索 Metadata Provider" })
+      .click();
+    expect((await searchResponse).status()).toBe(200);
+    const candidate = recovery.getByRole("radio", {
+      name: new RegExp(`${seeded.providerId}$`),
+    });
+    await expect(candidate).toBeVisible();
+    await candidate.check();
+  } else if (kind === "conflict") {
+    await recovery
+      .getByRole("radio", { name: "重命名目标(保留现有文件)" })
+      .check();
+  } else {
+    await recovery.getByRole("radio").first().check();
+  }
+
+  const decisionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
+  );
+  const continuationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+  );
+  await recovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await decisionResponse).status()).toBe(200);
+  expect((await continuationResponse).status()).toBe(202);
+}
+
+async function finishNativeRecovery(
+  page: Page,
+  request: APIRequestContext,
+  recovery: Locator,
+  seeded: NativeRecoverySeed,
+): Promise<void> {
+  let state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state).toMatchObject({ sourceExists: true });
+  const providerCallsAfterAnalysis = state.providerCalls;
+  if (seeded.targetPath) {
+    expect(state.conflictTargetPreserved).toBe(true);
+  }
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+  await expect(
+    recovery.getByRole("button", { name: "生成计划摘要并在此确认" }),
+  ).toBeVisible();
+  await recovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText(seeded.sourcePath);
+  state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state.sourceExists).toBe(true);
+  expect(state.providerCalls).toBe(providerCallsAfterAnalysis);
+  if (seeded.targetPath) {
+    expect(state.conflictTargetPreserved).toBe(true);
+  }
+
+  const confirmResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
+  const confirmed = await confirmResponse;
+  expect(confirmed.status()).toBe(202);
+  const confirmation = (await confirmed.json()) as {
+    readonly executionId: string;
+    readonly selectedItemIds: readonly string[];
+  };
+  expect(confirmation.selectedItemIds).toHaveLength(1);
+  await expect(page).toHaveURL(
+    new RegExp(`/operations/organize/execution/${confirmation.executionId}`),
+  );
+  const worker = await (
+    await request.post(`${BASE}/__harness__/run-manual-worker`)
+  ).json();
+  expect(worker).toMatchObject({ completed: true, status: "completed" });
+  state = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(state.sourceExists).toBe(false);
+  expect(state.sourceResultHistory.length).toBeGreaterThan(0);
+  if (seeded.targetPath) {
+    expect(state.conflictTargetPreserved).toBe(true);
+  } else {
+    expect(
+      state.targetFiles.some((path: string) =>
+        path.includes(seeded.sourcePath.split(".")[0]),
+      ),
+    ).toBe(true);
+  }
 }
 
 async function openInventory(page: Page): Promise<void> {
@@ -1780,23 +1957,37 @@ test("a mutation-authorized paused run without live authority is refused nativel
   page,
   request,
 }) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
   // A paused Task that was admitted as a mutation but owns no live reusable
   // authority. Its `execute_authorized` boolean is NOT authority, so the
   // backend must refuse Continue and name the native exact-Preview journey.
   const created = await (
     await request.post(`${BASE}/__harness__/seed-authority-refusal`)
   ).json();
+  const api = recordApiCalls(page);
   const taskId = created.taskId as string;
   expect(taskId).toBeTruthy();
   expect(created.scope).toBe("Authority");
+  expect(created.taskSnapshotId).not.toBe(created.activeSnapshotId);
   expect(created.remainingSources).toEqual([
     "Seven.2007.mkv",
     "Eight.2008.mkv",
   ]);
+  const authorityBefore = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  expect(authorityBefore).toMatchObject({
+    available: true,
+    taskSnapshotId: created.taskSnapshotId,
+    activeSnapshotId: created.activeSnapshotId,
+    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
+    destinationFiles: [],
+  });
 
   // The native recovery entry is bound to the permission that would really
   // admit it, so this journey connects the principal that holds it.
   await connect(page, ADMIN_TOKEN);
+  await page.setViewportSize({ width: 1536, height: 1024 });
   await openInventory(page);
   const row = page.getByRole("row").filter({ hasText: "Authority" });
   await expect(row).toHaveCount(1);
@@ -1818,31 +2009,9 @@ test("a mutation-authorized paused run without live authority is refused nativel
   await expect(controls).toContainText("exact Preview");
   await expect(controls).not.toContainText("mediaflow tasks");
 
-  // The refusal also publishes the *native* recovery entry RO-3/RO-5 promise,
-  // so the operator is never left with copy and no surface.  Driving it admits a
-  // real zero-mutation exact remaining-scope Preview whose summary is reviewed
-  // and confirmed in this same panel; no standalone Preview is required.
-  const summaryButton = controls.getByRole("button", {
-    name: "在当前界面生成剩余范围摘要",
-  });
-  await expect(summaryButton).toBeVisible();
-  await summaryButton.click();
-  const summary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible();
-  // The reviewed scope is exactly the run's own remaining sources: nothing
-  // outside the run's admitted scope is ever reviewed.
-  await expect(summary).toContainText("Seven.2007.mkv");
-  await expect(summary).toContainText("Eight.2008.mkv");
-  await expect(summary).not.toContainText("One.2001.mkv");
-  // The summary grants no authority: the operator must still explicitly
-  // confirm the ready subset here.
-  await expect(
-    summary.getByRole("button", { name: /确认继续整理剩余 \d+ 项/ }),
-  ).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
-
-  // Return to the run and prove a direct deliberate POST is refused atomically
-  // with the same reason, and queues no work.
+  // The stored execute flag cannot resume the paused run on its own. The
+  // direct control is refused atomically before the native Preview path is
+  // entered.
   const projectionResponse = await request.get(
     `${BASE}/api/v1/tasks/${taskId}`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
@@ -1859,6 +2028,290 @@ test("a mutation-authorized paused run without live authority is refused nativel
   expect(refusal.error.details.sideEffects).toBe("none");
   expect(refusal.error.details.nextAction).toContain("exact Preview");
   expect(refusal.error.details.nextAction).not.toContain("mediaflow tasks");
+
+  // The refusal also publishes the *native* recovery entry RO-3/RO-5 promise,
+  // so the operator is never left with copy and no surface.  Driving it admits a
+  // real zero-mutation exact remaining-scope Preview whose summary is reviewed
+  // and confirmed in this same panel; no standalone Preview is required.
+  const summaryButton = controls.getByRole("button", {
+    name: "在当前界面生成剩余范围摘要",
+  });
+  await expect(summaryButton).toBeVisible();
+  await summaryButton.click();
+  const summary = detail.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  // The reviewed scope is exactly the run's own remaining sources: nothing
+  // outside the run's admitted scope is ever reviewed.
+  await expect(summary).toContainText("Seven.2007.mkv");
+  await expect(summary).toContainText("Eight.2008.mkv");
+  await expect(summary).not.toContainText("One.2001.mkv");
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/paused-authority-exact-summary-1536x1024.png`,
+    fullPage: false,
+  });
+  // The summary grants no authority: the operator must still explicitly
+  // confirm the ready subset here.
+  await expect(
+    summary.getByRole("button", { name: /确认继续整理剩余 \d+ 项/ }),
+  ).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
+
+  // The Preview remained pinned to A after B became Active. The summary is
+  // still zero-mutation; only the explicit confirmation below admits work.
+  expect(
+    await (
+      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+    ).json(),
+  ).toMatchObject({
+    taskSnapshotId: created.taskSnapshotId,
+    activeSnapshotId: created.activeSnapshotId,
+    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
+    destinationFiles: [],
+  });
+
+  // The API commits the exact reviewed subset, then the browser loses only the
+  // response. It must expose an unknown state and reconcile this admission by
+  // its exact Preview/selection identity; no automatic replay is allowed.
+  let droppedConfirmationResponse = false;
+  let committedAdmissionStatus: number | null = null;
+  await page.route(
+    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    async (route) => {
+      if (droppedConfirmationResponse) {
+        await route.continue();
+        return;
+      }
+      droppedConfirmationResponse = true;
+      const admitted = await route.fetch();
+      committedAdmissionStatus = admitted.status();
+      // Model a proxy losing the successful upstream response after commit:
+      // the browser sees an unavailable response while the backend has the
+      // exact durable admission for reconciliation.
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "upstream_timeout" } }),
+      });
+    },
+  );
+  const executeButton = summary.getByRole("button", {
+    name: "确认继续整理剩余 2 项",
+  });
+  await executeButton.focus();
+  await expect(executeButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  const runDetail = page.getByRole("region", { name: "运行详情" });
+  await expect(runDetail).toContainText(
+    "确认响应未送达，暂时无法判断是否已受理",
+    { timeout: 5_000 },
+  );
+  await expect(
+    runDetail.getByRole("button", { name: "核对本次确认的持久状态" }),
+  ).toBeVisible();
+  await runDetail.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/paused-authority-unknown-confirmation-1536x1024.png`,
+    fullPage: false,
+  });
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+          entry.path,
+        ),
+    ),
+  ).toHaveLength(1);
+  expect(committedAdmissionStatus).toBe(202);
+  expect(
+    await (
+      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+    ).json(),
+  ).toMatchObject({
+    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
+    destinationFiles: [],
+  });
+
+  const reconcileButton = runDetail.getByRole("button", {
+    name: "核对本次确认的持久状态",
+  });
+  await reconcileButton.focus();
+  await expect(reconcileButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(runDetail).toContainText(
+    "已读回本次确认的持久状态：该精确子集已经受理",
+  );
+
+  // Reopen the Python runtime over the same SQLite file, then reconnect at the
+  // selected paused run. The durable overview restores the admitted execution
+  // link and never replays the lost confirmation.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  const restoredDetail = page.getByRole("region", { name: "运行详情" });
+  await expect(restoredDetail).toBeVisible();
+  await expect(
+    restoredDetail.getByRole("button", { name: "打开链接的继续运行" }),
+  ).toBeVisible();
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/.test(
+          entry.path,
+        ),
+    ),
+  ).toHaveLength(1);
+  expect(
+    await (
+      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+    ).json(),
+  ).toMatchObject({
+    taskSnapshotId: created.taskSnapshotId,
+    activeSnapshotId: created.activeSnapshotId,
+    sourceFiles: { "Seven.2007.mkv": true, "Eight.2008.mkv": true },
+    destinationFiles: [],
+  });
+
+  await restoredDetail
+    .getByRole("button", { name: "打开链接的继续运行" })
+    .click();
+  const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(workerRun.ok()).toBeTruthy();
+  const execution = await workerRun.json();
+  expect(execution).toMatchObject({
+    completed: true,
+    status: "completed",
+    itemCount: 2,
+  });
+  const authorityAfter = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  expect(authorityAfter).toMatchObject({
+    taskSnapshotId: created.taskSnapshotId,
+    activeSnapshotId: created.activeSnapshotId,
+    sourceFiles: { "Seven.2007.mkv": false, "Eight.2008.mkv": false },
+  });
+  expect(authorityAfter.destinationFiles).toHaveLength(2);
+  const executionState = await (
+    await request.get(
+      `${BASE}/__harness__/task-result-state?taskId=${execution.taskId}`,
+    )
+  ).json();
+  expect(executionState.taskStatus).toBe("completed");
+  expect(executionState.results).toHaveLength(2);
+  const executionResults = executionState.results.map(
+    (result: { sourcePath: string; status: string }) => ({
+      sourcePath: result.sourcePath,
+      status: result.status,
+    }),
+  );
+  expect(
+    executionResults.sort(
+      (left: { sourcePath: string }, right: { sourcePath: string }) =>
+        left.sourcePath.localeCompare(right.sourcePath),
+    ),
+  ).toEqual([
+    { sourcePath: "Authority/Eight.2008.mkv", status: "SUCCESS" },
+    { sourcePath: "Authority/Seven.2007.mkv", status: "SUCCESS" },
+  ]);
+
+  // Once both exact remaining items have durable outcomes, a second Continue
+  // is refused as empty scope rather than queuing duplicate work.
+  const completedProjectionResponse = await request.get(
+    `${BASE}/api/v1/tasks/${taskId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(completedProjectionResponse.ok()).toBeTruthy();
+  const completedProjection = await completedProjectionResponse.json();
+  const noDuplicate = await request.post(
+    `${BASE}/api/v1/tasks/${taskId}/resume`,
+    {
+      data: { expectedUpdatedAt: completedProjection.lifecycle.version },
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    },
+  );
+  expect(noDuplicate.status()).toBe(409);
+  const noDuplicateOutcome = await noDuplicate.json();
+  expect(noDuplicateOutcome.error.details.reason).toBe("no_remaining_scope");
+  expect(noDuplicateOutcome.error.details.sideEffects).toBe("none");
+});
+
+test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  const created = await (
+    await request.post(
+      `${BASE}/__harness__/seed-authority-refusal?missingPin=1`,
+    )
+  ).json();
+  const taskId = created.taskId as string;
+  expect(taskId).toBeTruthy();
+  expect(created.taskSnapshotId).not.toBe(created.activeSnapshotId);
+  const before = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  expect(before).toMatchObject({
+    available: true,
+    taskSnapshotId: created.taskSnapshotId,
+    activeSnapshotId: created.activeSnapshotId,
+    scope: "AuthorityMissingPin",
+    sourceFiles: { "BrokenPinA.2017.mkv": true, "BrokenPinB.2018.mkv": true },
+    destinationFiles: [],
+  });
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const row = page.getByRole("row").filter({ hasText: "AuthorityMissingPin" });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(
+    controls.getByRole("button", { name: "继续剩余范围" }),
+  ).toHaveCount(0);
+  const withheld = controls.getByRole("list", { name: "不可用的运行控制" });
+  await expect(withheld).toContainText(
+    "immutable configuration pin cannot be resolved",
+  );
+  await expect(controls).toContainText(
+    "restore the pinned published configuration revision",
+  );
+  await expect(
+    controls.getByRole("button", { name: "在当前界面生成剩余范围摘要" }),
+  ).toHaveCount(0);
+  // The UI does not offer an exact Preview when it cannot reconstruct the
+  // original immutable scope. A direct API probe still proves zero effects.
+  const refusedPreview = await request.post(
+    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(refusedPreview.status()).toBe(409);
+  const refusal = await refusedPreview.json();
+  expect(refusal.error.code).toBe("snapshot_unavailable");
+  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.details.nextAction).toContain(
+    "restore the pinned published configuration revision",
+  );
+  await expect(detail.getByRole("region", { name: "新计划摘要" })).toHaveCount(
+    0,
+  );
+  expect(
+    await (
+      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+    ).json(),
+  ).toMatchObject({
+    scope: "AuthorityMissingPin",
+    sourceFiles: { "BrokenPinA.2017.mkv": true, "BrokenPinB.2018.mkv": true },
+    destinationFiles: [],
+  });
 });
 
 test("native task-item recognition recovery reaches a separately authorized linked execution", async ({
@@ -2078,6 +2531,330 @@ test("native task-item recognition recovery reaches a separately authorized link
   expect(pageContent).not.toContain("/tmp/");
   expect(pageContent).not.toContain(ADMIN_TOKEN);
 });
+
+test("native Metadata candidate recovery reaches the same-page summary and Worker", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "metadata");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的元数据决策" }),
+  ).toBeVisible();
+  await chooseNativeRecoveryDecision(page, recovery, seeded, "metadata");
+  const worker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(worker.ran).toBe(true);
+  expect(worker.continuationStatus).toBe("completed");
+  await finishNativeRecovery(page, request, recovery, seeded);
+});
+
+test("native Metadata correction searches explicitly before summary and Worker", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "metadata_correction");
+  const api = recordApiCalls(page);
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的元数据修正决策" }),
+  ).toBeVisible();
+  await chooseNativeRecoveryDecision(
+    page,
+    recovery,
+    seeded,
+    "metadata_correction",
+  );
+  expect(
+    api.filter((value) => value.path.endsWith("/recovery/metadata-search")),
+  ).toHaveLength(1);
+  const worker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(worker.ran).toBe(true);
+  expect(worker.continuationStatus).toBe("completed");
+  await finishNativeRecovery(page, request, recovery, seeded);
+  // The only Provider search was the operator's explicit action; preparing the
+  // zero-mutation summary and reading it again does not look up Metadata.
+  expect(
+    api.filter(
+      (value) =>
+        value.method === "POST" &&
+        value.path.endsWith("/recovery/metadata-search"),
+    ),
+  ).toHaveLength(1);
+});
+
+test("native Classification recovery reaches the same-page summary and Worker", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "classification");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的分类决策" }),
+  ).toBeVisible();
+  await chooseNativeRecoveryDecision(page, recovery, seeded, "classification");
+  const worker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(worker.ran).toBe(true);
+  expect(worker.continuationStatus).toBe("completed");
+  await finishNativeRecovery(page, request, recovery, seeded);
+});
+
+test("native conflict recovery renames while preserving the existing target", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "conflict");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的目标冲突决策" }),
+  ).toBeVisible();
+  await chooseNativeRecoveryDecision(page, recovery, seeded, "conflict");
+  const beforeWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(beforeWorker.ran).toBe(true);
+  expect(beforeWorker.continuationStatus).toBe("completed");
+  const beforeSummary = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(beforeSummary.sourceExists).toBe(true);
+  expect(beforeSummary.conflictTargetPreserved).toBe(true);
+  await finishNativeRecovery(page, request, recovery, seeded);
+  const afterRename = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(afterRename.conflictTargetPreserved).toBe(true);
+  expect(
+    afterRename.targetFiles.some(
+      (path: string) =>
+        path.includes("ConflictRecovery") && path !== seeded.targetPath,
+    ),
+  ).toBe(true);
+});
+
+test("technical recovery surfaces a new Metadata blocker, resolves it, and records a second failure", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const seeded = await seedNativeRecovery(request, "technical");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(recovery).toContainText("repair the dependency");
+  const firstAdmission = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+  );
+  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
+  expect((await firstAdmission).status()).toBe(202);
+  const firstWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(firstWorker.ran).toBe(true);
+  const firstState = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(firstState.analysisTaskId).toBeTruthy();
+  expect(firstState.analysisItemId).toBeTruthy();
+  expect(firstState.analysisItems[0].status).toBe("waiting_metadata");
+  expect(firstState.siblingStatuses).toMatchObject({
+    "TechnicalRecoverySuccess.2019.mkv": "success",
+    "TechnicalRecoveryUnknown.2019.mkv": "failed",
+  });
+  const blockedSourceDetail = await (
+    await request.get(
+      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    )
+  ).json();
+  expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+
+  // The first safe analysis did not solve the file: it created a real linked
+  // Metadata blocker. The operator must enter that linked TaskItem's type flow.
+  const analysisLink = recovery.getByRole("button", {
+    name: "查看关联分析条目",
+  });
+  await expect(analysisLink).toBeVisible();
+  await analysisLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(
+      `/tasks/${firstState.analysisTaskId}.*item=${firstState.analysisItemId}`,
+    ),
+  );
+  const linkedRecovery = page.getByRole("region", {
+    name: "条目审核与恢复",
+  });
+  await expect(
+    linkedRecovery.getByRole("heading", { name: "待处理的元数据决策" }),
+  ).toBeVisible();
+  await linkedRecovery.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-new-metadata-blocker-1536x1024.png`,
+    fullPage: false,
+  });
+  const linkedItemId = firstState.analysisItemId as string;
+  const linkedTaskId = firstState.analysisTaskId as string;
+  await linkedRecovery.getByRole("radio").first().check();
+  const linkedDecision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/decision`,
+  );
+  const linkedContinue = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/continue`,
+  );
+  await linkedRecovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await linkedDecision).status()).toBe(200);
+  expect((await linkedContinue).status()).toBe(202);
+  const linkedWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${linkedItemId}`,
+    )
+  ).json();
+  expect(linkedWorker.ran).toBe(true);
+  if (linkedWorker.continuationStatus !== "completed") {
+    const linkedRecoveryState = await (
+      await request.get(
+        `${BASE}/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery`,
+        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+      )
+    ).json();
+    const nextItemId = linkedRecoveryState.checkpoint.recovery_continuation
+      ?.new_item_id as string | undefined;
+    const nextItemState = nextItemId
+      ? await (
+          await request.get(
+            `${BASE}/api/v1/tasks/${linkedWorker.newTaskId}/items/${nextItemId}/recovery`,
+            { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+          )
+        ).json()
+      : null;
+    throw new Error(
+      `Resolved linked analysis did not finish: ${JSON.stringify({ linkedWorker, linkedRecoveryState, nextItemState })}`,
+    );
+  }
+  const completedSourceDetail = await (
+    await request.get(
+      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    )
+  ).json();
+  expect(completedSourceDetail.manualRecoveryAnalysisReady).toBe(true);
+
+  // Return to the source manual item; its linked, now-unblocked analysis is
+  // the one summary preparation must consume.
+  await page.goBack();
+  await expect(page).toHaveURL(
+    new RegExp(`run=${seeded.runId}.*item=${seeded.itemId}`),
+  );
+  const sourceRecovery = page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("region", { name: "条目审核与恢复" });
+  await sourceRecovery.getByRole("button", { name: "Refresh" }).click();
+  await sourceRecovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText(seeded.sourcePath);
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-1536x1024.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 380, height: 720 });
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const confirmedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
+  const confirmed = await confirmedResponse;
+  expect(confirmed.status()).toBe(202);
+  const afterConfirm = (await confirmed.json()) as {
+    readonly executionId: string;
+    readonly selectedItemIds: readonly string[];
+  };
+  expect(afterConfirm.selectedItemIds).toHaveLength(1);
+  const failedWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-manual-worker?failBeforeMutation=1`,
+    )
+  ).json();
+  expect(failedWorker).toMatchObject({ completed: false, status: "failed" });
+  const finalState = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(finalState.sourceExists).toBe(true);
+  // The source's original result remains durable on its original Task. The
+  // confirmed retry is a separately admitted Manual execution, so its failed
+  // result belongs to that linked execution Task rather than rewriting history.
+  expect(finalState.sourceResultHistory).toHaveLength(1);
+  expect(finalState.sourceResultHistory[0].status).toBe("FAILED");
+  const retryTaskState = await (
+    await request.get(
+      `${BASE}/__harness__/task-result-state?taskId=${failedWorker.taskId}`,
+    )
+  ).json();
+  expect(retryTaskState.available).toBe(true);
+  expect(retryTaskState.results).toHaveLength(1);
+  expect(retryTaskState.results[0]).toMatchObject({
+    sourcePath: seeded.sourcePath,
+    status: "FAILED",
+    effectCertainty: "none",
+    completedOperations: [],
+  });
+  expect(finalState.siblingStatuses).toMatchObject({
+    "TechnicalRecoverySuccess.2019.mkv": "success",
+    "TechnicalRecoveryUnknown.2019.mkv": "failed",
+  });
+  expect(
+    finalState.sourceResultHistory.some(
+      (value: { status: string }) => value.status === "SUCCESS",
+    ),
+  ).toBe(false);
+});
+
 test("explicit disconnect clears a lost-response batch before another principal opens the run", async ({
   page,
   request,

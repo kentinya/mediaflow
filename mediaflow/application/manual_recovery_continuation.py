@@ -10,6 +10,7 @@ return to the original Organize journey after reload.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -35,11 +36,15 @@ from mediaflow.domain.manual_recovery import (
     ManualRecoveryPreparationStatus,
 )
 from mediaflow.domain.manual_safety import contains_manual_secret
+from mediaflow.domain.media_evidence import (
+    EXECUTION_IDENTITY_BYTE_LIMIT,
+    EXECUTION_IDENTITY_ITEM_LIMIT,
+    EXECUTION_IDENTITY_SIZE_LIMIT_REASON,
+    EXECUTION_IDENTITY_TEXT_LIMIT,
+)
 from mediaflow.domain.metadata import EpisodeIdentity, MediaIdentity, MediaType
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.task_persistence import TaskItemStatus
-
-_MAX_EXECUTION_IDENTITY_ITEMS = 256
 
 
 class ManualRecoveryContinuationError(ManualExecutionError):
@@ -79,6 +84,8 @@ class PreparedContinuation:
 
     checkpoint: object
     continuation: object
+    analysis_task_id: str
+    analysis_result_id: str
     manual_item: object
     intent: object
     intent_item: object
@@ -200,8 +207,8 @@ class ManualRecoveryContinuationService:
             link = self._repository.supersede_manual_recovery_link(
                 existing.link_id,
                 analysis_continuation_id=continuation.continuation_id,
-                analysis_task_id=continuation.new_task_id,
-                analysis_result_id=continuation.new_result_id,
+                analysis_task_id=prepared.analysis_task_id,
+                analysis_result_id=prepared.analysis_result_id,
                 intent_id=intent.intent_id,
                 preview_id=preview.preview_id,
                 authorization_id=authority.authorization_id,
@@ -214,8 +221,8 @@ class ManualRecoveryContinuationService:
                 source_task_id,
                 source_item_id,
                 continuation.continuation_id,
-                continuation.new_task_id,
-                continuation.new_result_id,
+                prepared.analysis_task_id,
+                prepared.analysis_result_id,
                 intent.intent_id,
                 preview.preview_id,
                 authority.authorization_id,
@@ -267,8 +274,8 @@ class ManualRecoveryContinuationService:
             source_task_id,
             source_item_id,
             continuation.continuation_id,
-            continuation.new_task_id,
-            continuation.new_result_id,
+            prepared.analysis_task_id,
+            prepared.analysis_result_id,
             prepared.intent.intent_id,
             preview.preview_id,
             preview.intent_version,
@@ -490,85 +497,17 @@ class ManualRecoveryContinuationService:
                 code="recovery_request_active",
             )
         continuation = checkpoint.recovery_continuation
-        if (
-            continuation is None
-            or continuation.status is not RecoveryContinuationStatus.COMPLETED
-            or not continuation.new_task_id
-            or not continuation.new_result_id
-        ):
-            raise ManualRecoveryContinuationError(
-                "no completed linked single-item re-analysis exists for this item",
-                code="analysis_not_completed",
-                next_action=(
-                    "continue the admitted recovery as a DryRun and wait for the Worker, "
-                    "then return here"
-                ),
-            )
-        analysis_task = self._repository.get_task(continuation.new_task_id)
-        if analysis_task is None:
-            raise ManualRecoveryContinuationError(
-                "the linked re-analysis Task is unavailable",
-                code="analysis_unavailable",
-                status=503,
-            )
-        analysis_items = self._repository.list_items(analysis_task.task_id)
-        analysis_results = self._repository.list_results(analysis_task.task_id)
-        if len(analysis_items) != 1:
-            raise ManualRecoveryContinuationError(
-                "the linked re-analysis Task must contain exactly one item",
-                code="analysis_scope_invalid",
-            )
-        analysis_item = analysis_items[0]
-        analysis_result = next(
-            (
-                value
-                for value in reversed(analysis_results)
-                if value.item_id == analysis_item.item_id
-            ),
-            None,
-        )
+        analysis_task, analysis_item, analysis_result = self._find_completed_analysis(checkpoint)
         # The durable identity the completed linked re-analysis resolved is a
         # reviewed fact about this exact source under this pin.  Reading it back
         # lets the summary reuse the plan without a second live Provider lookup;
         # it is only ever applied when it still matches the pinned policy.
         reuse_analysis_identity = self._reusable_analysis_identity(analysis_item.item_id)
-        analysis_checkpoint = self._checkpoint_service.get(
-            analysis_item.item_id, task_id=analysis_task.task_id
-        )
-        if analysis_checkpoint.blocker is not None or analysis_checkpoint.status in {
-            "waiting_confirm",
-            "waiting_recognition",
-            "waiting_metadata",
-            "waiting_metadata_correction",
-            "waiting_classification",
-        }:
-            raise ManualRecoveryContinuationError(
-                "the linked re-analysis item still requires a review or conflict decision",
-                code="review_pending",
-                next_action=(
-                    "resolve the blocker on the linked TaskItem, then request a fresh "
-                    "re-analysis and return here"
-                ),
-                details={
-                    "analysisTaskId": analysis_task.task_id,
-                    "analysisItemId": analysis_item.item_id,
-                    "blockerKind": (
-                        analysis_checkpoint.blocker.kind
-                        if analysis_checkpoint.blocker is not None
-                        else None
-                    ),
-                },
-            )
         if (
             analysis_item.status is not TaskItemStatus.DRY_RUN
             or analysis_result is None
             or analysis_result.status != TaskItemStatus.DRY_RUN.value
             or analysis_result.error
-            or analysis_item.source_path != checkpoint.source_path
-            or analysis_item.storage_id != checkpoint.source_storage_id
-            or analysis_task.configuration_snapshot_id != checkpoint.configuration.snapshot_id
-            or analysis_task.configuration_snapshot_digest
-            != checkpoint.configuration.snapshot_digest
         ):
             raise ManualRecoveryContinuationError(
                 "the linked re-analysis did not produce one completed current DryRun plan",
@@ -693,11 +632,153 @@ class ManualRecoveryContinuationService:
         return PreparedContinuation(
             checkpoint=checkpoint,
             continuation=continuation,
+            analysis_task_id=analysis_task.task_id,
+            analysis_result_id=analysis_result.result_id,
             manual_item=manual_item,
             intent=intent,
             intent_item=intent_item,
             preview=preview,
             preview_item=preview_item,
+        )
+
+    def _find_completed_analysis(self, source_checkpoint):
+        """Follow a bounded linked TaskItem chain to its exact completed DryRun."""
+
+        continuation = source_checkpoint.recovery_continuation
+        if (
+            continuation is None
+            or continuation.status
+            not in {RecoveryContinuationStatus.COMPLETED, RecoveryContinuationStatus.FAILED}
+            or not continuation.new_task_id
+            or (
+                continuation.status is RecoveryContinuationStatus.COMPLETED
+                and not continuation.new_result_id
+            )
+        ):
+            raise ManualRecoveryContinuationError(
+                "no completed linked single-item re-analysis exists for this item",
+                code="analysis_not_completed",
+                next_action=(
+                    "continue the admitted recovery as a DryRun and wait for the Worker, "
+                    "then return here"
+                ),
+            )
+
+        task_id = continuation.new_task_id
+        expected_result_id = continuation.new_result_id
+        visited_task_ids: set[str] = set()
+        for _ in range(16):
+            if task_id in visited_task_ids:
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis chain contains a cycle",
+                    code="analysis_chain_invalid",
+                )
+            visited_task_ids.add(task_id)
+            analysis_task = self._repository.get_task(task_id)
+            if analysis_task is None:
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis Task is unavailable",
+                    code="analysis_unavailable",
+                    status=503,
+                )
+            if (
+                analysis_task.configuration_snapshot_id
+                != source_checkpoint.configuration.snapshot_id
+                or analysis_task.configuration_snapshot_digest
+                != source_checkpoint.configuration.snapshot_digest
+            ):
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis changed the original configuration pin",
+                    code="analysis_pin_mismatch",
+                )
+            analysis_items = self._repository.list_items(analysis_task.task_id)
+            if len(analysis_items) != 1:
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis Task must contain exactly one item",
+                    code="analysis_scope_invalid",
+                )
+            analysis_item = analysis_items[0]
+            if (
+                analysis_item.source_path != source_checkpoint.source_path
+                or analysis_item.storage_id != source_checkpoint.source_storage_id
+            ):
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis changed the original source",
+                    code="analysis_source_mismatch",
+                )
+            analysis_results = self._repository.list_results(analysis_task.task_id)
+            analysis_result = next(
+                (
+                    value
+                    for value in reversed(analysis_results)
+                    if value.item_id == analysis_item.item_id
+                ),
+                None,
+            )
+            analysis_checkpoint = self._checkpoint_service.get(
+                analysis_item.item_id, task_id=analysis_task.task_id
+            )
+            if analysis_checkpoint.blocker is not None or analysis_checkpoint.status in {
+                "waiting_confirm",
+                "waiting_recognition",
+                "waiting_metadata",
+                "waiting_metadata_correction",
+                "waiting_classification",
+            }:
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis item still requires a review or conflict decision",
+                    code="review_pending",
+                    next_action=(
+                        "resolve the blocker on the linked TaskItem, continue that item's "
+                        "safe analysis, then return here"
+                    ),
+                    details={
+                        "analysisTaskId": analysis_task.task_id,
+                        "analysisItemId": analysis_item.item_id,
+                        "blockerKind": (
+                            analysis_checkpoint.blocker.kind
+                            if analysis_checkpoint.blocker is not None
+                            else None
+                        ),
+                    },
+                )
+            if (
+                analysis_item.status is TaskItemStatus.DRY_RUN
+                and analysis_result is not None
+                and analysis_result.status == TaskItemStatus.DRY_RUN.value
+                and not analysis_result.error
+                and (expected_result_id is None or analysis_result.result_id == expected_result_id)
+            ):
+                return analysis_task, analysis_item, analysis_result
+
+            next_continuation = analysis_checkpoint.recovery_continuation
+            if next_continuation is not None and next_continuation.active:
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis is still queued or running",
+                    code="analysis_in_flight",
+                    next_action="wait for the linked Worker, refresh this item, then return here",
+                    details={"analysisTaskId": analysis_task.task_id},
+                )
+            if (
+                next_continuation is None
+                or next_continuation.status
+                not in {RecoveryContinuationStatus.COMPLETED, RecoveryContinuationStatus.FAILED}
+                or not next_continuation.new_task_id
+            ):
+                raise ManualRecoveryContinuationError(
+                    "the linked re-analysis did not produce one completed current DryRun plan",
+                    code="analysis_result_invalid",
+                    next_action=(
+                        "open the linked Task/Result, resolve any blocker, and continue the "
+                        "exact item under its original pin before returning"
+                    ),
+                )
+            task_id = next_continuation.new_task_id
+            expected_result_id = next_continuation.new_result_id
+
+        raise ManualRecoveryContinuationError(
+            "the linked re-analysis chain exceeds its supported depth",
+            code="analysis_chain_invalid",
         )
 
     def execute_continued(
@@ -827,6 +908,21 @@ class ManualRecoveryContinuationService:
             for item in executions[0].items
         )
 
+    def analysis_summary_available(self, source_task_id: str, source_item_id: str) -> bool:
+        """Whether the original item has a completed linked single-item DryRun."""
+
+        try:
+            checkpoint = self._checkpoint_service.get(source_item_id, task_id=source_task_id)
+            if (
+                checkpoint.raw_stage != "task_retry_requested"
+                or checkpoint.active_recovery_request is not None
+            ):
+                return False
+            self._find_completed_analysis(checkpoint)
+        except ManualRecoveryContinuationError:
+            return False
+        return True
+
     def _reusable_analysis_identity(self, analysis_item_id: str):
         """The durable identity one completed linked re-analysis resolved, if any.
 
@@ -848,10 +944,36 @@ class ManualRecoveryContinuationService:
                 identity = self._identity_from_document(document)
                 if identity is not None:
                     return identity
+                if (
+                    getattr(value, "execution_identity_unavailable_reason", None)
+                    == EXECUTION_IDENTITY_SIZE_LIMIT_REASON
+                ):
+                    raise ManualRecoveryContinuationError(
+                        "the completed analysis identity exceeds the supported size "
+                        "for a safe continuation summary",
+                        code="analysis_identity_unsupported",
+                        next_action=(
+                            "choose a different Metadata candidate or correct the identity "
+                            "under the "
+                            "original configuration, then explicitly analyze again; repeating the "
+                            "same identity will not produce a reusable summary"
+                        ),
+                        details={"durableState": "analysis_complete_summary_unavailable"},
+                    )
         return None
 
     @staticmethod
     def _identity_from_document(document):
+        try:
+            encoded = json.dumps(
+                document, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+            ).encode("utf-8")
+            if len(encoded) > EXECUTION_IDENTITY_BYTE_LIMIT:
+                return None
+            if contains_manual_secret(encoded.decode("utf-8")):
+                return None
+        except (TypeError, ValueError, UnicodeEncodeError):
+            return None
         required = {
             "version",
             "provider",
@@ -957,7 +1079,7 @@ class ManualRecoveryContinuationService:
             return None
 
         def _text_tuple(value):
-            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+            if not isinstance(value, (list, tuple)) or len(value) > EXECUTION_IDENTITY_ITEM_LIMIT:
                 raise ValueError("execution identity text list is invalid")
             return tuple(_required_text(item) for item in value)
 
@@ -975,7 +1097,11 @@ class ManualRecoveryContinuationService:
         def _optional_text(value):
             if value is None:
                 return None
-            if not isinstance(value, str) or len(value) > 4096 or contains_manual_secret(value):
+            if (
+                not isinstance(value, str)
+                or len(value) > EXECUTION_IDENTITY_TEXT_LIMIT
+                or contains_manual_secret(value)
+            ):
                 raise ValueError("execution identity text field is invalid")
             return value
 
@@ -986,7 +1112,7 @@ class ManualRecoveryContinuationService:
             return normalized
 
         def _episode_tuple(value):
-            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+            if not isinstance(value, (list, tuple)) or len(value) > EXECUTION_IDENTITY_ITEM_LIMIT:
                 raise ValueError("execution identity episode list is invalid")
             result = []
             for item in value:
@@ -1014,14 +1140,14 @@ class ManualRecoveryContinuationService:
         def _number_tuple(value):
             if (
                 not isinstance(value, (list, tuple))
-                or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS
+                or len(value) > EXECUTION_IDENTITY_ITEM_LIMIT
                 or any(not isinstance(item, int) or isinstance(item, bool) for item in value)
             ):
                 raise ValueError("execution identity episode numbers are invalid")
             return tuple(value)
 
         def _external_id_tuple(value):
-            if not isinstance(value, (list, tuple)) or len(value) > _MAX_EXECUTION_IDENTITY_ITEMS:
+            if not isinstance(value, (list, tuple)) or len(value) > EXECUTION_IDENTITY_ITEM_LIMIT:
                 raise ValueError("execution identity external ids are invalid")
             result = []
             for item in value:

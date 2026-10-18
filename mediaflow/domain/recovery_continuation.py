@@ -150,6 +150,9 @@ class RecoveryContinuationRepository(Protocol):
     def list_recovery_continuations(
         self, item_id: str, *, limit: int = 32
     ) -> tuple[RecoveryContinuation, ...]: ...
+    def list_recovery_continuations_for_task(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryContinuation, ...]: ...
     def admit_recovery_continuation(
         self,
         job: AutomationJob,

@@ -2047,8 +2047,12 @@ class MediaFlowApi:
                 value["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
                 )
+                value["manualRecoveryAnalysisReady"] = (
+                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                )
             else:
                 value["manualRecoveryAvailable"] = False
+                value["manualRecoveryAnalysisReady"] = False
             return self._response(start_response, 200, redact_manual_value(value))
         if (
             len(parts) == 7
@@ -2414,8 +2418,12 @@ class MediaFlowApi:
                 recovery["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
                     parts[3], parts[5]
                 )
+                recovery["manualRecoveryAnalysisReady"] = (
+                    self._manual_recovery.analysis_summary_available(parts[3], parts[5])
+                )
             else:
                 recovery["manualRecoveryAvailable"] = False
+                recovery["manualRecoveryAnalysisReady"] = False
             return self._response(
                 start_response,
                 200,

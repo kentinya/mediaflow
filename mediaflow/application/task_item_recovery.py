@@ -49,6 +49,36 @@ class TaskItemRecoveryService:
 
     def detail(self, task_id: str, item_id: str) -> dict[str, object]:
         checkpoint = self._checkpoint(task_id, item_id)
+        checkpoint_document = checkpoint.document()
+        continuation_document = checkpoint_document.get("recovery_continuation")
+        if isinstance(continuation_document, dict):
+            linked_task_id = continuation_document.get("new_task_id")
+            linked_task = (
+                self._repository.get_task(linked_task_id)
+                if isinstance(linked_task_id, str) and linked_task_id
+                else None
+            )
+            linked_items = (
+                tuple(self._repository.list_items(linked_task_id))
+                if linked_task is not None
+                else ()
+            )
+            source_item = self._repository.get_item(item_id)
+            source_task = self._repository.get_task(task_id)
+            if (
+                len(linked_items) == 1
+                and source_item is not None
+                and source_task is not None
+                and linked_items[0].storage_id == source_item.storage_id
+                and linked_items[0].source_path == source_item.source_path
+                and linked_task.configuration_snapshot_id == source_task.configuration_snapshot_id
+                and linked_task.configuration_snapshot_digest
+                == source_task.configuration_snapshot_digest
+            ):
+                # The recovery route needs an exact destination for its native
+                # linked-item action. Expose an item ID only for a one-item
+                # child that preserves the same source and immutable pin.
+                continuation_document["new_item_id"] = linked_items[0].item_id
         blocker = checkpoint.blocker
         decision: dict[str, object] | None = None
         if blocker is not None:
@@ -56,7 +86,7 @@ class TaskItemRecoveryService:
         return {
             "task_id": task_id,
             "item_id": item_id,
-            "checkpoint": checkpoint.document(),
+            "checkpoint": checkpoint_document,
             "decision": decision,
             "sideEffects": "none",
             "next_action": checkpoint.refusal_reason
@@ -397,7 +427,7 @@ class TaskItemRecoveryService:
                 {
                     "rank": choice.rank,
                     "rule_id": choice.rule_id,
-                    "name": choice.name,
+                    "name": choice.rule_name,
                     "media_library_id": choice.media_library_id,
                     "relative_path": choice.relative_path,
                     "description": choice.description,
@@ -409,9 +439,11 @@ class TaskItemRecoveryService:
             document.update(
                 {
                     "configured_strategy": value.configured_strategy,
-                    "conflict_types": value.conflict_types,
+                    "conflict_types": tuple(
+                        kind for kind in value.conflict_type.split(",") if kind
+                    ),
                     "source_path": value.source_path,
-                    "target_path": value.target_path,
+                    "target_path": value.destination_path,
                     "allowed_strategies": ["skip", "rename"]
                     + (["overwrite"] if value.configured_strategy == "overwrite" else []),
                 }

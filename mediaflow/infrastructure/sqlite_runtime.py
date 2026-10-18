@@ -1850,6 +1850,23 @@ class SQLiteTaskRepository:
             ).fetchall()
         return tuple(self._recovery_continuation(row) for row in rows)
 
+    def list_recovery_continuations_for_task(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[RecoveryContinuation, ...]:
+        """Find bounded parent continuations that produced one linked Task."""
+
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("linked Task ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("recovery continuation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM recovery_continuations WHERE new_task_id=?
+                ORDER BY created_at, continuation_id LIMIT ?""",
+                (task_id, limit),
+            ).fetchall()
+        return tuple(self._recovery_continuation(row) for row in rows)
+
     def create_manual_recovery_link(self, link: ManualRecoveryLink) -> None:
         if link.status is not ManualRecoveryLinkStatus.AUTHORIZED:
             raise ValueError("manual recovery link must start authorized")
@@ -14899,6 +14916,14 @@ class SQLiteTaskRepository:
                         "ALTER TABLE manual_recovery_preparations ADD COLUMN "
                         "allow_source_cleanup INTEGER NOT NULL DEFAULT 0"
                     )
+            # Parent lookup follows the one-item continuation chain so explicit
+            # recovery decisions remain available to later linked analyses.
+            # Keep this index with additive migrations so a failed migration
+            # does not leave a partially applied schema change behind.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS recovery_continuations_task_created "
+                "ON recovery_continuations(new_task_id, created_at, continuation_id)"
+            )
             delivery_columns = {
                 row["name"]
                 for row in self._connection.execute(
