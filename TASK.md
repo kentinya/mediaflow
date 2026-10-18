@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: B RECHECKS TASK45.3 AGAINST THE A-REVISED CONTRACT
+Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 7
 ```
 
 ## Goal
@@ -594,6 +594,79 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
 可复用经验：无新增，留待A在Slice收尾统一整理。
 
 ## B Review Result
+
+### B Review 7 — 2026-10-18
+
+```text
+Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..a6ed23b030bd1a685562ad4028786caa70b197c1
+Executable Candidate: a6ed23b030bd1a685562ad4028786caa70b197c1
+Contract Checkpoint: 9657d96
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: DEVELOPER CORRECTS TASK45.3 IN THE SAME TASK LOOP
+```
+
+#### Review 7 evidence
+
+- The A-authorized Contract revision is now checkpointed at `9657d96`; governance passes against the
+  committed `HEAD:SLICE.md`. The revised meaning is: a verified primary-file operation is enough for
+  the primary item to complete, while every attachment failure, skipped step or target conflict stays
+  visible with its reason, source, target and manual-move guidance. Attachment-only automatic recovery,
+  compensation execution and primary replay remain out of scope.
+- The candidate's prior R6/R7/R8 recovery fixes and its reported T4 evidence remain valid. This review
+  is limited to the newly effective attachment completion contract and does not reopen those passed
+  recovery findings.
+
+#### Blocking implementation gaps
+
+1. **Primary execution is still blocked by attachment state.**
+   `OrganizerExecutor.execute` first requires every attachment source/target to be readable and
+   conflict-free (`mediaflow/application/organizer.py:481-507`), mutates all attachment plans before
+   the primary plan (`:537-587`), and only then executes the primary (`:588-614`). A missing sidecar,
+   attachment collision, attachment verification error or attachment-only Storage failure therefore
+   prevents the main file from being moved. This directly violates the revised user outcome.
+2. **Attachment outcomes are not durable enough for the promised journey.**
+   The current `ExecutionResult`/`PersistentResultRecord` path records aggregate errors and completed
+   operation markers, but it does not create a bounded per-attachment outcome carrying reason, exact
+   source and exact target when an attachment is skipped or fails after the primary succeeds. The
+   existing plan attachment list is not a substitute for a runtime failure explanation.
+3. **Operator copy does not give the requested manual recovery.**
+   `ProblemFilePanel` maps `attachment_collision` to “check the attachment target and choose conflict
+   handling” and `PreviewDetailPage` only lists attachment type/language/operation/filename. Neither
+   states that the primary is complete, names the attachment reason/source/target in the result view,
+   and tells the operator to move that attachment manually. A warning must not render as unqualified
+   full success.
+
+#### Required correction (same Task, detailed implementation order)
+
+1. Keep the existing primary Storage validation, exact pin/source checks, mutation authority,
+   concurrency fencing and unknown-effect rules unchanged. A missing or conflicted attachment must
+   not weaken any primary safety check.
+2. Change execution ordering/admission so the primary operation can be completed and verified even
+   when an attachment is unavailable, collides, or is otherwise known to be unexecutable. Do not
+   replay or compensate the primary. Do not silently overwrite or delete an attachment.
+3. For each attachment, retain a bounded independent outcome with at least: attachment type/language
+   when known, operation/status, exact source Storage/path, exact target Storage/path, normalized reason,
+   and next action `手动移动附件` (or an equivalent bounded localized message). Successful attachment
+   steps may remain successful; failed/unexecuted/blocked steps must be distinct and durable.
+4. If an attachment mutation has already crossed the mutation boundary and its effect is uncertain,
+   preserve the existing `unknown`/investigation-only semantics. Do not convert it into a manual-move
+   instruction that implies the source/target state is known, and do not advertise retry/replay.
+5. Project the per-attachment outcomes through the existing Result/detail/export/audit contracts and
+   the same-page summary. The primary success plus attachment warning must be visibly `partial` or
+   equivalent warning state, never a silent full-success view. Show reason, source, target and manual
+   move guidance without exposing secrets or host roots.
+6. Update the focused backend, persistence, API and Web tests. Required cases are: primary success +
+   missing attachment; primary success + attachment target collision; primary success + attachment
+   Storage unavailable; successful primary/attachment regression; attachment mutation uncertain;
+   exact source/target/reason/manual guidance in summary, result, detail, export and audit. Preserve
+   the existing no-replay tests and all prior recovery/batch/authority tests.
+
+#### Review 7 decision
+
+`FIX REQUIRED` remains in the same Task. This is a direct implementation defect under the now
+checkpointed Contract, not permission to create an attachment-only recovery Task. The Developer must
+submit a new coherent checkpoint and actual T4 evidence; B will then review the candidate again.
 
 ### B Review 6 — 2026-10-18
 
