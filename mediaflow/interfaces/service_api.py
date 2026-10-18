@@ -43,7 +43,7 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
-from mediaflow.application.manual_scan import ManualScanError, ManualScanService
+from mediaflow.application.manual_scan import ManualScanError
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -56,7 +56,6 @@ from mediaflow.application.notification_delivery import (
 )
 from mediaflow.application.operations_lifecycle import (
     OperationsLifecycleConflict,
-    TaskExecutionPath,
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
@@ -69,7 +68,6 @@ from mediaflow.application.operations_lifecycle import (
     manual_execution_plan_evidence_operator,
     manual_intent_operator_document,
     manual_preview_operator_document,
-    manual_scan_operator_document,
     manual_step_error_document,
     require_cancellable,
     run_item_evidence_document,
@@ -147,7 +145,6 @@ from mediaflow.domain.file_lifecycle import (
     OccurrenceState,
     ProcessingDisposition,
 )
-from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
 from mediaflow.domain.manual_organize import (
@@ -321,7 +318,6 @@ class _ApiRuntimeBinding:
     #: transfer can only ever resolve MediaLibrary endpoints and one kind's
     #: manifest, evidence or claim can never be exchanged with the other.
     direct_media_transfers: DirectFileTransferService | None = None
-    manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
     #: The saved Automation Task Definitions of this exact Active revision and a
     #: checker that proves one mutation-authorized Task still holds its live
@@ -382,7 +378,6 @@ class MediaFlowApi:
         manual_preview_service: ManualOrganizePreviewService | None = None,
         manual_execution_service: ManualOrganizeExecutionService | None = None,
         manual_recovery_service: ManualRecoveryContinuationService | None = None,
-        manual_scan_service: ManualScanService | None = None,
         media_discovery_service=None,
         automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
         management_only: bool = False,
@@ -419,7 +414,6 @@ class MediaFlowApi:
         self._storage_adapters = dict(storage_adapters or {})
         self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
-        self._manual_scans_override = manual_scan_service
         self._maximum_active_jobs_override = maximum_active_jobs
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and self._file_catalog is not None:
@@ -1525,6 +1519,42 @@ class MediaFlowApi:
             # Current-source Preview is the same persisted manual Preview
             # projection.  Keep concise API aliases on one application path.
             parts[2] = "manual-previews"
+        scan_route = parts[:3] == ["api", "v1", "scans"] or parts[:4] == [
+            "api",
+            "v1",
+            "operations",
+            "scans",
+        ]
+        if scan_route:
+            permission = (
+                ApiPermission.READ
+                if method == "GET"
+                else ApiPermission.CANCEL_JOB
+                if parts[-1] == "cancel"
+                else ApiPermission.SUBMIT_DRY_RUN
+            )
+            self._require(principal, permission)
+            raise ManualScanError(
+                "standalone_scan_retired",
+                "独立扫描已退役；未创建工作，也未执行发现。",
+                status=410,
+                durable_state="no_task_created",
+                retry_safe=False,
+                next_action="在任务中心新建整理并生成摘要。",
+            )
+        job_submission = None
+        if parts == ["api", "v1", "jobs"] and method == "POST":
+            job_submission = self._document(environ)
+            if job_submission.get("command") == "scan":
+                self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
+                raise ManualScanError(
+                    "standalone_scan_retired",
+                    "独立扫描已退役；未创建工作，也未执行发现。",
+                    status=410,
+                    durable_state="no_task_created",
+                    retry_safe=False,
+                    next_action="在任务中心新建整理并生成摘要。",
+                )
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -1595,132 +1625,6 @@ class MediaFlowApi:
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             return self._manual_action_matrix(start_response, environ, principal, binding)
-        if parts == ["api", "v1", "operations", "scans"] and method == "POST":
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "server-bound manual Scan")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                    details={
-                        "durableState": "no_task_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Task repository, then retry"
-                        ),
-                    },
-                )
-            scan = binding.manual_scans.admit_current_document(
-                self._document(environ), actor=principal.principal_id
-            )
-            return self._response(
-                start_response,
-                202,
-                manual_scan_operator_document(
-                    {
-                        **scan.document(),
-                        "taskId": scan.task_id,
-                        "scopeKind": scan.scope_kind.value,
-                        "scopeId": scan.scope_id,
-                        "resourceLibraryId": scan.resource_library_id,
-                        "fileId": scan.file_id,
-                        "storageId": scan.storage_id,
-                        "sourcePath": scan.source_path,
-                        "sourceOccurrenceId": scan.source_occurrence_id,
-                        "sourceFingerprint": scan.source_fingerprint,
-                    },
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
-        if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "scans"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            try:
-                limit, cursor = self._manual_scan_detail_page(environ)
-            except ValueError:
-                # A Scan detail cursor is read-only continuation state. If a
-                # browser resumes with an expired or malformed cursor, safely
-                # restart this collection at page one while continuing to
-                # reject unsupported query fields and invalid page limits.
-                values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-                if (
-                    set(values).issubset({"itemLimit", "itemCursor"})
-                    and len(values.get("itemCursor", [])) == 1
-                ):
-                    limit = self._parse_bounded_limit(
-                        values.get("itemLimit", ["100"])[0], "manual Scan item"
-                    )
-                    cursor = None
-                else:
-                    raise
-            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
-            before = (
-                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
-            )
-            value = binding.manual_scans.detail_document(
-                parts[4], limit=limit, after=after, before=before
-            )
-            items = value.get("items", [])
-            has_previous = bool(value.pop("_has_previous_items", False))
-            has_next = bool(value.pop("_has_next_items", False))
-            value["itemLimit"] = value.pop("item_limit", limit)
-            value["itemsTruncated"] = bool(value.pop("items_truncated", False)) or has_next
-            value["nextItemCursor"] = self._manual_scan_cursor(
-                items, direction=CursorDirection.NEXT
-            )
-            value["previousItemCursor"] = self._manual_scan_cursor(
-                items, direction=CursorDirection.PREVIOUS
-            )
-            if not has_previous:
-                value["previousItemCursor"] = None
-            if not has_next:
-                value["nextItemCursor"] = None
-            return self._response(
-                start_response,
-                200,
-                manual_scan_operator_document(
-                    value,
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "scans"]
-            and parts[5] == "cancel"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "server-bound Scan cancellation")
-            self._require_empty_body(environ, "server-bound Scan cancellation")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            scan = binding.manual_scans.cancel(parts[4])
-            return self._response(
-                start_response,
-                200,
-                manual_scan_operator_document(
-                    scan.document(),
-                    cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                ),
-            )
         if parts == ["api", "v1", "operations", "previews"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             if self._manual_previews is None or not callable(
@@ -5805,91 +5709,6 @@ class MediaFlowApi:
             response["consumption"] = self._system_settings.consumption_evidence()
             return self._response(start_response, 200, response)
 
-        if parts == ["api", "v1", "scans"] and method == "POST":
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            self._require_empty_query(environ, "manual Scan")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                    details={
-                        "durableState": "no_task_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Task repository, then retry"
-                        ),
-                    },
-                )
-            scan = binding.manual_scans.admit_document(
-                self._document(environ), actor=principal.principal_id
-            )
-            return self._response(
-                start_response,
-                202,
-                {
-                    **scan.document(),
-                    "task_id": scan.task_id,
-                    "scope_kind": scan.scope_kind.value,
-                    "resource_library_id": scan.resource_library_id,
-                    "file_id": scan.file_id,
-                    "source_occurrence_id": scan.source_occurrence_id,
-                    "source_fingerprint": scan.source_fingerprint,
-                },
-            )
-        if len(parts) == 4 and parts[:3] == ["api", "v1", "scans"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            limit, cursor = self._manual_scan_detail_page(environ)
-            after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
-            before = (
-                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
-            )
-            value = binding.manual_scans.detail_document(
-                parts[3], limit=limit, after=after, before=before
-            )
-            items = value.get("items", [])
-            has_previous = bool(value.pop("_has_previous_items", False))
-            has_next = bool(value.pop("_has_next_items", False))
-            value["previous_item_cursor"] = None
-            value["next_item_cursor"] = None
-            # The manual Scan service already bounds item pages.  Cursor links use the same
-            # signed task-item cursor contract as the generic Task detail surface.
-            if has_previous:
-                value["previous_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.PREVIOUS
-                )
-            if has_next:
-                value["next_item_cursor"] = self._manual_scan_cursor(
-                    items, direction=CursorDirection.NEXT
-                )
-            return self._response(start_response, 200, value)
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "scans"]
-            and parts[4] == "cancel"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.CANCEL_JOB)
-            self._require_empty_query(environ, "manual Scan cancellation")
-            self._require_empty_body(environ, "manual Scan cancellation")
-            if binding.manual_scans is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "manual Scan service is unavailable",
-                )
-            scan = binding.manual_scans.cancel(parts[3])
-            return self._response(start_response, 200, scan.document())
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -8124,35 +7943,6 @@ class MediaFlowApi:
                 if self._manual_execution is not None
                 else None
             )
-            manual_scan = None
-            if binding is not None and binding.manual_scans is not None:
-                try:
-                    scan_after = (
-                        item_cursor.position
-                        if item_cursor and item_cursor.direction is CursorDirection.NEXT
-                        else None
-                    )
-                    scan_before = (
-                        item_cursor.position
-                        if item_cursor and item_cursor.direction is CursorDirection.PREVIOUS
-                        else None
-                    )
-                    manual_scan = binding.manual_scans.detail_document(
-                        task.task_id,
-                        limit=item_limit,
-                        after=scan_after,
-                        before=scan_before,
-                    )
-                    manual_scan.pop("_has_previous_items", None)
-                    manual_scan.pop("_has_next_items", None)
-                    if operations_projection:
-                        manual_scan = manual_scan_operator_document(
-                            manual_scan,
-                            cancel_permitted=ApiPermission.CANCEL_JOB in principal.permissions,
-                        )
-                except ManualScanError as error:
-                    if error.code != "task_not_found":
-                        raise
             return self._response(
                 start_response,
                 200,
@@ -8164,7 +7954,6 @@ class MediaFlowApi:
                         for item in result_page
                     ],
                     "manualExecutionDiscovery": manual_discovery,
-                    "manualScan": manual_scan,
                     "recovery_batches": [
                         batch.document()
                         for batch in (
@@ -8536,7 +8325,7 @@ class MediaFlowApi:
                 )
             if method == "POST":
                 self._require_empty_query(environ, "job submission")
-                document = self._document(environ)
+                document = job_submission if job_submission is not None else self._document(environ)
                 forbidden = {
                     "overwrite",
                     "delete",
@@ -8853,6 +8642,15 @@ class MediaFlowApi:
 
         def unavailable_for(key: str, destination: str, reason: str, next_action: str):
             authorized = authorized_for(key)
+            if key == "scan":
+                return self._readiness_entry(
+                    ready=False,
+                    condition="standalone_scan_retired" if authorized else "unauthorized",
+                    durable_state="standalone Scan is retired; no work was created",
+                    next_action="prepare a new organize summary in the task center",
+                    recovery_destination="/ui-v2/operations/organize/new",
+                    authorized=authorized,
+                )
             return self._readiness_entry(
                 ready=False,
                 condition="unauthorized" if not authorized else reason,
@@ -8958,7 +8756,6 @@ class MediaFlowApi:
         )
         manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
         activate = ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
-        dry_run = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
 
@@ -9080,15 +8877,11 @@ class MediaFlowApi:
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
-        scan_permission = permission(dry_run, "/ui-v2/operations/scans/new", "Scan")
-        scan = scan_permission or self._readiness_entry(
-            ready=bool(enabled_resources),
-            condition="ready" if enabled_resources else "missing",
-            durable_state="ResourceLibrary scan scope available"
-            if enabled_resources
-            else "no enabled ResourceLibrary",
-            next_action="add an enabled ResourceLibrary",
-            recovery_destination="/ui-v2/resourcelib/files",
+        scan = unavailable_for(
+            "scan",
+            "/ui-v2/operations/organize/new",
+            "standalone_scan_retired",
+            "prepare a new organize summary in the task center",
         )
         preview_permission = permission(preview, "/ui-v2/operations/preview/new", "Preview")
         preview_entry = preview_permission or self._readiness_entry(
@@ -9720,13 +9513,7 @@ class MediaFlowApi:
         if (
             snapshot_id == current.snapshot_id
             and digest == current.snapshot_digest
-            and (
-                runtime is None
-                or (
-                    current.files_browser is not None
-                    and (self._file_index is None or current.manual_scans is not None)
-                )
-            )
+            and (runtime is None or (current.files_browser is not None))
         ):
             return current
         if runtime is None or refreshed_status is None:
@@ -9817,24 +9604,6 @@ class MediaFlowApi:
             # evidence or claim can never be exchanged with the other's.
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
             direct_media_transfers = DirectFileTransferService(direct_files=direct_media_files)
-        manual_scans = self._manual_scans_override
-        if (
-            manual_scans is None
-            and runtime_configuration is not None
-            and self._file_index is not None
-        ):
-            manual_scans = ManualScanService(
-                self._repository,
-                self._file_index,
-                runtime_configuration=runtime_configuration,
-                storage_factory=lambda storage_ids=None, configuration=runtime_configuration: (
-                    configuration.create_storages(
-                        external=self._storage_adapters, storage_ids=storage_ids
-                    )
-                ),
-                configuration_snapshot_id=snapshot_id,
-                configuration_snapshot_digest=snapshot_digest,
-            )
         runtime_settings = None
         if runtime_configuration is not None:
             retry = runtime_configuration.workflow_retry_policy
@@ -9909,7 +9678,6 @@ class MediaFlowApi:
             direct_media_files,
             direct_transfers,
             direct_media_transfers,
-            manual_scans,
             runtime_settings,
             tuple(getattr(runtime_configuration, "automation_task_definitions", ())),
             (
@@ -10604,19 +10372,6 @@ class MediaFlowApi:
 
         task = service.require(task_id)
         require_cancellable(task)
-        context = service.execution_context(task)
-        if context.path is TaskExecutionPath.MANUAL_SCAN:
-            # The manual Scan service owns the cooperative cancellation: claim it
-            # atomically for the observed version, then let the service mark its
-            # own bounded state and cancel any in-process token.
-            service.claim_manual_scan_cancellation(task_id, expected_version=expected_version)
-            if binding is not None and binding.manual_scans is not None:
-                try:
-                    binding.manual_scans.cancel(task_id)
-                except ManualScanError as error:
-                    if error.code != "task_not_found":
-                        raise
-            return service.require(task_id)
         return service.cancel(task_id, expected_version=expected_version)
 
     @staticmethod
@@ -10835,40 +10590,6 @@ class MediaFlowApi:
             else None,
         )
 
-    @staticmethod
-    def _manual_scan_detail_page(
-        environ: dict,
-    ) -> tuple[int, DecodedCursor | None]:
-        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"itemLimit", "itemCursor"}
-        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
-            raise ValueError("manual Scan detail query accepts itemLimit and itemCursor")
-        raw_cursor = values.get("itemCursor")
-        return (
-            MediaFlowApi._parse_bounded_limit(
-                values.get("itemLimit", ["100"])[0], "manual Scan item"
-            ),
-            decode_directional_cursor(raw_cursor[0], "task_items") if raw_cursor else None,
-        )
-
-    @staticmethod
-    def _manual_scan_cursor(items, *, direction: CursorDirection) -> str | None:
-        if not items:
-            return None
-        item = items[0] if direction is CursorDirection.PREVIOUS else items[-1]
-        if not isinstance(item, dict):
-            return None
-        raw_timestamp = item.get("createdAt")
-        record_id = item.get("itemId")
-        if not isinstance(raw_timestamp, str) or not isinstance(record_id, str):
-            return None
-        return encode_cursor(
-            "task_items",
-            datetime.fromisoformat(raw_timestamp),
-            record_id,
-            direction,
-        )
-
     def _manual_action_matrix(
         self,
         start_response: Callable,
@@ -10908,14 +10629,12 @@ class MediaFlowApi:
         if raw_kind == "file" and not isinstance(resource_library_id, str):
             raise ValueError("manual action matrix resourceLibraryId is required for file scope")
 
-        can_scan = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
         can_preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         can_execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
         configuration_snapshot_id = getattr(binding, "snapshot_id", None)
         # Determine runtime readiness: the binding has a snapshot_id when a
         # configuration has been activated and loaded.
         runtime_ready = bool(configuration_snapshot_id)
-        scan_service_ready = callable(getattr(binding.manual_scans, "admit_current_document", None))
         preview_service_ready = callable(
             getattr(self._manual_previews, "create_current_from_index", None)
         )
@@ -10934,7 +10653,6 @@ class MediaFlowApi:
                 "nextAction": "restore the admitted execution services, then refresh",
             }
         )
-        scan_available = can_scan and runtime_ready and scan_service_ready
         preview_available = can_preview and runtime_ready and preview_service_ready
         organize_available = (
             can_execute
@@ -10944,20 +10662,6 @@ class MediaFlowApi:
             and preview_intent_ready
             and execution_service_ready
             and bool(organize_worker["ready"])
-        )
-        scan_reason = (
-            None
-            if scan_available
-            else (
-                "the connected API principal does not hold the submit_dry_run permission "
-                "required for Scan"
-                if not can_scan
-                else "the Active runtime is unavailable for Scan"
-                if not runtime_ready
-                else "the manual Scan service is unavailable"
-                if not scan_service_ready
-                else "Scan is unavailable"
-            )
         )
         preview_reason = (
             None
@@ -11026,10 +10730,9 @@ class MediaFlowApi:
         source: dict[str, object] = {}
         selection_required = raw_kind is None
         if raw_kind is None:
-            scan_available = False
             preview_available = False
             organize_available = False
-            scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+
             preview_reason = "select an exact ResourceLibrary scope before running a Preview"
             organize_reason = "select an exact scope before organizing"
         elif raw_kind == "file":
@@ -11038,10 +10741,9 @@ class MediaFlowApi:
             # Check ResourceLibrary availability.
             rl_info = rl_map.get(resource_library_id)
             if rl_info is None or not rl_info.get("enabled", False):
-                scan_available = False
                 preview_available = False
                 organize_available = False
-                scan_reason = "the configured ResourceLibrary is not available"
+
                 preview_reason = "the configured ResourceLibrary is not available"
                 organize_reason = "the configured ResourceLibrary is not available"
             else:
@@ -11057,10 +10759,9 @@ class MediaFlowApi:
                             record = candidate
                             break
                 if record is None:
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the current FileIndex source was not found"
+
                     preview_reason = "the current FileIndex source was not found"
                     organize_reason = "the current FileIndex source was not found"
                 elif (
@@ -11069,10 +10770,9 @@ class MediaFlowApi:
                     or not getattr(record, "occurrence_id", None)
                     or not getattr(record, "fingerprint", None)
                 ):
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the FileIndex source is not a verified ready current occurrence"
+
                     preview_reason = (
                         "the FileIndex source is not a verified ready current occurrence"
                     )
@@ -11105,19 +10805,18 @@ class MediaFlowApi:
                 # Bounded discovery: the operator has not selected an exact
                 # ResourceLibrary yet, so nothing is actionable.
                 selection_required = True
-                scan_available = False
+
                 preview_available = False
                 organize_available = False
-                scan_reason = "select an exact ResourceLibrary scope before submitting a Scan"
+
                 preview_reason = "select an exact ResourceLibrary scope before running a Preview"
                 organize_reason = "select an exact ResourceLibrary scope before organizing"
             else:
                 rl_info = rl_map.get(resource_library_id)
                 if rl_info is None or not rl_info.get("enabled", False):
-                    scan_available = False
                     preview_available = False
                     organize_available = False
-                    scan_reason = "the configured ResourceLibrary is not available"
+
                     preview_reason = "the configured ResourceLibrary is not available"
                     organize_reason = "the configured ResourceLibrary is not available"
                 else:
@@ -11149,14 +10848,12 @@ class MediaFlowApi:
                     },
                     "actions": {
                         "scan": {
-                            "available": scan_available,
-                            "reason": scan_reason,
+                            "available": False,
+                            "reason": "独立扫描已退役；请新建整理。",
                             "method": "POST",
                             "path": "/api/v1/operations/scans",
-                            "nextAction": (
-                                "submit a bounded Scan" if scan_available else scan_reason
-                            ),
-                            "modes": [mode.value for mode in ScanMode],
+                            "nextAction": "在任务中心新建整理并生成摘要。",
+                            "modes": [],
                         },
                         "preview": {
                             "available": preview_available,
@@ -11707,6 +11404,7 @@ class MediaFlowApi:
                 "sourceOccurrenceId",
                 "fingerprint",
                 "sourceFingerprint",
+                "storageFingerprint",
                 "snapshotId",
                 "snapshotDigest",
             }
@@ -11726,6 +11424,7 @@ class MediaFlowApi:
                 "sourceOccurrenceId",
                 "fingerprint",
                 "sourceFingerprint",
+                "storageFingerprint",
                 "snapshotId",
                 "snapshotDigest",
             }
@@ -13295,6 +12994,7 @@ class MediaFlowApi:
             "plan",
             "planFingerprint",
             "sourceFingerprint",
+            "storageFingerprint",
             "definitionFingerprint",
             "definitionCurrentFingerprint",
             "configurationRevisionDigest",
@@ -18873,6 +18573,7 @@ class MediaFlowApi:
             404: "Not Found",
             405: "Method Not Allowed",
             409: "Conflict",
+            410: "Gone",
             413: "Payload Too Large",
             422: "Unprocessable Entity",
             500: "Internal Server Error",

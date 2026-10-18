@@ -48,6 +48,10 @@ class TaskRetryRequestService:
         ):
             raise ValueError(f"task retry batch limit must be between 1 and {self.MAX_BATCH_SIZE}")
         items = self._repository.list_failed_items(limit=limit, task_id=task_id)
+        for item in items:
+            task = self._repository.get_task(item.task_id)
+            if task is not None and task.command == "scan":
+                raise ValueError("standalone_scan_retired: prepare a new organize summary")
         if not items:
             raise ValueError("no failed task items were selected")
         if self._recovery_admission is not None:
@@ -153,6 +157,9 @@ class TaskRetryRequestService:
         item = self._repository.get_item(item_id)
         if item is None:
             raise LookupError(f"TaskItem {item_id!r} was not found")
+        task = self._repository.get_task(item.task_id)
+        if task is not None and task.command == "scan":
+            raise ValueError("standalone_scan_retired: prepare a new organize summary")
         if item.status is not TaskItemStatus.FAILED:
             raise ValueError("TaskItem is not failed")
         now = datetime.now(UTC)

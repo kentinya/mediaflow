@@ -1476,7 +1476,7 @@ class ManualOrganizePreviewService:
             raise ManualPreviewError(
                 "configured ResourceLibrary has no current FileIndex sources",
                 code="selection_empty",
-                next_action="run a bounded Scan, then select the current ResourceLibrary again",
+                next_action="prepare a new organize summary from the live source in Files",
                 details={"resourceLibraryId": resource_library_id},
             )
         if len(values) > self._max_items:
@@ -1537,7 +1537,7 @@ class ManualOrganizePreviewService:
                 code=code,
                 status=409,
                 next_action=(
-                    "refresh FileIndex and select the current source after a successful Scan"
+                    "prepare a new organize summary in Files with internal stability checks"
                 ),
                 details={
                     "fileId": getattr(record, "file_id", None),
@@ -1553,7 +1553,7 @@ class ManualOrganizePreviewService:
                 "current FileIndex source occurrence is not verified",
                 code="source_unverified",
                 status=409,
-                next_action="run a complete Scan, then select the refreshed current occurrence",
+                next_action="open Files and prepare a new organize summary from the live source",
                 details={"fileId": getattr(record, "file_id", None)},
             )
 
@@ -1658,7 +1658,7 @@ class ManualOrganizePreviewService:
                     "current FileIndex source is no longer present in Storage",
                     code="source_missing",
                     status=409,
-                    next_action="run a bounded Scan and select the current source occurrence",
+                    next_action="prepare a new organize summary from the live source in Files",
                     details={"fileId": record.file_id},
                 ) from error
             raise ManualPreviewUnavailable(
@@ -1675,7 +1675,7 @@ class ManualOrganizePreviewService:
                 "current FileIndex source is no longer a file in Storage",
                 code="source_missing",
                 status=409,
-                next_action="run a bounded Scan and select the current source occurrence",
+                next_action="prepare a new organize summary from the live source in Files",
                 details={"fileId": record.file_id},
             )
         observed = source_fingerprint(record.storage_id, record.resource_library_id, entry)

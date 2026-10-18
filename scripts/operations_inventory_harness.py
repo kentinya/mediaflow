@@ -71,6 +71,7 @@ import os
 import socketserver
 import sys
 import threading
+import time
 import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -356,6 +357,7 @@ def build_managed_fixture(
     document["storages"][0]["rootPath"] = str(source_root)
     document["storages"][1]["rootPath"] = str(destination_root)
     document["resourceLibraries"][0]["storagePath"] = ""
+    document["resourceLibraries"][0]["displayRootPath"] = str(source_root)
     document["mediaLibraries"][0]["rootPath"] = "Movies"
     if include_cross_storage_destinations:
         document["resourceLibraries"].append(
@@ -378,6 +380,21 @@ def build_managed_fixture(
         )
         (source_root / "Archive").mkdir(parents=True, exist_ok=True)
 
+    document["resourceLibraries"].append(
+        {
+            "id": "retirement",
+            "name": "Retirement stability",
+            "storageId": "source-storage",
+            "storagePath": "Retirement",
+            "enabled": True,
+            "extensions": ["mkv"],
+            "stability": {
+                "minimumAgeSeconds": 0,
+                "modifiedThresholdSeconds": 0,
+                "stableSizeDurationSeconds": 3,
+            },
+        }
+    )
     document["organizePolicies"][0]["attachments"] = {"enabled": True}
     overwrite_policy = dict(document["organizePolicies"][0])
     overwrite_policy.update(
@@ -467,6 +484,15 @@ def build_managed_fixture(
     ).scan(runtime.resource_libraries[0])
     if scan.status.value != "completed":
         raise RuntimeError("temporary ResourceLibrary scan did not complete")
+    # Fresh sources are created after compatibility fixture indexing.
+    retirement_root = source_root / "Retirement"
+    retirement_root.mkdir(exist_ok=True)
+    for name in ("Thirteenth.2013.mkv", "Fourteenth.2014.mkv"):
+        fresh = retirement_root / name
+        fresh.write_bytes(b"fresh retirement source")
+        old = time.time() - 86400
+        os.utime(fresh, (old, old))
+    (retirement_root / "Downloading.mkv.part").write_bytes(b"temporary")
     registry = MetadataProviderRegistry(
         (
             _QueryScopedMetadataProvider(
@@ -504,6 +530,33 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Four",
                         year=2004,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "113",
+                        MediaType.MOVIE,
+                        "Thirteenth",
+                        year=2013,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "114",
+                        MediaType.MOVIE,
+                        "Fourteenth",
+                        year=2014,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "105",
+                        MediaType.MOVIE,
+                        "Five",
+                        year=2005,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -2622,15 +2675,15 @@ AUTHORITY_TARGETS = (
     "Movies/Movies/Anime/Eight (2008) [tmdbid-108]/Eight (2008).mkv",
 )
 
-CONTINUATION_RECORDED_FILE = "Six.2006.mkv"
-CONTINUATION_SOURCE_FILE = "Five.2005.mkv"
+CONTINUATION_RECORDED_FILE = "C/Continuation/Six.2006.mkv"
+CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
 
 
 def seed_continuation_journey(state: AppState) -> dict[str, object]:
-    """Create one real paused scan Task with one already-recorded source.
+    """Create one real paused Preview Task with one already-recorded source.
 
     This is a genuine durable state produced by the real production
-    coordinator: a scan Task that discovered exactly one source and was then
+    coordinator: a Preview Task that discovered exactly one source and was then
     durably paused at a supported item boundary.  Its item budget is two, so
     exactly one unit of remaining work exists — the continuation must process
     that one and nothing else.
@@ -2638,12 +2691,13 @@ def seed_continuation_journey(state: AppState) -> dict[str, object]:
 
     active = state.managed.active
     source_root = state.managed.root / "source"
+    (source_root / "C" / "Continuation").mkdir(parents=True, exist_ok=True)
     (source_root / CONTINUATION_SOURCE_FILE).write_bytes(b"continuation synthetic media")
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
     task = coordinator.create(
-        "scan",
+        "preview",
         execute_authorized=False,
-        scope_path=None,
+        scope_path=str(source_root / "C" / "Continuation"),
         item_limit=2,
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
@@ -2726,12 +2780,16 @@ def run_continuation_worker_once(state: AppState) -> dict[str, object]:
         claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
     if claimed is None:
         return {"ran": False, "reason": "the continuation Job was not claimable"}
-    task_id = _run_queued_workflow(
-        claimed,
-        str(config_path) if config_path is not None else None,
-        lambda: False,
-        repository=state.repository,
-    )
+    with patch(
+        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+        lambda _provider_ids: state.managed.metadata_registry,
+    ):
+        task_id = _run_queued_workflow(
+            claimed,
+            str(config_path) if config_path is not None else None,
+            lambda: False,
+            repository=state.repository,
+        )
     state.repository.complete_claimed_job(
         dataclasses.replace(
             claimed,
@@ -3474,11 +3532,46 @@ class ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
     daemon_threads = True
 
 
+def retirement_stability_state(state: AppState, *, change: bool = False):
+    root = state.managed.root / "source" / "Retirement"
+    source = root / "Thirteenth.2013.mkv"
+    if change:
+        source.write_bytes(source.read_bytes() + b"changed")
+    records = state.repository.list_media_discoveries(limit=500)
+    matching = [item for item in records if item.resource_library_id == "retirement"]
+    observations = []
+    for item in matching:
+        observations.extend(
+            value.document()
+            for value in state.repository.list_media_discovery_observations(
+                item.discovery_id, limit=100
+            )
+        )
+    counts = {
+        table: state.repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in ("tasks", "automation_jobs", "manual_execution_authorizations")
+    }
+    return {
+        "counts": counts,
+        "observations": observations,
+        "sources": sorted(path.name for path in root.iterdir()),
+        "targets": sorted(
+            path.name
+            for path in (state.managed.root / "destination").rglob("*")
+            if path.is_file() and path.name.startswith(("Thirteenth", "Fourteenth"))
+        ),
+    }
+
+
 def application(environ, start_response):
     path = str(environ.get("PATH_INFO", ""))
     if path.startswith("/__harness__/") and STATE is not None:
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
-        if path == "/__harness__/run-worker" and method == "POST":
+        if path == "/__harness__/retirement-state" and method == "GET":
+            document = retirement_stability_state(STATE)
+        elif path == "/__harness__/retirement-change" and method == "POST":
+            document = retirement_stability_state(STATE, change=True)
+        elif path == "/__harness__/run-worker" and method == "POST":
             document = run_worker_once(STATE)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)

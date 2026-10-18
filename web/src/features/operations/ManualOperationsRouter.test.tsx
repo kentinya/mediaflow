@@ -24,16 +24,6 @@ function document(name: string): Json {
   return JSON.parse(JSON.stringify(documents[name])) as Json;
 }
 
-/** The real Scan detail document with one deterministic task identity. */
-function scanDocument(name: string, taskId: string): Json {
-  const value = document(name);
-  value["taskId"] = taskId;
-  const actions = value["actions"] as Json;
-  (actions["cancel"] as Json)["path"] =
-    `/api/v1/operations/scans/${taskId}/cancel`;
-  return value;
-}
-
 /** The real Preview document with one deterministic preview identity. */
 function previewDocument(name: string, previewId: string): Json {
   const value = document(name);
@@ -167,10 +157,10 @@ describe("Operations manual Scan/Preview journeys", () => {
     );
     // The exact backend-advertised scope opens the Scan/Preview entries and
     // the matrix read carries the exact submitted scope.
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
     expect(
-      await screen.findByRole("link", { name: "发起受限扫描" }),
+      await screen.findByRole("link", { name: "运行零变更预览" }),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "运行零变更预览" })).toBeVisible();
     await waitFor(() =>
       expect(
         calls.some(
@@ -180,228 +170,6 @@ describe("Operations manual Scan/Preview journeys", () => {
         ),
       ).toBe(true),
     );
-  });
-
-  it("submits one exact bounded Scan body with the operator's mode and never replays it", async () => {
-    const user = userEvent.setup();
-    const { calls } = recordingFetch((call) => {
-      if (call.url.includes("/api/v1/operations/manual-actions?")) {
-        return jsonResponse(document("actionMatrix"));
-      }
-      if (call.url === "/api/v1/operations/scans" && call.method === "POST") {
-        return jsonResponse(scanDocument("scanAdmission", "scan-1"), 202);
-      }
-      if (call.url.startsWith("/api/v1/operations/scans/")) {
-        return jsonResponse(scanDocument("scanDetail", "scan-1"));
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp(
-      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
-    );
-
-    await screen.findByRole("heading", { name: "Start bounded Scan" });
-    await user.selectOptions(
-      await screen.findByLabelText("Scan mode"),
-      "incremental",
-    );
-
-    const submit = await screen.findByRole("button", {
-      name: "Submit bounded Scan",
-    });
-    await waitFor(() => expect(submit).toBeEnabled());
-    await user.click(submit);
-
-    expect(await screen.findByText("Scan admitted successfully")).toBeVisible();
-    await screen.findByRole(
-      "heading",
-      { name: "Scan scan-1" },
-      { timeout: 3000 },
-    );
-    const submitted = calls.filter(
-      (call) => call.url === "/api/v1/operations/scans",
-    );
-    expect(submitted).toHaveLength(1);
-    expect(submitted[0]?.method).toBe("POST");
-    expect(submitted[0]?.body).toEqual({
-      scopeKind: "file",
-      fileId: "file-1",
-      resourceLibraryId: "library",
-      mode: "incremental",
-    });
-  });
-
-  it("activates the Scan submission from the keyboard and offers no action for an invalid scope", async () => {
-    const user = userEvent.setup();
-    const { calls } = recordingFetch((call) => {
-      if (call.url.includes("/api/v1/operations/manual-actions")) {
-        return jsonResponse(document("actionMatrix"));
-      }
-      if (call.url === "/api/v1/operations/scans" && call.method === "POST") {
-        return jsonResponse(scanDocument("scanAdmission", "scan-1"), 202);
-      }
-      if (call.url.startsWith("/api/v1/operations/scans/")) {
-        return jsonResponse(scanDocument("scanDetail", "scan-1"));
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    const { queryClient } = renderApp(
-      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
-    );
-
-    const submit = await screen.findByRole("button", {
-      name: "Submit bounded Scan",
-    });
-    await waitFor(() => expect(submit).toBeEnabled());
-    submit.focus();
-    expect(submit).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await screen.findByRole(
-      "heading",
-      { name: "Scan scan-1" },
-      { timeout: 3000 },
-    );
-    expect(
-      calls.filter((call) => call.url === "/api/v1/operations/scans"),
-    ).toHaveLength(1);
-
-    queryClient.clear();
-    renderApp("/ui-v2/operations/scan/new?scopeKind=bucket");
-    await screen.findByRole("heading", { name: "Start bounded Scan" });
-    expect(
-      await screen.findByRole("heading", { name: "Invalid scope" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Submit bounded Scan" }),
-    ).toBeDisabled();
-  });
-
-  it("renders the durable Scan detail actions, paging and the exact backend-advertised control", async () => {
-    const user = userEvent.setup();
-    // The real paged document: page one of a 2-item ResourceLibrary Scan
-    // (the fixture canonicalizes the page-window source label because which
-    // sibling lands on page one is not part of the API contract).
-    const paged = scanDocument("scanLibraryDetail", "scan-1");
-    for (const item of paged["items"] as Json[]) {
-      item["sourcePath"] = "Two.2002.mkv";
-    }
-    // Its real next page, as the backend would return it for that cursor.
-    const pageTwo = scanDocument("scanLibraryDetail", "scan-1");
-    pageTwo["items"] = [
-      {
-        ...((
-          scanDocument("scanDetail", "scan-1")["items"] as Json[]
-        )[0] as Json),
-        itemId: "item-2",
-        sourcePath: "One.2001.mkv",
-      },
-    ];
-    pageTwo["nextItemCursor"] = null;
-    pageTwo["itemsTruncated"] = false;
-    const cursors: (string | null)[] = [];
-    recordingFetch((call) => {
-      if (!call.url.startsWith("/api/v1/operations/scans/scan-1")) {
-        return undefined;
-      }
-      const cursorMatch = /itemCursor=([^&]+)/.exec(call.url);
-      cursors.push(cursorMatch ? decodeURIComponent(cursorMatch[1]!) : null);
-      return jsonResponse(cursorMatch ? pageTwo : paged);
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/scan/scan-1");
-
-    await screen.findByRole("heading", { name: "Scan scan-1" });
-    expect(screen.getByText("Two.2002.mkv", { exact: false })).toBeVisible();
-    // The paged ResourceLibrary Scan advertises its next page and no
-    // cancellation control for its terminal state.
-    expect(
-      screen.getByRole("button", { name: "Previous items" }),
-    ).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Request cancel" })).toBeNull();
-    expect(
-      screen.getByText(/Cancellation is not available for this Scan/),
-    ).toBeVisible();
-
-    const next = screen.getByRole("button", { name: "Next items" });
-    expect(next).toBeEnabled();
-    await user.click(next);
-    expect(
-      await screen.findByText("One.2001.mkv", { exact: false }),
-    ).toBeVisible();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Previous items" }),
-      ).toBeEnabled(),
-    );
-    expect(cursors.some((cursor) => cursor !== null)).toBe(true);
-
-    await user.click(screen.getByRole("button", { name: "Previous items" }));
-    expect(
-      await screen.findByText("Two.2002.mkv", { exact: false }),
-    ).toBeVisible();
-  });
-
-  it("submits exactly one cooperative Scan cancellation and keeps the durable outcome", async () => {
-    const user = userEvent.setup();
-    const running = scanDocument("scanAdmission", "scan-1");
-    const cancelled = scanDocument("scanDetail", "scan-1");
-    cancelled["status"] = "cancelled";
-    cancelled["cancellationRequested"] = true;
-    ((cancelled["actions"] as Json)["cancel"] as Json)["available"] = false;
-    let cancellationRequested = false;
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/scans/scan-1/cancel") {
-        cancellationRequested = true;
-        return jsonResponse(cancelled);
-      }
-      if (call.url.startsWith("/api/v1/operations/scans/scan-1")) {
-        return jsonResponse(cancellationRequested ? cancelled : running);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/scan/scan-1");
-
-    await screen.findByRole("heading", { name: "Scan scan-1" });
-    const cancel = await screen.findByRole("button", {
-      name: "Request cancel",
-    });
-    await user.click(cancel);
-
-    await screen.findByText("Cancel requested");
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Request cancel" }),
-      ).toBeNull(),
-    );
-    const posted = calls.filter((call) =>
-      call.url.endsWith("/api/v1/operations/scans/scan-1/cancel"),
-    );
-    expect(posted).toHaveLength(1);
-    expect(posted[0]?.method).toBe("POST");
-    expect(posted[0]?.body).toBeNull();
-  });
-
-  it("does not render a Scan cancel control when the backend denies this principal", async () => {
-    const readOnly = scanDocument("scanAdmission", "scan-1");
-    const actions = readOnly["actions"] as Json;
-    const cancel = actions["cancel"] as Json;
-    cancel["available"] = false;
-    cancel["unavailableReason"] =
-      "the connected API principal does not hold the cancel_job permission required for this control";
-    recordingFetch((call) =>
-      call.url.startsWith("/api/v1/operations/scans/scan-1")
-        ? jsonResponse(readOnly)
-        : undefined,
-    );
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/scan/scan-1");
-
-    await screen.findByRole("heading", { name: "Scan scan-1" });
-    expect(screen.queryByRole("button", { name: "Request cancel" })).toBeNull();
-    expect(screen.getByText(/cancel_job permission required/)).toBeVisible();
   });
 
   it("renders the persisted Preview findings without fabricating absent ones", async () => {
@@ -520,7 +288,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     );
     authStore.setToken(TOKEN);
     renderApp(
-      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
+      "/ui-v2/operations/preview/new?scopeKind=file&relativePath=One.2001.mkv&resourceLibraryId=library",
     );
 
     await screen.findByRole("heading", { name: "Action matrix unavailable" });
@@ -613,10 +381,10 @@ describe("Operations manual Scan/Preview journeys", () => {
 
     // The Operations workspace owns the manual ResourceLibrary actions now
     // that the retired Library landing no longer exists.
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
     expect(
-      await screen.findByRole("link", { name: "发起受限扫描" }),
+      await screen.findByRole("link", { name: "运行零变更预览" }),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "运行零变更预览" })).toBeVisible();
     expect(
       calls.some(
         (call) =>
@@ -681,7 +449,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     });
     authStore.setToken(TOKEN);
     renderApp(
-      "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
+      "/ui-v2/operations/preview/new?scopeKind=file&relativePath=One.2001.mkv&resourceLibraryId=library",
     );
 
     await screen.findByRole("heading", { name: "Operations unavailable" });

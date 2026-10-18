@@ -20,7 +20,8 @@ import {
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
-import { SCAN_MODES, type ScanMode } from "./scan";
+const SCAN_MODES = ["full", "incremental"] as const;
+type ScanMode = (typeof SCAN_MODES)[number];
 
 export const MANUAL_ACTION_SCOPES = ["file", "resourceLibrary"] as const;
 export type ManualActionScope = (typeof MANUAL_ACTION_SCOPES)[number];

@@ -33,9 +33,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from mediaflow.domain.automation import AutomationJobStatus
-from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord
-from mediaflow.domain.manual_scan import ManualScanScopeKind, ManualScanTask
 from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
@@ -143,30 +141,6 @@ def _result(
         attachment_count=attachment_count,
         effect_certainty=effect_certainty,
         uncertain_effects=uncertain_effects,
-    )
-
-
-def _scan(
-    task_id: str,
-    *,
-    status: PersistentTaskStatus = PersistentTaskStatus.RUNNING,
-    reconciliation_complete: bool = False,
-    errors: tuple[dict[str, object], ...] = (),
-    progress: dict[str, int] | None = None,
-) -> ManualScanTask:
-    return ManualScanTask(
-        task_id=task_id,
-        scope_kind=ManualScanScopeKind.RESOURCE_LIBRARY,
-        resource_library_id="source",
-        mode=ScanMode.FULL,
-        status=status,
-        configuration_snapshot_id="snap-a",
-        configuration_snapshot_digest="digest-a",
-        created_at=NOW,
-        updated_at=NOW,
-        reconciliation_complete=reconciliation_complete,
-        errors=errors,
-        progress=progress or {},
     )
 
 
@@ -506,70 +480,6 @@ class RunProgressAccountingTests(_RunDetailApiTestCase):
         progress = overview["progress"]
         self.assertEqual(progress["kind"], "organize")
         self.assertIn("存储操作", progress["success_means"])
-
-    def test_unknown_discovery_total_is_indeterminate(self) -> None:
-        task_id = f"task-{uuid.uuid4().hex[:10]}"
-        record = dataclasses.replace(
-            task(task_id, command="scan", status=PersistentTaskStatus.RUNNING),
-            total_items=0,
-        )
-        self.repository.create_manual_scan(record, _scan(task_id, reconciliation_complete=False))
-        self.repository.upsert_item(_item(task_id, "item-0", TaskItemStatus.SUCCESS))
-
-        code, overview = self.overview(task_id)
-        self.assertEqual(code, 200)
-        progress = overview["progress"]
-        self.assertTrue(progress["available"])
-        self.assertTrue(progress["indeterminate"])
-        self.assertIsNone(progress["known_total"])
-        self.assertIsNone(progress["processed"])
-        self.assertFalse(progress["scan_discovery_complete"])
-        self.assertEqual(progress["kind"], "scan")
-        # The already-known dispositions remain visible without a denominator.
-        self.assertEqual(progress["dispositions"]["success"], 1)
-        self.assertEqual(sum(progress["dispositions"].values()), 1)
-
-        # Once discovery reconciles, the total becomes known and reconciles.
-        connection = self.raw()
-        connection.execute(
-            "UPDATE manual_scan_tasks SET reconciliation_complete=1 WHERE task_id=?",
-            (task_id,),
-        )
-        connection.commit()
-        code, overview = self.overview(task_id)
-        progress = overview["progress"]
-        self.assertFalse(progress["indeterminate"])
-        self.assertEqual(progress["known_total"], 1)
-        self.assertTrue(progress["scan_discovery_complete"])
-
-    def test_scan_errors_and_attachment_steps_stay_separate(self) -> None:
-        task_id = f"task-{uuid.uuid4().hex[:10]}"
-        record = dataclasses.replace(
-            task(task_id, command="scan", status=PersistentTaskStatus.PARTIAL_SUCCESS),
-            total_items=1,
-        )
-        self.repository.create_manual_scan(
-            record,
-            _scan(
-                task_id,
-                status=PersistentTaskStatus.PARTIAL_SUCCESS,
-                reconciliation_complete=True,
-                errors=({"stage": "discovery"}, {"stage": "source"}),
-                progress={"files_visited": 12, "candidates": 1},
-            ),
-        )
-        self.repository.upsert_item(_item(task_id, "item-0", TaskItemStatus.SUCCESS))
-        self.repository.append_result(_result(task_id, "item-0", attachment_count=4))
-
-        code, overview = self.overview(task_id)
-        progress = overview["progress"]
-        self.assertEqual(progress["scan_errors"], 2)
-        self.assertEqual(progress["attachment_steps"], 4)
-        self.assertEqual(progress["scan_progress"]["files_visited"], 12)
-        # Neither leaks into the primary-item partition.
-        self.assertEqual(progress["known_total"], 1)
-        self.assertEqual(sum(progress["dispositions"].values()), 1)
-        self.assertEqual(progress["dispositions"]["success"], 1)
 
     def test_admitted_not_yet_materialized_items_publish_pending(self) -> None:
         run_id, task_id = self.seed_run(status=PersistentTaskStatus.RUNNING, total_items=5)

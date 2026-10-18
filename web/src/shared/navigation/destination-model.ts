@@ -148,19 +148,19 @@ const childDestinationData = [
   },
   {
     id: "operations-scan-new",
-    label: "Start Scan",
+    label: "扫描已退役",
     path: "/operations/scan/new",
-    title: "Start Scan | MediaFlow",
+    title: "扫描已退役 | MediaFlow",
     availability: "implemented" as const,
-    description: "Submit a bounded server-bound Scan admission.",
+    description: "独立扫描已退役，请新建整理。",
   },
   {
     id: "operations-scan-detail",
-    label: "Scan detail",
+    label: "扫描已退役",
     path: "/operations/scan/$taskId",
-    title: "Scan detail | MediaFlow",
+    title: "扫描已退役 | MediaFlow",
     availability: "implemented" as const,
-    description: "Bounded scan document, progress and per-item findings.",
+    description: "独立扫描已退役，请新建整理。",
     dynamicPrefix: "/operations/scan/" as const,
   },
   {
@@ -920,14 +920,7 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/scan/new") {
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setSafe(allowed, "scopeKind", current.get("scopeKind"));
-    setSafe(allowed, "fileId", current.get("fileId"));
-    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
+  if (path === "/operations/scan/new") return null;
   if (path === "/operations/preview/new") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);

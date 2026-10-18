@@ -303,7 +303,7 @@ describe("Operations run inventory landing", () => {
     expect((await screen.findAllByText(/Worker 就绪/)).length).toBeGreaterThan(
       0,
     );
-    expect(screen.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
     expect(
       requested.some((url) => url.includes("/api/v1/operations/runs")),
     ).toBe(true);

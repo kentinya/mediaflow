@@ -112,7 +112,12 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                 waiting = repo.get_resident_service_wait_state(row.service, row.instance_id)
                 self.assertEqual(waiting.waiting_reason, "unconfigured")
 
-    def test_live_worker_consumes_later_and_old_published_scan_pins(self):
+    def test_live_worker_consumes_later_and_old_published_preview_pins(self):
+        # The source is empty: the real Preview consumer constructs but never
+        # calls TMDB. Supply only an isolated fake bootstrap credential.
+        credential = patch.dict(os.environ, {"TMDB_ACCESS_TOKEN": "fake-preview-test"})
+        credential.start()
+        self.addCleanup(credential.stop)
         with SQLiteTaskRepository(self.database):
             pass
         process = self.start("worker")
@@ -144,12 +149,12 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         revision_a = self.publish_successor(configure)
         process.send_signal(signal.SIGSTOP)
         try:
-            code, out, err = self.cli("jobs", "submit", "scan")
+            code, out, err = self.cli("jobs", "submit", "preview")
             self.assertEqual(code, 0, err)
             self.publish_successor(
                 lambda document: document["resourceLibraries"][0].update(name="B")
             )
-            code, out, err = self.cli("jobs", "submit", "scan")
+            code, out, err = self.cli("jobs", "submit", "preview")
             self.assertEqual(code, 0, err)
             with SQLiteTaskRepository(self.database, read_only=True) as repo:
                 self.assertEqual([job.status.value for job in repo.list_jobs()], ["pending"] * 2)

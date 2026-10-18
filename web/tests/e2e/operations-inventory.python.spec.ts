@@ -1885,9 +1885,9 @@ test("the default unfiltered task-center origin selects its admitted run through
  * continuation scope logic or the real authority decision.
  */
 
-/** The paused scan fixture's already-recorded and remaining sources. */
-const CONTINUATION_RECORDED_SOURCE = "Six.2006.mkv";
-const CONTINUATION_REMAINING_SOURCE = "Five.2005.mkv";
+/** The paused Preview fixture's already-recorded and remaining sources. */
+const CONTINUATION_RECORDED_SOURCE = "C/Continuation/Six.2006.mkv";
+const CONTINUATION_REMAINING_SOURCE = "C/Continuation/Five.2005.mkv";
 
 test("a paused run continues only its remaining scope through the real Worker", async ({
   page,
@@ -1946,7 +1946,7 @@ test("a paused run continues only its remaining scope through the real Worker", 
   // The operator/API projection is bounded and redacted: it publishes the
   // durable identifiers but never the internal scope path, the pin or the actor.
   expect(admissionBody.continuation.sourceTaskId).toBe(sourceTaskId);
-  expect(admissionBody.continuation.command).toBe("scan");
+  expect(admissionBody.continuation.command).toBe("preview");
   expect(admissionBody.continuation.itemLimit).toBe(2);
   expect(admissionBody.continuation.boundary).toBe(
     "paused_remaining_admitted_scope",
@@ -2002,7 +2002,7 @@ test("a paused run continues only its remaining scope through the real Worker", 
   await expect(
     page
       .getByRole("row")
-      .filter({ hasText: "扫描" })
+      .filter({ hasText: "预览" })
       .filter({ hasText: "已完成" }),
   ).toHaveCount(1);
   const afterRestart = await (
@@ -4486,4 +4486,139 @@ test("verified primary completes with durable policy-specific attachment collisi
   ).toContainText("不重放主文件");
   const again = await request.post(`${BASE}/__harness__/run-manual-worker`);
   expect((await again.json()).reason).toBe("no admitted manual execution");
+});
+
+test("retired links and fresh organization retain real elapsed stability and exact confirmation", async ({
+  page,
+  request,
+}) => {
+  await connect(page, ADMIN_TOKEN);
+  const calls = recordApiCalls(page);
+  for (const width of [1536, 380]) {
+    await page.setViewportSize({ width, height: width === 380 ? 720 : 1024 });
+    for (const old of ["new?scopeKind=bucket&fileId=old", "old-task"]) {
+      await page.goto("/ui-v2/operations/scan/" + old);
+      await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+      await expect(
+        page.getByRole("heading", { name: "独立扫描已退役" }),
+      ).toBeVisible();
+      const next = page.getByRole("link", { name: "新建整理", exact: true });
+      await next.focus();
+      await expect(next).toBeFocused();
+      await expect(next).toBeInViewport();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBeTruthy();
+      await page.screenshot({
+        path:
+          TASK45_RECOVERY_EVIDENCE +
+          "/retired-" +
+          width +
+          "-" +
+          (old.startsWith("new") ? "new" : "detail") +
+          ".png",
+        fullPage: true,
+      });
+    }
+  }
+  expect(
+    calls.filter(
+      (call) => call.path.includes("/scans") || call.method !== "GET",
+    ),
+  ).toEqual([]);
+  const before = await (
+    await request.get(BASE + "/__harness__/retirement-state")
+  ).json();
+  await request.post(BASE + "/__harness__/register-manual-worker");
+  await page.goto(
+    "/ui-v2/resourcelib/files?resourceLibraryId=retirement&path=",
+  );
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await page
+    .getByRole("checkbox", { name: "选择 Thirteenth.2013.mkv" })
+    .check();
+  await page
+    .getByRole("checkbox", { name: "选择 Fourteenth.2014.mkv" })
+    .check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page).toHaveURL(/discoveryId=/);
+  const first = await (
+    await request.post(BASE + "/__harness__/run-discovery-worker")
+  ).json();
+  expect(first.status).toBe("waiting_stability");
+  await expect(
+    page.getByText("等待来源稳定", { exact: true }).first(),
+  ).toBeVisible();
+  await page.screenshot({
+    path: TASK45_RECOVERY_EVIDENCE + "/retirement-wait-380.png",
+    fullPage: true,
+  });
+  const unchanged = await (
+    await request.get(BASE + "/__harness__/retirement-state")
+  ).json();
+  expect(unchanged.counts).toEqual(before.counts);
+  expect(unchanged.targets).toEqual([]);
+  expect(unchanged.observations).toHaveLength(2);
+  await request.post(BASE + "/__harness__/retirement-change");
+  // Real test-side time; the product browser never drives an observation loop.
+  await new Promise((resolve) => setTimeout(resolve, 3100));
+  const changed = await (
+    await request.post(BASE + "/__harness__/run-discovery-worker")
+  ).json();
+  expect(changed.status).toBe("waiting_stability");
+  const afterChange = await (
+    await request.get(BASE + "/__harness__/retirement-state")
+  ).json();
+  expect(afterChange.counts).toEqual(before.counts);
+  expect(afterChange.targets).toEqual([]);
+  expect(
+    (
+      await (
+        await request.post(BASE + "/__harness__/run-discovery-worker")
+      ).json()
+    ).advanced,
+  ).toBe(false);
+  await new Promise((resolve) => setTimeout(resolve, 3100));
+  for (let step = 0; step < 10; step += 1) {
+    const advanced = await (
+      await request.post(BASE + "/__harness__/run-discovery-worker")
+    ).json();
+    if (advanced.previewId) break;
+  }
+  await expect(
+    page.getByRole("heading", { name: "计划摘要", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("checkbox", { name: "选择 Thirteenth.2013.mkv" })
+    .uncheck();
+  await expect(
+    page.getByRole("button", { name: "确认整理 1 项" }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: TASK45_RECOVERY_EVIDENCE + "/retirement-summary-380.png",
+    fullPage: true,
+  });
+  expect(
+    (await (await request.get(BASE + "/__harness__/retirement-state")).json())
+      .counts,
+  ).toEqual(before.counts);
+  await page.getByRole("button", { name: "确认整理 1 项" }).click();
+  await expect(page).toHaveURL(/organize\/execution\//);
+  const executed = await (
+    await request.post(BASE + "/__harness__/run-manual-worker")
+  ).json();
+  expect(executed).toMatchObject({ completed: true, itemCount: 1 });
+  const final = await (
+    await request.get(BASE + "/__harness__/retirement-state")
+  ).json();
+  expect(final.targets).toHaveLength(1);
+  expect(
+    final.sources.filter((name: string) => name.endsWith(".mkv")),
+  ).toHaveLength(1);
+  await page.screenshot({
+    path: TASK45_RECOVERY_EVIDENCE + "/retirement-result-380.png",
+    fullPage: true,
+  });
 });

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import io
-import json
 import posixpath
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
 from mediaflow.application.media_organizer import MediaOrganizerService
@@ -123,48 +123,11 @@ class MemoryStorage:
 
 
 class ResourceLibraryPipelineTests(unittest.TestCase):
-    def test_scan_cli_needs_no_path_or_metadata_token(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            source_root = Path(temp, "source")
-            target_root = Path(temp, "target")
-            source_root.joinpath("Incoming").mkdir(parents=True)
-            target_root.mkdir()
-            source_root.joinpath("Incoming", "Movie.2024.mkv").write_bytes(b"movie")
-            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-            document["storages"] = [
-                {"id": "source", "type": "local", "rootPath": str(source_root)},
-                {"id": "target", "type": "local", "rootPath": str(target_root)},
-            ]
-            document["resourceLibraries"] = [
-                {
-                    "id": "movies",
-                    "storageId": "source",
-                    "storagePath": "Incoming",
-                    "rootPath": str(source_root / "Incoming"),
-                }
-            ]
-            for policy in document["classificationPolicies"]:
-                for rule in policy["rules"]:
-                    rule["result"]["mediaLibraryId"] = "movies"
-            document["mediaLibraries"] = [
-                {
-                    "id": "movies",
-                    "storageId": "target",
-                    "rootPath": "Movies",
-                }
-            ]
-            config = Path(temp, "config.json")
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-            stdout, stderr = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "scan", "--limit", "20"],
-                stdout=stdout,
-                stderr=stderr,
-            )
-            self.assertEqual(0, code, stderr.getvalue())
-            self.assertIn("ResourceLibrary: movies", stdout.getvalue())
-            self.assertIn("source:Incoming/Movie.2024.mkv", stdout.getvalue())
-            self.assertTrue(source_root.joinpath("Incoming", "Movie.2024.mkv").exists())
+    def test_scan_cli_is_retired_before_configuration_or_metadata(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch("mediaflow.final_cli._configuration", side_effect=AssertionError):
+            self.assertNotEqual(0, final_main(["scan"], stdout=stdout, stderr=stderr))
+        self.assertIn("standalone_scan_retired", stderr.getvalue())
 
     def test_scans_local_and_mock_openlist_without_mutation(self) -> None:
         local = MemoryStorage("local", {"Movies/Local.2024.mkv": b"local"})

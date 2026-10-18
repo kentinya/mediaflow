@@ -2127,10 +2127,10 @@ function ManualOperationsSection({
   const matrix = matrixQuery.data?.ok === true ? matrixQuery.data.model : null;
   const actionable =
     matrix !== null &&
-    (matrix.actions.scan.available || matrix.actions.preview.available);
+    matrix.actions.preview.available;
   const backendReason =
     matrix !== null
-      ? (matrix.actions.scan.reason ?? matrix.actions.preview.reason)
+      ? matrix.actions.preview.reason
       : null;
   return (
     <section className="mf-count-section">
@@ -2192,14 +2192,6 @@ function ManualOperationsSection({
             </p>
           )}
           <nav className="mf-actions" aria-label="手动操作入口">
-            {matrix.actions.scan.available && (
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/scan/new"
-              >
-                发起受限扫描
-              </Link>
-            )}
             {matrix.actions.preview.available && (
               <Link
                 className="mf-button mf-button-secondary"

@@ -1785,8 +1785,8 @@ class ManualOrganizeExecutionService:
             "no further action is required"
         ),
         "no_matching_occurrence": (
-            "refresh or rescan this ResourceLibrary, then repeat the bounded FileIndex "
-            "reconciliation against the durable Result"
+            "inspect the durable Result and live source/target in Files; the historical "
+            "index association cannot authorize a new operation or replay this Result"
         ),
         "attention_required": (
             "inspect the current FileIndex occurrence and repeat the bounded reconciliation; "

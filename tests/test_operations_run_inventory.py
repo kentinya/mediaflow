@@ -47,14 +47,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.automation import ProcessingWorkerService
-from mediaflow.application.manual_scan import ManualScanService
-from mediaflow.application.scanner import StorageScanner
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
 )
-from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.operations_run import (
     known_command_label,
 )
@@ -63,7 +60,6 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskStatus,
 )
-from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.pagination import (
     CursorDirection,
@@ -71,7 +67,6 @@ from mediaflow.interfaces.pagination import (
     encode_cursor,
 )
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_scanner import FakeStorage
 from tests.test_v2_manual_organize import _JourneyFixtureMixin
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -1709,138 +1704,6 @@ def _retime(task_id: str, when: datetime) -> PersistentTask:
     from dataclasses import replace
 
     return replace(task(task_id, rank=0), created_at=when, updated_at=when)
-
-
-class ScanDisplayEvidenceTests(_InventoryApiTestCase):
-    """A newly admitted Scan records its business identity at admission.
-
-    The producer writes bounded display evidence inside the same transaction
-    that creates the Task, so a brand-new Scan is searchable by its visible
-    business label and configured library scope instead of appearing as
-    legacy-missing.
-    """
-
-    def _service(
-        self, *, library_name: str = "Library"
-    ) -> tuple[ManualScanService, InMemoryFileIndexRepository]:
-        storage = FakeStorage("source")
-        storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
-        storage.add_file("sibling.mkv", 11, NOW - timedelta(hours=2))
-        index = InMemoryFileIndexRepository()
-        library = ResourceLibrary("library", library_name, "source", "", exclude_rules=())
-        StorageScanner({"source": storage}, index, clock=lambda: NOW).scan(library)
-        service = ManualScanService(
-            self.repository,
-            index,
-            resource_libraries=(library,),
-            storages={"source": storage},
-            configuration_snapshot_id="snap-a",
-            configuration_snapshot_digest="digest-a",
-            clock=lambda: NOW,
-            start_async=False,
-        )
-        return service, index
-
-    def _run_document(self, run_id: str) -> dict:
-        code, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
-        self.assertEqual(200, code)
-        matches = [item for item in page["items"] if item["run_id"] == run_id]
-        self.assertEqual(1, len(matches), page)
-        return matches[0]
-
-    def test_library_scope_scan_publishes_scope_and_is_searchable(self) -> None:
-        service, _index = self._service()
-        admitted = service.admit_document(
-            {
-                "scopeKind": "resource_library",
-                "resourceLibraryId": "library",
-                "mode": "full",
-            }
-        )
-        run = self._run_document(admitted.task_id)
-        self.assertEqual("扫描", run["command_label"])
-        self.assertEqual("Library", run["source_scope"])
-        self.assertIsNone(run["target_scope"])
-        self.assertEqual("resource", run["library_kind"])
-        for needle in ("Library", "扫描"):
-            with self.subTest(needle=needle):
-                code, found, _ = request(
-                    self.api, "GET", "/api/v1/operations/runs", query=f"q={needle}"
-                )
-                self.assertEqual(200, code)
-                self.assertEqual(1, found["total"])
-                self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
-
-    def test_file_scope_scan_publishes_the_relative_source_path(self) -> None:
-        service, index = self._service()
-        record = index.find_by_path("source", "library", "current.mkv")
-        self.assertIsNotNone(record)
-        admitted = service.admit_document(
-            {
-                "scopeKind": "file",
-                "resourceLibraryId": "library",
-                "fileId": record.file_id,
-                "occurrenceId": record.occurrence_id,
-                "fingerprint": record.fingerprint,
-                "mode": "incremental",
-            }
-        )
-        run = self._run_document(admitted.task_id)
-        self.assertEqual("Library/current.mkv", run["source_scope"])
-        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=current.mkv")
-        self.assertEqual(200, code)
-        self.assertEqual(1, found["total"])
-        self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
-
-    def test_credential_shaped_library_name_is_redacted_and_unsearchable(self) -> None:
-        """A reader can never probe content the public projection hides.
-
-        The admitted Scan really records the credential-shaped library name
-        as durable display evidence, but the public projection replaces it
-        with the bounded marker — so server-side search, its filtered total
-        and the status/attention counts must contribute nothing for any
-        substring of the hidden text either, while the visible business
-        label keeps finding the run.
-        """
-
-        sentinel = "Archive api_key=INVENTORYPROBE-SECRET"
-        service, _index = self._service(library_name=sentinel)
-        admitted = service.admit_document(
-            {
-                "scopeKind": "resource_library",
-                "resourceLibraryId": "library",
-                "mode": "full",
-            }
-        )
-        run = self._run_document(admitted.task_id)
-        self.assertEqual("[redacted-path]", run["source_scope"])
-        for needle in (
-            sentinel,
-            "INVENTORYPROBE-SECRET",
-            "INVENTORYPROBE",
-            "api_key=INVENTORYPROBE",
-            "Archive",
-        ):
-            with self.subTest(needle=needle):
-                code, found, _ = request(
-                    self.api, "GET", "/api/v1/operations/runs", query=f"q={needle}"
-                )
-                self.assertEqual(200, code)
-                self.assertEqual(0, found["total"], found)
-                self.assertEqual({}, found["status_counts"])
-                self.assertEqual(0, found["attention_count"])
-                self.assertNotIn("INVENTORYPROBE", json.dumps(found["items"]))
-        # Only hidden text is excluded — the row itself stays discoverable
-        # through its visible business label.
-        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=扫描")
-        self.assertEqual(200, code)
-        self.assertEqual(1, found["total"])
-        self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
-        # The selected-run overview publishes the same redacted identity.
-        code, overview, _ = request(self.api, "GET", f"/api/v1/operations/runs/{admitted.task_id}")
-        self.assertEqual(200, code)
-        self.assertEqual("[redacted-path]", overview["source_scope"])
-        self.assertNotIn("INVENTORYPROBE", json.dumps(overview))
 
 
 class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase):

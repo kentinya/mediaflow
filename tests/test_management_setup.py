@@ -119,7 +119,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertIsNone(readiness["active"])
         self.assertEqual(
             readiness["commandReadiness"]["scan"]["condition"],
-            "no_active_configuration",
+            "standalone_scan_retired",
         )
         self.assertEqual(
             readiness["commandReadiness"]["directTransfer"]["recoveryDestination"],
@@ -219,7 +219,7 @@ class ManagementSetupTests(unittest.TestCase):
                     method="POST",
                     body={"expectedVersion": validated["version"], "checked": True},
                 )
-                self.scan_service_ready = self.app._runtime_binding.manual_scans is not None
+                self.scan_service_ready = False
 
         with tempfile.TemporaryDirectory() as directory:
             bootstrap = json.loads(json.dumps(self.bootstrap))
@@ -261,7 +261,7 @@ class ManagementSetupTests(unittest.TestCase):
         # restart. No Storage or Provider is constructed by this assertion.
         self.assertIsNotNone(server.app._file_index)
         self.assertEqual(server.activated[0], 200)
-        self.assertTrue(server.scan_service_ready)
+        self.assertFalse(server.scan_service_ready)
         self.assertEqual(server.health, (200, {"processAlive": True, "status": "ok"}))
         self.assertEqual(server.readiness[0], 200)
         self.assertTrue(server.readiness[1]["managementReady"])

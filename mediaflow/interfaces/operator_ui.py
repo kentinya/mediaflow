@@ -2445,7 +2445,7 @@ APP_JS = b"""(() => {
       clear(controls);
       const storageLabel = text('label', 'Storage '); storageLabel.append(storageSelect);
       controls.append(storageLabel, actionButton('Refresh Files', () => loadPage(null)));
-      controls.append(manualScanLibraryControls(resourceLibraries, selectedStorage));
+      controls.append(manualPreviewLibraryControls(resourceLibraries, selectedStorage));
       const breadcrumbs = text('div', '', 'choices');
       (Array.isArray(data.breadcrumbs) ? data.breadcrumbs : []).forEach(crumb => {
         breadcrumbs.append(actionButton(crumb.path ? crumb.name : 'Storage root', () => {
@@ -2459,21 +2459,17 @@ APP_JS = b"""(() => {
         const membership = item.indexMembership || {};
         const membershipText = !membership.available ? 'FileIndex unavailable' :
           membership.indexed ? `Indexed (${membership.total || 0})` : 'Not indexed';
-        const scanPayload = item.isDirectory ? null : manualScanPayloadFromMembership(membership);
-        const scanAction = scanPayload ? actionButton('Scan file', () =>
-          confirmManualScan(scanPayload, `Scan current FileIndex item ${scanPayload.fileId}`)) :
-          text('span', item.isDirectory ? '-' : 'Scan unavailable until a verified current item exists');
         const previewPayload = item.isDirectory ? null : manualPreviewPayloadFromMembership(membership);
         const previewAction = previewPayload ? actionButton('Preview file', () =>
           confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${previewPayload.fileId}`)) :
           text('span', item.isDirectory ? '-' : 'Preview unavailable until a verified current item exists');
         return [item.isDirectory ? actionButton(`Open ${item.name}`, () => {
           currentPath = item.path; loadPage(null);
-        }) : item.name, item.type, item.size, item.modifiedAt, membershipText, scanAction,
+        }) : item.name, item.type, item.size, item.modifiedAt, membershipText,
           previewAction];
       });
       if (items.length) content.append(table(
-        ['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Manual Scan', 'Preview'], rows));
+        ['Name', 'Type', 'Size', 'Modified', 'FileIndex', 'Preview'], rows));
       if (data.nextCursor) content.append(actionButton('Next page', () => loadPage(data.nextCursor)));
     };
     storageSelect.addEventListener('change', () => {
@@ -2531,64 +2527,24 @@ APP_JS = b"""(() => {
         });
         const cell = text('span', ''); cell.append(checkbox, text('span', ` ${fileId}`));
         const occurrence = item.currentOccurrence || {};
-        const scanPayload = manualScanPayloadFromFile(item);
-        const scanAction = scanPayload ? actionButton('Scan', () =>
-          confirmManualScan(scanPayload, `Scan current FileIndex item ${fileId}`)) :
-          text('span', 'Scan unavailable until source is ready');
         const previewPayload = manualPreviewPayloadFromFile(item);
         const previewAction = previewPayload ? actionButton('Preview', () =>
           confirmCurrentPreview(previewPayload, `Preview current FileIndex item ${fileId}`)) :
           text('span', 'Preview unavailable until source is verified');
         return [cell, item.path, item.scanStatus || item.scan_status,
           item.processingDisposition || '-', occurrence.occurrenceId || 'unverified',
-          item.updatedAt || item.updated_at, scanAction, previewAction];
+          item.updatedAt || item.updated_at, previewAction];
       });
       content.append(table(['ID', 'Path', 'Scan / discovery', 'Processing disposition',
-        'Current occurrence', 'Updated', 'Manual Scan', 'Preview'], rows,
+        'Current occurrence', 'Updated', 'Preview'], rows,
         index => showDetail('files', items[index].fileId || items[index].file_id)));
       content.append(actionButton('Start manual organize for selected files', () =>
         confirmManualIntent(Array.from(selectedFileIds))));
-      content.append(actionButton('Scan selected FileIndex item', () => {
-        if (selectedFileIds.size !== 1) {
-          message('Select exactly one current FileIndex item for a bounded manual Scan.', true);
-          return;
-        }
-        const selected = items.find(item => (item.fileId || item.file_id) ===
-          Array.from(selectedFileIds)[0]);
-        const payload = manualScanPayloadFromFile(selected);
-        if (!payload) {
-          message('The selected item has no verified current source identity; refresh FileIndex.', true);
-          return;
-        }
-        confirmManualScan(payload, `Scan current FileIndex item ${payload.fileId}`);
-      }));
       content.append(actionButton('Refresh FileIndex', loadFiles));
     };
-      content.append(form, actionButton('Search files', loadFiles));
+    content.append(form, actionButton('Search files', loadFiles));
   }
-  function confirmManualScan(payload, label, onQueued = null) {
-    clear(detailContent);
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('h2', 'Confirm manual Scan'), text('p',
-      `${label || 'Start this bounded discovery Scan'}? ` +
-      'The request is pinned to the current Active runtime and performs FileIndex discovery only. ' +
-      'It does not call a Provider, create a Preview, grant execution authority, organize media, ' +
-      'or mutate Storage.', 'warning'));
-    confirmation.append(actionButton('Confirm manual Scan', async () => {
-      try {
-        const result = await api('/api/v1/scans', {
-          method: 'POST', body: JSON.stringify(payload)
-        });
-        confirmation.remove();
-        if (typeof onQueued === 'function') await onQueued(result);
-        await showTask(result.taskId || result.task_id);
-        message(`Manual Scan Task ${result.taskId || result.task_id} admitted. ` +
-          'Inspect its durable progress and per-item discovery outcomes.');
-      } catch (error) { message(errorText(error), true); }
-    }), actionButton('Keep source unchanged', () => confirmation.remove()));
-    detailContent.append(confirmation); detail.hidden = false;
-  }
-  function manualScanPayloadFromMembership(membership) {
+  function currentSourcePayloadFromMembership(membership) {
     const item = membership && Array.isArray(membership.memberships) &&
       membership.memberships.length === 1 ? membership.memberships[0] : null;
     if (!item || item.scanStatus !== 'ready' || item.fingerprintState !== 'verified' ||
@@ -2601,7 +2557,7 @@ APP_JS = b"""(() => {
       fingerprint: item.fingerprint
     };
   }
-  function manualScanPayloadFromFile(item) {
+  function currentSourcePayloadFromFile(item) {
     const occurrence = item && (item.currentOccurrence || {});
     if (!item || item.scanStatus !== 'ready' || occurrence.state !== 'verified' ||
         !item.fileId || !item.resourceLibraryId || !occurrence.occurrenceId ||
@@ -2613,7 +2569,7 @@ APP_JS = b"""(() => {
     };
   }
   function manualPreviewPayloadFromFile(item) {
-    const scan = manualScanPayloadFromFile(item);
+    const scan = currentSourcePayloadFromFile(item);
     if (!scan) return null;
     return {scopeKind: 'file', resourceLibraryId: scan.resourceLibraryId,
       occurrenceId: scan.occurrenceId, fingerprint: scan.fingerprint,
@@ -2656,21 +2612,12 @@ APP_JS = b"""(() => {
     }), actionButton('Keep source unchanged', () => confirmation.remove()));
     detailContent.append(confirmation); detail.hidden = false;
   }
-  function manualScanLibraryControls(libraries, storageId) {
+  function manualPreviewLibraryControls(libraries, storageId) {
     const available = (Array.isArray(libraries) ? libraries : []).filter(item =>
       item.storage_id === storageId && item.enabled !== false);
     const section = text('div', '', 'choices');
     if (!available.length) return section;
-    section.append(text('span', 'Manual ResourceLibrary Scan: '));
-    const mode = document.createElement('select'); mode.setAttribute('aria-label', 'Manual Scan mode');
-    ['full', 'incremental'].forEach(value => {
-      const option = text('option', value); option.value = value; mode.append(option);
-    });
-    section.append(mode);
     available.forEach(item => {
-      section.append(actionButton(`Scan ${item.id}`, () =>
-        confirmManualScan({scopeKind: 'resource_library', resourceLibraryId: item.id, mode: mode.value},
-          `Scan ResourceLibrary ${item.id} (${mode.value})`)));
       section.append(actionButton(`Preview ${item.id}`, () =>
         confirmCurrentPreview({scopeKind: 'resource_library', resourceLibraryId: item.id},
           `Preview ResourceLibrary ${item.id}`)));
@@ -2698,7 +2645,7 @@ APP_JS = b"""(() => {
         });
         confirmation.remove();
         message(`Reprocess admitted for ${result.occurrenceId}. No Task or media side effect occurred. ` +
-          `${result.nextAction || 'Run the later explicit Scan or Preview admission.'}`);
+          `${result.nextAction || 'Create an organize summary in the task center.'}`);
         await showDetail('files', id);
       } catch (error) { message(errorText(error), true); }
     }), actionButton('Keep current occurrence unchanged', () => confirmation.remove()));
@@ -3300,7 +3247,7 @@ APP_JS = b"""(() => {
   function showQueueJobForm() {
     clear(detailContent); detailContent.append(text('h2', 'Queue Job'));
     const command = document.createElement('select'); command.setAttribute('aria-label', 'Job command');
-    ['scan', 'preview', 'organize'].forEach(value => { const option = text('option', value); option.value = value;
+    ['preview', 'organize'].forEach(value => { const option = text('option', value); option.value = value;
       command.append(option); });
     const limit = document.createElement('input'); limit.type = 'number'; limit.min = '1';
     limit.max = '10000'; limit.step = '1'; limit.placeholder = 'Optional limit';
@@ -3310,7 +3257,7 @@ APP_JS = b"""(() => {
         if (limit.value && !limit.reportValidity()) return;
         reviewQueueJob(command.value, limit.value ? Number(limit.value) : null);
       }), actionButton('Keep jobs unchanged', () => { detail.hidden = true; }));
-    detailContent.append(text('p', 'Scan and Preview are DryRun-only and grant no execution authority. ' +
+    detailContent.append(text('p', 'Preview is DryRun-only and grant no execution authority. ' +
       'Organize requires the separate one-shot execution authority and an explicit final confirmation.',
       'warning'), controls); detail.hidden = false;
   }
@@ -3825,40 +3772,7 @@ APP_JS = b"""(() => {
       clear(detailContent); detailContent.append(text('h2', 'Task detail'),
         scalarDetails(data, ['items_truncated', 'results_truncated']));
       renderManualExecutionDiscovery(data.manualExecutionDiscovery);
-      const manualScan = data.manualScan;
-      if (manualScan && typeof manualScan === 'object') {
-        const scanList = document.createElement('dl');
-        [['Scan scope', `${manualScan.scopeKind || '-'}:${manualScan.scopeId || '-'}`],
-          ['Scan mode', manualScan.mode], ['Cancellation requested', manualScan.cancellationRequested ? 'yes' : 'no'],
-          ['Reconciliation complete', manualScan.reconciliationComplete ? 'yes' : 'no'],
-          ['Failure stage', manualScan.failureStage || '-'],
-          ['Known effects', manualScan.knownEffects || 'none'],
-          ['Retry safe', manualScan.retrySafe ? 'yes' : 'no'],
-          ['Next action', manualScan.nextAction || '-']].forEach(([label, value]) => field(scanList, label, value));
-        detailContent.append(text('h3', 'Manual Scan state'), scanList);
-        const progress = manualScan.progress && typeof manualScan.progress === 'object' ? manualScan.progress : {};
-        detailContent.append(text('p', `Progress: directories ${progress.directoriesVisited || 0}, ` +
-          `files ${progress.filesVisited || 0}, candidates ${progress.mediaCandidates || 0}, ` +
-          `unstable ${progress.unstable || 0}, errors ${progress.errors || 0}.`));
-        if (['pending', 'running'].includes(manualScan.status) && !manualScan.cancellationRequested) {
-          detailContent.append(text('p',
-            'Cancellation is cooperative and never rolls back FileIndex discovery already persisted.',
-            'warning'), actionButton('Request Scan cancellation', () =>
-              confirmManualScanCancellation(manualScan.taskId)));
-        }
-        const scanItems = Array.isArray(manualScan.items) ? manualScan.items : [];
-        if (scanItems.length) {
-          detailContent.append(text('h4', 'Per-item discovery outcomes'), table(
-            ['Item', 'Status', 'Change', 'Source', 'Occurrence', 'Stage', 'Next action'],
-            scanItems.map(item => [item.itemId, item.status, item.change || '-', item.sourcePath,
-              item.sourceOccurrenceId || '-', item.stage, item.nextAction || '-'])));
-        }
-        const scanErrors = Array.isArray(manualScan.errors) ? manualScan.errors : [];
-        if (scanErrors.length) {
-          detailContent.append(text('h4', 'Scan errors'), table(
-            ['Code', 'Path', 'Operation'], scanErrors.map(item => [item.code, item.path || '-', item.operation || '-'])));
-        }
-      }
+
       const items = (data.items || []).map(item => {
         const checkpoint = item.checkpoint && typeof item.checkpoint === 'object' ? item.checkpoint : {};
         return [item.item_id, item.status, checkpoint.stage || item.stage,
@@ -4449,21 +4363,6 @@ APP_JS = b"""(() => {
       await renderObservability('jobs'); await showJob(id); message('Cancellation recorded.');
     } catch (error) { message(errorText(error), true); }
   }
-  function confirmManualScanCancellation(id) {
-    const confirmation = text('div', '', 'choices');
-    confirmation.append(text('p',
-      'Request cancellation for this bounded Scan? Persisted discovery is kept, no Storage media ' +
-      'mutation is performed, and the Task will remain distinguishable from a completed full reconciliation.'),
-      actionButton('Confirm Scan cancellation', () => cancelManualScan(id)),
-      actionButton('Keep Scan running', () => confirmation.remove()));
-    detailContent.append(confirmation);
-  }
-  async function cancelManualScan(id) {
-    try {
-      await api(`/api/v1/scans/${encodeURIComponent(id)}/cancel`, {method: 'POST'});
-      await showTask(id); message('Manual Scan cancellation request persisted.');
-    } catch (error) { message(errorText(error), true); }
-  }
   async function showDetail(kind, id) {
     try {
       const data = await api(`/api/v1/${kind}/${encodeURIComponent(id)}`);
@@ -4485,15 +4384,6 @@ APP_JS = b"""(() => {
           ['Current occurrence', occurrence.occurrenceId || '-',
             `fingerprint ${occurrence.fingerprint || '-'}; state ${occurrence.state || 'unverified'}`]
         ]));
-        const scanPayload = manualScanPayloadFromFile(data);
-        if (scanPayload) {
-          detailContent.append(actionButton('Scan current source (DryRun)', () =>
-            confirmManualScan(scanPayload, `Scan current FileIndex item ${id}`)));
-        } else {
-          detailContent.append(text('p',
-            'Manual Scan unavailable: select a verified ready current occurrence from FileIndex.',
-            'warning'));
-        }
         const previewPayload = manualPreviewPayloadFromFile(data);
         if (previewPayload) {
           detailContent.append(actionButton('Preview current source (DryRun)', () =>

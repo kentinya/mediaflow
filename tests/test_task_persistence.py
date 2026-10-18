@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from mediaflow.application.task_runtime import PersistentTaskCoordinator, TaskLockError
-from mediaflow.domain.scanner import FileChange
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTaskItem,
@@ -21,7 +20,6 @@ from mediaflow.domain.task_persistence import (
 )
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
-from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
 
@@ -225,81 +223,21 @@ class PersistentTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not running"):
                 coordinator.begin_item(task.task_id, "s", "r", "later.mkv", "later.mkv")
 
-    def test_production_scan_uses_persistent_file_index_and_task_cli(self) -> None:
+    def test_retired_scan_creates_no_persistent_task_or_file_index(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            incoming = root / "Incoming" / "电影"
-            incoming.mkdir(parents=True)
-            (root / "Target").mkdir()
-            media = incoming / "Movie.2025.mkv"
-            media.write_bytes(b"movie")
-            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-            document["storages"][0]["rootPath"] = str(root)
-            document["storages"][1]["rootPath"] = str(root / "Target")
-            document["resourceLibraries"][0]["storagePath"] = "Incoming"
-            document["resourceLibraries"][0]["displayRootPath"] = str(root / "Incoming")
-            database = root / "state" / "runtime.sqlite3"
-            document["persistence"] = {"databasePath": str(database)}
-            document["historyPath"] = str(root / "state" / "history.jsonl")
-            config = root / "config.json"
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-
-            first_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
+            config = root / "absent.json"
+            errors = io.StringIO()
+            self.assertNotEqual(
                 0,
                 final_main(
                     ["--config", str(config), "scan"],
-                    stdout=first_output,
-                    stderr=errors,
-                ),
-                errors.getvalue(),
-            )
-            with SQLiteFileIndexRepository(database) as index:
-                record = index.find_by_path(
-                    "source-storage", "source", "Incoming/电影/Movie.2025.mkv"
-                )
-                self.assertIsNotNone(record)
-                assert record is not None
-                self.assertEqual(record.change, FileChange.NEW)
-
-            second_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "scan"],
-                    stdout=second_output,
-                    stderr=errors,
-                ),
-                errors.getvalue(),
-            )
-            with SQLiteFileIndexRepository(database) as index:
-                record = index.find_by_path(
-                    "source-storage", "source", "Incoming/电影/Movie.2025.mkv"
-                )
-                assert record is not None
-                self.assertEqual(record.change, FileChange.UNCHANGED)
-
-            tasks_output, errors = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "tasks", "list"],
-                    stdout=tasks_output,
+                    stdout=io.StringIO(),
                     stderr=errors,
                 ),
             )
-            self.assertIn("TASKS", tasks_output.getvalue())
-            first_task_id = first_output.getvalue().split("Task ID: ", 1)[1].splitlines()[0]
-            show_output = io.StringIO()
-            self.assertEqual(
-                0,
-                final_main(
-                    ["--config", str(config), "tasks", "show", first_task_id],
-                    stdout=show_output,
-                    stderr=errors,
-                ),
-            )
-            self.assertIn("Incoming/电影/Movie.2025.mkv", show_output.getvalue())
+            self.assertIn("standalone_scan_retired", errors.getvalue())
+            self.assertEqual([], list(root.iterdir()))
 
 
 class Schema34To35UpgradeTests(unittest.TestCase):

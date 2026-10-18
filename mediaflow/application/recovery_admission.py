@@ -81,6 +81,12 @@ class RecoveryAdmissionService:
         note = self._bounded_text(note, self.MAX_NOTE, "recovery note", optional=True)
         note = self._redact_note(note)
 
+        task = self._repository.get_task(task_id)
+        if action_id == "retry" and task is not None and task.command == "scan":
+            raise RecoveryAdmissionError(
+                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                "standalone_scan_retired: prepare a new organize summary",
+            )
         checkpoint = self._checkpoint_service.get(item_id)
         if checkpoint.task_id != task_id:
             # Preserve the existing transport convention (the API maps this to not-found)

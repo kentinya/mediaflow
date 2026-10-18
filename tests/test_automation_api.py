@@ -45,7 +45,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             connection.close()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                job = AutomationJobService(repository).submit("scan")
+                job = AutomationJobService(repository).submit("preview")
                 self.assertFalse(job.cancellation_requested)
                 self.assertEqual(repository.list_schedule_states(), ())
 
@@ -54,7 +54,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 service = AutomationJobService(repository)
-                first = service.submit("scan", limit=3)
+                first = service.submit("preview", limit=3)
                 second = service.submit("preview")
                 claimed = repository.claim_next_job(datetime.now(UTC))
                 self.assertEqual(claimed.job_id, first.job_id)
@@ -74,7 +74,7 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
-                AutomationJobService(repository).submit("scan")
+                AutomationJobService(repository).submit("preview")
             barrier = Barrier(2)
             claimed = []
 
@@ -98,7 +98,7 @@ class AutomationPersistenceTests(unittest.TestCase):
                 completed = AutomationWorker(repository, lambda job, cancelled: "task-1").run_next()
                 self.assertEqual(completed.status, AutomationJobStatus.COMPLETED)
                 self.assertEqual(completed.task_id, "task-1")
-                service.submit("scan")
+                service.submit("preview")
 
                 def fail(job, cancelled):
                     raise RuntimeError("Authorization: Bearer top-secret")
@@ -127,7 +127,7 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                queued = service.submit("scan")
+                queued = service.submit("preview")
                 running = repository.claim_next_job(datetime.now(UTC))
                 old = replace(running, updated_at=datetime.now(UTC) - timedelta(hours=2))
                 repository.update_job(old)
@@ -142,14 +142,14 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("scan")
+                service.submit("preview")
                 service.submit("preview")
                 calls, sleeps = [], []
                 stopped = False
 
                 def handler(job, cancelled):
                     calls.append(job.command.value)
-                    if job.command.value == "scan":
+                    if len(calls) == 1:
                         raise RuntimeError("failed")
                     return "task-ok"
 
@@ -162,7 +162,7 @@ class AutomationPersistenceTests(unittest.TestCase):
                     lambda: stopped, poll_seconds=0.5, sleep=sleep
                 )
                 self.assertEqual(processed, 2)
-                self.assertEqual(calls, ["scan", "preview"])
+                self.assertEqual(calls, ["preview", "preview"])
                 self.assertEqual(sleeps, [0.5])
 
 
@@ -171,7 +171,7 @@ class IntervalSchedulerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             schedules = (
-                IntervalSchedule("scan-fast", "scan", 60, 5),
+                IntervalSchedule("scan-fast", "preview", 60, 5),
                 IntervalSchedule("disabled", "preview", 60, enabled=False),
             )
             now = datetime(2026, 8, 22, tzinfo=UTC)
@@ -212,7 +212,7 @@ class IntervalSchedulerTests(unittest.TestCase):
                         service.submit(command)
                 for limit in (0, -1, 10_001, True, "2"):
                     with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
-                        service.submit("scan", limit=limit)
+                        service.submit("preview", limit=limit)
 
 
 class ServiceApiTests(unittest.TestCase):
@@ -281,7 +281,7 @@ class ServiceApiTests(unittest.TestCase):
         self.assertIsNone(response["items"][0]["state"])
 
     def test_api_requests_running_job_cancellation(self) -> None:
-        queued = AutomationJobService(self.repository).submit("scan")
+        queued = AutomationJobService(self.repository).submit("preview")
         self.repository.claim_next_job(datetime.now(UTC))
         status, response, _ = self.request(
             "POST", f"/api/v1/jobs/{queued.job_id}/cancel", token="api-secret"
@@ -294,7 +294,7 @@ class ServiceApiTests(unittest.TestCase):
         for document in (
             {"command": "organize"},
             {"command": "preview", "execute": False},
-            {"command": "scan", "overwrite": False},
+            {"command": "preview", "overwrite": False},
         ):
             status, response, _ = self.request("POST", "/api/v1/jobs", document, "api-secret")
             self.assertEqual(status, 400)
@@ -345,7 +345,7 @@ class AutomationCliTests(unittest.TestCase):
             "schedules": [
                 {
                     "id": "periodic-scan",
-                    "command": "scan",
+                    "command": "preview",
                     "intervalSeconds": 3600,
                     "limit": 20,
                 }
@@ -355,35 +355,21 @@ class AutomationCliTests(unittest.TestCase):
         config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         return config
 
-    def test_cli_queue_worker_scan_reuses_workflow_with_zero_media_mutations(self) -> None:
+    def test_cli_queue_scan_is_retired_without_media_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = self._configuration(directory)
-            source = Path(directory, "source")
-            media = source / "Movie.2025.mkv"
+            media = Path(directory, "source", "Movie.2025.mkv")
             media.write_bytes(b"unchanged")
             output, error = io.StringIO(), io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "jobs", "submit", "scan", "--limit", "1"],
-                    stdout=output,
-                    stderr=error,
-                ),
-                0,
-                error.getvalue(),
+            code = final_main(
+                ["--config", str(config), "jobs", "submit", "scan", "--limit", "1"],
+                stdout=output,
+                stderr=error,
             )
-            output = io.StringIO()
-            self.assertEqual(
-                final_main(
-                    ["--config", str(config), "worker", "run-next"],
-                    stdout=output,
-                    stderr=error,
-                ),
-                0,
-                error.getvalue(),
-            )
-            self.assertIn("Status: completed", output.getvalue())
-            self.assertEqual(media.read_bytes(), b"unchanged")
-            self.assertEqual(list(Path(directory, "target").iterdir()), [])
+            self.assertNotEqual(0, code)
+            self.assertIn("standalone_scan_retired", error.getvalue())
+            self.assertEqual(b"unchanged", media.read_bytes())
+            self.assertEqual([], list(Path(directory, "target").iterdir()))
 
     def test_api_config_validation_does_not_require_secret(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
@@ -426,7 +412,7 @@ class AutomationCliTests(unittest.TestCase):
                 stderr=io.StringIO(),
                 cancellation_check=lambda: True,
             )
-            self.assertEqual(code, 130)
+            self.assertNotEqual(code, 0)
             self.assertEqual(media.read_bytes(), b"unchanged")
             self.assertEqual(list(Path(directory, "target").iterdir()), [])
 

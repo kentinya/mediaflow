@@ -257,54 +257,6 @@ class TaskPauseResumeTest(unittest.TestCase):
             self.assertIn("Pause requested: YES", rendered)
             self.assertNotIn("token", rendered.casefold())
 
-    def test_paused_scan_resume_rescans_scope_without_repeating_discovered_item(self) -> None:
-        document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            incoming = root / "Incoming"
-            incoming.mkdir()
-            (incoming / "first.mkv").write_bytes(b"first")
-            (incoming / "second.mkv").write_bytes(b"second")
-            target = root / "Target"
-            target.mkdir()
-            database = root / "runtime.sqlite3"
-            document["storages"][0]["rootPath"] = str(root)
-            document["storages"][1]["rootPath"] = str(target)
-            document["resourceLibraries"][0]["storagePath"] = "Incoming"
-            document["resourceLibraries"][0]["displayRootPath"] = str(incoming)
-            document["persistence"] = {"databasePath": str(database)}
-            document["historyPath"] = str(root / "history.jsonl")
-            config = root / "config.json"
-            config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
-
-            with SQLiteTaskRepository(database) as repository:
-                coordinator = PersistentTaskCoordinator(repository, repository)
-                original = coordinator.create("scan", execute_authorized=False)
-                coordinator.record_discovered(
-                    original.task_id,
-                    "source-storage",
-                    "source",
-                    "Incoming/first.mkv",
-                    "source-storage:Incoming/first.mkv",
-                )
-                coordinator.request_pause(original.task_id)
-                coordinator.acknowledge_pause(original.task_id)
-
-            output, errors = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "tasks", "resume", original.task_id],
-                stdout=output,
-                stderr=errors,
-            )
-            self.assertEqual(code, 0, errors.getvalue())
-            with SQLiteTaskRepository(database) as repository:
-                continuation = next(
-                    task for task in repository.list_tasks() if task.task_id != original.task_id
-                )
-                paths = {item.source_path for item in repository.list_items(continuation.task_id)}
-                self.assertEqual(paths, {"Incoming/second.mkv"})
-                self.assertEqual(continuation.status, PersistentTaskStatus.COMPLETED)
-
 
 if __name__ == "__main__":
     unittest.main()

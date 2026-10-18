@@ -698,7 +698,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
             directory.cleanup()
             target_directory.cleanup()
 
-    def test_stable_size_preview_reuses_durable_scanner_history(self):
+    def test_stable_size_preview_records_internal_observations_without_prior_scan(self):
         fixture = self._fixture({"C/One.2001.mkv": b"x" * 10})
         directory, target_directory, source_root, target_root, database = fixture
         current = [datetime(2026, 9, 1, 12, tzinfo=UTC)]
@@ -727,18 +727,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
         def clock():
             return current[0]
 
-        scanner = StorageScanner({"source": source}, index, clock=clock)
         try:
-            first = scanner.scan(resource_library)
-            self.assertEqual(first.statistics.unstable, 1)
-            current[0] += timedelta(seconds=61)
-            second = scanner.scan(resource_library)
-            self.assertEqual(second.statistics.media_candidates, 1)
-            record = index.find_by_path("source", "special", "Media/C/One.2001.mkv")
-            self.assertIsNotNone(record)
-            self.assertIsNotNone(record.stable_since)
-            source.calls.clear()
-            target.calls.clear()
             with SQLiteTaskRepository(database) as repository:
                 previews = AutomationTaskDefinitionPreviewService(
                     repository,
@@ -748,10 +737,62 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
                     file_index=index,
                     clock=clock,
                 )
+                first = previews.create("def-1", actor="tester")
+                self.assertEqual(
+                    first.items[0].status, AutomationTaskDefinitionPreviewItemStatus.UNSTABLE
+                )
+                self.assertEqual(first.counts["selected"], 0)
+                self.assertIn("wait", first.items[0].next_action)
+                current[0] += timedelta(seconds=30)
+                early = previews.create("def-1", actor="tester")
+                self.assertEqual(
+                    early.items[0].status, AutomationTaskDefinitionPreviewItemStatus.UNSTABLE
+                )
+                current[0] += timedelta(seconds=31)
+                # A new service consumes only exact durable work-scoped observations.
+                previews = AutomationTaskDefinitionPreviewService(
+                    repository,
+                    configuration=configuration,
+                    providers=MetadataProviderRegistry((_provider(),)),
+                    storages={"source": source, "target": target},
+                    clock=clock,
+                )
                 preview = previews.create("def-1", actor="tester")
                 self.assertEqual(preview.status, AutomationTaskDefinitionPreviewStatus.PREVIEWED)
                 self.assertEqual(preview.items[0].source.stability, "stable")
                 self.assertEqual(preview.items[0].source.scan_status, "ready")
+                source_path.write_bytes(b"changed after ready")
+                current[0] += timedelta(seconds=1)
+                changed = previews.create("def-1", actor="tester")
+                self.assertEqual(changed.items[0].status.value, "unstable")
+                self.assertEqual(changed.items[0].source.stable_since, current[0])
+                current[0] += timedelta(seconds=59)
+                self.assertEqual(previews.create("def-1", actor="tester").counts["selected"], 0)
+                current[0] += timedelta(seconds=1)
+                self.assertEqual(previews.create("def-1", actor="tester").counts["selected"], 1)
+                # A different immutable pin cannot borrow the prior interval.
+                successor = replace(configuration, configuration_snapshot_id="snapshot-other")
+                repinned = AutomationTaskDefinitionPreviewService(
+                    repository,
+                    configuration=successor,
+                    providers=MetadataProviderRegistry((_provider(),)),
+                    storages={"source": source, "target": target},
+                    clock=clock,
+                ).create("def-1", actor="tester")
+                self.assertEqual(repinned.counts["selected"], 0)
+                self.assertEqual(repinned.items[0].source.stable_since, current[0])
+                mutating = {
+                    "write",
+                    "create_directory",
+                    "move",
+                    "copy",
+                    "delete",
+                    "hard_link",
+                    "soft_link",
+                }
+                self.assertFalse(mutating.intersection(source.calls))
+                self.assertFalse(mutating.intersection(target.calls))
+
         finally:
             directory.cleanup()
             target_directory.cleanup()

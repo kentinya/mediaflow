@@ -73,6 +73,17 @@ class DefinitionScopedExecutionService:
     def run(self, job, cancellation_check: Callable[[], bool]) -> str:
         """Consume a claimed definition Job and return its durable Task id."""
 
+        from mediaflow.application.automation import persisted_definition_origin
+
+        if job.command is AutomationCommand.SCAN and not persisted_definition_origin(
+            self._repository, job
+        ):
+            raise self._failure(
+                "standalone_scan_retired",
+                "no Task created; no discovery performed",
+                False,
+                "在任务中心新建整理并生成摘要。",
+            )
         definition = self._resolve_definition(job)
         resource = self._resolve_resource_library(definition)
         scope_root = self._resolve_scope_root(resource, definition, job)

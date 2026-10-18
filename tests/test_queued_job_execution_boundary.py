@@ -500,7 +500,8 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
                 preview = service.submit("preview", limit=1)
-                scan = service.submit("scan", limit=1)
+                with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                    service.submit("scan", limit=1)
                 calls = []
 
                 def fake_main(args, **kwargs):
@@ -510,11 +511,9 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
 
                 with patch("mediaflow.final_cli.final_main", side_effect=fake_main):
                     _run_queued_workflow(preview, None, lambda: False)
-                    _run_queued_workflow(scan, None, lambda: False)
                 self.assertTrue(calls[0][1]["_analysis_only_preview"])
                 self.assertNotIn("--execute", calls[0][0])
-                self.assertFalse(calls[1][1]["_analysis_only_preview"])
-                self.assertNotIn("--execute", calls[1][0])
+                self.assertEqual(1, len(calls))
 
     def test_api_command_matrix_and_one_shot_organize_authority(self) -> None:
         """Jobs API command matrix: SUBMIT_DRY_RUN cannot organize; real organize

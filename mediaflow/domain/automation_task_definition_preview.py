@@ -143,6 +143,9 @@ class AutomationPreviewSource:
     modified_at: datetime
     stability: str
     scan_status: str = "discovered"
+    observed_at: datetime | None = None
+    stable_since: datetime | None = None
+    storage_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.storage_id, "source storage")
@@ -169,6 +172,14 @@ class AutomationPreviewSource:
         if not isinstance(self.modified_at, datetime) or self.modified_at.tzinfo is None:
             raise ValueError("automation Preview source modifiedAt must include timezone")
 
+        for value in (self.observed_at, self.stable_since):
+            if value is not None and (not isinstance(value, datetime) or value.tzinfo is None):
+                raise ValueError("automation Preview observation must include timezone")
+        if self.stable_since and (not self.observed_at or self.stable_since > self.observed_at):
+            raise ValueError("automation Preview observation interval is invalid")
+        if self.storage_fingerprint is not None and not _SHA256.fullmatch(self.storage_fingerprint):
+            raise ValueError("automation Preview source observation fingerprint is invalid")
+
     def document(self) -> dict[str, object]:
         return {
             "storageId": self.storage_id,
@@ -180,6 +191,11 @@ class AutomationPreviewSource:
             "modifiedAt": self.modified_at.isoformat(),
             "stability": self.stability,
             "scanStatus": self.scan_status,
+            **({"observedAt": self.observed_at.isoformat()} if self.observed_at else {}),
+            **({"stableSince": self.stable_since.isoformat()} if self.stable_since else {}),
+            **(
+                {"storageFingerprint": self.storage_fingerprint} if self.storage_fingerprint else {}
+            ),
         }
 
     @classmethod
@@ -197,6 +213,13 @@ class AutomationPreviewSource:
                 datetime.fromisoformat(str(value["modifiedAt"])),
                 str(value["stability"]),
                 str(value.get("scanStatus", "discovered")),
+                datetime.fromisoformat(str(value["observedAt"]))
+                if value.get("observedAt")
+                else None,
+                datetime.fromisoformat(str(value["stableSince"]))
+                if value.get("stableSince")
+                else None,
+                str(value["storageFingerprint"]) if value.get("storageFingerprint") else None,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("automation Preview source document is invalid") from error

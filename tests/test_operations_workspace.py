@@ -29,11 +29,6 @@ from mediaflow.domain.automation import (
     AutomationJob,
     AutomationJobStatus,
 )
-from mediaflow.domain.manual_scan import (
-    ManualScanScopeKind,
-    ManualScanTask,
-    ScanMode,
-)
 from mediaflow.domain.organizer import (
     ExecutionEffectCertainty,
     ExecutionResult,
@@ -572,7 +567,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
 
     def test_job_cancel_fences_version_and_state(self) -> None:
         service = AutomationJobService(self.repository)
-        pending = service.submit("scan")
+        pending = service.submit("preview")
         self.repository.create_job(
             self.job(
                 "job-done",
@@ -793,7 +788,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.assertEqual(task.status, PersistentTaskStatus.CANCELLED)
 
     def test_concurrent_job_cancel_submissions_admit_exactly_one(self) -> None:
-        job = AutomationJobService(self.repository).submit("scan")
+        job = AutomationJobService(self.repository).submit("preview")
         version = job.updated_at.isoformat()
 
         self.assertEqual(
@@ -856,58 +851,6 @@ class OperationsControlFencingTests(unittest.TestCase):
             self.repository.get_task(task.task_id).status,
             PersistentTaskStatus.CANCELLED,
         )
-
-    def test_pause_is_withheld_for_a_manual_scan_task(self) -> None:
-        task = PersistentTask(
-            "scan-task",
-            "scan",
-            PersistentTaskStatus.RUNNING,
-            False,
-            NOW,
-            NOW,
-            started_at=NOW,
-            configuration_snapshot_id="snap-1",
-            configuration_snapshot_digest="digest-1",
-        )
-        # The manual Scan service owns the Task row and its discovery scope row
-        # in one transaction.
-        self.repository.create_manual_scan(
-            task,
-            ManualScanTask(
-                task.task_id,
-                ManualScanScopeKind.RESOURCE_LIBRARY,
-                "movies",
-                ScanMode.FULL,
-                PersistentTaskStatus.RUNNING,
-                "snap-1",
-                "digest-1",
-                NOW,
-                NOW,
-            ),
-        )
-
-        status, detail, _ = request(self.api, "GET", "/api/v1/tasks/scan-task")
-        self.assertEqual(status, 200)
-        lifecycle = detail["lifecycle"]
-        self.assertEqual(lifecycle["executionPath"], "manual_scan")
-        pause = next(item for item in lifecycle["actions"] if item["action"] == "pause")
-        self.assertFalse(pause["available"])
-        self.assertIn("never acknowledges a Task pause request", pause["unavailableReason"])
-        # The manual Scan service observes its own cooperative cancellation.
-        cancel = next(item for item in lifecycle["actions"] if item["action"] == "cancel")
-        self.assertTrue(cancel["available"])
-
-        status, body, _ = request(
-            self.api,
-            "POST",
-            "/api/v1/tasks/scan-task/pause",
-            body=control_body(task.updated_at.isoformat()),
-        )
-        self.assertEqual(status, 409)
-        self.assertEqual(body["error"]["details"]["reason"], "pause_unavailable")
-        persisted = self.repository.get_task("scan-task")
-        self.assertFalse(persisted.pause_requested)
-        self.assertEqual(persisted.status, PersistentTaskStatus.RUNNING)
 
     def test_synchronously_executed_manual_organize_task_exposes_no_control(self) -> None:
         task = self.running_task("manual-run", command="manual_organize", execute=True)

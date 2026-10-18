@@ -81,7 +81,7 @@ class AutomationAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository, maximum_active_jobs=1)
-                pending = service.submit("scan")
+                pending = service.submit("preview")
                 with self.assertRaises(AutomationQueueFull):
                     service.submit("preview")
                 repository.claim_next_job(datetime.now(UTC))
@@ -120,7 +120,7 @@ class AutomationAdmissionTests(unittest.TestCase):
                     try:
                         return (
                             AutomationJobService(repository, maximum_active_jobs=1)
-                            .submit("scan")
+                            .submit("preview")
                             .job_id
                         )
                     except AutomationQueueFull:
@@ -136,7 +136,7 @@ class AutomationAdmissionTests(unittest.TestCase):
         now = datetime(2026, 8, 22, 12, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("scan")
+                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("preview")
                 scheduler = IntervalScheduler(
                     repository,
                     (IntervalSchedule("hourly", "preview", 3600),),
@@ -154,7 +154,7 @@ class AutomationAdmissionTests(unittest.TestCase):
     def test_remote_ticket_survives_full_queue_then_consumes_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("scan")
+                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("preview")
                 authorizations = ExecutionAuthorizationService(
                     repository, maximum_active_jobs=1, token_factory=lambda: "one-time-token"
                 )
@@ -181,7 +181,7 @@ class AutomationAdmissionTests(unittest.TestCase):
                     frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
                 )
                 api = MediaFlowApi(repository, None, principals=(principal,), maximum_active_jobs=1)
-                self.assertEqual(api_request(api, {"command": "scan"})[0], 202)
+                self.assertEqual(api_request(api, {"command": "preview"})[0], 202)
                 status, document = api_request(api, {"command": "preview"})
                 self.assertEqual(status, 409)
                 self.assertEqual(document["error"]["code"], "queue_full")

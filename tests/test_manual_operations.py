@@ -18,12 +18,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from mediaflow.application.manual_scan import ManualScanError, ManualScanService
-from mediaflow.domain.file_lifecycle import OccurrenceState
 from mediaflow.domain.library import ResourceLibrary
-from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import PersistentTaskStatus
 from mediaflow.infrastructure.configuration_snapshot import ConfigurationSnapshot
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -165,20 +161,6 @@ def _api(
         if include_manual_preview
         else object()
     )
-    scans = (
-        ManualScanService(
-            repository,
-            index,
-            resource_libraries=(library_value,),
-            storages={"source": storage},
-            configuration_snapshot_id="active-snap",
-            configuration_snapshot_digest="active-digest",
-            clock=lambda: NOW,
-            start_async=False,
-        )
-        if include_manual_scan
-        else None
-    )
     return MediaFlowApi(
         repository,
         None,
@@ -189,7 +171,6 @@ def _api(
         configuration_snapshot_digest="active-digest",
         manual_intent_service=intents,
         manual_preview_service=previews,
-        manual_scan_service=scans,
     )
 
 
@@ -203,37 +184,6 @@ class BoundedDocumentTests(unittest.TestCase):
 
         self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
         self.scanner.scan(self.library_value)
-
-    def test_scan_operator_document_strips_fingerprint(self) -> None:
-        from mediaflow.application.operations_lifecycle import manual_scan_operator_document
-
-        raw = {
-            "taskId": "t1",
-            "scopeKind": "file",
-            "scopeId": "f1",
-            "resourceLibraryId": "library",
-            "fileId": "f1",
-            "storageId": "source",
-            "sourcePath": "movies/Test.mkv",
-            "sourceOccurrenceId": "occ-abc",
-            "sourceFingerprint": "a" * 64,
-            "configurationSnapshotId": "snap1",
-            "configurationSnapshotDigest": "d" * 64,
-            "status": "running",
-            "createdAt": "2026-09-04T12:00:00Z",
-            "updatedAt": "2026-09-04T12:00:00Z",
-            "cancellationRequested": False,
-            "progress": {"filesVisited": 1},
-            "errors": [],
-            "items": [],
-        }
-        bounded = manual_scan_operator_document(raw)
-        self.assertEqual("t1", bounded["taskId"])
-        self.assertIsNone(bounded.get("sourceOccurrenceId"))
-        self.assertIsNone(bounded.get("sourceFingerprint"))
-        self.assertIsNone(bounded.get("configurationSnapshotDigest"))
-        self.assertIn("configurationSnapshotId", bounded)
-        self.assertEqual("movies/Test.mkv", bounded["sourcePath"])
 
     def test_preview_operator_document_strips_fingerprint(self) -> None:
         from mediaflow.application.operations_lifecycle import manual_preview_operator_document
@@ -513,275 +463,6 @@ class HostileProjectionTests(unittest.TestCase):
         self.assertTrue(item["zeroMutation"])
         self.assertEqual("none", item["sideEffects"])
 
-    def test_scan_projection_bounds_errors_and_publishes_paging_and_actions(self) -> None:
-        from mediaflow.application.operations_lifecycle import manual_scan_operator_document
-
-        raw = {
-            "taskId": "t1",
-            "scopeKind": "resource_library",
-            "scopeId": "library",
-            "resourceLibraryId": "library",
-            "fileId": None,
-            "storageId": "source",
-            "sourcePath": "movies/Test.mkv",
-            "sourceOccurrenceId": "occ-abc",
-            "sourceFingerprint": "a" * 64,
-            "configurationSnapshotId": "snap1",
-            "configurationSnapshotDigest": "d" * 64,
-            "mode": "full",
-            "status": "partial_success",
-            "createdAt": "2026-09-04T12:00:00Z",
-            "updatedAt": "2026-09-04T12:00:00Z",
-            "cancellationRequested": False,
-            "progress": {
-                "directoriesVisited": 2,
-                "filesVisited": 5,
-                "mediaCandidates": 3,
-                "ignored": 1,
-                "unstable": 0,
-                "errors": 1,
-            },
-            "errors": [
-                {
-                    "code": "read_failed",
-                    "path": "/srv/private/media/bad.mkv",
-                    "operation": "list",
-                }
-            ],
-            "reconciliationComplete": False,
-            "failureStage": "discovery",
-            "knownEffects": "partial_discovery_only",
-            "retrySafe": True,
-            "nextAction": "inspect per-item outcomes",
-            "error": "manual Scan completed with discovery errors",
-            "itemLimit": 20,
-            "itemsTruncated": True,
-            "nextItemCursor": "eyJhIjoxfQ==",
-            "previousItemCursor": None,
-            "items": [
-                {
-                    "itemId": "i1",
-                    "taskId": "t1",
-                    "storageId": "source",
-                    "resourceLibraryId": "library",
-                    "sourcePath": "movies/Test.mkv",
-                    "fileId": "f1",
-                    "status": "ready",
-                    "change": "unchanged",
-                    "stage": "manual_scan_discovery",
-                    "createdAt": "2026-09-04T12:00:00Z",
-                    "updatedAt": "2026-09-04T12:00:00Z",
-                    "sourceOccurrenceId": "occ-abc",
-                    "sourceFingerprint": "a" * 64,
-                    "error": None,
-                    "knownEffects": "file_index_discovery_refreshed",
-                    "retrySafe": True,
-                    "nextAction": "inspect the refreshed FileIndex item",
-                }
-            ],
-        }
-        bounded = manual_scan_operator_document(raw)
-        serialized = json.dumps(bounded)
-
-        self.assertEqual("resourceLibrary", bounded["scopeKind"])
-        self.assertEqual(20, bounded["itemLimit"])
-        self.assertTrue(bounded["itemsTruncated"])
-        self.assertEqual("eyJhIjoxfQ==", bounded["nextItemCursor"])
-        self.assertIsNone(bounded["previousItemCursor"])
-        self.assertEqual("partial_success", bounded["status"])
-        self.assertEqual(1, len(bounded["errors"]))
-        self.assertEqual("media/bad.mkv", bounded["errors"][0]["path"])
-        self.assertIsNotNone(bounded["failure"])
-        self.assertFalse(bounded["actions"]["cancel"]["available"])
-        self.assertEqual("POST", bounded["actions"]["cancel"]["method"])
-        self.assertNotIn("a" * 64, serialized)
-        self.assertNotIn("d" * 64, serialized)
-        self.assertNotIn("/srv/private", serialized)
-        self.assertNotIn("sourceFingerprint", serialized)
-        self.assertNotIn("configurationSnapshotDigest", serialized)
-        self.assertEqual("movies/Test.mkv", bounded["items"][0]["sourcePath"])
-
-    def test_scan_projection_advertises_cancel_only_for_a_cancellable_state(self) -> None:
-        from mediaflow.application.operations_lifecycle import manual_scan_operator_document
-
-        base = {
-            "taskId": "t1",
-            "scopeKind": "file",
-            "scopeId": "f1",
-            "resourceLibraryId": "library",
-            "fileId": "f1",
-            "storageId": "source",
-            "sourcePath": "movies/Test.mkv",
-            "mode": "incremental",
-            "status": "running",
-            "createdAt": "2026-09-04T12:00:00Z",
-            "updatedAt": "2026-09-04T12:00:00Z",
-            "cancellationRequested": False,
-            "progress": {},
-            "errors": [],
-            "items": [],
-        }
-        running = manual_scan_operator_document(base)
-        self.assertTrue(running["actions"]["cancel"]["available"])
-        self.assertIsNone(running["actions"]["cancel"]["unavailableReason"])
-        self.assertIn("/api/v1/operations/scans/t1/cancel", running["actions"]["cancel"]["path"])
-
-        requested = manual_scan_operator_document({**base, "cancellationRequested": True})
-        self.assertFalse(requested["actions"]["cancel"]["available"])
-        self.assertIn("already been requested", requested["actions"]["cancel"]["unavailableReason"])
-
-        for status in ("completed", "failed", "cancelled", "partial_success"):
-            terminal = manual_scan_operator_document({**base, "status": status})
-            self.assertFalse(terminal["actions"]["cancel"]["available"])
-
-
-class ServerBoundScanTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage = FakeStorage("source")
-        self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
-        self.library_value = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        self.index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        self.scanner = StorageScanner({"source": self.storage}, self.index, clock=lambda: NOW)
-        self.scanner.scan(self.library_value)
-
-    def _make_service(self, repository) -> ManualScanService:
-        return ManualScanService(
-            repository,
-            self.index,
-            resource_libraries=(self.library_value,),
-            storages={"source": self.storage},
-            configuration_snapshot_id="snap",
-            configuration_snapshot_digest="digest",
-            clock=lambda: NOW,
-            start_async=False,
-        )
-
-    def test_file_scope_admission_resolves_current_record(self) -> None:
-        record = self.index.find_by_path("source", "library", "current.mkv")
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                scan = service.admit_current_document(
-                    {
-                        "scopeKind": "file",
-                        "fileId": record.file_id,
-                        "resourceLibraryId": "library",
-                        "mode": "incremental",
-                    }
-                )
-                self.assertEqual(PersistentTaskStatus.RUNNING, scan.status)
-                self.assertEqual(record.file_id, scan.file_id)
-                self.assertEqual(record.occurrence_id, scan.source_occurrence_id)
-                self.assertEqual(record.fingerprint, scan.source_fingerprint)
-
-    def test_file_scope_rejects_not_found(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                with self.assertRaises(ManualScanError) as ctx:
-                    service.admit_current_document(
-                        {
-                            "scopeKind": "file",
-                            "fileId": "nonexistent",
-                            "resourceLibraryId": "library",
-                            "mode": "incremental",
-                        }
-                    )
-                self.assertEqual("source_not_found", ctx.exception.code)
-
-    def test_file_scope_rejects_not_ready(self) -> None:
-        record = self.index.find_by_path("source", "library", "current.mkv")
-        from mediaflow.domain.file_index import FileIndexRecord
-
-        not_ready = FileIndexRecord(
-            record.file_id,
-            "source",
-            "library",
-            "current.mkv",
-            "current.mkv",
-            "mkv",
-            10,
-            NOW,
-            NOW,
-            NOW,
-            None,
-            FileScanStatus.UNSTABLE,
-            None,
-            NOW,
-            NOW,
-            None,
-            None,
-            None,
-            None,
-            None,
-            OccurrenceState.UNVERIFIED,
-        )
-        self.index.batch_upsert((not_ready,))
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                with self.assertRaises(ManualScanError) as ctx:
-                    service.admit_current_document(
-                        {
-                            "scopeKind": "file",
-                            "fileId": record.file_id,
-                            "resourceLibraryId": "library",
-                            "mode": "incremental",
-                        }
-                    )
-                self.assertEqual("source_not_ready", ctx.exception.code)
-
-    def test_file_scope_rejects_changed_source_live(self) -> None:
-        record = self.index.find_by_path("source", "library", "current.mkv")
-        self.storage.files["current.mkv"] = (99, NOW - timedelta(hours=1))
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                with self.assertRaises(ManualScanError) as ctx:
-                    service.admit_current_document(
-                        {
-                            "scopeKind": "file",
-                            "fileId": record.file_id,
-                            "resourceLibraryId": "library",
-                            "mode": "incremental",
-                        }
-                    )
-                self.assertEqual("source_stale", ctx.exception.code)
-
-    def test_resource_library_scope_admission(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                scan = service.admit_current_document(
-                    {
-                        "scopeKind": "resource_library",
-                        "resourceLibraryId": "library",
-                        "mode": "incremental",
-                    }
-                )
-                self.assertEqual(PersistentTaskStatus.RUNNING, scan.status)
-                self.assertIsNone(scan.file_id)
-
-    def test_file_scope_rejects_fingerprint_echo(self) -> None:
-        record = self.index.find_by_path("source", "library", "current.mkv")
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = self._make_service(repository)
-                with self.assertRaises(ManualScanError) as ctx:
-                    service.admit_current_document(
-                        {
-                            "scopeKind": "file",
-                            "fileId": record.file_id,
-                            "resourceLibraryId": "library",
-                            "occurrenceId": record.occurrence_id,
-                            "fingerprint": record.fingerprint,
-                            "mode": "incremental",
-                        }
-                    )
-                self.assertEqual("invalid_request", ctx.exception.code)
-
 
 class ActionMatrixTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -820,7 +501,7 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("file", body["scopeKind"])
         self.assertIsNotNone(body["source"])
-        self.assertTrue(body["actions"]["scan"]["available"])
+        self.assertFalse(body["actions"]["scan"]["available"])
         self.assertTrue(body["actions"]["preview"]["available"])
 
     def test_action_matrix_with_unavailable_scan_service_offers_no_submission(self) -> None:
@@ -845,7 +526,7 @@ class ActionMatrixTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
         self.assertFalse(body["actions"]["scan"]["available"])
-        self.assertIn("Scan service is unavailable", body["actions"]["scan"]["reason"])
+        self.assertIn("已退役", body["actions"]["scan"]["reason"])
         post_status, post_body = _post(
             api,
             "/api/v1/operations/scans",
@@ -855,8 +536,8 @@ class ActionMatrixTests(unittest.TestCase):
                 "mode": "full",
             },
         )
-        self.assertEqual(503, post_status)
-        self.assertEqual("service_unavailable", post_body["error"]["code"])
+        self.assertEqual(410, post_status)
+        self.assertEqual("standalone_scan_retired", post_body["error"]["code"])
 
     def test_action_matrix_with_unavailable_preview_service_offers_no_submission(self) -> None:
         """Preview availability also requires its bound application service."""
@@ -902,8 +583,8 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual("resourceLibrary", body["scopeKind"])
         self.assertEqual("library", body["scopeId"])
         self.assertFalse(body["selectionRequired"])
-        self.assertTrue(body["actions"]["scan"]["available"])
-        self.assertEqual(["full", "incremental"], body["actions"]["scan"]["modes"])
+        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertEqual([], body["actions"]["scan"]["modes"])
 
     def test_library_discovery_matrix_offers_no_action_without_a_selection(self) -> None:
         api = self._make_api()
@@ -918,7 +599,7 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertIsNone(body["source"])
         self.assertFalse(body["actions"]["scan"]["available"])
         self.assertFalse(body["actions"]["preview"]["available"])
-        self.assertIn("select an exact ResourceLibrary", body["actions"]["scan"]["reason"])
+        self.assertIn("已退役", body["actions"]["scan"]["reason"])
         self.assertEqual(
             ["library"], [item["resourceLibraryId"] for item in body["resourceLibraries"]]
         )
@@ -1003,72 +684,6 @@ class ActionMatrixTests(unittest.TestCase):
             "or absolute host path]",
             body["source"]["filename"],
         )
-
-
-class PrincipalBoundScanProjectionTests(unittest.TestCase):
-    def test_read_only_scan_detail_does_not_advertise_cancel(self) -> None:
-        """Scan lifecycle controls are projected for the authenticated principal."""
-
-        storage = FakeStorage("source")
-        storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
-        library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
-        index = InMemoryFileIndexRepository()
-        from mediaflow.application.scanner import StorageScanner
-
-        StorageScanner({"source": storage}, index, clock=lambda: NOW).scan(library)
-        operator = ResolvedApiPrincipal(
-            "operator",
-            "operator-token",
-            frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN, ApiPermission.CANCEL_JOB}),
-        )
-        viewer = ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ}))
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = ManualScanService(
-                    repository,
-                    index,
-                    resource_libraries=(library,),
-                    storages={"source": storage},
-                    configuration_snapshot_id="active-snap",
-                    configuration_snapshot_digest="active-digest",
-                    clock=lambda: NOW,
-                    start_async=False,
-                )
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=(operator, viewer),
-                    manual_scan_service=service,
-                )
-                status, admitted = _post(
-                    api,
-                    "/api/v1/operations/scans",
-                    {
-                        "scopeKind": "resourceLibrary",
-                        "resourceLibraryId": "library",
-                        "mode": "full",
-                    },
-                    token="operator-token",
-                )
-                self.assertEqual(202, status)
-                task_id = admitted["taskId"]
-                status, detail = _get(
-                    api,
-                    f"/api/v1/operations/scans/{task_id}",
-                    token="viewer-token",
-                )
-                self.assertEqual(200, status)
-                self.assertFalse(detail["actions"]["cancel"]["available"])
-                self.assertIn(
-                    "cancel_job permission", detail["actions"]["cancel"]["unavailableReason"]
-                )
-                cancel_status, cancel_body = _post(
-                    api,
-                    f"/api/v1/operations/scans/{task_id}/cancel",
-                    token="viewer-token",
-                )
-                self.assertEqual(403, cancel_status)
-                self.assertEqual("forbidden", cancel_body["error"]["code"])
 
 
 class ServerBoundPreviewTests(unittest.TestCase):
