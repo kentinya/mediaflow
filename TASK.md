@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 5
+Next Action: B RECHECKS TASK45.3 AGAINST THE A-REVISED CONTRACT
 ```
 
 ## Goal
@@ -239,14 +239,15 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
 - **完成标准：** 至少跑通“技术失败→修复→Metadata 待选→选择→新摘要→执行再次失败”。
   两次失败记录都保留，新原因可操作，原成功项不重跑；效果未知只核查，不出现执行确认。
 
-### 16 — 接任务内有界多选及附件剩余步骤
+### 16 — 接任务内有界多选及附件结果提示
 
 - **改哪里：** 复用 `RecoveryBatchContinuationService`、现有批次结果和精确选择机制。
 - **做什么：** 多选只限当前任务允许范围，分析逐项接受/拒绝；汇总各自持久摘要，只确认所选就绪项。
   保留每项原 pin/来源/版本/影响；上下文不兼容时明确分组或拒绝，不拼成一个伪共同快照。
 - **完成标准：** 两个就绪项只选一个执行，未选项继续可处理；成功/忽略/未知/过期项分别拒绝。
-  主文件已完成时只允许既有权威能证明安全的附件剩余步骤；不能证明就拒绝并保留核查证据，
-  不能为补附件从头执行主文件，也不能以拒绝所有附件用例代替已有安全能力的接入。
+  主文件执行并验证完成即可形成主项成功；附件步骤独立持久化。附件失败、未执行或冲突必须
+  展示具体原因、来源/目标和人工移动指引，不新增附件-only 自动恢复、不重放主文件，也不把
+  附件警告显示为无警告的完整成功。
 
 ### 17 — 接暂停整理的继续与重新授权
 
@@ -385,7 +386,8 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
   使用原 pin/Provider/策略与既有持久 Worker；过期/跨源/非法输入拒绝且保留其他项和可修正输入。
 - [ ] **AC-3：** 同页摘要精确展示本次可继续范围/剩余步骤/附件/目标/影响及未就绪原因。
   修复后出现新阻塞可转对应处理，原失败与成功兄弟项保留；受理/分析不冒充解决，列表/计数
-  根据真实当前状态变化。原 pin 不可用不静默 repin。
+  根据真实当前状态变化。原 pin 不可用不静默 repin。主文件验证成功即可保留主项完成；附件
+  失败/未执行/冲突需显示原因、来源/目标和人工移动指引，不提供附件-only 自动恢复。
 - [ ] **AC-4：** 精确就绪子集经“确认继续整理 N 项”原子准入，只有明确允许的剩余效果经
   Worker/OrganizerExecutor 执行；成功、忽略、已受理、未知效果和未选项不重放/互相覆盖。
   有界任务内批量分析保留各项独立接受/拒绝，不新增跨任务批量 mutation。
@@ -420,7 +422,7 @@ T4 来自恢复执行授权、原 pin/来源、并发/非重放与持久 Worker 
    主体隔离，批次/session hint 仍按后端认证主体隔离。
 4. 扩展真实 `operations_inventory_harness.py` 与 `operations-inventory.python.spec.ts`：
    混合成功/待识别/Metadata/分类/冲突/技术失败/未知效果；每类从列表到补正→分析→同页摘要→
-   子集确认→实际 Worker 结果；网络/权限修复后的新阻塞转类、只继续附件允许步骤、再次失败。
+   子集确认→实际 Worker 结果；网络/权限修复后的新阻塞转类、附件结果/人工处理指引、再次失败。
    对照确认前 mutation/执行许可计数、GET Provider 计数、原成功/未知项不进入执行选择。
    覆盖 pin A→B/原 pin 缺失、来源变化、暂停重新授权、撤销/消费许可、重复/并发、未知响应、
    Worker 缺失、重连/重启与独立接受/拒绝。使用 fake/local-server Provider/Storage，禁接生产。
@@ -592,6 +594,81 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
 可复用经验：无新增，留待A在Slice收尾统一整理。
 
 ## B Review Result
+
+### B Review 6 — 2026-10-18
+
+```text
+Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..a6ed23b030bd1a685562ad4028786caa70b197c1
+Executable Candidate: a6ed23b030bd1a685562ad4028786caa70b197c1
+Report-only successor: 1ee9c82a62530e08b9c80731f01285dbd478b6e6 (TASK.md only)
+Decision: FIX REQUIRED — CONTRACT DECISION REQUIRED FROM A
+Slice Required Outcomes all satisfied: NO
+Next: A CHECKPOINTS WHETHER ATTACHMENT-ONLY CONTINUATION IS IN OR OUT OF THIS CONTRACT
+```
+
+#### Review 6 evidence
+
+- Governance passed with `python3 scripts/check_governance.py`. The executable candidate is the
+  exact source named by the Developer report; the successor commit changes only `TASK.md`.
+- The candidate's retained T4 index and source/served-artifact identities were inspected. The
+  reported final gates are internally consistent: isolated Python `2512 tests / 7 skipped / OK`,
+  Web quality/unit/fake/real-browser, migration, wheel and Docker evidence. Independent focused
+  checks on this checkout also passed: Python recovery/lineage/batch/checkpoint/manual execution/
+  mutation authority `171 tests / 18.865s / OK`; Web operations Vitest `43 tests / 3 files / PASS`;
+  `npm run build` PASS; `git diff --check` PASS.
+- R6/R7/R8 corrections are present in the executable diff: multi-hop lineage now closes only the
+  verified current problem, new blockers render inside the original Task/type/item context, and
+  the batch fixture isolates Provider candidates. No new P1 was found in these corrected paths.
+
+#### Blocking Contract gap — attachment-only continuation
+
+This is not a safe Developer omission that can be repaired by another small patch:
+
+1. `OrganizerExecutor.execute` requires the primary source to exist before any plan is admitted
+   (`mediaflow/application/organizer.py:462-471`), validates the primary destination, then mutates
+   the attachment plans and always mutates/verifies the primary plan (`:537-599`). There is no
+   attachment-only admission or consumer in the existing manual execution path.
+2. Manual recovery preparation still requires the original item to be in `task_retry_requested`,
+   finds a completed linked single-item DryRun, and rebuilds the exact primary plan under the same
+   pin (`mediaflow/application/manual_recovery_continuation.py:488-505`). This cannot represent a
+   completed primary whose source is gone while only a sidecar remains.
+3. The checkpoint safety projection intentionally exposes investigation, not replay, for unknown
+   or attempted-unverified effects (`mediaflow/application/processing_checkpoint.py:919-923`).
+   Relaxing this, fabricating a failed attachment state, or replaying the primary would violate
+   the Slice safety invariants.
+
+The user-triggered scenario is a real main-file move followed by a sidecar failure: the operator
+returns to the task expecting the remaining attachment to be explained and, when an existing
+authority can prove it safe, continued in the same summary/confirmation flow. The current
+architecture can only fail closed and preserve investigation evidence. That is safe, but the
+Task's step 16, AC-3/AC-4, and Required Tests explicitly prohibit using refusal of every attachment
+case as a substitute for an existing safe capability. Adding such capability would introduce a
+new mutation admission, durable remaining-step state, and execution fencing; it is High-risk work,
+not a legal continuation of this Task without a Contract decision.
+
+#### Decision and required next action
+
+`FIX REQUIRED` remains the only valid Task result; this is a Contract blocker, not a request to
+invent a compensating executor. B does **not** create Task45.4, weaken the attachment requirement,
+or submit a Closure Packet. A must checkpoint one of the following before Developer work resumes:
+
+- **Defer/clarify:** explicitly defer attachment-only continuation and define the accepted
+  investigation/refusal journey, then B rechecks whether the current Task can PASS against the
+  revised Contract; or
+- **Keep in scope:** authorize a new coherent implementation boundary for attachment-only
+  admission/consumer (with durable remaining-step semantics, exact source/pin/permission binding,
+  no primary replay, Worker claim/fence, and failure/reopen tests), then B legally adjusts or
+  replans this Task after the A checkpoint.
+
+Until that A decision, the candidate is not PASS and Slice closure is not eligible. Existing dirty
+user files and all prior review history remain untouched.
+
+#### User clarification pending A checkpoint — 2026-10-18
+
+用户明确倾向于：主文件执行并验证完成即可视为主项完成；附件若失败或未执行，只展示具体原因、
+目标和人工处理指引，由用户自行移动附件，不提供附件自动恢复或主文件重放。该方向可作为上方
+“Defer/clarify”选项，但它仍是对当前 Slice/Task 验收语义的材料性收窄；在 A checkpoint 之前，
+不得把它当作已生效 Contract、不得将附件失败标成无警告的完整成功，也不得继续 Developer 实现。
 
 ```text
 Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..ff34f0faa4a8697e9ef6e5b659a57d31a5795e0a
