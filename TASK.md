@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.3
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: B REVIEWS THE TASK 45.3 R2–R5 CORRECTION AT THE NEW IMPLEMENTATION HEAD
+Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 5
 ```
 
 ## Goal
@@ -496,271 +496,393 @@ assertion、隐藏 skip 或删除测试造绿。纯环境失败需 Base 证明�
 
 ### 交付
 
-Task45.3 继续修正 B Review 2 的 R2–R5。四类阻塞均按同一 Task 的 Scope/AC/Required Tests
-修正，未改 ID/Base/Goal/范围/High/T4，未建新 Task，未改 Slice/Roadmap/稳定需求。
+按 B Review 3 在同一 Task 45.3 内修复 R2/R3 未知批次确认、R4 TV durable identity 与 R5 迁移/候选证据缺口，并补充 Task Center 恢复动作对比度及键盘焦点验证。没有扩大 Contract 或 Task 范围，没有改 Slice、Roadmap 或稳定需求。
 
-本轮（B Review 2 后）按 R2–R5 修正：
+- 分析结果单独持久化完整、限长且脱敏的执行身份；TV episode title、episode metadata 与 facets 在 durable summary 重建后保留。旧版/不完整展示证据要求 Worker 重分析，summary 准备不调用 live Provider。
+- 批量确认的网络结果未知时，按主体/Task/子项维持独立提交锁；只有读回同一 batch、preparation、选择与 effect 后才解锁。未自动重发；兄弟项仍独立可见和可恢复。
+- Migration proof 从真实 Task Base 旧代码与记录出发，验证 schema 45→46、重新打开、ALTER 中途失败回滚及恢复；旧 preparation 不会取得执行权限。
+- Task Center 识别保存、单项摘要确认、批量确认和未知结果锁定动作均有 ≥4.5:1 对比度和键盘焦点回归检查。
 
-- **R2 本地摘要不再覆盖 durable 结果，暂停范围也精确对账**：
-  `TaskItemRecoveryPanel` 以 durable `manualRecoveryPreparation` 为唯一读权威：只要持久摘要
-  不是 `prepared`（`confirmed`/`superseded`/`stale`），本地缓存就不得再提供确认按钮；确认时
-  记录本次 `preparationId`，`reconcile` 必须读回**同一** preparation 才解锁，读回
-  `confirmed`+`executionId` 显示已受理、读回 `prepared` 才允许再次确认，读回其它摘要或仅 GET
-  成功都保持锁定。暂停剩余范围复用既有 exact-Preview admission outcome/readback：
-  `OperationsLanding` 从 run overview 的 durable `continuation.recoveryKind=exact_preview` /
-  `recoveryPreviewId` / `executionId` 派生有效摘要（无 effect、无状态同步），刷新/重连/重启先
-  恢复持久摘要或已受理执行；confirm 丢响应后只核对本次提交的 preview/选择/版本/破坏性许可，
-  不猜最近任务、不自动重发。
-- **R3 批次子项同页就绪子集汇总与确认**：`_recovery_batch_document` 为每个 child 附带其
-  durable preparation、当前 checkpoint 版本、continuation 状态与 `manualRecoveryAvailable`；
-  `RunDetailTabs` 新增 `BatchRecoverySummary`，逐项读取独立摘要、逐项选择、统一
-  “确认继续整理所选 N 项”，经既有 `confirmTaskItemRecoveryPreparation` 逐项原子准入；未就绪项
-  单列且不可确认，成功/未知/拒绝项不进入执行选择。
-- **R4 摘要准备不再同步调用 Provider（含已有决定/候选/reference）**：`_run_item` 在决定/
-  reference 存在时也优先消费完成分析解析出的 durable identity，并新增
-  `_metadata_decision_mismatch`：保存的决定与 durable identity 在 provider/media type（及已命名
-  providerId）上不一致时 fail closed，而不是静默二选一；`require_durable_identity` 让同页摘要
-  在缺少/不完整/过期身份时给出明确重新分析动作，绝不在 HTTP 内 fallback 到 live Provider。
-  `_reusable_analysis_identity` 优先采用含分类 facets 的完整 evidence metadata 段。
-- **R5 迁移证明真实且含失败注入**：`task_base_migration_proof.py` 用实际 Task Base 代码创建
-  真实 published revision、manual intent/item、exact Preview/PreviewItem、一个 active 与一个已
-  consumed 的 one-shot authorization、恢复 continuation/link 与 Task/Result；升级/重开逐项比较
-  这些事实，验证旧工作未变成可执行；再复制真实旧库构造 pre-46 preparation 表并在 ALTER 中途
-  注入 `sqlite3.OperationalError`，断言 schema marker/列/旧记录原子回滚，移除故障后安全重开并
-  完成迁移，legacy 行读回空选择。
+### 检查点
 
-- **Application** (`manual_organize_preview.py`)：`require_durable_identity`、
-  `_metadata_decision_mismatch`、决定分支的 durable identity 复用。
-- **Application** (`manual_recovery_continuation.py`)：`_prepare_continuation` 传
-  `require_durable_identity=True`；`_reusable_analysis_identity` 优先完整 evidence 段。
-- **API** (`service_api.py`)：`_recovery_batch_document` 为每个 child 附
-  `manualRecoveryPreparation`/`currentCheckpointVersion`/`recoveryContinuationStatus`/
-  `manualRecoveryAvailable`（GET，零创建）。
-- **Web**：`TaskItemRecoveryPanel` durable-wins 协调与提交绑定对账；`OperationsLanding` 暂停范围
-  durable 恢复 + exact admission 对账；`RunDetailTabs.BatchRecoverySummary`；
-  `SamePagePlanSummary` 支持父级统一确认；entity 增加 child preparation 模型。
-- **Tests/脚本**：R4 决定分支零 Provider 调用回归；R3 批次 child durable 摘要 API 回归与 Web
-  组件回归；R2 本地准备丢响应/durable 覆盖回归与暂停范围对账回归；R5 真实旧库+失败注入迁移
-  证明；真实浏览器新增两项就绪只选一的原生旅程。
+- Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`。
+- 最终 executable checkpoint：`46f54bc2a33fb5ab486a11f96714c6c1a41119f6`。
+- 已 fast-forward `slice/45-scope-pending` 到该 SHA。Base..Head 共 37 个文件；提交只含 Task 45.3 合同文档与所需实现、脚本、测试，没有改 `SLICE.md` 或 Roadmap。
+- T4 原始日志、截图、wheel、迁移证明、容器矩阵与 AC 映射：`.git/validation-evidence/46f54bc2a33fb5ab486a11f96714c6c1a41119f6/developer-45.3-final-20261018/INDEX.md`。
 
-### 最终候选
+### 验证
 
-- Implementation Head：`d09245e2d49622f8e88ead4fc1583d55cffe9727`（R2–R5 修正 checkpoint + 测试补充）。
-- Task Base：`8f5cf4e284766bcc8894817d7640231e85050fb2`（未移动）。
-- 全部运行时门禁均在该候选的隔离 worktree / 精确 image 上验证。
-- 证据索引：`.git/validation-evidence/d09245e2d49622f8e88ead4fc1583d55cffe9727/developer-45.3-r3/`
-  （`INDEX.md`、`logs/` 原始日志；仅本地可达，未推送）。
-- 本报告提交为 executable candidate 之后的文档-only successor，不改变任何 executable 输入。
+最终候选在隔离、干净 worktree 完成 T4 门禁：
 
-### 验证（本轮候选）
+- Governance、`ruff format --check .`（372 files）、`ruff check .`、compileall、`pip check`、两份示例配置验证和 FFmpeg/FFprobe 禁用扫描全部 PASS。
+- 完整 Python：2503 tests，7 skipped，240.948s，PASS。真实 Task Base schema45→46 migration proof 与 ALTER 失败回滚 PASS。
+- Web typecheck/lint/format PASS；Vitest 76 files / 1129 tests PASS；production build PASS；fake Playwright E2E 246 PASS。
+- 真实 API/SQLite/Worker Operations 浏览器 E2E 28 PASS / 51.6s；Unicode 主体 1 PASS；Task Center production visual E2E 2 PASS。实际检查桌面与 380×720 窄屏截图、同页摘要和恢复按钮。
+- wheel build SHA-256：`a09d48f308f34d1813bd25ce7f677db5f6bf0d3d61598dd7aae68273ac10d36d`；wheel smoke PASS。另在独立 venv 从 `site-packages` 导入安装 wheel，TV durable identity→摘要重建用例 1 PASS。
+- Docker release-security 与 recovery browser proof 均 PASS，并使用同一完整镜像 ID `sha256:3dc19a97bea674b464ae2c673a25e71b24dbc33b7afaae41ad8a377a01014760`。从镜像提取后，163 个 Python 源文件及 4 个 Web served assets 与候选构建逐字节相同。Recovery proof 在确认前 source 存在且 target 不存在；显式确认后只有选中项被真实 Worker 移动。
+- `git diff --check 8f5cf4e284766bcc8894817d7640231e85050fb2..46f54bc2a33fb5ab486a11f96714c6c1a41119f6` PASS；候选 worktree 最终 clean。
 
-- 治理：`.venv/bin/python scripts/check_governance.py` → **PASS**。
-- 隔离全量：`.venv/bin/python -m unittest discover -s tests` → **2501 tests / 7 skipped / 1 failed / 198.3s**。
-  唯一失败 `test_resource_library_pipeline.ResourceLibraryPipelineTests.test_scan_cli_needs_no_path_or_metadata_token`
-  为本机工作区 ignored `.mediaflow/mediaflow.sqlite3` 为 schema48 导致的环境失败；已在 Task Base
-  （`8f5cf4e`）独立复现同一失败，非本轮回归，交 B 判断。
-- 聚焦恢复/执行/权限/任务中心/批次/暂停：`tests.test_processing_checkpoint
-  tests.test_processing_recovery_admission tests.test_recovery_continuation tests.test_recovery_batch
-  tests.test_scope_continuation tests.test_conflict_resolution tests.test_recognition_review
-  tests.test_metadata_review tests.test_classification_review` → **215 tests / OK**；
-  `tests.test_v2_manual_organize tests.test_manual_organize_execution tests.test_organizer_mutation_authority
-  tests.test_operations_task_center tests.test_operations_run_inventory tests.test_operations_run_detail
-  tests.test_operations_run_detail_plan_evidence tests.test_organize_preparation` → **217 tests / OK**。
-- 质量门禁：`ruff format --check .`（372 files）、`ruff check .`、`compileall -q mediaflow tests scripts`、
-  `pip check`、两份示例配置 `config validate` 全通过；`rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml`
-  无匹配（exit 1）。
-- 真实旧库迁移证明：`.venv/bin/python scripts/task_base_migration_proof.py` → **PASS**，
-  schema 45→46，真实 revision/intent/Preview/active+consumed 许可/link/Result 不变、
-  `manualExecutions=0`，新列与边界往返成功，ALTER 中途注入失败原子回滚后安全重开。
-- Web：`typecheck`/`lint`/`format:check` 全通过；`npm run test -- run` **1129 passed (76 files)**；
-  `npm run build` 成功（保留产物大小 warning）。
-- 真实 Python 浏览器：`operations-inventory.python.spec.ts` **28 passed / 53.8s**，含新增
-  “两个就绪批次子项汇总摘要、只选一个确认”的原生旅程；`operations-principal-identity.python.spec.ts`
-  **1 passed**。
-- wheel：`pip wheel . --no-deps -w dist`（`sha256 91f3f44a2009326ad1ecee566667373f3a0ce826001621dc06ad1022949049e4`），
-  `wheel_smoke_test.py` → `preparationConsumer`/`recoveryPreparationConsumer: loaded`（schema 46）。
-- Docker release-security：`TMPDIR=<项目内可挂载目录> .venv/bin/python
-  scripts/docker_release_security_smoke_test.py --image mediaflow:task45.3-security-r3b` → **通过**
-  （image `bf10b798d56d`）。
-- Docker 恢复浏览器证明：`MEDIAFLOW_SMOKE_TEMP_DIR=<项目内可挂载目录> .venv/bin/python
-  scripts/docker_task_center_recovery_browser_proof.py --image mediaflow:task45.3-recovery-r3b`
-  → **通过**（image `a7f394c7282d`）；同页 prepare（零权限）→ 选就绪子集 → 确认 → 真实常驻
-  Worker MOVE 到 `Movies/其他电影/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv`；仅一次
-  prepare/confirm，无 legacy `manual-recovery-links/execute`。
-- **环境约束（非回归）**：本机 Docker Desktop 挂载命名空间不含 `/var/folders`（默认 `TMPDIR`），
-  两个 Docker 脚本需用 `TMPDIR`/`MEDIAFLOW_SMOKE_TEMP_DIR` 指向项目内可挂载目录；主工作区共享
-  ignored 运行库为 schema48，全量唯一失败已在 Task Base 复现。
-- **证据复用**：Docker 镜像在 executable checkpoint `7c94028` 上构建（image `bf10b798d56d` /
-  `a7f394c7282d`）；`git diff 7c94028..d09245e -- mediaflow scripts web/src web/tests` 为空，
-  仅 `tests/test_recovery_continuation.py` 变化，而 Dockerfile 不包含 `tests/`，因此两个镜像的
-  executable 输入与本候选一致，Docker 证据可复用；Web 单元/浏览器在本候选上重新执行。
+### 失败记录与风险
+
+- 较早候选 `65fb170b4ba7ab861836c6bf4f2224498ad89032` 的全量 Python 曾有 1 项失败：测试期望有界展示 evidence 不含 `overview`。在 `76902dba6ab762bec30c356ed223af443148f567` 将 overview 从展示字段移除、同时保留独立的完整执行身份后，全量测试通过；最终候选再次通过。首次失败日志保留于对应 SHA 证据目录。
+- 最终全量 Python 报告的 7 个 skip 保持可见。Vite 仍报告一个 minified JavaScript chunk 大于 500 kB；`npm ci` 报告依赖树中 2 个 high severity audit findings，本 Task 未改依赖。
+- Docker/Colima 的挂载临时目录指向候选 worktree 内 `.mediaflow/validation-temp/`；没有访问用户运行库或生产介质。
 
 ### 决定
 
-- durable preparation 是页面读权威：本地缓存只能加速到同一条记录，绝不能覆盖
-  `confirmed`/`superseded`/`stale`；确认对账绑定本次 `preparationId`，读回别的摘要不解锁。
-- 暂停剩余范围从 run overview 的 durable exact-Preview 恢复派生有效摘要，无 effect、无自动 POST；
-  丢响应只按本次提交的 preview/选择/版本/许可核对。
-- 摘要准备一律消费完成分析的 durable identity；保存决定与身份冲突时 fail closed 要求重新分析，
-  不在 HTTP 内 live Provider fallback。
-- 批次逐项独立摘要、逐项原子准入，只确认所选就绪子集，不伪造共同 Preview/pin。
-
-### 风险 / 偏差
-
-- 五类恢复共用同一套 prepare/confirm 入口与既有决策表单；识别、分类、元数据、冲突与技术失败的
-  专用输入均汇入同一分析→摘要→确认链，逐类专用文案与窄屏细节仍可在后续迭代细化。
-- 任务内有界多选复用既有 `RecoveryBatchContinuationService` 与逐项 admission；批次面板只在
-  child 已有/可准备 durable 摘要时提供确认，未就绪项明确单列。
+**READY FOR B REVIEW。** 本报告不声明 Task PASS，不更改 B Review 3 结论或 Task 状态。
 
 ### 可复用经验候选
 
-- 无（待 Slice 收尾统一整理）。
+无；留待 Slice 收尾统一整理。
+
+### Developer correction — Review 5 / 2026-10-18（候选门禁进行中）
+
+本轮继续同一 Task45.3：修正 R6 多段 lineage 的当前问题/attention/checkpoint 动作投影，
+R7 将关联新问题表单嵌在原 Task/type/item 上下文，R8 fake Provider 按请求标题隔离候选；
+保留生产候选上限。增加合法覆盖的独立决定与精确摘要影响确认、成功与再次失败的真实链测试。
+不修改 Slice/Roadmap/稳定需求，不改变 partial/unknown 的调查-only 安全边界。
+
+开发反馈：真实 SQLite/API/Worker 聚焦 141 tests PASS；真实 production 浏览器完整 spec
+36 PASS（随后增加识别类型行入口及逐类截图，最终候选须重跑）；首次红测/修复期失败保存在
+.git/validation-evidence/task45.3-review5-work/（仅本地）。此前 ff34 的完整 Python
+原始日志实际为2507/7 skipped/OK，真实浏览器32 PASS/2 FAIL；不沿用之前不准确的仅schema48描述。
+
+附件能力差异（待 B 核对并交 A）：现有 OrganizerExecutor.execute 先逐个处理并验证所有附件，
+再执行主文件；manual execution 持久主项/附件步骤，但没有独立附件-only admission/consumer。
+ProcessingCheckpoint 对一般 partial / verified known effects 不提供 retry，仅 investigate；
+manual recovery 只接受 task_retry_requested + 完成的单项 DryRun，并重新校验原 source。
+因此未找到“主文件已完成、仅续附件”的既有合法入口；本轮不会发明补偿引擎、放开 partial、
+伪造失败状态或重放主文件。该条件验收未完成，不以所有附件拒绝冒充交付，交 B/A 判断能力边界。
+其他确定修正和完整 T4 继续。最终结果将在门禁后更新；此段不声明 PASS 或已可完整验收。
 
 ## B Review Result
 
 ```text
-Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..e851d05978a773fd15ae09d4249122e0a613b7e4
-Executable Candidate: 1d4a9870b153ee5fe127296d9f809e157661f938
+Reviewed Range: 8f5cf4e284766bcc8894817d7640231e85050fb2..ff34f0faa4a8697e9ef6e5b659a57d31a5795e0a
+Executable Candidate: ff34f0faa4a8697e9ef6e5b659a57d31a5795e0a
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: DEVELOPER CORRECTS THE SAME TASK 45.3
 ```
 
-### B 独立验证 — Review 2 / 2026-10-17
+### B 独立验证 — Review 5 / 2026-10-18（当前结论）
 
-- 规划/审查前治理 PASS；已提交 Slice45 ACTIVE 与工作树一致，Base/Contract 未变。
-  `git diff 1d4a987..e851d05 --name-only` 仅 TASK.md，明确本轮运行时候选。
-  已检查完整 Task manifest 和本轮 correction diff；本轮仅修改 B-owned TASK.md，
-  保留全部预存脏文件，不修改产品代码、Slice/Roadmap/Progress/稳定需求，不推送。
-- `.venv/bin/python -m unittest tests.test_recovery_continuation tests.test_task_persistence
-  tests.test_processing_checkpoint tests.test_manual_organize_execution`：**104 tests / 8.274s / OK**。
-  包含新的等价确认、事务内 checkpoint 栅栏及成功解除 attention 回归。
-  `web/ npm run build` PASS，产物大小 warning 保留。
-- 两条真实 Python API/临时 SQLite/Local Storage/假 Provider 反例：复用原候选选择和
-  correction 集成 fixture，Worker 分析完成后 POST prepare-summary 仍同步增加 detail：
-  候选分支 **4→5**，纠正分支 **2→3**；均返回 201，源仍存在。不是 GET 调用 Provider 的结论。
-- 精确 production build + 真实 Python API/SQLite/生产 consumer harness 原生复现：
-  页面新生成摘要（不先刷新），confirm 后端提交 202 再丢响应，显式重新读取后 durable status
-  为 confirmed，已有关联执行按钮，但旧摘要/确认按钮仍 enabled；再次点击实际发出第二次 POST。
-  两次独立新 fixture 复现；后端等价去重保住同一执行，未声称重复 mutation 或数据损失。
-  已查看 **1536×1024 / 380×720** 实际截图。此证据不是五类、键盘或容器整体验收。
-- 实际重跑 `scripts/task_base_migration_proof.py` PASS；已核对脚本与原始输出，只证明其
-  实际执行的旧代码建库、schema45→46、新字段往返与所选字段重开比较，不能扩大为失败注入/
-  真实授权消费/pin 全部保留的证明。
-- Developer 原始 logs 现在存在：full Python **2496 / 7 skipped / 227.310s / OK**、
-  Web/浏览器/wheel 等已有日志；报告中的 193.6s、wheel a41ee… 与本轮索引/原始日志
-  （wheel **3a3911…**）不一致，交回时须统一具体运行身份。此次没有据此单独判产品回归，
-  也没有把日志存在等同于原 Required Tests 全覆盖。
-- 证据、可复跑 probes、原始 logs/trace/截图、source/lockfile/build 摘要及精确命令：
-  `.git/validation-evidence/e851d05978a773fd15ae09d4249122e0a613b7e4/b-review2-20261017/INDEX.md`。仅本地可达。
-  已有确定阻塞，按 workflow 提前拒绝；不重跑完整 Python/Web/E2E/Unicode/wheel/Docker
-  或全部旧库矩阵，不将未跑门禁记 B PASS。
+本轮审查实际 Task Base..ff34f0f，结论 **FIX REQUIRED**。继续同一 Task45.3；
+ID/Base/Goal/Scope/AC、High/T4 不变。保留 Developer 报告、历史 Review 和所有无关脏文件；
+未改产品代码、SLICE、Roadmap、Progress 或稳定需求。当前行动以下方 Review 5 为准。
 
-### 上轮修正核对
+#### 已确认进展与实际验证
 
-| 上轮条目 | 本轮实际结论 |
+- 治理 PASS，工作树 SLICE 与已提交 Contract 一致；完整 Base..Head manifest 及关键实现已核查。
+- B 在精确候选隔离 checkout 独立运行恢复/批次/checkpoint/manual execution/persistence
+  五模块：**175 tests / 21.596s / OK**。Review 4 长简介问题已修复，3900/5200/4096/4097、
+  尾部分类关键词、重开与 TV identity 回归通过，不再要求重复改该边界。
+- B 独立完整真实 Python/API/SQLite/Worker 浏览器 spec：**33 passed / 1 failed / 54.5s**，
+  workers=1、retries=0、trace on、独立输出目录。新增 Metadata 候选/纠正、分类、Rename、
+  技术失败→新Metadata→再次失败及暂停确认/未知响应/重启确已运行；不等于全部入口验收。
+- B 独立生产服务/API/SQLite + 临时 Local/fake Provider 完成两段分析→精确确认→真实Worker
+  成功，再查当前问题并重开数据库，复现 R6。未操作用户媒体/配置/运行库；未发现或宣称实际
+  重复 Storage mutation。已查看本轮新阻塞桌面图和380×720摘要图，普通路径仍进入内部Task。
+- 当前候选 Developer 原始日志确有隔离 full Python **2507 / 200.697s / OK (7 skipped)**、
+  Web unit **1129**、fake E2E **246**、Unicode **1**、静态质量/build/wheel smoke 结果。不能
+  继续说“只有schema48失败”；工作树报告需与实际日志对齐并保留首次失败。Developer real-Python
+  是 **32 passed / 2 failed**（同一批次失败及trace ENOENT）；B独立输出仅复现批次失败，
+  未把ENOENT当产品缺陷。未重跑完整T4，未把46f旧镜像当作本候选证据。
+- 原始日志、probe、trace、实际截图及证据限制索引：
+  `.git/validation-evidence/ff34f0faa4a8697e9ef6e5b659a57d31a5795e0a/b-review5-20261018/INDEX.md`。
+  仅本地可达；按workflow在已证实阻塞后提前拒绝，不以不完整验证声明PASS。
+
+#### R6 / P1 — 多段恢复成功后当前失败/待处理投影未闭合（AC-3/5/7）
+
+最终execution已completed且选中主文件已MOVE；原任务的failure文件页仍返回已恢复的
+`TechnicalRecovery.2019.mkv`及真正效果未知的兄弟项，共**2项**，前者还提供retry。
+中间Metadata分析任务虽无类型问题却仍占attention。数据库/API重开前后相同。期望当前失败
+仅剩未知兄弟项**1项**，中间任务退出attention；原任务因未知兄弟仍需处理，历史失败不删改。
+
+Developer依次完成，不新建Task：
+
+1. 将证据目录 `recovery_probe_reopen.py` 的成功链收敛进现有测试：失败+成功/未知兄弟→
+   新Metadata→合法决定→下一段分析→原项摘要确认→Worker成功。先断言当前问题item_id集合、
+   文件/任务计数和中间项attention，形成确实捕获本反例的红测。
+2. 核对 `sqlite_runtime.py:_run_query_document` 的 `completed_preparation_follow_up` /
+   `safe_continuation` 与 `_problem_item_predicate('failure')`；现投影仅消费直接source_item
+   或一段child blocker，未与 `_find_completed_analysis` 的持久多段链一致。复用明确的
+   lineage/preparation/execution/item/result，建立一致的当前问题判断，不另建恢复状态体系。
+3. 列表、总数和类型文件页在分页前共用后端权威。只在该精确项有已验证成功效果后移除待办；
+   prepared/accepted/queued/analyzing/再次失败/unknown不算解决。同一execution的其他项成功
+   不替代本项成功；不按文件名/时间/相同目标猜关联，不伪造原Task/Result为成功。
+4. 核对checkpoint及可操作入口，已解决链不再指导重新分析，保留结果/历史查看。不能靠前端
+   隐藏、删除旧task/item/result/review或整任务清零掩盖问题。
+5. 补fresh/reopen、再次失败、未选项、不同来源/pin回归；原生类型入口完成后刷新核对原文件
+   退出当前失败、中间待办退出、成功兄弟不变、未知兄弟仍只可核查。
+
+#### R7 / P1 — 新阻塞仍要求处理内部分析Task（AC-1/3/5）
+
+`TaskItemRecoveryPanel.tsx` 的“查看关联分析条目”经 `OperationsLanding.tsx` /
+`TaskDetailPage.tsx` 跳到 `/operations/tasks/$taskId`。新增technical用例断言内部分析Task URL，
+再靠 `page.goBack()` 回原项准备摘要，不满足RO-3普通恢复无需处理内部DryRun Task。
+`openNativeRecovery` 从全部任务→通用详情→查看证据开始，不能代替五类列表行内入口验收。
+
+1. 保留共享恢复API、原pin/决定校验和Worker；以原Task/type/item处理上下文承载后端明确
+   关联的当前阻塞及对应合法表单，不另外建立五套恢复服务。
+2. 保存和继续发往真实关联item，不把决定写到旧原项。保留原任务身份、尝试链、输入/选择和
+   分析进度；下一段完成后在当前处理界面展示原恢复摘要并确认。
+3. 普通路径不要求用户打开内部Task后手工返回；可以保留次级诊断/历史链接。新阻塞提供问题
+   说明和直接处理动作，不把内部状态枚举或授权材料当作用户下一步。
+4. 真实浏览器从五类标签的行内动作进入task/type文件列表，完成各自输入。技术失败案例在
+   同一上下文完成新Metadata→摘要→确认→结果，检查筛选/分页/返回、重连、窄屏和键盘；
+   不删除后端lineage/权限断言以绕过缺口。
+
+#### R8 / 必需门禁失败 — 修复共享Provider fixture污染（AC-4/7）
+
+完整spec的 `two ready batch children aggregate their summaries and only the selected subset is confirmed`
+在 `seed_batch_summary_recovery` 准入409。B fresh fixture成功；先播种六类恢复及混合批次
+则失败。fake Provider累积候选，正常 `max_candidates=20` 截断后BatchSummaryB候选不可选；
+这是harness污染，不是证实生产准入错误，更不能提高生产上限规避。
+
+1. 让现有harness按fixture/请求正确隔离或确定性匹配候选；保留首次失败，重复fresh/污染反例。
+   禁止扩大生产候选边界、绕过合法选择、skip、减断言或只跑grep来造绿。
+2. 修正后运行完整真实Python spec，含原批次未知确认和少于就绪总量选择；再冻结候选完成
+   原Required Tests全部T4，新源码/测试/harness不能继承旧候选最终PASS。
+3. 补准确INDEX：source SHA、dirty内容、cwd、依赖/构建/wheel/image身份、命令/exit/counts/
+   skips/首次失败与复跑。现有ff34日志可据实引用，但报告或目录名不替代来源与产物校验。
+4. 当前wheel consumer仅验证missing-item/missing-preparation拒绝，不是成功恢复执行证明。
+   按原门禁以安装产物实际完成恢复/确认消费；补当前候选Docker recovery/security、源码与
+   served assets一致性、迁移/重开和实际桌面/窄屏/键盘证据。本轮没有找到这些边界的完整
+   新候选索引，不声称已失败或已通过，也不重复要求已经证明的功能从零重写。
+
+#### R5 剩余验收及安全边界核对（承接Review 4，不扩建新引擎）
+
+- Rename用例不证明覆盖许可/破坏性影响确认。按原Required Tests补实际冲突许可路径，
+  验证无原策略许可拒绝、合法许可仍需精确确认、确认前目标零覆盖。
+- 附件仅限**既有权威可证明安全的剩余步骤**。当前checkpoint对unknown effect及一般partial
+  仅允许investigate，不能为补案例放开拒绝或重放主文件。先交代现有executor/持久步骤/准入
+  路径及适用状态；能证明的路径接同页摘要并用真实Worker验证仅处理附件。若不存在，提交
+  具体能力/Contract差异给B核对并交A判定，不自创通用补偿、不改Task/Contract弱化义务，
+  不以“所有附件拒绝”冒充完成；其他确定修正可继续。
+- 暂停继续及五类输入已有实证进展。将原pin A→Active B、原pin缺失、GET不调用Provider、
+  未知响应非重发与权限边界映射到最终候选具体测试/日志，而非泛称full suites covered。
+
+#### Slice复核与下一步
+
+RO-1/S-1、RO-2/S-2先前Task PASS保留，本次新增链的当前问题回归必须修复；RO-3/S-3/S-4、
+RO-4/S-5异常连续性及RO-6/S-6当前验收仍未完成。RO-5/S-7独立Scan退役未实现且不并入本Task。
+**继续Task45.3，不创建45.4、不提交Closure Packet、不宣布Slice关闭。** 修正后重新审查
+实际checkpoint及全部Required Outcomes；经验留待Slice收尾统一提炼。
+
+---
+
+### B 独立验证 — Review 4 / 2026-10-18（历史结论；候选46f54bc）
+
+本轮审查新的实际 checkpoint；Developer 的工作树 Completion Report 已读取并保留。
+Task45.3 继续合法，ID/Base/Goal/Scope/AC/High/T4 不变；不需 A 修改 Contract。
+旧 Review 3 原文保留在后面供当轮修正对照；当前行动以上方 Review 5 为准。
+
+- 治理 PASS；已提交 Slice45 ACTIVE、工作树 Contract 与 Roadmap 对齐。检查完整
+  Base..Head manifest、15cee31..46f54bc correction 范围及关键实现/测试；未改产品代码、
+  Slice/Roadmap/Progress/稳定需求。保留本轮前已存在的 TASK 报告/Review 3 与全部无关脏文件。
+- 在精确候选隔离 worktree 独立执行相关 Python 五模块：**171 tests / 15.546s / OK**。
+  完整真实 Python/API/SQLite/Worker 浏览器 spec：**28 passed / 51.6s**。
+- 独立 TV 原反例：Worker 分析和摘要目标都保留 `Episode 1`，prepare-summary=201，
+  Provider **7→7**；两个电影决定分支 Provider detail **4→4 / 2→2**，摘要201且真实继续成功。
+- 独立原生批次反例：两个就绪项只选一个，后端202提交后丢响应，barrier延迟批次GET完成；
+  页面正确显示未知并锁定，精确读回后确认一项confirmed/另一项prepared，确认POST始终**1**。
+  随后驱动真实生产 Worker，只移动已选 B，未选 A 来源保留；查看1536×1024/380×720实际截图。
+- 独立运行真实 Task Base schema45→46 migration proof PASS：合法 published revision/pin
+  通过生产 validator，原许可消费/关联/结果保留，ALTER中途故障回滚及安全重开通过。
+- Developer 最终原始证据现已可读：全Python **2503 / 7 skipped / 240.948s / OK**、Web unit
+  **1129**、fake E2E **246**、real-Python **28**、Unicode **1**、visual **2**、wheel和Docker。
+  独立校验全部**207**件产物hash、提取镜像**163**个Python文件与候选逐字节一致，4个Web产物
+  与精确候选构建一致；wheel摘要与报告一致。旧“日志缺失/只有schema48失败”缺口本轮已解决，
+  不再作为阻塞。计数通过只证明实际案例，不能推定下面尚未运行的原生分支。
+- 查看实际批次/窄屏/容器摘要图；本轮未独立重跑完整Python/Web fake/Unicode/wheel/Docker，
+  未声称完成五类恢复、全部键盘/暂停/附件的整体验收。新确定阻塞允许按workflow提前拒绝。
+- 耐久原始日志、probes、trace、截图、产物核对与命令索引：
+  `.git/validation-evidence/46f54bc2a33fb5ab486a11f96714c6c1a41119f6/b-review4-20261018/INDEX.md`。
+  仅本地可达，未推送。
+
+#### R4 / P1 仍未完成 — 合法长简介导致已完成分析无法生成恢复摘要（AC-2/3/7）
+
+定位：`evidence_capture.py:_execution_identity_document.exact_text`（约400–406行）及
+`manual_recovery_continuation.py:_reusable_analysis_identity/_build_identity`。
+单字段4096字符限制遇到较长overview时将**整个**执行身份置空；读取方只接受该身份，
+摘要遂拒绝并要求重新分析，而相同Provider输入经新Worker分析仍会触发相同限制。
+
+独立真实链路采用同一合法Movie/策略/临时源，仅改变不含敏感信息的简介长度：
+
+| Provider overview | Worker分析 | 执行身份 | 同页摘要 | Provider计数 |
+|---|---|---|---|---|
+| 3900字符 | completed，生成合法目标 | 已保存 | 201 prepared | 4→4 |
+| 5200字符 | completed，生成相同合法目标 | 被整条丢弃 | 409 preview_blocked，指引重新分析 | 4→4 |
+
+5200字符远小于现有128KiB整体身份边界，域对象和正常规划均接受；这是当前恢复链的可用性缺陷，
+不是要求支持任意无界输入。源文件均保留，未发现重复mutation或数据损失。
+
+Developer按下面顺序修正，不新建Task，不改用户配置或模板规避：
+
+1. 先将上述3900/5200真实回归加入现有恢复fixture；补4096附近边界。保持原完整Worker分析，
+   断言数据库reopen后仍可prepare→confirm→实际Worker结果，准备阶段零新增Provider/许可/mutation。
+2. 对照实际 `MediaIdentity`、Naming和Classification消费者核对持久输入边界。修正**写入和读取**
+   两处4096限制，使该合法案例可无损重建；优先复用现有整体字节预算/规范化模型或已完成的精确
+   计划，避免扩大改动。仅增大写入限制而不改读取方仍会失败。保持有界与secret-free，不同步回源。
+3. 禁止裁剪简介后继续分类：`classification.py:_keyword`实际读取overview；至少用简介末尾的
+   分类关键词证明原分析与重建摘要的MediaLibrary/目标完全一致。单集/多集字段、facets及C身份
+   继续沿用已修好的无损规则，不以只保留title/providerId代替完整语义。
+4. 对真实旧/不完整记录保留明确重新分析动作；新Worker必须能产生可复用事实。对真正超过整体
+   支持边界的输入给出准确且可行的说明，不能将“再分析”当作不会改变结果的循环动作，也不能
+   拒绝本次已被正常主链接受的5200字符输入来制造通过。
+5. 先跑该反例、TV和metadata候选/纠正回归，再冻结新候选按原T4 Required Tests完整交付。
+   本轮已通过证据只属于46f54bc，新的executable修正不能直接继承旧候选的最终全量PASS。
+
+#### R5 / 原定验收缺口仍未完成 — 补齐缺失旅程，准确收窄证据声明（AC-1/3/5/6/7）
+
+不是要求再补可选反证。原Required Tests已明确要求下列业务分支；当前28项spec与容器proof
+实际没有完整执行它们。Python旧兼容authorize/execute测试不能替代新的原生同页旅程。
+
+1. 复用现有harness/临时源/假Provider，分别从Metadata候选/纠正、分类、主文件或附件冲突、
+   技术失败对应类型入口，完成合法输入→Worker分析→同页摘要→确认→真实Worker结果；
+   识别已通过可复用，不重新建立五套编排。至少一例需要覆盖冲突许可及零提前覆盖。
+2. 用同一混合任务跑“依赖修好→分析产生新Metadata阻塞→进入新类型补正→摘要确认→执行再失败”，
+   读回当前类型/计数及两次失败历史；保留成功/未知兄弟项。不能只测试九标签能打开或旧API返回200。
+3. 使用既有能力可证明安全的附件剩余步骤fixture，确认摘要展示已完成主文件/待续附件，实际执行
+   不重放主文件。若现有能力确实不支持该输入，交B核对具体边界，不能以拒绝所有附件案例替代接入。
+4. 扩展现有paused-authority浏览器用例（当前在“可见确认按钮”即结束）：实际确认、必要未知响应
+   精确对账、刷新/重连/重开后恢复同一剩余摘要/执行，运行Worker并核对已完成范围未重放。
+   原pin A在Active B下仍用A，原pin缺失拒绝；引用已有实际证明时给出具体测试/日志位置。
+5. 每条标注最终候选、用例名、原始日志/实际截图及覆盖AC。更新Completion Report/索引中
+   “covered by full suites”等泛化映射，使其只声明确已执行的分支；保留本轮完整日志和首次失败。
+   不改变原Goal/Scope/AC/Required Tests，先修已知产品失败再跑最终候选全部门禁。
+
+#### Slice 复核与下一步
+
+RO-1/S-1、RO-2/S-2保留Task45.1/45.2既有B PASS；RO-3/S-3/S-4、RO-4/S-5异常连续性及
+RO-6/S-6完整验证仍incomplete；RO-5/S-7独立Scan退役仍是后续范围，不混入本次修正。
+**Decision: FIX REQUIRED；Developer继续同一Task45.3。** 不创建Task45.4，不交Closure Packet，
+不改变Contract/Roadmap，不代A作最终审查。修好后再次审查全部Required Outcomes。
+
+---
+
+### B 独立验证 — Review 3 / 2026-10-18
+
+- 治理 PASS；已提交 Slice45 ACTIVE、工作树 Contract、Task Base 和 Roadmap 对齐。必读文档沿用
+  本会话已读版本并检查其未变；重读 Slice/当前 Task/B 经验，检查完整 Base..Head manifest 与
+  本轮 correction diff。`d09245e..15cee31` 只有 TASK.md；`7c94028..d09245e` 仅测试补充，
+  Docker 输入不变的复用理由本身成立，但仍须有原始运行/内容证据。
+- 独立 `.venv/bin/python -m unittest tests.test_recovery_continuation tests.test_recovery_batch
+  tests.test_task_persistence tests.test_processing_checkpoint tests.test_manual_organize_execution`：
+  **169 tests / 18.510s / OK**；`web/ npm run build` PASS，保留大小 warning。
+- 本轮已修好的两条原反例独立复验通过：
+  - 候选选择 detail **4→4**、Metadata correction detail **2→2**；prepare-summary 返回201，
+    临时来源保留。该结论针对这两条电影分支，不推定 TV 元数据往返完整。
+  - production build + 真实 Python/SQLite/consumer harness，本页准备→confirm202后丢响应→
+    显式对账：durable confirmed、关联执行入口存在、确认按钮数 **0**，只发一次确认 POST。
+- 新批次反例：真实两项 manual failure→批量 Worker 分析→两个独立摘要→只选一项确认。
+  后端提交202、浏览器丢响应；用 barrier 暂停批次 GET 的完成，页面显示
+  **“未获受理（transport_unavailable）”** 并重新启用确认；再次点击实际发出第二次 POST。
+  API独立读回为一项confirmed、一项prepared，两次POST返回同一execution，未证实重复媒体变更。
+- TV独立真实调用链：临时电视剧源、合法B选择、假Provider含Episode 1、实际手动失败、Worker
+  分析完成；原结果目标含 `Correct - S01E01 - Episode 1.mkv`，摘要201却变成
+  `Correct - S01E01.mkv`。Provider calls **7→7**，来源保留。将同一合法Naming策略的
+  missingVariableStrategy设为error后，分析仍成功且含标题，prepare-summary返回 **409 preview_blocked**。
+- 真实Task Base迁移脚本独立PASS，确认新增授权行和ALTER故障注入已存在；但对其生成的临时库
+  另调生产 `validate_runtime_snapshot`：Task pin `snap-base/digest-base` 无法读取，唯一revision
+  是 `base-revision/d…d`，抛 `RuntimeSnapshotUnavailable`。不能把表行保留扩大为合法旧pin可用。
+- 已检查Developer索引和实际日志：full Python原始结果 **2501 / 7 skipped / 1 failed / 198.250s**；
+  traceback路径仍指向主工作区，报告的schema48环境说明不等于干净候选全量PASS。
+  当前索引目录中的Web unit仅4行摘要，无完整real-Python/Unicode/fake E2E原始日志，
+  wheel日志亦不足以核对报告中的91f3…；先前候选不能自动替代这次改动的T4证据。
+  不把这些差异单独宣称为产品回归，具体最终补证见R5。
+- 证据、可重跑probe、原始日志/trace、实际桌面/窄屏截图、source/lockfile/build摘要：
+  `.git/validation-evidence/15cee31bdb98eccb2ba3ef5ea3d74524234361f9/b-review3-20261018/INDEX.md`。
+  已查看批次1536×1024/380×720截图。本轮不是完整五类/键盘/暂停/容器验收。
+  已有确定阻塞，按workflow提前拒绝，不重复全量Python/Web/完整spec/wheel/Docker，未跑不记PASS。
+
+### 修正核对
+
+| 原条目 | 当前事实 |
 |---|---|
-| R1 精确确认 / 原 checkpoint 原子栅栏 | 已加入选择/许可比较及事务内重新投影；独立聚焦集通过，本轮未复现原两个缺陷。保持这些保护及原并发门禁 |
-| R2 durable preparation / 对账 / 当前问题 | 刷新可读 preparation、confirmed 链参与成功解除查询已补；本地新准备后的 unknown 对账仍有下述阻塞，暂停剩余范围也未接精确对账 |
-| R3 普通 Preview 绕路 / 完整恢复处理 | 高级独立 Preview 控件已移除；批次按钮改回原项，但汇总就绪子集旅程未交付，五类/新阻塞/附件原生覆盖不足 |
-| R4 摘要内重复 Provider | 无已保存 Metadata 决定的分支已可复用；候选、correction 和已有 metadata reference 分支仍绕过复用 |
-| R5 最终证据 / 实际旧库 | 原始日志与实际 Base 建库已补；脚本未执行所声称的失败注入，旧许可/pin/恢复链验证仍不完整 |
+| R1 精确绑定/事务内checkpoint | 保留；独立相关回归通过，未复现原问题 |
+| R2 单项及暂停对账 | 单项本地prepared遮盖confirmed已独立证明修好；暂停增加exact outcome读取，但本轮未作完整原生验收 |
+| R3 批次/五类恢复 | 已增加真实两就绪项和汇总子集准入；新增批次确认未继承unknown保护，见下；五类/新阻塞/附件完整门禁仍须满足 |
+| R4 摘要重复Provider | 两条电影决定分支计数已修好；durable身份缺少TV必要字段，不能保证同一Naming/Classification语义 |
+| R5 迁移/最终证据 | 增加授权表行及实际ALTER失败注入；pin样本仍失配，最终T4原始证据不齐 |
 
-### 同 Task 阻塞与简单修正顺序
+### 同 Task 修正指导
 
-以下仅细化已有 Scope/AC/Required Tests，不改变 ID/Base/Goal/范围/High/T4。
-先完成一个反例及其修正，再做下一项；全部完成后固定最终候选跑原 T4 门禁。
-不把任一条拆成新 Task，不以改文案、隐藏控件或删断言代替行为修复。
+ID/Base/Goal/Scope/AC/High/T4和原Required Tests保持不变。保留已修好的行为，先修以下确定
+反例，再固定最终候选完成原门禁；不拆新Task，不把删除断言、改文案或拒绝有效输入当作修复。
 
-#### R2 / P1 — 新准备摘要的本地状态覆盖 durable 结果；暂停确认也缺精确对账（AC-5/6）
+#### R2/R3 / P1 — 新增批次确认把未知结果当作拒绝，未对账就解锁（AC-4/5）
 
-定位：`TaskItemRecoveryPanel.tsx:126–138,335–389,470–506`；
-`OperationsLanding.tsx:1456–1476,1513–1563`。
-独立 browser probe 证明本地 preparation 为 prepared 时，durable confirmed 不会替代它；
-reconcile 解锁后仍可提交旧确认。现有组件 unknown 用例从 GET 恢复摘要起步，没有覆盖此路径，
-且只断言出现受理标题，没有断言确认消失/禁用。
-暂停确认只把错误文案改为未知，后续 reconcile 仍仅 refetch 原 run 并解锁，未读回本次 Preview
-对应的精确执行；remainingScope 也仅在组件内，刷新无法恢复该摘要/提交状态。
+定位：`RunDetailTabs.tsx:1585–1640` 的 `BatchRecoverySummary.confirmSelected`。
+所有非ok响应都进入“未获受理”，没有逐项提交身份/unknown锁或精确读回；finally立即解除busy。
+等待中的refetch不能代替已完成的精确对账。本轮controlled barrier与真实API读回证明该窗口。
 
-1. 先把上述 browser probe 改成产品回归：**本页显式准备→confirm 已提交但丢响应→重新读取**，
-   断言显示同一执行且不再有可用确认，后续读取/重连不 POST。保留从 GET 恢复摘要的旧用例。
-2. 以同一 preparation ID 的 durable 状态为准协调本地缓存；confirmed/stale/superseded
-   不能被旧 prepared 遮盖。过期或不同输入只显示当前合法下一步；不能静默复用旧选择/许可。
-   在前端回调也阻止已确认摘要再次提交，不仅依赖按钮或后端去重。
-3. 对账保存本次 preparation/Preview、精确选择/影响和已核实主体所需的安全定位材料；读取
-   **这一次**执行与实际绑定。读到别的当前 preparation 或仅原 TaskItem GET 成功不能直接解锁。
-4. 暂停剩余范围复用既有 exact Preview admission outcome/readback，读取该次确认的已有执行，
-   受理后显示真实入口/结果。刷新/重连/重启先恢复持久摘要与状态，不能自动 POST 或猜最近任务。
-5. 分别测试本地准备、GET 恢复、另一摘要取代、过期、same/different principal、原请求已受理
-   与确实未受理；暂停范围补已提交丢响应及刷新。两个实际连接/主体仍遵循原权限和非重放规则。
+Developer按顺序做：
 
-#### R4 / P1 — Metadata 决定分支仍在摘要 HTTP 内调用 Provider（AC-2；Scope 2）
+1. 先加入本轮真实反例：两项已就绪，只选一项；确认事务提交后丢响应，以event/barrier延后
+   批次读取。断言显示“结果未知”，该项没有可用再次确认，并保留另一项可诊断状态。
+   不用sleep碰运气，不把后端返回404/409冒充网络未知。
+2. 抽取或复用已有单项exact reconciliation行为，记录每个已发出确认的preparationId、确切
+   selected itemIds/影响许可及已核实主体。每项独立表示未提交/未知/已受理/明确拒绝；
+   未知不是未受理，也不是成功。不得自动重发POST或按最近执行猜测。
+3. 对未知项读取该次preparation及执行绑定；已受理显示已有执行并移除该项确认；确实未受理
+   才恢复同一合法摘要的显式确认；读到另一摘要、过期或读取失败保持该项锁定并给出下一步。
+   旧GET的prepared不能盖过已经知道的confirmed，local与durable协调须保持同一身份。
+4. 刷新、同主体重连、换主体、重启、两项一项已受理一项拒绝/未知都保留各自结果，不让
+   一个unknown覆盖兄弟项或触发新批次。批次确认完成前后的自动导航不得丢失未完成对账。
+5. 补组件和真实Python浏览器回归：未知提交、延迟/失败读回、精确确认去重、部分成功、未选项
+   后续继续；保持原子准入/一次性权限/OrganizerExecutor及已修好的单项路径。
 
-定位：`manual_organize_preview.py:2270–2310`，
-`manual_recovery_continuation.py:_prepare_continuation/_reusable_analysis_identity`。
-复用只在 metadata_selection/correction 都为空且没有 metadata_reference 的分支启用；
-任一已有候选或纠正决定继续走 live metadata。本轮两个真实 API 计数反例已复现。
+#### R4 / P1 — durable身份重建丢失单集标题，使有效TV恢复变更目标或无法生成摘要（AC-2/3/7）
 
-1. 先扩展现有候选选择、直接 ID/query correction 集成用例，在 **Worker 分析完成后**记录
-   search/detail/season/episode 计数，再调用 prepare-summary，断言这些计数不增加。
-   另覆盖原 intent 已有 metadata reference；不要只测无决定的电影自动匹配。
-2. 摘要消费该次完成分析的耐久身份/计划及决定版本，保留来源/pin/策略/选择的精确绑定。
-   决定存在时也验证它与 durable identity 一致，不能直接跳过决定或用任意 identity 覆盖。
-   需要完整命名/分类数据时从完整耐久证据读取；不靠只有 provider/id/title 的 Result 猜补。
-3. 旧证据缺失/不完整/已过期时给出明确重新分析动作，由既有 Job/Worker 处理；
-   不以同步 live fallback 掩盖缺失。保留 bounded Storage source/plan 校验，零执行权限/零 mutation。
-4. 假 Provider 设为可阻塞/失败，证明摘要 HTTP 不等待它；确需新长分析仅准入可重开的工作。
-   补 Movie/TV 必需字段及分类/命名一致性，不能因省 Provider 改变目标或丢掉 episode 信息。
+定位：`evidence_capture.py:_metadata_section`、
+`manual_recovery_continuation.py:874–944`。当前保存/重建season/episode/episodes，却没有
+`episode_title`/`episode_metadata`；分类所需其它身份信息也不能仅因展示投影省略而改变。
+原Worker分析已成功，摘要无Provider复用时仍必须保持同一命名/分类语义。
 
-#### R3 / P1 — 批次只逐项返回，未完成同页就绪子集与恢复分支（AC-1/3/4）
+1. 用临时源 `Correct.S01E01.2024.mkv`、合法B选择、假Provider返回Episode 1，先通过完整
+   原手动失败→Worker重新分析，再准备摘要。分别覆盖omit_token和error策略；
+   断言原分析与摘要目标都包含Episode 1、后者可确认，且Provider计数不增加。
+   保留源/许可/执行计数，不以去掉模板变量或更换Naming策略规避。
+2. 明确复用的是完整可重建的分析身份/已完成计划。保存并严格还原实际参与Naming、
+   Classification和逐集计划的字段；不能把有界脱敏的展示摘要当成无损的执行输入，
+   也不能只补一个标题常量。复用现有耐久模型，必要时最小增量演进并验证旧记录兼容。
+3. 核对episode_title、episode_metadata与keywords等实际下游消费者。单集/多集及Movie/TV
+   在保存→重开→摘要中的目标/附件/解释一致；非法或过期决定仍拒绝，Type C身份仍保持C。
+4. 旧记录确实没有必要字段时，返回明确可执行的重新分析动作，由现有Worker产生完整证据；
+   不能同步Provider fallback，也不能无限重复分析却仍写出同样不完整证据。
+5. 回归已有候选选择、query/direct ID correction、metadata reference以及默认自动匹配，
+   保持本轮已经证明的零新增Provider调用；补TV原生摘要和后续实际Worker结果。
 
-定位：`RunDetailTabs.tsx:1395–1416` 仅 `onInspectItem(child.itemId)`；
-`ManualRecoveryContinuationService._prepare_continuation` 仍创建一个原项的单 item Preview；
-`TaskItemRecoveryPanel` 同时只持有一个 preparation。
-没有在当前任务处理界面收集多个独立就绪摘要、展示统一选择并只确认所选就绪项的组合。
-现有真实浏览器 spec 的批次测试只断言返回证据区域，未生成/确认两个就绪项的子集；
-专用五类完整处理、新阻塞再处理和安全附件剩余步骤也没有所要求的真实原生分支证据。
+#### R5 / 阻塞验证缺口 — 旧pin样本不可用，最终T4仍缺可复用原始证据（AC-7）
 
-1. 先建一个真实原手动执行的两项可恢复失败 fixture，经现有任务内批量分析完成；
-   不用只有 coordinator Task、没有 manual execution 关联的合成行冒充可执行恢复。
-2. 在当前任务/类型处理界面读取每项已完成分析和独立 preparation，汇总就绪/未就绪/拒绝，
-   展示每项原 pin、目标、附件与影响；不要求操作者逐个打开内部分析 Task 管理。
-3. 用当前任务的多选只确认一个就绪项；调用现有精确逐项 admission，保留独立受理/拒绝。
-   不伪造共同 Preview/pin，不新增跨任务批量 mutation。未选项仍有摘要和后续处理入口；
-   成功/忽略/未知/过期项不进入执行选择，上下文不兼容明确分组或拒绝。
-4. 对五类现有合法表单逐条连通保存/修复→分析→同页摘要→确认→真实 Worker。
-   分析产生新 blocker 时在原任务/类型上下文处理其真实关联项，再回原恢复链；
-   不以跳到内部 DryRun Task 结束旅程。至少跑原计划的技术失败→Metadata→确认→再次失败。
-5. 用现有能证明安全的附件恢复权威接入“主文件已完成、附件剩余”的摘要，展示不重复的步骤，
-   验证主文件/成功兄弟项未重放。不能证明的范围保留证据并拒绝；不能一概拒绝已有安全能力。
-6. 完整 spec/自包含真实 fixture 覆盖两就绪只选一、五类、新阻塞、再次失败、未知只核查、
-   桌面/窄屏/键盘/深链返回；看实际截图与动作，不能凭共享组件或测试总数宣称逐类完成。
+定位：`task_base_migration_proof.py:109–125,385–430`。
+保存的唯一revision为base-revision/d…d，Task/intent/Preview却pin到snap-base/digest-base；
+revision.document还是无法构建真实runtime的占位文档。新preparation亦引用base-task/base-item等
+未对应实际seed对象的字符串。ALTER失败注入已有效增加，不要求推倒重写它。
 
-#### R5 / 阻塞验证缺口 — migration proof 与最终证据仍超出实际证明（AC-7）
-
-`task_base_migration_proof.py` 头部声称注入失败，但 main 只有建库/升级/比较，**没有失败注入**。
-旧库 seed 的 snap-base/digest-base 只是 Task/intent 字符串，未保存真实 published revision；
-base-authorization 只填入恢复 link，未创建/消费 manual execution authorization 记录。
-`_read_facts` 只比较部分 Result 字段和 link，无法证明原计划约定的 pin/许可消费保留。
-
-1. 保留真正 Task Base 建库的方法，使用其实际服务创建可读的历史 revision/pin、原 Task/Results、
-   有效/已消费许可与关联执行/恢复链；保存准确 fixture 身份，不用悬空 ID 代替真实记录。
-2. 比较升级前后所承诺的完整关键状态，重开读取并核对：合法旧 pin 可用，消费/撤销不复活，
-   旧成功/未知效果不变，不因迁移新建执行。新增边界记录引用真实 task/item/Preview。
-3. 在 migration 的实际新表/列写入中途注入错误，检查 schema marker、旧记录/pin/许可/关联及
-   新边界没有留下可执行半状态；移除故障后能安全重开升级。保留首次失败及恢复读回日志。
-4. R2–R4 修正后固定 executable candidate，按原 Required Tests 完整执行 T4；索引写清每条
-   命令、候选/产物/依赖/fixture、退出码/计数/耗时及首次失败/复跑。Completion Report 使用
-   同一轮真实数字和 wheel/image digest。已有正确门禁不需在开发每步反复跑，但最终候选必须齐全。
-5. 对 wheel/Docker 的精确源码/served assets 和真实驻留恢复链保留内容证明；import loaded
-   仍只证明装配。原计划的混合项/非重放/重连不能由单识别 happy path 自动推断。
+1. 用实际Task Base服务和安全临时示例配置发布一个可加载的旧revision，取得真实ID/digest；
+   Task、intent、Preview、许可和恢复关联统一引用它及真实seed对象。
+   升级前后均通过生产validate_runtime_snapshot并重开读回，不能只比较ID字符串是否未变。
+2. 使用真实许可创建/消费及关联执行状态，保留已消费/撤销不复活、原Result/成功/未知效果不变；
+   新边界引用真实原项/分析/Preview。保留现有中途ALTER故障和安全重开，核对整个相关权威一致。
+3. 修好产品反例后，按原Required Tests固定最终source SHA，在真正干净的隔离checkout完成
+   T4全量。确保子进程/import/config/database根都属于临时测试环境；不读取用户schema48库。
+   环境失败保留原始结果/Base反证，但它不能代替原计划要求的干净候选全量证据。
+4. 索引附精确cwd/命令/版本/依赖/fixture/源码与产物摘要、exit/counts/skips/duration及原始logs，
+   不只存grep出的“passed”行。补完整Web fake E2E、real-Python五类恢复/新阻塞/安全附件、
+   暂停重新授权/unknown/重连及Unicode等原门禁，不能按共享入口或28个测试推定全部覆盖。
+5. wheel的实际构建/安装/consumer与候选digest一致；Docker可复用内容相同的7c94028镜像，
+   提供完整image ID、内容匹配和原始运行/浏览器证据。缺失文件明确标注待补，不仅重复报告PASS。
 
 ### Slice 核对与范围决定
 
-- RO-1/S-1、RO-2/S-2 保留 Task45.1/45.2 的既有 B PASS；本轮不扩大其接受范围。
-- RO-3/S-3、S-4，RO-4/S-5 的 unknown/暂停连续性，RO-6/S-6 的完整验证仍 incomplete。
-- RO-5/S-7 独立 Scan 完整退役仍未实现，保持本 Task 非目标。
-- **不创建 Task45.4，不提交 Closure Packet，不宣称 Slice 关闭。** 当前 Contract 仍可满足，
-  Task45.3 继续合法，不需 A 改范围；相同 ID/Base/Goal/Scope/AC/High/T4 修正后重新交审。
-- 经验候选留 Slice 收尾合并：共享入口的分支证据必须覆盖“本地新建状态”和“持久恢复状态”；
-  两者生命周期不同，不能用一个恢复测试替代另一个。
+- RO-1/S-1、RO-2/S-2保留Task45.1/45.2既有B PASS，不扩大到本Task尚未完成的恢复链。
+- RO-3/S-3/S-4、RO-4/S-5异常连续性、RO-6/S-6完整验证仍incomplete。
+- RO-5/S-7独立Scan完整退役尚未完成，保持本Task非目标。
+- **不创建Task45.4，不提交Closure Packet，不宣称Slice关闭。** 当前Contract仍可满足；
+  Task45.3继续合法，不需A改范围，同Task完成上述修正后重新交审。
+- 经验候选：同一种确认保护必须覆盖新接入的批次入口；耐久复用必须验证下游真实语义，
+  展示字段的子集不能自动视为完整业务身份。Slice收尾再合并，不另增经验流水账。

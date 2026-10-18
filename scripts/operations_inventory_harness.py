@@ -293,6 +293,23 @@ def build_api(
     return api
 
 
+class _QueryScopedMetadataProvider(SyntheticMetadataProvider):
+    """Keep unrelated browser fixtures outside each search's candidate budget."""
+
+    def search_movie(self, query, policy=None, **kwargs):
+        candidates = super().search_movie(query, policy, **kwargs)
+        title = getattr(query, "title_candidate", getattr(query, "title", query))
+        normalized = "".join(
+            character.casefold() for character in str(title) if character.isalnum()
+        )
+        return tuple(
+            value
+            for value in candidates
+            if normalized
+            in "".join(character.casefold() for character in value.title if character.isalnum())
+        )
+
+
 def build_managed_fixture(
     database: Path,
     root: Path,
@@ -360,6 +377,23 @@ def build_managed_fixture(
             }
         )
         (source_root / "Archive").mkdir(parents=True, exist_ok=True)
+
+    overwrite_policy = dict(document["organizePolicies"][0])
+    overwrite_policy.update(
+        {"id": "overwrite-fixture", "conflictStrategy": "overwrite", "overwrite": True}
+    )
+    document["organizePolicies"].append(overwrite_policy)
+    document["recognitionTypes"].append({"id": "overwrite-fixture", "name": "Overwrite fixture"})
+    document["recognitionTypePolicies"].append(
+        {
+            "id": "type-overwrite-fixture",
+            "recognitionType": "overwrite-fixture",
+            "metadataPolicy": "C",
+            "namingPolicy": "A",
+            "classificationPolicy": "A",
+            "organizePolicy": "overwrite-fixture",
+        }
+    )
 
     configuration_repository = SQLiteConfigurationRepository(database)
     configuration_service = ManagedConfigurationService(
@@ -434,7 +468,7 @@ def build_managed_fixture(
         raise RuntimeError("temporary ResourceLibrary scan did not complete")
     registry = MetadataProviderRegistry(
         (
-            SyntheticMetadataProvider(
+            _QueryScopedMetadataProvider(
                 (
                     MediaCandidate(
                         "tmdb",
@@ -1462,7 +1496,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         "metadata_correction",
         "classification",
         "conflict",
+        "conflict_overwrite",
         "technical",
+        "technical_success",
     }
     if kind not in supported:
         raise ValueError("unsupported recovery fixture kind")
@@ -1476,7 +1512,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "metadata_correction": "MetadataCorrection",
             "classification": "ClassificationRecovery",
             "conflict": "ConflictRecovery",
+            "conflict_overwrite": "ConflictOverwriteRecovery",
             "technical": "TechnicalRecovery",
+            "technical_success": "TechnicalRecoveryChain",
         }
         years = {
             "recognition": 2005,
@@ -1484,8 +1522,12 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "metadata_correction": 2016,
             "classification": 2017,
             "conflict": 2018,
+            "conflict_overwrite": 2020,
             "technical": 2019,
+            "technical_success": 2021,
         }
+        organize_policy_id = "overwrite-fixture" if kind == "conflict_overwrite" else "A"
+        recognition_type_id = "overwrite-fixture" if kind == "conflict_overwrite" else "C"
         title = titles[kind]
         year = years[kind]
         filename = f"{title}.{year}.mkv"
@@ -1495,7 +1537,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "metadata_correction": "216",
             "classification": "217",
             "conflict": "218",
+            "conflict_overwrite": "220",
             "technical": "219",
+            "technical_success": "221",
         }[kind]
         source_file = state.managed.root / "source" / filename
         source_file.write_bytes(b"synthetic recovery media; no real codec parsing")
@@ -1549,10 +1593,10 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             body={
                 "expectedVersion": intent["version"],
                 "expectedItemVersion": item["version"],
-                "recognitionTypeId": "C",
+                "recognitionTypeId": recognition_type_id,
                 "namingPolicyId": "A",
                 "classificationPolicyId": "A",
-                "organizePolicyId": "A",
+                "organizePolicyId": organize_policy_id,
             },
             token=HARNESS_ADMIN_TOKEN,
         )
@@ -1617,7 +1661,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             RecognitionReviewService(
                 state.repository,
                 state.managed.runtime.strategy.recognition_types,
-            ).resolve(prior_recognition.review_id, "C", actor="harness")
+            ).resolve(prior_recognition.review_id, recognition_type_id, actor="harness")
             processing = state.repository.get_item(manual_item.task_item_id)
             if processing is None:
                 raise RuntimeError("recovery fixture lost its resolved Recognition TaskItem")
@@ -1708,7 +1752,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
                 ),
             )
             review_id = review.review_id
-        elif kind == "conflict":
+        elif kind in {"conflict", "conflict_overwrite"}:
             target_path = str(manual_item.plan["executionPlan"]["targetPath"])
             destination = state.managed.root / "destination" / target_path
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1716,7 +1760,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             policy = next(
                 value
                 for value in state.managed.runtime.strategy.organize_policies
-                if value.policy_id == "A"
+                if value.policy_id == organize_policy_id
             )
             plan = OrganizePlan(
                 source_storage_id="source-storage",
@@ -1863,7 +1907,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             # is later admitted, so setup cannot consume or bias its intent.
             alternate = MediaCandidate(
                 "tmdb",
-                "929",
+                "930" if kind == "technical_success" else "929",
                 MediaType.MOVIE,
                 title,
                 year=year,
@@ -1882,7 +1926,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "kind": kind,
             "providerId": provider_id,
             "targetPath": (
-                str(manual_item.plan["executionPlan"]["targetPath"]) if kind == "conflict" else ""
+                str(manual_item.plan["executionPlan"]["targetPath"])
+                if kind in {"conflict", "conflict_overwrite"}
+                else ""
             ),
         }
         if source_file.read_bytes() != b"synthetic recovery media; no real codec parsing":
@@ -2439,7 +2485,7 @@ def task_item_recovery_state(state: AppState, *, item_id: str | None = None) -> 
         "conflictTargetPreserved": (
             (state.managed.root / "destination" / run["targetPath"]).read_bytes()
             == b"existing destination must be preserved"
-            if run.get("kind") == "conflict"
+            if run.get("kind") in {"conflict", "conflict_overwrite"}
             and (state.managed.root / "destination" / run["targetPath"]).is_file()
             else None
         ),

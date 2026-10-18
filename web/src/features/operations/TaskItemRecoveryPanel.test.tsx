@@ -661,3 +661,51 @@ describe("TaskItemRecoveryPanel", () => {
     });
   });
 });
+
+it("handles the exact linked blocker in the original context without navigation", async () => {
+  authStore.setToken("task-recovery-test-token");
+  const parent = completedRecovery(null);
+  const checkpoint = parent["checkpoint"] as Record<string, unknown>;
+  checkpoint["recovery_continuation"] = {
+    status: "failed",
+    new_task_id: "child-task",
+    new_item_id: "child-item",
+  };
+  const child = recognitionRecovery();
+  child["task_id"] = "child-task";
+  child["item_id"] = "child-item";
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      calls.push((init?.method ?? "GET") + " " + path);
+      return new Response(
+        JSON.stringify(path.includes("child-task") ? child : parent),
+        { status: 200 },
+      );
+    }),
+  );
+  const navigate = vi.fn();
+  renderWithProviders(
+    <TaskItemRecoveryPanel
+      taskId="task-1"
+      itemId="item-1"
+      runId="task-1"
+      active={false}
+      onOpenLinkedAnalysis={navigate}
+    />,
+  );
+  expect(await screen.findByText("重新检查发现新问题")).toBeVisible();
+  expect(
+    await screen.findByRole("heading", { name: "待处理的识别决策" }),
+  ).toBeVisible();
+  expect(calls).toContain(
+    "GET /api/v1/tasks/child-task/items/child-item/recovery",
+  );
+  expect(calls.every((value) => value.startsWith("GET "))).toBe(true);
+  expect(
+    screen.queryByRole("button", { name: "查看关联分析条目" }),
+  ).not.toBeInTheDocument();
+  expect(navigate).not.toHaveBeenCalled();
+});

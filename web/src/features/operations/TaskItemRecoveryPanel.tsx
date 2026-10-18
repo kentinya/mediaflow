@@ -75,6 +75,7 @@ export interface TaskItemRecoveryPanelProps {
   readonly itemId: string;
   readonly runId: string;
   readonly active: boolean;
+  readonly analysisDepth?: number;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
@@ -85,6 +86,7 @@ export function TaskItemRecoveryPanel({
   itemId,
   runId,
   active,
+  analysisDepth = 0,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
 }: TaskItemRecoveryPanelProps) {
@@ -646,9 +648,7 @@ export function TaskItemRecoveryPanel({
       {checkpoint?.continuationStatus === "completed" && (
         <StatusBanner variant="info" title="单项分析已完成">
           <p>
-            {checkpoint.continuationTaskId && checkpoint.continuationResultId
-              ? `关联分析 Task ${checkpoint.continuationTaskId}，Result ${checkpoint.continuationResultId}。`
-              : "已保存关联分析结果；检查上方新计划与原始结果。"}{" "}
+            已保存关联分析结果；在当前界面检查新计划与原始结果。
             分析结果仍是零变更检查，不代表文件整理已成功。
           </p>
           {checkpoint.continuationTaskId &&
@@ -671,25 +671,38 @@ export function TaskItemRecoveryPanel({
       )}
       {checkpoint?.continuationStatus === "failed" &&
         checkpoint.continuationTaskId &&
-        checkpoint.continuationItemId && (
-          <StatusBanner variant="warning" title="单项分析发现新的审核事项">
+        checkpoint.continuationItemId &&
+        !model?.manualRecoveryAnalysisReady &&
+        confirmedPreparation === null && (
+          <StatusBanner variant="warning" title="重新检查发现新问题">
             <p>
-              原恢复记录仍保留为失败。请在关联条目处理新问题并继续安全分析；
-              分析完成后返回此条目生成新的计划摘要。
+              原任务和失败历史保持不变。请在此处理新问题并继续安全分析，
+              完成后更新原恢复摘要；保存决定不会修改文件。
             </p>
-            {onOpenLinkedAnalysis && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() =>
-                  onOpenLinkedAnalysis(
-                    checkpoint.continuationTaskId!,
-                    checkpoint.continuationItemId!,
-                  )
-                }
-              >
-                查看关联分析条目
-              </button>
+            {analysisDepth < 16 ? (
+              <div aria-label="当前关联问题">
+                <TaskItemRecoveryPanel
+                  key={checkpoint.continuationItemId}
+                  taskId={checkpoint.continuationTaskId}
+                  itemId={checkpoint.continuationItemId}
+                  runId={runId}
+                  active={active}
+                  analysisDepth={analysisDepth + 1}
+                  onOpenRecoveryExecution={onOpenRecoveryExecution}
+                />
+                <button
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  disabled={query.isFetching}
+                  onClick={() => void query.refetch()}
+                >
+                  更新原恢复摘要
+                </button>
+              </div>
+            ) : (
+              <p>
+                关联分析已达到支持的深度，请保留当前记录并联系管理员核查恢复链。
+              </p>
             )}
           </StatusBanner>
         )}

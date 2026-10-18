@@ -71,6 +71,7 @@ class TaskItemRecoveryService:
                 and source_task is not None
                 and linked_items[0].storage_id == source_item.storage_id
                 and linked_items[0].source_path == source_item.source_path
+                and linked_items[0].resource_library_id == source_item.resource_library_id
                 and linked_task.configuration_snapshot_id == source_task.configuration_snapshot_id
                 and linked_task.configuration_snapshot_digest
                 == source_task.configuration_snapshot_digest

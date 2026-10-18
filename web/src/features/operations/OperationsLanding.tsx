@@ -493,7 +493,15 @@ export function OperationsLanding() {
   };
 
   const closeRun = () => {
-    void navigate({ to: "/operations", search: listSearch(), replace: true });
+    const search = listSearch();
+    if (problemRunId !== "") search["problemRun"] = problemRunId;
+    if (chosenProblemType !== null && !isRecoveryView(view))
+      search["problemType"] = chosenProblemType;
+    if (problemPage.cursor !== null) {
+      search["problemCursor"] = problemPage.cursor;
+      search["problemDir"] = problemPage.direction;
+    }
+    void navigate({ to: "/operations", search, replace: true });
     // A closed selection drops its overview cache so a later selection of
     // the same run starts from a fresh bounded read.
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
@@ -541,12 +549,11 @@ export function OperationsLanding() {
       returnSearch["problemCursor"] = problemPage.cursor;
       returnSearch["problemDir"] = problemPage.direction;
     }
-    const returnContext = operationsReturnContextFromSearch(returnSearch);
     void navigate({
-      to: "/operations/tasks/$taskId",
-      params: { taskId },
+      to: "/operations",
       search: {
-        returnOps: returnContext,
+        ...returnSearch,
+        run: taskId,
         ...runDetailStateSearch(
           readRunDetailState({ tab: "detail", item: itemId }),
         ),

@@ -164,6 +164,7 @@ class ProcessingCheckpointContext:
     audits: tuple[CheckpointAudit, ...] = ()
     recovery_requests: tuple[RecoveryRequest, ...] = ()
     recovery_continuations: tuple[RecoveryContinuation, ...] = ()
+    verified_recovery_follow_up: bool = False
 
 
 class ProcessingCheckpointRepository(Protocol):

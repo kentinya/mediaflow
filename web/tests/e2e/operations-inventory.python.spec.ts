@@ -127,7 +127,11 @@ type NativeRecoverySeed = {
 
 async function seedNativeRecovery(
   request: APIRequestContext,
-  kind: NativeRecoveryKind | "technical",
+  kind:
+    | NativeRecoveryKind
+    | "technical"
+    | "technical_success"
+    | "conflict_overwrite",
 ): Promise<NativeRecoverySeed> {
   const response = await request.post(
     `${BASE}/__harness__/seed-task-item-recovery?kind=${kind}`,
@@ -139,18 +143,35 @@ async function seedNativeRecovery(
 async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
+  const view = seeded.sourcePath.startsWith("Technical")
+    ? "失败恢复"
+    : seeded.sourcePath.startsWith("Classification")
+      ? "分类恢复"
+      : seeded.sourcePath.startsWith("Conflict")
+        ? "冲突处理"
+        : "元数据恢复";
+  await page.getByRole("button", { name: view, exact: true }).click();
   const sourceRun = page
     .getByRole("row")
     .filter({ hasText: seeded.sourcePath });
   await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button").first().click();
-  const detail = page.getByRole("region", { name: "运行详情" });
-  const items = detail.getByRole("region", { name: "主条目" });
-  const sourceItem = items.getByRole("row").filter({
-    hasText: seeded.sourcePath,
-  });
+  await sourceRun
+    .getByRole("button", { name: /查看问题文件|查看失败文件/ })
+    .click();
+  const problemFiles = page.getByRole("region", { name: /问题文件/ });
+  const sourceItem = problemFiles
+    .getByRole("listitem")
+    .filter({ hasText: seeded.sourcePath });
   await expect(sourceItem).toHaveCount(1);
-  await sourceItem.getByRole("button", { name: "查看证据" }).click();
+  await sourceItem.getByRole("button").click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  await detail.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path:
+      TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-input-1536.png",
+    fullPage: false,
+  });
   return {
     detail,
     recovery: detail.getByRole("region", { name: "条目审核与恢复" }),
@@ -232,6 +253,20 @@ async function finishNativeRecovery(
   const summary = page.getByRole("region", { name: "新计划摘要" });
   await expect(summary).toBeVisible();
   await expect(summary).toContainText(seeded.sourcePath);
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path:
+      TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-summary-1536.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 380, height: 720 });
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path:
+      TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-summary-380.png",
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   state = await (
     await request.get(
       `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
@@ -2332,19 +2367,16 @@ test("native task-item recognition recovery reaches a separately authorized link
   const api = recordApiCalls(page);
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
+  await page.getByRole("button", { name: "识别恢复", exact: true }).click();
   const sourceRun = page
     .getByRole("row")
     .filter({ hasText: "Recovery.2005.mkv" });
-  await expect(sourceRun).toHaveCount(1);
-  await sourceRun.getByRole("button").first().click();
+  await sourceRun.getByRole("button", { name: "查看问题文件" }).click();
+  await page
+    .getByRole("region", { name: "问题文件处理" })
+    .getByRole("button", { name: "查看该文件证据与恢复记录" })
+    .click();
   const detail = page.getByRole("region", { name: "运行详情" });
-  const items = detail.getByRole("region", { name: "主条目" });
-  const sourceItemRow = items.getByRole("row").filter({
-    hasText: seeded.sourcePath,
-  });
-  await expect(sourceItemRow).toHaveCount(1);
-  await sourceItemRow.getByRole("button", { name: "查看证据" }).click();
-
   const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
   await expect(
     recovery.getByRole("heading", { name: "待处理的识别决策" }),
@@ -2352,7 +2384,9 @@ test("native task-item recognition recovery reaches a separately authorized link
   await expect(
     recovery.getByText(/保存仅记录人工决定，不执行 OrganizerExecutor/),
   ).toBeVisible();
-  const selectedRecognition = recovery.getByRole("radio").last();
+  const selectedRecognition = recovery.getByRole("radio", {
+    name: /^Special —/,
+  });
   await selectedRecognition.focus();
   await expect(selectedRecognition).toBeFocused();
   await selectedRecognition.check();
@@ -2649,6 +2683,90 @@ test("native conflict recovery renames while preserving the existing target", as
   ).toBe(true);
 });
 
+test("policy-permitted overwrite still needs exact same-page destructive consent", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "conflict_overwrite");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await recovery
+    .getByRole("radio", { name: "替换现有目标(高风险，需要再次确认)" })
+    .check();
+  await recovery
+    .getByRole("checkbox", {
+      name: "我明确选择覆盖此冲突目标；本次仍只保存决定并重新分析",
+    })
+    .check();
+  const decision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/recovery/decision"),
+  );
+  const analysis = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/recovery/continue"),
+  );
+  await recovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await decision).status()).toBe(200);
+  expect((await analysis).status()).toBe(202);
+  expect(
+    (
+      await (
+        await request.post(
+          BASE +
+            "/__harness__/run-task-item-recovery-worker?itemId=" +
+            seeded.itemId,
+        )
+      ).json()
+    ).continuationStatus,
+  ).toBe("completed");
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+  await recovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  const confirm = summary.getByRole("button", { name: /确认继续整理 1 项/ });
+  await expect(confirm).toBeDisabled();
+  const before = await (
+    await request.get(
+      BASE + "/__harness__/task-item-recovery-state?itemId=" + seeded.itemId,
+    )
+  ).json();
+  expect(before.sourceExists).toBe(true);
+  expect(before.conflictTargetPreserved).toBe(true);
+  await summary
+    .getByRole("checkbox", { name: "我确认允许按此精确摘要替换现有目标文件" })
+    .check();
+  await expect(confirm).toBeEnabled();
+  const submitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      response.url().endsWith("/confirm"),
+  );
+  await confirm.click();
+  expect((await submitted).status()).toBe(202);
+  const admitted = await (
+    await request.get(
+      BASE + "/__harness__/task-item-recovery-state?itemId=" + seeded.itemId,
+    )
+  ).json();
+  expect(admitted.conflictTargetPreserved).toBe(true);
+  expect(
+    (await (await request.post(BASE + "/__harness__/run-manual-worker")).json())
+      .completed,
+  ).toBe(true);
+  const after = await (
+    await request.get(
+      BASE + "/__harness__/task-item-recovery-state?itemId=" + seeded.itemId,
+    )
+  ).json();
+  expect(after.sourceExists).toBe(false);
+  expect(after.conflictTargetPreserved).toBe(false);
+});
+
 test("technical recovery surfaces a new Metadata blocker, resolves it, and records a second failure", async ({
   page,
   request,
@@ -2693,19 +2811,10 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
   expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
   await recovery.getByRole("button", { name: "Refresh" }).click();
 
-  // The first safe analysis did not solve the file: it created a real linked
-  // Metadata blocker. The operator must enter that linked TaskItem's type flow.
-  const analysisLink = recovery.getByRole("button", {
-    name: "查看关联分析条目",
-  });
-  await expect(analysisLink).toBeVisible();
-  await analysisLink.click();
-  await expect(page).toHaveURL(
-    new RegExp(
-      `/tasks/${firstState.analysisTaskId}.*item=${firstState.analysisItemId}`,
-    ),
-  );
-  const linkedRecovery = page.getByRole("region", {
+  // Handle the exact linked blocker inside the source Task/type context.
+  await expect(page).toHaveURL(new RegExp("problemRun=" + seeded.runId));
+  const sourceContextUrl = page.url();
+  const linkedRecovery = recovery.getByRole("region", {
     name: "条目审核与恢复",
   });
   await expect(
@@ -2716,6 +2825,24 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
     path: `${TASK45_RECOVERY_EVIDENCE}/technical-new-metadata-blocker-1536x1024.png`,
     fullPage: false,
   });
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL((url) => {
+    const expected = new URL(sourceContextUrl);
+    return (
+      url.pathname === expected.pathname &&
+      [...expected.searchParams].every(
+        ([key, value]) => url.searchParams.get(key) === value,
+      )
+    );
+  });
+  await linkedRecovery.getByRole("radio").first().check();
+  const linkedSave = linkedRecovery.getByRole("button", {
+    name: "保存决策并继续安全分析",
+  });
+  await linkedSave.focus();
+  await expect(linkedSave).toBeFocused();
   const linkedItemId = firstState.analysisItemId as string;
   const linkedTaskId = firstState.analysisTaskId as string;
   await linkedRecovery.getByRole("radio").first().check();
@@ -2771,16 +2898,18 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
   ).json();
   expect(completedSourceDetail.manualRecoveryAnalysisReady).toBe(true);
 
-  // Return to the source manual item; its linked, now-unblocked analysis is
-  // the one summary preparation must consume.
-  await page.goBack();
-  await expect(page).toHaveURL(
-    new RegExp(`run=${seeded.runId}.*item=${seeded.itemId}`),
-  );
-  const sourceRecovery = page
-    .getByRole("region", { name: "运行详情" })
-    .getByRole("region", { name: "条目审核与恢复" });
-  await sourceRecovery.getByRole("button", { name: "Refresh" }).click();
+  // The original context never left for an internal analysis Task.
+  await expect(page).toHaveURL((url) => {
+    const expected = new URL(sourceContextUrl);
+    return (
+      url.pathname === expected.pathname &&
+      [...expected.searchParams].every(
+        ([key, value]) => url.searchParams.get(key) === value,
+      )
+    );
+  });
+  await recovery.getByRole("button", { name: "更新原恢复摘要" }).click();
+  const sourceRecovery = recovery;
   await sourceRecovery
     .getByRole("button", { name: "生成计划摘要并在此确认" })
     .click();
@@ -2844,6 +2973,240 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
     effectCertainty: "none",
     completedOperations: [],
   });
+  expect(finalState.siblingStatuses).toMatchObject({
+    "TechnicalRecoverySuccess.2019.mkv": "success",
+    "TechnicalRecoveryUnknown.2019.mkv": "failed",
+  });
+  expect(
+    finalState.sourceResultHistory.some(
+      (value: { status: string }) => value.status === "SUCCESS",
+    ),
+  ).toBe(false);
+});
+
+test("technical multi-hop success closes current failure and intermediate attention after restart", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const seeded = await seedNativeRecovery(request, "technical_success");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await expect(recovery).toContainText("repair the dependency");
+  const firstAdmission = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+  );
+  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
+  expect((await firstAdmission).status()).toBe(202);
+  const firstWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(firstWorker.ran).toBe(true);
+  const firstState = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(firstState.analysisTaskId).toBeTruthy();
+  expect(firstState.analysisItemId).toBeTruthy();
+  expect(firstState.analysisItems[0].status).toBe("waiting_metadata");
+  expect(firstState.siblingStatuses).toMatchObject({
+    "TechnicalRecoverySuccess.2019.mkv": "success",
+    "TechnicalRecoveryUnknown.2019.mkv": "failed",
+  });
+  const blockedSourceDetail = await (
+    await request.get(
+      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    )
+  ).json();
+  expect(blockedSourceDetail.manualRecoveryAnalysisReady).toBe(false);
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+
+  // Handle the exact linked blocker inside the source Task/type context.
+  await expect(page).toHaveURL(new RegExp("problemRun=" + seeded.runId));
+  const sourceContextUrl = page.url();
+  const linkedRecovery = recovery.getByRole("region", {
+    name: "条目审核与恢复",
+  });
+  await expect(
+    linkedRecovery.getByRole("heading", { name: "待处理的元数据决策" }),
+  ).toBeVisible();
+  await linkedRecovery.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-new-metadata-blocker-1536x1024.png`,
+    fullPage: false,
+  });
+  await page.reload();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL((url) => {
+    const expected = new URL(sourceContextUrl);
+    return (
+      url.pathname === expected.pathname &&
+      [...expected.searchParams].every(
+        ([key, value]) => url.searchParams.get(key) === value,
+      )
+    );
+  });
+  await linkedRecovery.getByRole("radio").first().check();
+  const linkedSave = linkedRecovery.getByRole("button", {
+    name: "保存决策并继续安全分析",
+  });
+  await linkedSave.focus();
+  await expect(linkedSave).toBeFocused();
+  const linkedItemId = firstState.analysisItemId as string;
+  const linkedTaskId = firstState.analysisTaskId as string;
+  await linkedRecovery.getByRole("radio").first().check();
+  const linkedDecision = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/decision`,
+  );
+  const linkedContinue = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery/continue`,
+  );
+  await linkedRecovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  expect((await linkedDecision).status()).toBe(200);
+  expect((await linkedContinue).status()).toBe(202);
+  const linkedWorker = await (
+    await request.post(
+      `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${linkedItemId}`,
+    )
+  ).json();
+  expect(linkedWorker.ran).toBe(true);
+  if (linkedWorker.continuationStatus !== "completed") {
+    const linkedRecoveryState = await (
+      await request.get(
+        `${BASE}/api/v1/tasks/${linkedTaskId}/items/${linkedItemId}/recovery`,
+        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+      )
+    ).json();
+    const nextItemId = linkedRecoveryState.checkpoint.recovery_continuation
+      ?.new_item_id as string | undefined;
+    const nextItemState = nextItemId
+      ? await (
+          await request.get(
+            `${BASE}/api/v1/tasks/${linkedWorker.newTaskId}/items/${nextItemId}/recovery`,
+            { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+          )
+        ).json()
+      : null;
+    throw new Error(
+      `Resolved linked analysis did not finish: ${JSON.stringify({ linkedWorker, linkedRecoveryState, nextItemState })}`,
+    );
+  }
+  const completedSourceDetail = await (
+    await request.get(
+      `${BASE}/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery`,
+      { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+    )
+  ).json();
+  expect(completedSourceDetail.manualRecoveryAnalysisReady).toBe(true);
+
+  // The original context never left for an internal analysis Task.
+  await expect(page).toHaveURL((url) => {
+    const expected = new URL(sourceContextUrl);
+    return (
+      url.pathname === expected.pathname &&
+      [...expected.searchParams].every(
+        ([key, value]) => url.searchParams.get(key) === value,
+      )
+    );
+  });
+  await recovery.getByRole("button", { name: "更新原恢复摘要" }).click();
+  const sourceRecovery = recovery;
+  await sourceRecovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  const summary = page.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText(seeded.sourcePath);
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-1536x1024.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 380, height: 720 });
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
+    fullPage: false,
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  const confirmedResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
+  const confirmed = await confirmedResponse;
+  expect(confirmed.status()).toBe(202);
+  const afterConfirm = (await confirmed.json()) as {
+    readonly executionId: string;
+    readonly selectedItemIds: readonly string[];
+  };
+  expect(afterConfirm.selectedItemIds).toHaveLength(1);
+  const failedWorker = await (
+    await request.post(`${BASE}/__harness__/run-manual-worker`)
+  ).json();
+  expect(failedWorker).toMatchObject({ completed: true, status: "completed" });
+  const finalState = await (
+    await request.get(
+      `${BASE}/__harness__/task-item-recovery-state?itemId=${seeded.itemId}`,
+    )
+  ).json();
+  expect(finalState.sourceExists).toBe(false);
+  // The source's original result remains durable on its original Task. The
+  // confirmed retry is a separately admitted Manual execution, so its failed
+  // result belongs to that linked execution Task rather than rewriting history.
+  expect(finalState.sourceResultHistory).toHaveLength(1);
+  expect(finalState.sourceResultHistory[0].status).toBe("FAILED");
+  const retryTaskState = await (
+    await request.get(
+      `${BASE}/__harness__/task-result-state?taskId=${failedWorker.taskId}`,
+    )
+  ).json();
+  expect(retryTaskState.available).toBe(true);
+  expect(retryTaskState.results).toHaveLength(1);
+  expect(retryTaskState.results[0]).toMatchObject({
+    sourcePath: seeded.sourcePath,
+    status: "SUCCESS",
+    effectCertainty: "verified_complete",
+  });
+  await request.post(BASE + "/__harness__/restart");
+  const original = await (
+    await request.get(
+      BASE +
+        "/api/v1/operations/runs/" +
+        seeded.taskId +
+        "/problem-items?problem=failure&limit=100",
+      { headers: { Authorization: "Bearer " + ADMIN_TOKEN } },
+    )
+  ).json();
+  expect(original.matching_total).toBe(1);
+  expect(
+    original.items.map((value: { item_id: string }) => value.item_id),
+  ).not.toContain(seeded.itemId);
+  const intermediate = await (
+    await request.get(BASE + "/api/v1/operations/runs/" + linkedTaskId, {
+      headers: { Authorization: "Bearer " + ADMIN_TOKEN },
+    })
+  ).json();
+  expect(intermediate.attention).toBe(false);
   expect(finalState.siblingStatuses).toMatchObject({
     "TechnicalRecoverySuccess.2019.mkv": "success",
     "TechnicalRecoveryUnknown.2019.mkv": "failed",
@@ -3877,13 +4240,12 @@ test("source filters and 21-file recovery pages preserve exact evidence context"
   await restoredPanel
     .getByRole("button", { name: "查看该文件证据与恢复记录" })
     .click();
-  await expect(page).toHaveURL(
-    new RegExp(`/operations/tasks/${seeded.taskId}`),
-  );
-  await expect(
-    page.getByRole("heading", { name: `Task ${seeded.taskId}`, exact: true }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "返回原运行", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp("run=" + seeded.taskId));
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("button", { name: "关闭详情" })
+    .click();
   await expect(page).toHaveURL(/source=/);
   await expect(page).toHaveURL(/problemCursor=/);
   await expect(

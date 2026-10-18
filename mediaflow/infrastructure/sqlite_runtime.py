@@ -3531,11 +3531,19 @@ class SQLiteTaskRepository:
                     ORDER BY source_item_id, created_at DESC, continuation_id DESC""",
                     values,
                 ).fetchall()
+                verified_rows = self._connection.execute(
+                    "SELECT i.item_id FROM task_items i WHERE i.item_id IN ("
+                    + placeholders
+                    + ") AND "
+                    + self._verified_recovery_follow_up("i"),
+                    values,
+                ).fetchall()
             except BaseException:
                 self._connection.rollback()
                 raise
             self._connection.commit()
 
+        verified_item_ids = {row["item_id"] for row in verified_rows}
         items = {row["item_id"]: self._item(row) for row in item_rows}
         tasks = {row["task_id"]: self._task(row) for row in task_rows}
         results_by_item: dict[str, list[PersistentResultRecord]] = {}
@@ -3587,6 +3595,7 @@ class SQLiteTaskRepository:
                 ),
                 tuple(recovery_by_item.get(item_id, ())),
                 tuple(continuations_by_item.get(item_id, ())),
+                item_id in verified_item_ids,
             )
             for item_id, item in items.items()
             if item.task_id in tasks
@@ -3792,6 +3801,7 @@ class SQLiteTaskRepository:
                 audits=tuple(audits[-audit_limit:]),
                 recovery_requests=recovery_requests,
                 recovery_continuations=recovery_continuations,
+                verified_recovery_follow_up=self.has_verified_recovery_follow_up(item_id),
             )
 
     def list_results(
@@ -5721,21 +5731,7 @@ class SQLiteTaskRepository:
         # never the legacy link, so a source item resolved through the same-page
         # journey leaves the current problem list once its real Worker outcome
         # proves the effect.
-        completed_preparation_follow_up = (
-            "EXISTS (SELECT 1 FROM manual_recovery_preparations preparations "
-            "JOIN manual_executions prep_executions "
-            "ON prep_executions.execution_id = preparations.execution_id "
-            "JOIN manual_execution_items prep_execution_items "
-            "ON prep_execution_items.execution_id = preparations.execution_id "
-            "WHERE preparations.status = 'confirmed' "
-            "AND preparations.source_item_id = continuation_items.item_id "
-            "AND preparations.execution_id IS NOT NULL "
-            "AND prep_executions.status = 'completed' "
-            "AND prep_execution_items.status = 'success' "
-            "AND prep_execution_items.result_id IS NOT NULL "
-            "AND prep_execution_items.effect_certainty = 'verified_complete' "
-            "AND prep_execution_items.uncertain_effects = '[]')"
-        )
+        completed_preparation_follow_up = self._verified_recovery_follow_up("continuation_items")
         # A resolved review or admitted analysis/retry is no longer a
         # technical failure. Its pending safe-continuation step remains in
         # the generic attention view until a later durable outcome replaces
@@ -6762,6 +6758,85 @@ class SQLiteTaskRepository:
         )
 
     @staticmethod
+    def _verified_recovery_follow_up(item_alias: str) -> str:
+        """Exact confirmed item effect, including its bounded analysis lineage.
+
+        Only persisted links establish ancestry. Every hop preserves the source,
+        library and immutable pin and has exactly one child. A sibling's success,
+        a queued execution or a known/unknown partial effect never resolves it.
+        Shared by inventory, file paging/counts and checkpoint action projection.
+        """
+        return f"""EXISTS (
+            WITH RECURSIVE lineage(root_item_id, item_id, depth) AS (
+                SELECT source_item_id, source_item_id, 0
+                FROM manual_recovery_preparations
+                WHERE status = 'confirmed' AND execution_id IS NOT NULL
+                UNION ALL
+                SELECT lineage.root_item_id, child.item_id, lineage.depth + 1
+                FROM lineage
+                JOIN task_items parent ON parent.item_id = lineage.item_id
+                JOIN tasks parent_task ON parent_task.task_id = parent.task_id
+                JOIN recovery_continuations link
+                  ON link.source_item_id = parent.item_id
+                 AND link.source_task_id = parent.task_id
+                 AND link.status IN ('completed', 'failed')
+                JOIN tasks child_task ON child_task.task_id = link.new_task_id
+                JOIN task_items child ON child.task_id = child_task.task_id
+                WHERE lineage.depth < 16
+                  AND child.storage_id = parent.storage_id
+                  AND child.source_path = parent.source_path
+                  AND child.resource_library_id = parent.resource_library_id
+                  AND child_task.configuration_snapshot_id = parent_task.configuration_snapshot_id
+                  AND child_task.configuration_snapshot_digest
+                      = parent_task.configuration_snapshot_digest
+                  AND link.configuration_snapshot_id = parent_task.configuration_snapshot_id
+                  AND link.configuration_snapshot_digest = parent_task.configuration_snapshot_digest
+                  AND (SELECT COUNT(*) FROM task_items scope
+                       WHERE scope.task_id = child.task_id) = 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM recovery_continuations newer
+                      WHERE newer.source_item_id = parent.item_id
+                        AND (newer.created_at > link.created_at OR
+                             (newer.created_at = link.created_at
+                              AND newer.continuation_id > link.continuation_id)))
+            )
+            SELECT 1 FROM lineage
+            JOIN manual_recovery_preparations prep ON prep.source_item_id = lineage.root_item_id
+            JOIN task_items root_item ON root_item.item_id = prep.source_item_id
+              AND root_item.task_id = prep.source_task_id
+            JOIN tasks root_task ON root_task.task_id = root_item.task_id
+            JOIN manual_executions execution ON execution.execution_id = prep.execution_id
+            JOIN manual_execution_items effect ON effect.execution_id = execution.execution_id
+              AND effect.preview_id = prep.preview_id AND effect.intent_id = prep.intent_id
+            JOIN task_results result ON result.result_id = effect.result_id
+              AND result.task_id = effect.task_id AND result.item_id = effect.task_item_id
+            WHERE lineage.item_id = {item_alias}.item_id
+              AND prep.status = 'confirmed'
+              AND root_task.configuration_snapshot_id = prep.configuration_snapshot_id
+              AND root_task.configuration_snapshot_digest = prep.configuration_snapshot_digest
+              AND execution.status = 'completed'
+              AND execution.configuration_snapshot_id = prep.configuration_snapshot_id
+              AND execution.configuration_snapshot_digest = prep.configuration_snapshot_digest
+              AND effect.item_id IN (SELECT value FROM json_each(prep.selected_item_ids_json))
+              AND json_extract(effect.source_json, '$.storageId') = {item_alias}.storage_id
+              AND json_extract(effect.source_json, '$.path') = {item_alias}.source_path
+              AND effect.status = 'success' AND effect.effect_certainty = 'verified_complete'
+              AND effect.uncertain_effects = '[]'
+              AND lower(result.status) = 'success'
+        )"""
+
+    def has_verified_recovery_follow_up(self, item_id: str) -> bool:
+        with self._lock:
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM task_items resolved_item WHERE resolved_item.item_id = ? AND "
+                    + self._verified_recovery_follow_up("resolved_item"),
+                    (item_id,),
+                ).fetchone()
+                is not None
+            )
+
+    @staticmethod
     def _problem_item_predicate(problem_type: str) -> tuple[str, tuple[object, ...]]:
         """The exact durable predicate of one recovery problem type.
 
@@ -6861,7 +6936,8 @@ class SQLiteTaskRepository:
                 " 'metadata_resolved', 'metadata_correction_resolved',"
                 " 'classification_resolved', 'task_retry_requested'))"
                 " OR (i.status = 'pending' AND i.stage = 'task_retry_requested' AND ("
-                f"{failed_request} OR {failed_continuation})))",
+                f"{failed_request} OR {failed_continuation})))"
+                f" AND NOT {SQLiteTaskRepository._verified_recovery_follow_up('i')}",
                 (),
             )
         raise ValueError("run problem item type is invalid")

@@ -1041,15 +1041,15 @@ describe("Operations run inventory landing", () => {
       }),
     );
     await waitFor(() =>
-      expect(router.history.location.pathname).toBe(
-        "/ui-v2/operations/tasks/task-002",
-      ),
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
     );
     expect(router.history.location.search).toContain("item=item-b");
-    const returnContext = new URLSearchParams(
-      router.history.location.search,
-    ).get("returnOps");
-    expect(parseOperationsReturnContext(returnContext)).toMatchObject({
+    expect(new URLSearchParams(router.history.location.search).get("run")).toBe(
+      "task-002",
+    );
+    expect(
+      parseOperationsReturnContext(router.history.location.search),
+    ).toMatchObject({
       view: "failure",
       problemRun: "task-002",
       problemCursor: "page-two",

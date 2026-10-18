@@ -398,6 +398,17 @@ class ProcessingCheckpointService:
             recovery_continuation=current_continuation,
             failure=failure,
         )
+        if context.verified_recovery_follow_up:
+            retry_safety = RetrySafety.UNSAFE
+            actions = (
+                CheckpointAction(
+                    "inspect_result", "View the verified recovery result", False, "none"
+                ),
+            )
+            refusal = (
+                "recovery_completed: the exact confirmed item has a verified successful effect; "
+                "inspect its linked result"
+            )
         library_kind, library_id = split_library_identity(item.resource_library_id)
         payload = {
             "task_id": item.task_id,
