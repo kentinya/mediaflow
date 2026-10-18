@@ -177,7 +177,7 @@ export function ItemFindings({
       <dt>操作</dt>
       <dd>{displayEnum(safeValue(item.operation))}</dd>
       <dt>预期目标</dt>
-      <dd>
+      <dd className="mf-exact-identity">
         {safeValue(item.targetStorageId)}:
         {safeValue(item.targetPath ?? item.destination?.relativePath ?? null)}
       </dd>

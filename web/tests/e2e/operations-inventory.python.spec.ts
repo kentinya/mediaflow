@@ -173,9 +173,18 @@ async function openNativeRecovery(page: Page, seeded: NativeRecoverySeed) {
       TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-input-1536.png",
     fullPage: false,
   });
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  await recovery.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/${seeded.sourcePath}-input-fields-1536.png`,
+  });
+  await page.setViewportSize({ width: 380, height: 720 });
+  await recovery.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/${seeded.sourcePath}-input-fields-380.png`,
+  });
+  await page.setViewportSize({ width: 1536, height: 1024 });
   return {
     detail,
-    recovery: detail.getByRole("region", { name: "条目审核与恢复" }),
+    recovery,
   };
 }
 
@@ -228,6 +237,21 @@ async function chooseNativeRecoveryDecision(
   expect((await continuationResponse).status()).toBe(202);
 }
 
+async function expectTargetPathFits(summary: Locator): Promise<void> {
+  const targets = await summary.locator("dt").evaluateAll((terms) =>
+    terms
+      .filter((term) => term.textContent === "预期目标")
+      .map((term) => {
+        const value = term.nextElementSibling as HTMLElement;
+        return { width: value.clientWidth, content: value.scrollWidth };
+      }),
+  );
+  expect(targets.length).toBeGreaterThan(0);
+  for (const target of targets) {
+    expect(target.content).toBeLessThanOrEqual(target.width + 1);
+  }
+}
+
 async function finishNativeRecovery(
   page: Page,
   request: APIRequestContext,
@@ -263,6 +287,7 @@ async function finishNativeRecovery(
   });
   await page.setViewportSize({ width: 380, height: 720 });
   await summary.scrollIntoViewIfNeeded();
+  await expectTargetPathFits(summary);
   await page.screenshot({
     path:
       TASK45_RECOVERY_EVIDENCE + "/" + seeded.sourcePath + "-summary-380.png",
@@ -2929,6 +2954,7 @@ test("technical recovery surfaces a new Metadata blocker, resolves it, and recor
   });
   await page.setViewportSize({ width: 380, height: 720 });
   await summary.scrollIntoViewIfNeeded();
+  await expectTargetPathFits(summary);
   await page.screenshot({
     path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
     fullPage: false,
@@ -3146,6 +3172,7 @@ test("technical multi-hop success closes current failure and intermediate attent
   });
   await page.setViewportSize({ width: 380, height: 720 });
   await summary.scrollIntoViewIfNeeded();
+  await expectTargetPathFits(summary);
   await page.screenshot({
     path: `${TASK45_RECOVERY_EVIDENCE}/technical-recovery-summary-380x720.png`,
     fullPage: false,
