@@ -1040,70 +1040,6 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
 
-test("verified primary completes with durable policy-specific attachment collision warning", async ({
-  page,
-  request,
-}) => {
-  const seeded = await seedNativeRecovery(request, "attachment");
-  const { recovery } = await openNativeRecovery(page, seeded);
-  await chooseNativeRecoveryDecision(page, recovery, seeded, "metadata");
-  const analysis = await request.post(
-    `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
-  );
-  expect((await analysis.json()).continuationStatus).toBe("completed");
-  const executionId = await finishNativeRecovery(
-    page,
-    request,
-    recovery,
-    seeded,
-    "partial_success",
-  );
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  const results = page.getByRole("region", { name: "附件执行结果" });
-  await expect(results.getByText("主文件已完成；附件有警告")).toBeVisible();
-  await expect(results).toContainText("AttachmentRecovery (2022).en.srt");
-  await expect(results).toContainText("请修正后再进行‘移动’操作");
-  await expect(results.getByRole("button")).toHaveCount(0);
-  const response = await request.get(
-    `${BASE}/api/v1/manual-executions/${executionId}`,
-    {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
-    },
-  );
-  expect(response.status()).toBe(200);
-  const execution = await response.json();
-  expect(execution.items[0]).toMatchObject({
-    primaryCompleted: true,
-    status: "partial",
-  });
-  expect(execution.items[0].attachmentResults[0]).toMatchObject({
-    reason: "attachment_collision",
-    effect_certainty: "none",
-  });
-  expect(
-    execution.authorizationAudit.some(
-      (entry: { action: string }) => entry.action === "attachment_outcome",
-    ),
-  ).toBe(true);
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/attachment-warning-1536.png`,
-    fullPage: true,
-  });
-  await page.setViewportSize({ width: 380, height: 720 });
-  await results.scrollIntoViewIfNeeded();
-  await page.screenshot({
-    path: `${TASK45_RECOVERY_EVIDENCE}/attachment-warning-380.png`,
-    fullPage: true,
-  });
-  await page.reload();
-  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
-  await expect(
-    page.getByRole("region", { name: "附件执行结果" }),
-  ).toContainText("不重放主文件");
-  const again = await request.post(`${BASE}/__harness__/run-manual-worker`);
-  expect((await again.json()).reason).toBe("no admitted manual execution");
-});
-
 test("new task selection reconciles a lost admission, completes in the Worker, and restores the selected run", async ({
   page,
   request,
@@ -4459,4 +4395,68 @@ test("a visible terminal inventory discovers new work and shows live progress", 
   await expect(page).toHaveURL(/status=failed/);
   await expect(page).toHaveURL(/q=Movies%2FInventory\+Poll/);
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+});
+
+test("verified primary completes with durable policy-specific attachment collision warning", async ({
+  page,
+  request,
+}) => {
+  const seeded = await seedNativeRecovery(request, "attachment");
+  const { recovery } = await openNativeRecovery(page, seeded);
+  await chooseNativeRecoveryDecision(page, recovery, seeded, "metadata");
+  const analysis = await request.post(
+    `${BASE}/__harness__/run-task-item-recovery-worker?itemId=${seeded.itemId}`,
+  );
+  expect((await analysis.json()).continuationStatus).toBe("completed");
+  const executionId = await finishNativeRecovery(
+    page,
+    request,
+    recovery,
+    seeded,
+    "partial_success",
+  );
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  const results = page.getByRole("region", { name: "附件执行结果" });
+  await expect(results.getByText("主文件已完成；附件有警告")).toBeVisible();
+  await expect(results).toContainText("AttachmentRecovery (2022).en.srt");
+  await expect(results).toContainText("请修正后再进行‘移动’操作");
+  await expect(results.getByRole("button")).toHaveCount(0);
+  const response = await request.get(
+    `${BASE}/api/v1/manual-executions/${executionId}`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    },
+  );
+  expect(response.status()).toBe(200);
+  const execution = await response.json();
+  expect(execution.items[0]).toMatchObject({
+    primaryCompleted: true,
+    status: "partial",
+  });
+  expect(execution.items[0].attachmentResults[0]).toMatchObject({
+    reason: "attachment_collision",
+    effect_certainty: "none",
+  });
+  expect(
+    execution.authorizationAudit.some(
+      (entry: { action: string }) => entry.action === "attachment_outcome",
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/attachment-warning-1536.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 380, height: 720 });
+  await results.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/attachment-warning-380.png`,
+    fullPage: true,
+  });
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(
+    page.getByRole("region", { name: "附件执行结果" }),
+  ).toContainText("不重放主文件");
+  const again = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect((await again.json()).reason).toBe("no admitted manual execution");
 });
