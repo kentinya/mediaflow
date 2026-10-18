@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.4
 Parent Slice: 45
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: f02443917bcd5b3ef645a32c432b191dc4f12aa3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CONTINUES TASK45.4; RO-7 IS PLANNED AFTER THIS TASK PASSES
+Next Action: B REVIEWS TASK45.4 CHECKPOINT; RO-7 REMAINS DEFERRED
 ```
 
 ## Goal
@@ -400,9 +400,83 @@ retry配置、exit/counts/skips/duration、首次失败/复跑、日志/截图/t
 
 ## Developer Completion Report
 
-开发中。治理检查 PASS；原有脏文件已记录并保留。实现后记录实际Changed Files、Implemented、Tests and Results及耐久证据、
-Decisions、Remaining In-Slice Work、Risks/Deviations和完整checkpoint SHA；不能自判PASS。
-优先复用已有能力；遇到无法满足Contract的边界，保留具体反例交B/A，不能减断言或改要求造绿。
+### Checkpoint / Scope
+
+- **Status: READY FOR B REVIEW**；Developer 不自判 PASS、不关闭 Slice、不规划下一 Task，未 push。
+- Task Base：`f02443917bcd5b3ef645a32c432b191dc4f12aa3`。
+- 最终 executable checkpoint：`cb5ebd834d6532bdc2b6354073d32d3dc6dd0ddd`。
+  本报告为其 TASK.md-only successor；完整报告提交 SHA 写入下方证据的
+  `report-checkpoint.log`，`report-only.diff`证明无源码/测试/harness/依赖/配置变化。
+- 耐久证据：`.git/validation-evidence/cb5ebd834d6532bdc2b6354073d32d3dc6dd0ddd/final-20261018/INDEX.md`。
+  精确 cwd/command/exit/count/duration、runtime、manifest、首次失败、trace/截图、wheel/image摘要
+  均留存；本地路径不声称远程可达。开发反馈及起始脏文件快照保留于
+  `.git/validation-evidence/task45.4-development-20261018/`。
+
+### Changed Files / Implemented
+
+- 完整 Task Base..Head name-status/stat/diff 见证据；A 已提交的范围文档单列归属，不算 Developer
+  实现。本轮未修改 SLICE/Roadmap/Progress/稳定需求/CURRENT；原有用户图像删除、未跟踪图像、
+  .DS_Store/zip/旧浏览器输出均保留且未纳入提交；私密 alist 仍 ignored/untracked/unstaged。
+- Application/API/CLI/Worker：独立 Scan submit、所有 aliases、旧详情/取消入口、通用 Job(scan)、
+  forged-definition dispatch、retry/resume/continue 明确退役拒绝；拒绝在配置/Provider/Storage发现
+  前完成，不创建新 Task/观察/许可，不暗转 Organize，保留 RBAC。CLI 旧 flags 仅返回薄拒绝。
+- 删除独立 ManualScan runner/domain/repository/history/cancel/UI 装配；只留有界错误类型与退役
+  说明。V1/V2 创建/执行动作删除，旧new/detail链接认证后指向新建整理与任务中心，不回放旧scope。
+  readiness/action matrix 不再广告可执行Scan；其他任务历史/结果/导出与控制保持。
+- 复用未改动的 MediaDiscovery Worker/过滤/真实稳定性观察：fresh目录/单项/多项无预扫描即可
+  等待真实区间、源变化重置、同页摘要并精确子集确认后才由真实 Worker 执行。旧mtime不是观察。
+  修正可达恢复指引，不要求不可能的独立Scan；不新增队列/观察/恢复引擎或索引补偿服务。
+- 定义Preview复用同pin/同definition内的持久来源观察；变化重置、新pin不能借旧区间，Provider
+  DTO/秘密/指纹不泄露。冻结定义绑定Automation模式/发布/调度保留；C→NamingA/ClassA仍是C。
+- 通用历史/取消/pin等原Scan fixtures迁为受支持Preview，保留原安全断言；更新真实Python/
+  Docker/release-security夹具。新增退役反例、fresh观察/变更/pin和原生完整链测试。
+
+### Tests And Results — Final T4
+
+以下全部来自上述最终 executable SHA 的完整历史隔离clone，不读用户ignored运行库。
+修正后的全部门禁重新执行，没有用旧候选最终全量结果代替。
+
+| 门禁 | 实际结果 |
+|---|---|
+| Python full unittest discover | **PASS 2500 tests /249.410s /7 skipped** |
+| governance、ruff format/check、compileall、pip check | **PASS** |
+| 两个批准example config validate、禁止FFprobe/FFmpeg搜索 | **PASS**；搜索无匹配预期exit1 |
+| Web typecheck/lint/format/build | **PASS** |
+| Vitest full | **PASS 76 files /1112 tests** |
+| Fake浏览器全量 | **PASS 240**，workers1/retries0/trace on |
+| 完整真实Python inventory spec | **PASS 38**，精确剩余scope/稳定性/确认/真实Worker/重连非重放 |
+| Unicode principal / 九视图及创建visual spec | **PASS 1 /2**；实际查看桌面1536×1024/380×720截图 |
+| wheel build / wheel_smoke_test | **PASS**；清除PYTHONPATH，真正安装而非源码误导入 |
+| 安装wheel消费者 | **PASS 29**；site-packages实际CLI退役、内部观察/摘要/确认/Worker |
+| production Docker退役/真实稳定性/同页确认/Worker/restart | **PASS**；无确认零许可/零变更，变化重置 |
+| Docker release-security完整门禁 | **PASS**；secret/RBAC/权限/非重放等原断言保留 |
+| 完整manifest、冻结文档、私密文件、git diff --check | **PASS** |
+
+- 7个 **SKIP而非PASS**：独立真实OpenList/SMB/S3验收环境3项、Local/SMB/OpenList/S3 endurance
+  隔离profile4项未提供；精确名称/原因见 `skip-reasons.log`。未新增skip/重试或削弱断言。
+  raw日志中的 ResourceWarning 保留，未掩盖或自行认定既有豁免。
+- wheel SHA256：`2dd97025ce001ddf0bd300ad62e925c3ad4221840ebebd6ef3289d19d0e65beb`；
+  162 Python模块逐字节匹配候选。最终release-security重建的实际imageID：
+  `sha256:6a0a857e83fd41d514b5ec32b7449a637814bd78b3610570cec974bf883327f5`。
+  重建后再次完整运行production proof，核对162 Python/4 Web文件与实际served assets字节摘要。
+- shared schema条件门禁：60个共享CREATE TABLE语句不变，schema47不变；仅移除两个Scan专用
+  fresh CREATE，不新增DROP/delete/ALTER/迁移。实际diff与shared-schema-comparison.json留证；
+  fresh/reopen共享pin、全量既有迁移与wheel backup/rehearsal通过，不建设旧Scan迁移矩阵。
+- 开发期首败均保留：无.git归档环境、Preview夹具scope/Provider/识别、fake旧Scan预期、Colima
+  临时挂载、wheel PYTHONPATH污染、release夹具构造无关OpenList、退役链接视觉对比度；逐项定位
+  修正后先跑受影响用例，最终候选完整T4。未把产品失败标为既有或自行豁免。
+
+### Decisions / Risks / Remaining Work
+
+- 完整FileIndex退出和CLI/两种库页实时列表统一是 **RO-7待后续B规划**；本Task不交付它，
+  不因此宣称Slice全部Outcome完成。共享Scanner/enum/定义绑定Scan与有限历史标签保留原因见索引。
+- 无数据库清空/媒体删除；只在隔离Local fixtures执行显式确认操作，生产路径仍仅OrganizerExecutor
+  变更媒体。定义/普通pin、未知效果非重放、权限及源范围不降级。
+- 已实际审阅九视图、旧new/detail、稳定等待、同页摘要与确认、键盘/窄屏/返回证据；长摘要需要
+  纵向滚动但没有页面横向溢出。现存部分共享英文指引保持，不进行范围外整页重做。
+- 可复用经验：容器exec不继承entrypoint加载的秘密环境；测试fixture仅构造所需Local适配器，
+  不因无关Provider/Storage造成假失败。wheel消费者清除PYTHONPATH并断言site-packages真实来源。
+
 
 ## B Review Result
 
