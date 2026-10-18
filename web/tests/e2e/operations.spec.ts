@@ -81,7 +81,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   // No manual action before an exact scope is chosen, then advertised links.
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await page.getByLabel("ResourceLibrary scope").selectOption("resources");
-  await expect(page.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "运行零变更预览" }),
   ).toBeVisible();

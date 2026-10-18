@@ -100,7 +100,7 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   await expect(scope.locator('option[value="resources"]')).toHaveCount(1);
   await scope.selectOption("resources");
 
-  await expect(page.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "运行零变更预览" }),
   ).toBeVisible();
@@ -233,8 +233,7 @@ test("Unauthenticated deep entry stays behind the connection boundary", async ({
   ).toHaveCount(0);
   await expect(page.getByLabel("API token")).toHaveCount(0);
   expect(
-    requestsTo(await manualEvidence(page), "GET", "/api/v1/manual-actions")
-      .length,
+    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")).length,
   ).toBe(0);
 });
 
@@ -261,7 +260,7 @@ test("hostile action-matrix evidence never reaches the built-artifact DOM", asyn
   page,
 }) => {
   await page.goto(
-    "/ui-v2/operations/preview/new?scopeKind=file&fileId=hostile-source&resourceLibraryId=resources",
+    "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
   );
   await connect(page, VIEWER_TOKEN);
 

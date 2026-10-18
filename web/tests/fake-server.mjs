@@ -15406,7 +15406,7 @@ const server = createServer(async (req, res) => {
     // frontend must reject this source before any credential-shaped value,
     // absolute path or digest can be rendered; the fake never records it as
     // request evidence.
-    if (fileId === "hostile-source") {
+    if (fileId === "hostile-source" || resourceLibraryId === "hostile-source") {
       matrix.source = {
         digest: "a".repeat(64),
         extension: "mkv",
