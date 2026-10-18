@@ -30,7 +30,6 @@ from pathlib import Path
 
 from docker_health_smoke_test import (
     activate_runtime,
-    compose,
     json_request,
     service_records,
     wait_for_services_healthy,
@@ -114,6 +113,61 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
         encoding="utf-8",
     )
     config_file.chmod(0o644)
+
+
+def prepare_offline_provider(root: Path) -> tuple[Path, Path]:
+    provider_root = root / "offline_provider"
+    provider_root.mkdir()
+    (provider_root / "sitecustomize.py").write_text(
+        "import mediaflow.infrastructure.metadata_provider_bootstrap as bootstrap\n"
+        "from mediaflow.application.metadata import MetadataProviderRegistry\n"
+        "from mediaflow.domain.metadata import (MediaCandidate, MediaIdentity, "
+        "MediaType, ProviderCapabilities)\n"
+        "\n"
+        "class OfflineProvider:\n"
+        "    provider_id = 'tmdb'\n"
+        "    capabilities = ProviderCapabilities(True, True, True, True, True, True, True)\n"
+        "    def search_movie(self, query, policy=None, *, force_refresh=False):\n"
+        "        return (MediaCandidate('tmdb', '1', MediaType.MOVIE, 'One'),)\n"
+        "    def search_tv(self, query, policy=None, *, force_refresh=False):\n"
+        "        return ()\n"
+        "    def get_movie(self, provider_id, policy=None, *, force_refresh=False):\n"
+        "        return MediaIdentity(provider='tmdb', provider_id=provider_id, "
+        "media_type=MediaType.MOVIE, title='One', year=2001)\n"
+        "    def get_tv(self, provider_id, policy=None, *, force_refresh=False):\n"
+        "        return self.get_movie(provider_id, policy, force_refresh=force_refresh)\n"
+        "    def get_season(self, provider_id, season, policy=None, *, force_refresh=False):\n"
+        "        return self.get_movie(provider_id, policy, force_refresh=force_refresh)\n"
+        "    def get_episode(self, provider_id, season, episode, **kwargs):\n"
+        "        return self.get_movie(provider_id, **kwargs)\n"
+        "    def find_by_external_id(self, external_id, media_type, **kwargs):\n"
+        "        return self.get_movie(external_id, **kwargs)\n"
+        "def _offline_registry(provider_ids, **kwargs):\n"
+        "    return MetadataProviderRegistry((OfflineProvider(),))\n"
+        "bootstrap.metadata_provider_registry_from_environment = _offline_registry\n",
+        encoding="utf-8",
+    )
+    (provider_root / "sitecustomize.py").chmod(0o644)
+    override = root / "compose.restart-fault.yaml"
+    provider_volume = (
+        "      - type: bind\n"
+        "        source: ${MEDIAFLOW_OFFLINE_PROVIDER_DIR:?set MEDIAFLOW_OFFLINE_PROVIDER_DIR}\n"
+        "        target: /offline-provider\n"
+        "        read_only: true\n"
+        "        bind:\n"
+        "          create_host_path: false\n"
+    )
+    override.write_text(
+        "services:\n"
+        + "".join(
+            f"  {service}:\n    volumes:\n{provider_volume}    environment:\n"
+            "      PYTHONPATH: /offline-provider\n"
+            for service in ("api", "worker", "scheduler", "notification-worker")
+        ),
+        encoding="utf-8",
+    )
+    override.chmod(0o644)
+    return provider_root, override
 
 
 def exec_python(
@@ -563,6 +617,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
         os.chmod(root, 0o755)
         config_file, environment_file, source_root, target_root = prepare_files(root, token)
         add_fault_schedule(config_file, source_root)
+        provider_root, override_file = prepare_offline_provider(root)
         environment = compose_environment(
             root,
             image,
@@ -572,7 +627,19 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             target_root=target_root,
             api_port=api_port,
         )
-        command = compose(project)
+        environment["MEDIAFLOW_OFFLINE_PROVIDER_DIR"] = str(provider_root)
+        command = [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-f",
+            str(ROOT / "compose.media-mounts.yaml"),
+            "-f",
+            str(override_file),
+            "--project-name",
+            project,
+        ]
         expected = {"api", "worker", "scheduler", "notification-worker"}
         try:
             print("Building MediaFlow image...")
