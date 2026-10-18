@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.4
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: f02443917bcd5b3ef645a32c432b191dc4f12aa3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER REMOVES SCAN PRODUCTS/MODES/RETIREMENT LAYERS UNDER REVISED CONTRACT; RO-7 AFTER PASS
+Next Action: B REVIEWS 13744f0 IMPLEMENTATION AND EXISTING EVIDENCE; VALIDATION GAPS DISCLOSED; RO-7 AFTER PASS
 ```
 
 **2026-10-18 main 整合说明：** 用户授权合并 main 与 Slice45 分支，冲突采用 Slice45 内容，
@@ -655,3 +655,68 @@ Next: SAME TASK FIX LOOP; B PLANS RO-7 ONLY AFTER PASS
   Developer 的已有全量结果仍是该旧候选的证据，不覆盖漏测入口，也不是本轮 B PASS。
 - 保留所有会话开始已有脏文件和私密 ignored 配置；不修改产品代码、Slice/Roadmap/稳定需求，
   不创建45.5、Closure Packet，不宣布 Slice 完成。Task45.3 PASS仍保持其历史结论。
+
+
+## Developer Completion Report — 2026-10-18，首次部署不存在语义候选
+
+### Checkpoint / Delivery
+
+- **READY FOR B REVIEW**：按用户“按照已经存在全量验收证据提交报告”交接；不自判 PASS，
+  不把证据缺口写成通过，不变更 T4/Required Tests，不关闭 Slice或规划下一 Task，未 push。
+- Task Base：`f02443917bcd5b3ef645a32c432b191dc4f12aa3`。
+  最终 implementation/source SHA：`13744f037f6373df4c3f11de9c3251e06b59b351`。
+  本次 checkpoint 只改 TASK.md；提交完整 SHA 见下述证据 `report-checkpoint.log`，
+  `report-only.diff`证明运行源码/测试/harness/依赖/配置/产物输入未变。
+- 证据索引：`.git/validation-evidence/13744f037f6373df4c3f11de9c3251e06b59b351/final-20261018/INDEX.md`。
+  原始日志、首败、未完成运行、截图/trace、完整 Base..Head diff/manifest、摘要和复用边界均保留。
+  此路径仅本地可用，不声称远程可达。历史候选报告与 B Review 保留，不能替代本段。
+
+已删除独立 Scan Web页/路由/destination、API aliases/410/专用错误、CLI注册/帮助/choices、
+Scan Job/定义模式/旧值解码及执行/重试/继续的专用退役认识层。旧输入走正常认证、not-found、
+argparse exit2或共享支持集合校验；拒绝不触发发现/观察/准入/执行许可，也不暗转整理。
+移除旧模式 selector 和相关文案；只清理本Task必要耦合，不重做延期自动化页面。
+
+保留共享Scanner/过滤/真实稳定观察、diagnostic及scheduled Preview、明确grant/pin、
+Task/Worker claim/fence、独立结果/恢复/审计和未知效果不重放；来源在整理内观察→同页摘要→
+明确确认→OrganizerExecutor执行。通用安全夹具改用支持工作；Docker scheduled Preview 使用
+本地确定性fake Provider，未访问生产服务。没有静默overwrite/delete、清用户库或媒体。
+
+### Existing validation evidence
+
+| 门禁 | 实际结果 |
+|---|---|
+| Python full | **PASS 2674 tests /259.558s /7 skipped**，最终source完整原始日志已保留 |
+| Vitest full | **PASS 81 files /1173 tests /61.71s** |
+| governance/ruff/compileall/pip、批准example config | **PASS**；config初次错误入口FAIL另存，改用真实CLI入口后PASS |
+| Web typecheck/lint/format/build | **PASS**；保留build warning |
+| fake E2E /real inventory /Unicode /visual | 已有会话结果 **240 /38 /1 /2 passed**；last-run/截图/trace保留，完整stdout与逐次元数据缺口见下方 |
+| real automation lifecycle | 已有14 passed；不代表run-once已在正确real配置通过 |
+| 干净wheel build/直接manifest/smoke | **PASS**；170 entries字节一致、实际site-packages导入、CLI/模式/backup/restore |
+| Docker首次部署/重启故障/release-security | **PASS**；真实5秒观察/变化重置、确认与实际Worker、普通拒绝、非重放、RBAC/secret |
+| fresh SQLite /共享schema差异 | schema47，63表，无Scan专用命名表；实际Base..Head共享schema差异已单列 |
+| Base..Head diff/manifest/A-owned/private检查 | 已留存；A-owned范围文件从最新授权f1e6758至source无变化；用户脏文件保留 |
+
+- wheel SHA256：`53d981794c49d49e3580eec371b3b2f0f9b5a646fc4359afc2e7b95d69179f20`，
+  使用证据checkout内干净构建的确切wheel；原workspace stale staging wheel不作为准确产物证据。
+- imageID：`sha256:9e35752df9d06ab72840528336c21d39570295b250c085531aaa48cdb695fdfe`。
+  实际165 Python/4 Web文件及HTTP served assets已核对；与最终产品内容摘要全清单一致。
+  image source90b73c8到最终source只改wheel smoke路径日志/断言，该smoke已在最终source通过。
+- 7项SKIP是缺真实OpenList/SMB/S3独立环境及四类Storage endurance profile，不能计为PASS。
+  ResourceWarning等保留，没有自行认定既有失败或豁免。
+
+### Evidence limitations / Remaining work
+
+1. 部分浏览器已有成功结果仅保留last-run/截图/trace及会话输出，缺完整stdout和逐次exit/duration
+   汇总；不能只凭last-run宣称所有门禁证据完整。proper real配置的run-once没有本轮完整通过证据。
+2. clean wheel的smoke已通过；但来源外API/共享发现→摘要→确认→Worker/Preview完整consumer
+   证据尚缺，不沿用旧退役语义候选的consumer结果冒充覆盖。
+3. 后续隔离补证Python/Web运行中断，记录UNAVAILABLE/未完成；hidden .git克隆setup错误等
+   首败记录FAIL。按用户本轮要求不再补跑全量，不将这些状态改为PASS。
+4. 本报告提交已有交付与验收事实供B审查，**不声称完整T4所有证据已满足，不自行豁免缺口**。
+   可复用范围与原始材料见INDEX；是否需要补证由B按Contract/workflow判断。
+5. RO-7 FileIndex完全退出及CLI/库页实时列表统一仍未交付；不在本Task扩展实现，不提前关闭Slice。
+   已有用户图片删除、未跟踪图/DS_Store/zip/旧浏览器证据未纳入提交，alist保持私密ignored。
+
+本次仅补交接报告和本地证据索引；治理检查PASS，文档消费者
+`tests.test_governance tests.test_release_security` **15 tests /2.392s /OK**，`git diff --check` PASS。
+检查结果与报告checkpoint记录在同一证据目录；本轮未启动新的全量测试。
