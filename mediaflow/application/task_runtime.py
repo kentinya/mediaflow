@@ -972,6 +972,8 @@ class PersistentTaskCoordinator:
             item.source_occurrence_id,
             item.source_fingerprint,
             item.source_fingerprint_state,
+            primary_completed=execution.primary_completed if execution else False,
+            attachment_results=execution.attachment_results if execution else (),
         )
 
 

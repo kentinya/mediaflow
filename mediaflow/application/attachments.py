@@ -4,6 +4,7 @@ import posixpath
 import re
 from dataclasses import replace
 
+from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.organizer import (
     AttachmentPlan,
     AttachmentPolicy,
@@ -135,7 +136,9 @@ class AttachmentPlanner:
         planned: list[AttachmentPlan] = []
         destinations: set[str] = {plan.destination_location.path.casefold()}
         conflicts = list(plan.conflicts)
+        warnings = list(plan.warnings)
         for attachment in file_set.attachments:
+            blocked_reason = None
             filename = self._target_filename(named_stem, attachment)
             destination_path = posixpath.join(destination_parent, filename)
             try:
@@ -144,37 +147,18 @@ class AttachmentPlanner:
                 return self._invalid(plan, "attachment destination is unsafe")
             folded = destination.path.casefold()
             if folded in destinations:
-                conflicts.append(
-                    Conflict(
-                        ConflictType.TARGET_COLLISION,
-                        attachment.source.path,
-                        destination.path,
-                        "attachment destination collides within the media file set",
-                    )
-                )
+                blocked_reason = "attachment_collision"
             destinations.add(folded)
             if target_storage is not None:
                 try:
                     exists = target_storage.exists(destination.path)
-                except StorageError as error:
-                    conflicts.append(
-                        Conflict(
-                            ConflictType.UNKNOWN,
-                            attachment.source.path,
-                            destination.path,
-                            f"attachment existence could not be determined: {error.code.value}",
-                        )
-                    )
+                except StorageError:
+                    blocked_reason = "storage_unavailable"
                 else:
                     if exists:
-                        conflicts.append(
-                            Conflict(
-                                ConflictType.DESTINATION_EXISTS,
-                                attachment.source.path,
-                                destination.path,
-                                "attachment target exists",
-                            )
-                        )
+                        blocked_reason = "attachment_collision"
+            if blocked_reason:
+                warnings.append(f"{blocked_reason}: {destination.path}")
             planned.append(
                 AttachmentPlan(
                     attachment.source,
@@ -182,12 +166,15 @@ class AttachmentPlanner:
                     attachment.attachment_type,
                     plan.operation,
                     attachment.suffix,
+                    attachment.language,
+                    blocked_reason,
                 )
             )
         return replace(
             plan,
             attachment_plans=tuple(planned),
             conflicts=tuple(conflicts),
+            warnings=tuple(warnings),
             status=PlanStatus.CONFLICT if conflicts else plan.status,
         )
 
@@ -210,3 +197,58 @@ class AttachmentPlanner:
     def _invalid(plan: OrganizePlan, details: str) -> OrganizePlan:
         conflict = Conflict(ConflictType.INVALID_DESTINATION, plan.source, plan.target, details)
         return replace(plan, conflicts=(*plan.conflicts, conflict), status=PlanStatus.INVALID)
+
+
+def attachment_result_document(
+    plan: OrganizePlan,
+    attachment: AttachmentPlan,
+    *,
+    status: str,
+    reason: str | None = None,
+    certainty: str = "none",
+    completed: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Display evidence only; this never grants attachment or primary replay authority."""
+    action = {
+        "MOVE": "移动",
+        "COPY": "复制",
+        "LINK": "软链接"
+        if plan.link_operation and plan.link_operation.value == "soft_link"
+        else "硬链接",
+    }.get(plan.operation.value)
+    name = redact_evidence_text(posixpath.basename(attachment.destination.path))
+    if certainty in {"unknown", "attempted_unverified"}:
+        next_action = "效果尚未确认，请核查附件来源、目标及持久步骤；不要重放主文件或附件。"
+    elif status == "success":
+        next_action = "附件已验证完成，无需重复操作。"
+    elif reason in {"primary_not_completed", "execution_stopped", "authority_refused"}:
+        next_action = "执行已停止，请核查持久结果、来源和目标；此记录不授权重放主文件或附件。"
+    elif not action:
+        next_action = "固定策略不允许继续，请核查附件来源、目标与策略。"
+    elif reason == "attachment_collision":
+        next_action = f"有冲突：{name}，请修正后再进行‘{action}’操作（仅该附件，不重放主文件）。"
+    elif reason == "source_missing":
+        next_action = (
+            f"附件来源不存在，请核查并补正来源后按固定策略进行‘{action}’操作"
+            "（仅该附件，不重放主文件）。"
+        )
+    else:
+        next_action = (
+            f"附件未执行，请核查来源、目标及存储权限后按固定策略进行‘{action}’操作"
+            "（仅该附件，不重放主文件）。"
+        )
+    return {
+        "type": attachment.attachment_type.value,
+        "language": attachment.language,
+        "operation": plan.operation.value,
+        "action_label": action,
+        "status": status,
+        "source_storage_id": attachment.source.storage_id,
+        "source_path": redact_evidence_text(attachment.source.path),
+        "destination_storage_id": attachment.destination.storage_id,
+        "destination_path": redact_evidence_text(attachment.destination.path),
+        "reason": reason,
+        "effect_certainty": certainty,
+        "completed_operations": list(completed),
+        "next_action": next_action,
+    }

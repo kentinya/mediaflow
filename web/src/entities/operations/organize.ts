@@ -1,3 +1,5 @@
+import { normalizeAttachmentResults, type AttachmentResult } from "./task";
+
 /**
  * Frontend-owned bounded manual Organize models.
  *
@@ -390,6 +392,8 @@ export interface OrganizeExecutionEffectModel {
 }
 
 export interface OrganizeExecutionItemModel {
+  readonly primaryCompleted?: boolean;
+  readonly attachmentResults?: readonly AttachmentResult[];
   readonly itemId: string;
   readonly taskId: string | null;
   readonly taskItemId: string | null;
@@ -1050,6 +1054,11 @@ function normalizeExecutionItem(value: unknown): OrganizeExecutionItemModel {
     itemId: text(source, "itemId"),
     taskId: optionalText(source, "taskId"),
     taskItemId: optionalText(source, "taskItemId"),
+    primaryCompleted:
+      source["primaryCompleted"] === undefined
+        ? false
+        : flag(source, "primaryCompleted"),
+    attachmentResults: normalizeAttachmentResults(source["attachmentResults"]),
     status,
     stage: optionalText(source, "stage"),
     resultId: optionalText(source, "resultId"),

@@ -738,6 +738,8 @@ def _operation_section(execution: ExecutionResult | None) -> EvidenceSection:
             "planId": _bounded(execution.plan_id),
             "createdDirectories": _bounded_items(execution.created_directories),
             "completedOperations": _bounded_items(execution.completed_operations),
+            "primaryCompleted": execution.primary_completed,
+            "attachmentResults": list(execution.attachment_results),
             "effectCertainty": _bounded(execution.effect_certainty.value),
             "uncertainEffects": _bounded_items(execution.uncertain_effects),
             "cleanupStatus": _bounded(execution.cleanup_status.value),

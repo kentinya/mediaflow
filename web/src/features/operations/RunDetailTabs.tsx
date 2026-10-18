@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from "react";
+import { AttachmentResults } from "./AttachmentResults";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -2221,7 +2222,13 @@ function RunEvidenceSection({
                         <tr key={result.resultId}>
                           <td>{result.resultId}</td>
                           <td>{result.operation ?? "—"}</td>
-                          <td>{result.status}</td>
+                          <td>
+                            {result.status}
+                            <AttachmentResults
+                              primaryCompleted={result.primaryCompleted}
+                              results={result.attachmentResults ?? []}
+                            />
+                          </td>
                           <td>
                             {RUN_EFFECT_CERTAINTY_LABELS[
                               result.effectCertainty

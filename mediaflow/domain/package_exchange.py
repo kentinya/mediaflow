@@ -523,6 +523,8 @@ def result_item_document(result: PersistentResultRecord) -> dict[str, object]:
         "error": safe.error,
         "completedOperations": list(safe.completed_operations),
         "attachmentCount": safe.attachment_count,
+        "primaryCompleted": safe.primary_completed,
+        "attachmentResults": list(safe.attachment_results),
         "retryAttempts": safe.retry_attempts,
         "retryCategory": safe.retry_category,
         "cleanupStatus": safe.cleanup_status,

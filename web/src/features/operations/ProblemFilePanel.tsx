@@ -82,6 +82,7 @@ const STAGE_LABELS: Readonly<Record<string, string>> = {
   waiting_classification: "等待分类决定",
   failed: "失败",
   completed: "已完成",
+  primary_completed_with_warnings: "主文件已完成，附件或清理有警告",
   cancelled: "已取消",
   paused: "已暂停",
 };

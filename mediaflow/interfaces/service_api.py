@@ -13163,7 +13163,9 @@ class MediaFlowApi:
             durable_state = "completed"
         elif status == "partial_success":
             next_action = (
-                "inspect each failed item and use Review & Recovery; uncertain effects are "
+                "主文件已完成的项无需重放；请按逐附件结果核查或补正，效果未知仅核查。"
+                if any(item.get("primaryCompleted") for item in document.get("items", []))
+                else "inspect each failed item and use Review & Recovery; uncertain effects are "
                 "never replayed automatically"
             )
             durable_state = "partially_completed"
@@ -18772,6 +18774,8 @@ class MediaFlowApi:
             document["uncertainEffects"] = list(result.uncertain_effects)
             document["completedOperations"] = list(result.completed_operations)
             document["attachmentCount"] = result.attachment_count
+            document["primaryCompleted"] = result.primary_completed
+            document["attachmentResults"] = list(result.attachment_results)
         if relevance is not None:
             document["relevance"] = relevance
             document["current"] = relevance == "current"

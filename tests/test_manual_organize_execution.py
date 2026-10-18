@@ -1470,6 +1470,71 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
         finally:
             attachment_fixture.cleanup()
 
+    def test_primary_completion_and_attachment_warning_share_durable_projections(self):
+        from mediaflow.application.operations_lifecycle import task_result_operator_document
+        from mediaflow.domain.package_exchange import result_item_document
+
+        for issue in ("missing", "existing_collision", "late_collision"):
+            fixture = self._fixture(attachments=AttachmentPolicy(enabled=True))
+            try:
+                source = Path(fixture.source_root, "One.2001.en.srt")
+                source.write_text("sub", encoding="utf-8")
+                target = Path(
+                    fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).en.srt"
+                )
+                if issue == "existing_collision":
+                    target.parent.mkdir(parents=True)
+                    target.write_text("existing", encoding="utf-8")
+                with SQLiteTaskRepository(fixture.database) as repository:
+                    _, intents, previews, execution, _ = self._services(repository, fixture)
+                    _, preview = self._intent_and_preview(intents, previews)
+                    if issue == "existing_collision":
+                        attachment = preview.items[0].plan["attachments"][0]
+                        self.assertEqual(attachment["blockedReason"], "attachment_collision")
+                        self.assertIn("请修正后再进行‘移动’操作", attachment["nextAction"])
+                    if issue == "missing":
+                        source.unlink()
+                    elif issue == "late_collision":
+                        target.parent.mkdir(parents=True)
+                        target.write_text("existing", encoding="utf-8")
+                    run = execution.execute(
+                        self._authorize(execution, preview).authorization_id,
+                        actor="operator",
+                        confirmation=True,
+                    )
+                    result = repository.list_results(run.task_id)[0]
+                    self.assertEqual(result.status, "PARTIAL")
+                    self.assertTrue(result.primary_completed)
+                    self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+                    self.assertIn("不重放主文件", result.attachment_results[0]["next_action"])
+                    self.assertEqual(
+                        task_result_operator_document(result)["attachment_results"],
+                        list(result.attachment_results),
+                    )
+                    self.assertEqual(
+                        result_item_document(result)["attachmentResults"],
+                        list(result.attachment_results),
+                    )
+                    self.assertEqual(
+                        execution.document(run.execution_id)["items"][0]["attachmentResults"],
+                        list(result.attachment_results),
+                    )
+                    audit = repository.list_manual_execution_authorization_audit(
+                        run.authorization_id
+                    )
+                    outcome = next(value for value in audit if value.action == "attachment_outcome")
+                    self.assertEqual(
+                        outcome.details["attachmentResult"], result.attachment_results[0]
+                    )
+                    if issue != "missing":
+                        self.assertEqual(target.read_text(), "existing")
+                with SQLiteTaskRepository(fixture.database) as reopened:
+                    self.assertEqual(reopened.list_results(run.task_id)[0], result)
+            finally:
+                fixture.cleanup()
+
+    def test_source_cleanup_still_requires_explicit_authority(self):
+
         cleanup_policy = DirectoryCleanupPolicy(DirectoryCleanupMode.EMPTY, 1, (), 100)
         cleanup_fixture = self._fixture(names=("folder/One.2001.mkv",), cleanup=cleanup_policy)
         try:

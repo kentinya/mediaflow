@@ -18,7 +18,11 @@ from datetime import UTC, datetime
 from pathlib import PurePath
 from uuid import uuid4
 
-from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
+from mediaflow.application.attachments import (
+    AttachmentDiscovery,
+    AttachmentPlanner,
+    attachment_result_document,
+)
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.metadata import MetadataProviderRegistry
@@ -2966,6 +2970,13 @@ class ManualOrganizePreviewService:
                 },
                 "operation": value.operation.value,
                 "suffix": _bounded(value.suffix, 128),
+                "language": value.language,
+                "blockedReason": value.blocked_reason,
+                "nextAction": attachment_result_document(
+                    plan, value, status="not_executed", reason=value.blocked_reason
+                )["next_action"]
+                if value.blocked_reason
+                else None,
             }
             for value in plan.attachment_plans[:_MAX_COLLECTION]
         ]
@@ -2982,6 +2993,8 @@ class ManualOrganizePreviewService:
                 },
                 "operation": value.operation.value,
                 "suffix": value.suffix,
+                "language": value.language,
+                "blockedReason": value.blocked_reason,
             }
             for value in plan.attachment_plans[:_MAX_COLLECTION]
         ]

@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { AttachmentResults } from "./AttachmentResults";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -54,6 +55,8 @@ function displayEnum(value: string): string {
     none: "无",
     partial: "部分完成",
     partial_success: "部分成功",
+    partially_completed: "部分成功",
+    primary_completed_with_warnings: "主文件已完成，附件或清理有警告",
     pending: "等待中",
     running: "处理中",
     skipped: "已跳过",
@@ -219,7 +222,13 @@ export function OrganizeExecutionPage() {
                   <dt>阶段</dt>
                   <dd>{displayEnum(item.stage ?? "unknown")}</dd>
                   <dt>结果确定性</dt>
-                  <dd>{displayEnum(item.effectCertainty ?? "unknown")}</dd>
+                  <dd>
+                    {displayEnum(item.effectCertainty ?? "unknown")}
+                    <AttachmentResults
+                      primaryCompleted={item.primaryCompleted}
+                      results={item.attachmentResults ?? []}
+                    />
+                  </dd>
                   <dt>已完成操作</dt>
                   <dd>
                     {item.completedOperations.length === 0

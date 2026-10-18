@@ -7,8 +7,8 @@ database with the *actual Task Base code* (schema 45, no
 ``manual_recovery_preparations`` table), seeds representative durable state,
 then reopens that database with the current candidate repository and verifies:
 
-* the additive schema bump (45 -> 46), new preparation columns, and bounded
-  parent-continuation lookup index exist;
+* the additive schema bump (45 -> 47), independent attachment result fields,
+  preparation columns and bounded parent-continuation lookup index exist;
 * the seeded **real** published configuration revision, manual intent/item,
   exact Preview/PreviewItem, one-shot authorization (one active, one already
   consumed), recovery continuation/link and Task/Result facts are byte-for-byte
@@ -35,12 +35,13 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TASK_BASE = "8f5cf4e284766bcc8894817d7640231e85050fb2"
 BASE_SCHEMA = 45
-CANDIDATE_SCHEMA = 46
+CANDIDATE_SCHEMA = 47
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -450,6 +451,7 @@ def _read_facts(database: Path) -> dict[str, object]:
                 "FROM task_results ORDER BY result_id"
             ).fetchall()
         ]
+        result_columns = {row[1] for row in connection.execute("PRAGMA table_info(task_results)")}
         link = (
             [
                 dict(row)
@@ -536,6 +538,7 @@ def _read_facts(database: Path) -> dict[str, object]:
             ).fetchall()
         ]
     return {
+        "resultColumns": sorted(result_columns),
         "schema": marker,
         "hasPreparationTable": "manual_recovery_preparations" in tables,
         "preparationColumns": sorted(columns),
@@ -874,7 +877,9 @@ def _build_intermediate_database(base_database: Path, target: Path, seeded: dict
         connection.commit()
 
 
-def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> None:
+def _inject_migration_failure(
+    base_database: Path, seeded: dict, work: Path, *, attachment_failure=False
+) -> None:
     """Inject a fault into the additive migration and prove atomic rollback.
 
     The candidate's own migration runs the ``ALTER TABLE
@@ -927,7 +932,12 @@ def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> 
             if (
                 not state["raised"]
                 and isinstance(sql, str)
-                and "ALTER TABLE manual_recovery_preparations ADD COLUMN selected_item_ids_json"
+                and (
+                    "ALTER TABLE task_results ADD COLUMN attachment_results"
+                    if attachment_failure
+                    else "ALTER TABLE manual_recovery_preparations "
+                    "ADD COLUMN selected_item_ids_json"
+                )
                 in sql
             ):
                 state["raised"] = True
@@ -955,6 +965,7 @@ def _inject_migration_failure(base_database: Path, seeded: dict, work: Path) -> 
     assert after["preparationColumns"] == before["preparationColumns"]
     assert after["recoveryContinuationIndexes"] == before["recoveryContinuationIndexes"]
     assert after["results"] == before["results"]
+    assert after["resultColumns"] == before["resultColumns"]
     assert after["links"] == before["links"]
     assert after["authorizations"] == before["authorizations"]
     assert after["revisions"] == before["revisions"]
@@ -980,7 +991,7 @@ def main() -> int:
     parser.add_argument("--work-dir", default=None)
     args = parser.parse_args()
     work = (
-        Path(args.work_dir)
+        Path(args.work_dir).resolve()
         if args.work_dir
         else Path(tempfile.mkdtemp(prefix="mediaflow-task-base-migration-"))
     )
@@ -1034,6 +1045,14 @@ def main() -> int:
             assert "selected_item_ids_json" in after_open["preparationColumns"]
             assert "allow_overwrite" in after_open["preparationColumns"]
             assert "allow_source_cleanup" in after_open["preparationColumns"]
+            assert {"primary_completed", "attachment_results"} <= set(after_open["resultColumns"])
+            from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+            with SQLiteTaskRepository(database) as repository:
+                for task_id in (str(seeded["taskId"]), str(seeded["analysisTaskId"])):
+                    for result in repository.list_results(task_id):
+                        assert result.primary_completed is False
+                        assert result.attachment_results == ()
             for key in (
                 "links",
                 "authorizations",
@@ -1063,6 +1082,7 @@ def main() -> int:
             # intermediate pre-46 preparation table; it must roll back
             # atomically and then recover on a fault-free reopen.
             _inject_migration_failure(old_database, seeded, work)
+            _inject_migration_failure(old_database, seeded, work, attachment_failure=True)
             report["failureInjection"] = "rolled back and recovered"
             report["status"] = "PASS"
         finally:
@@ -1072,6 +1092,7 @@ def main() -> int:
                 env=dict(os.environ),
             )
     except Exception as error:  # pragma: no cover - diagnostic path
+        traceback.print_exc()
         report["status"] = "FAIL"
         report["error"] = f"{type(error).__name__}: {error}"
     print(json.dumps(report, ensure_ascii=False, indent=2))

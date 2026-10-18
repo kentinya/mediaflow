@@ -309,7 +309,7 @@ from mediaflow.infrastructure.file_index_schema import (
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -13077,6 +13077,46 @@ class SQLiteTaskRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 self._insert_result_locked(result)
+                if result.attachment_results:
+                    for index, outcome in enumerate(result.attachment_results):
+                        # Keep each existing 8-KiB audit envelope bounded without truncating paths.
+                        payloads = [outcome]
+                        if len(json.dumps(outcome, ensure_ascii=False).encode()) > 7000:
+                            payloads = []
+                            for key, value in outcome.items():
+                                if isinstance(value, str) and len(value.encode()) > 4000:
+                                    chunks = [
+                                        value[start : start + 512]
+                                        for start in range(0, len(value), 512)
+                                    ]
+                                    payloads.extend(
+                                        {
+                                            "field": key,
+                                            "part": part,
+                                            "parts": len(chunks),
+                                            "value": chunk,
+                                        }
+                                        for part, chunk in enumerate(chunks)
+                                    )
+                                else:
+                                    payloads.append({key: value})
+                        for payload in payloads:
+                            self._insert_manual_execution_authorization_audit(
+                                ManualExecutionAuthorizationAudit(
+                                    str(uuid4()),
+                                    execution.authorization_id,
+                                    "attachment_outcome",
+                                    result.created_at,
+                                    actor=execution.actor,
+                                    execution_id=execution.execution_id,
+                                    details={
+                                        "resultId": result.result_id,
+                                        "index": index,
+                                        "primaryCompleted": result.primary_completed,
+                                        "attachmentResult": payload,
+                                    },
+                                )
+                            )
                 task_item = self._bind_item_to_current_occurrence(task_item)
                 self._connection.execute(
                     _TASK_ITEM_UPSERT,
@@ -14865,6 +14905,9 @@ class SQLiteTaskRepository:
                     ON operational_logs(occurred_at, log_id);
                 """
             )
+            # sqlite does not start a transaction for ALTER/CREATE statements.
+            # All additive upgrades and the version marker must fail atomically.
+            self._connection.execute("BEGIN IMMEDIATE")
             if self._connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
             ).fetchone():
@@ -15155,6 +15198,16 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE task_results ADD COLUMN uncertain_effects "
                     "TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "primary_completed" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "primary_completed INTEGER NOT NULL DEFAULT 0"
+                )
+            if "attachment_results" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN "
+                    "attachment_results TEXT NOT NULL DEFAULT '[]'"
                 )
             grant_columns = {
                 row["name"]
@@ -15589,9 +15642,10 @@ class SQLiteTaskRepository:
                 organize_policy_id, operation, status, created_at, title, error,
                 completed_operations, attachment_count, retry_attempts, retry_category,
                 cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects,
-                source_occurrence_id, source_fingerprint, source_fingerprint_state
+                source_occurrence_id, source_fingerprint, source_fingerprint_state,
+                primary_completed, attachment_results
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?)""",
+                      ?, ?, ?, ?, ?, ?, ?)""",
             self._result_values(result),
         )
         self._apply_result_to_file_index_locked(result)
@@ -15869,6 +15923,8 @@ class SQLiteTaskRepository:
             result.source_occurrence_id,
             result.source_fingerprint,
             result.source_fingerprint_state,
+            int(result.primary_completed),
+            json.dumps(result.attachment_results, ensure_ascii=False),
         )
 
     @staticmethod
@@ -16106,6 +16162,8 @@ class SQLiteTaskRepository:
                 row["source_fingerprint_state"]
                 if "source_fingerprint_state" in row.keys()
                 else "unverified",
+                primary_completed=bool(row["primary_completed"]),
+                attachment_results=tuple(json.loads(row["attachment_results"] or "[]")),
             )
         )
 

@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: B RECHECKS TASK45.3 AGAINST THE CLARIFIED CONTRACT
+Next Action: DEVELOPER CORRECTS TASK45.3 AGAINST THE CHECKPOINTED CONTRACT
 ```
 
 ## Goal
@@ -596,6 +596,22 @@ Task Base 保持 8f5cf4e284766bcc8894817d7640231e85050fb2，High/T4/Goal/Scope/A
 Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不规划下一Task、不关闭Slice。
 预存图片删除意图、未跟踪图片/.DS_Store/zip/旧测试产物保持，私有配置ignored/untracked/unstaged。
 可复用经验：无新增，留待A在Slice收尾统一整理。
+
+### Developer correction — Review 9 / 2026-10-18（候选验证中）
+
+- 按已提交的附件语义澄清修正同一 Task：主文件先完成并验证，附件异常不回滚/重放主文件；
+  已知附件异常独立记录，未知附件效果只核查，冲突目标与源均保留。
+- 附件计划告警不阻断主文件；执行准入保留主文件原来源、pin、能力、权限、冲突与 fencing。
+  Result 新增主文件完成事实和逐附件类型/语言、操作、来源/目标、状态、原因、步骤、确定性及
+  固定策略动作指引。MOVE/COPY/HardLink/SoftLink 分别使用实际动作标签，不统一提示手动移动。
+- Result、Task 详情、原生执行页、摘要、JSON 导出及逐附件审计共用该事实。主文件完成伴附件
+  告警显示部分成功，不提供附件-only 执行，也不将未知效果转换为可重试。
+- runtime schema 47 加法迁移；迁移反例发现旧 additive DDL 未开启事务，已将增量升级和版本
+  标记放入同一事务；实际 Task Base 旧库保留 pin、结果、授权和恢复链，新增字段缺省不冒充完成。
+- 开发期首败和复跑留在 `.git/validation-evidence/task45.3-review9/development/`。
+  已有图片删除、未跟踪图片/目录、私密配置和用户运行 DB 均未读取、修改或纳入候选。
+- 最终 T4 门禁尚未完成；本节不声明 READY、B PASS 或 Slice 完成。完整 SHA、原始日志索引及
+  最终门禁结果在候选冻结后补充。
 
 ## B Review Result
 

@@ -371,6 +371,8 @@ class PersistentResultRecord:
     source_occurrence_id: str | None = None
     source_fingerprint: str | None = None
     source_fingerprint_state: str = "unverified"
+    primary_completed: bool = False
+    attachment_results: tuple[dict[str, object], ...] = ()
 
 
 def redact_persistent_result(
@@ -403,6 +405,9 @@ def redact_persistent_result(
         uncertain_effects=tuple(
             redact_evidence_text(value) if isinstance(value, str) else redact_evidence_value(value)
             for value in result.uncertain_effects
+        ),
+        attachment_results=tuple(
+            redact_evidence_value(value) for value in result.attachment_results[:64]
         ),
     )
 

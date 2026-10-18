@@ -64,6 +64,7 @@ SOURCE_FOLDER = "Incoming"
 SOURCE_FILE = "Recovery.2005.mkv"
 SOURCE_RELATIVE = f"{SOURCE_FOLDER}/{SOURCE_FILE}"
 TARGET_RELATIVE = "Movies/其他电影/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv"
+ATTACHMENT_TARGET = TARGET_RELATIVE.removesuffix(".mkv") + ".en.srt"
 
 BROWSER_PROOF = r"""
 import { chromium } from '@playwright/test';
@@ -245,14 +246,26 @@ try {
   let executionTask = null;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     executionTask = await api(`/api/v1/tasks/${confirmation.taskId}`);
-    if (executionTask.status === 'completed') break;
+    if (executionTask.status === 'partial_success') break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   require_(
-    executionTask?.status === 'completed',
+    executionTask?.status === 'partial_success',
     `the confirmed Worker execution did not complete: ${JSON.stringify(executionTask)}`,
   );
   evidence.passes.push({ case: 'worker-completed', screenshot: await shoot('worker-completed') });
+  const execution = await api(`/api/v1/manual-executions/${confirmation.executionId}`);
+  require_(execution.items[0].primaryCompleted === true, 'primary must be independently complete');
+  const attachment = execution.items[0].attachmentResults[0];
+  require_(attachment.reason === 'attachment_collision' &&
+    attachment.effect_certainty === 'none', 'attachment conflict must stay known and unexecuted');
+  require_(attachment.next_action.includes('请修正后再进行‘移动’操作') &&
+    attachment.next_action.includes('Recovery (2005).en.srt'), 'strategy guidance missing');
+  const outcome = page.getByRole('region', { name: '附件执行结果' });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await outcome.getByText('主文件已完成；附件有警告').waitFor();
+  evidence.attachment = attachment;
+  evidence.passes.push({case: 'attachment-warning', screenshot: await shoot('attachment-warning')});
 
   evidence.mutatingRequests = requests.filter(
     (entry) => entry.method !== 'GET' && entry.method !== 'HEAD',
@@ -473,6 +486,10 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     target_root = root / "media" / "organized"
     (source_root / SOURCE_FOLDER).mkdir(parents=True, exist_ok=True)
     (source_root / SOURCE_RELATIVE).write_bytes(b"synthetic recovery media")
+    (source_root / SOURCE_RELATIVE).with_suffix(".en.srt").write_bytes(b"synthetic subtitle")
+    attachment_target = target_root / ATTACHMENT_TARGET
+    attachment_target.parent.mkdir(parents=True, exist_ok=True)
+    attachment_target.write_bytes(b"preserve existing subtitle")
     (target_root / "Movies").mkdir(parents=True, exist_ok=True)
     for root_path in (source_root, target_root):
         root_path.chmod(0o777)
@@ -507,6 +524,7 @@ def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Pa
     document["resourceLibraries"][0]["extensions"] = ["mkv", "mp4"]
     document["resourceLibraries"][0]["maxDepth"] = None
     document["mediaLibraries"][0]["rootPath"] = "Movies"
+    document["organizePolicies"][0]["attachments"] = {"enabled": True}
     # The offline Provider is deterministic; keep the real query type so the
     # recovery re-analysis performs the complete metadata pipeline against it.
     for policy in document["classificationPolicies"]:
@@ -945,6 +963,10 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             after = _execution_state(source_root, target_root)
             if after != {"sourceExists": False, "targetExists": True}:
                 raise RuntimeError(f"the confirmed recovery did not move the source: {after}")
+            if (target_root / ATTACHMENT_TARGET).read_bytes() != b"preserve existing subtitle":
+                raise RuntimeError("the existing attachment was overwritten")
+            if not (source_root / SOURCE_RELATIVE).with_suffix(".en.srt").is_file():
+                raise RuntimeError("the conflicted attachment source was removed")
             print(
                 "   same-page recovery: prepared without authority, confirmed one ready item, "
                 "production Worker moved the exact source"

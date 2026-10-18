@@ -78,6 +78,8 @@ export interface ManualPreviewAttachmentLocationModel {
 }
 
 export interface ManualPreviewAttachmentModel {
+  readonly blockedReason?: string | null;
+  readonly nextAction?: string | null;
   readonly type: string | null;
   readonly operation: string | null;
   readonly suffix: string | null;
@@ -490,6 +492,8 @@ function normalizeAttachment(value: unknown): ManualPreviewAttachmentModel {
     };
     return {
       type: optionalText(source, "type"),
+      blockedReason: optionalText(source, "blockedReason"),
+      nextAction: optionalText(source, "nextAction"),
       operation: optionalText(source, "operation"),
       suffix: optionalText(source, "suffix"),
       language: optionalText(source, "language"),

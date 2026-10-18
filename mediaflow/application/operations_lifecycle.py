@@ -755,6 +755,8 @@ def task_result_operator_document(result: PersistentResultRecord) -> dict[str, o
         "uncertain_effects": list(result.uncertain_effects),
         "completed_operations": list(result.completed_operations),
         "attachment_count": result.attachment_count,
+        "primary_completed": result.primary_completed,
+        "attachment_results": _attachment_results_operator(list(result.attachment_results)),
         "retry_attempts": result.retry_attempts,
         "recognition_type": result.recognition_type,
         "provider": result.provider,
@@ -1502,8 +1504,37 @@ def _bounded_file_index_reconciliation(value: object) -> dict[str, object] | Non
     }
 
 
+def _attachment_results_operator(value: object) -> list[dict[str, object]]:
+    outcomes = []
+    for item in _as_list(value)[:64]:
+        if not isinstance(item, dict):
+            continue
+        outcomes.append(
+            {
+                "type": _bounded_evidence_text(item.get("type"), limit=64),
+                "language": _bounded_evidence_text(item.get("language"), limit=64),
+                "operation": _bounded_evidence_text(item.get("operation"), limit=64),
+                "action_label": _bounded_evidence_text(item.get("action_label"), limit=64),
+                "status": _bounded_evidence_text(item.get("status"), limit=64),
+                "reason": _bounded_evidence_text(item.get("reason"), limit=64),
+                "effect_certainty": _bounded_evidence_text(item.get("effect_certainty"), limit=64),
+                "source_storage_id": _bounded_identifier(item.get("source_storage_id")),
+                "source_path": _bounded_manual_source_path(item.get("source_path")),
+                "destination_storage_id": _bounded_identifier(item.get("destination_storage_id")),
+                "destination_path": _bounded_manual_source_path(item.get("destination_path")),
+                "completed_operations": _bounded_text_list(
+                    item.get("completed_operations"), limit=4096, maximum=64
+                ),
+                "next_action": _bounded_evidence_text(item.get("next_action"), limit=512),
+            }
+        )
+    return outcomes
+
+
 def _manual_execution_item_operator(item: dict[str, object]) -> dict[str, object]:
     return {
+        "primaryCompleted": item.get("primaryCompleted") is True,
+        "attachmentResults": _attachment_results_operator(item.get("attachmentResults")),
         "itemId": _bounded_identifier(item.get("itemId")),
         "taskItemId": _bounded_identifier(item.get("taskItemId")),
         "taskId": _bounded_identifier(item.get("taskId")),
@@ -1957,6 +1988,8 @@ def _bounded_attachment_list(value: object) -> list[dict[str, object]]:
                 "operation": _bounded_evidence_text(item.get("operation"), limit=64),
                 "suffix": suffix,
                 "language": _attachment_language(suffix),
+                "blockedReason": _bounded_evidence_text(item.get("blockedReason"), limit=64),
+                "nextAction": _bounded_evidence_text(item.get("nextAction"), limit=512),
                 "filename": _bounded_location(destination.get("path"), segments=1)
                 or _bounded_location(source.get("path"), segments=1),
                 "storageId": _bounded_identifier(destination.get("storageId"))

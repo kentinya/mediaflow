@@ -376,6 +376,8 @@ class AttachmentPlan:
     attachment_type: AttachmentType
     operation: PlanOperation
     suffix: str = ""
+    language: str | None = None
+    blocked_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -434,6 +436,8 @@ class ExecutionResult:
     cleanup_steps: tuple[DirectoryCleanupStep, ...] = ()
     effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.UNKNOWN
     uncertain_effects: tuple[str, ...] = ()
+    primary_completed: bool = False
+    attachment_results: tuple[dict[str, object], ...] = ()
 
     @property
     def createdDirectories(self) -> tuple[str, ...]:

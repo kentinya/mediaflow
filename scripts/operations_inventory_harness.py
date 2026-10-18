@@ -378,6 +378,7 @@ def build_managed_fixture(
         )
         (source_root / "Archive").mkdir(parents=True, exist_ok=True)
 
+    document["organizePolicies"][0]["attachments"] = {"enabled": True}
     overwrite_policy = dict(document["organizePolicies"][0])
     overwrite_policy.update(
         {"id": "overwrite-fixture", "conflictStrategy": "overwrite", "overwrite": True}
@@ -1499,6 +1500,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         "conflict_overwrite",
         "technical",
         "technical_success",
+        "attachment",
     }
     if kind not in supported:
         raise ValueError("unsupported recovery fixture kind")
@@ -1515,6 +1517,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "conflict_overwrite": "ConflictOverwriteRecovery",
             "technical": "TechnicalRecovery",
             "technical_success": "TechnicalRecoveryChain",
+            "attachment": "AttachmentRecovery",
         }
         years = {
             "recognition": 2005,
@@ -1525,6 +1528,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "conflict_overwrite": 2020,
             "technical": 2019,
             "technical_success": 2021,
+            "attachment": 2022,
         }
         organize_policy_id = "overwrite-fixture" if kind == "conflict_overwrite" else "A"
         recognition_type_id = "overwrite-fixture" if kind == "conflict_overwrite" else "C"
@@ -1540,9 +1544,12 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "conflict_overwrite": "220",
             "technical": "219",
             "technical_success": "221",
+            "attachment": "222",
         }[kind]
         source_file = state.managed.root / "source" / filename
         source_file.write_bytes(b"synthetic recovery media; no real codec parsing")
+        if kind == "attachment":
+            source_file.with_suffix(".en.srt").write_bytes(b"subtitle")
         scan = StorageScanner(
             state.managed.runtime.create_storages(),
             state.file_index,
@@ -1643,6 +1650,14 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         if durable is None or len(durable.items) != 1:
             raise RuntimeError("recovery fixture lost the exact manual execution item")
         manual_item = durable.items[0]
+        if kind == "attachment":
+            attachment_target = (
+                state.managed.root
+                / "destination"
+                / manual_item.plan["executionPlan"]["attachments"][0]["destination"]["path"]
+            )
+            attachment_target.parent.mkdir(parents=True, exist_ok=True)
+            attachment_target.write_bytes(b"preserve existing subtitle")
         current = state.repository.get_item(manual_item.task_item_id)
         if current is None or current.status is not TaskItemStatus.FAILED:
             raise RuntimeError("recovery fixture item did not persist its failed outcome")
@@ -1679,7 +1694,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
                 RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
             )
             review_id = review.review_id
-        elif kind == "metadata":
+        elif kind in {"metadata", "attachment"}:
             candidate = MediaCandidate(
                 "tmdb",
                 provider_id,

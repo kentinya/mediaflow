@@ -211,6 +211,9 @@ export function ItemFindings({
                     {safeValue(value.destination?.path ?? null)}
                   </span>
                 ) : null}
+                {value.nextAction ? (
+                  <p role="status">{value.nextAction}</p>
+                ) : null}
               </li>
             ))}
           </ul>
