@@ -2125,13 +2125,8 @@ function ManualOperationsSection({
 }) {
   const navigate = useNavigate();
   const matrix = matrixQuery.data?.ok === true ? matrixQuery.data.model : null;
-  const actionable =
-    matrix !== null &&
-    matrix.actions.preview.available;
-  const backendReason =
-    matrix !== null
-      ? matrix.actions.preview.reason
-      : null;
+  const actionable = matrix !== null && matrix.actions.preview.available;
+  const backendReason = matrix !== null ? matrix.actions.preview.reason : null;
   return (
     <section className="mf-count-section">
       <h3>手动操作</h3>
