@@ -1,151 +1,50 @@
 # Files Page Visual Specification
 
-Status: CURRENT — Slice 37 PASS / CLOSED; Slice 38 route migration is TARGET
-Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
-Reference size: `1536 x 1024` pixels
-Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
+Status: CURRENT visual baseline — accepted Slice37 with delivered38 route/card editing updates.
+Canonical immutable image: [`文件页.png`](pics/文件页.png), `1536 x 1024`.
+Current route: `/ui-v2/resourcelib/files`; MediaLibrary has its
+[separate specification](media-library-page-visual-spec.md). Old library URLs provide route recovery.
 
-Slice 38 TARGET moves this same Files journey to `/ui-v2/resourcelib/files`. Its current body,
-commands and Organize continuation remain protected. The new MediaLibrary page has a separate
-[visual specification](media-library-page-visual-spec.md); both pages now share the library card
-and selected-context presentation defined below. Slice 37's final Contract
-and review are preserved at `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git; root
-`SLICE.md` now owns the next capability.
-
-This document is the visual source of truth for the Files page and the shared V2 shell that frames
-it. The image is an existing user asset and must not be edited, regenerated, compressed, recolored
-or replaced. The 2026-09-14 A rescope makes the reference shell the replacement for the prior dark
-horizontal V2 shell rather than a Files-only imitation inside it.
+This file owns Files/shared-shell composition and controlled visual acceptance, not live work scope.
+[SLICE.md](../SLICE.md) selects current changes; [Progress](progress.md) records accepted Base/Head.
+Original revision/delivery notes are retained at
+`865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/file-page-visual-spec.md`.
+Do not edit/regenerate/compress/recolor/replace the user's reference image.
 
 ## Current Presentation Boundary — 2026-09-22
 
-A's 2026-09-21 scope clarification removes the business concepts `识别结果` and `整理状态` from the
-Files page. The Files table presents physical file facts and explicit actions with exactly six
-columns:
+The current table presents selection, exact name, type, size and modification time, with applicable
+commands in the controlled accessible context menu. No recognition-result/organize-status feedback,
+persistent row action buttons or operation column. Backend evidence is not ordinary page authority.
+Preserve boundary whitespace exactly and distinguish it visually/assistively; an absent trimmed
+sibling stays not-found, without alternate-path guesses.
 
-```text
-选择 | 名称 | 类型 | 大小 | 修改时间
-```
-
-The information banner describes browsing and organizing ResourceLibrary files without presenting
-either removed concept. The explicit `整理` action, the single-item Preview path, the bounded batch
-continuation and the OrganizerExecutor authority remain available and unchanged. This is a
-presentation-boundary correction: the backend/API projections may still carry recognition and
-business-status fields for their existing authorities and result synchronization, but Files must
-not display those two concepts as business feedback. Exact Storage entry names, breadcrumb paths
-and the current directory path preserve identity characters, including leading or trailing
-whitespace, through the frontend projection and navigation. Boundary whitespace is rendered with
-visible and assistive disambiguation; a genuinely absent trimmed sibling remains a bounded
-not-found state with no alternate-path retry.
-
-The same reactivation makes refresh truthful. When a ResourceLibrary directory is deleted or moved
-outside the Web page, `刷新` must reconcile the page-local directory-tree memory and selection with
-the refreshed live Storage read: a removed directory may no longer appear as a directory-tree
-target or as a stale selection. The selected ResourceLibrary and current directory path are
-preserved when the refreshed read remains valid, and the existing bounded read-failure state and
-its recovery actions are preserved when the current directory is gone.
-
-The earlier wording in this document that still names the removed columns or the withdrawn Upload/
-Download surfaces is historical. Where it conflicts with the closed Slice 37 Contract, that
-historical Contract and this section control the Files baseline; the current Slice adds only its
-explicit migration requirements.
+Refresh reconciles directory-tree memory/selection against live Storage so externally removed/moved
+directories disappear. Keep the selected library/path when valid, or the bounded read-failure and
+recovery state when absent. Source organization remains behind exact analysis/separate confirmation.
 
 ## Shared Library Selector Presentation — 2026-09-24 A Revision
 
-The Files and MediaLibrary pages use the same library-selection header. Each card shows only the
-library icon, library name, selection state and independent action menu. The card does not show
-Storage, Storage ID, root path, file counts or capacity. Immediately below the cards, the selected
-library context shows only the enabled state (`已启用`) and exact configured path (`路径: /...`,
-with `/` for the root). The selected library name is not repeated because it remains visible on the
-selected card. Storage remains available in Add/configuration steps and actionable failure/setup
-guidance, but not in the normal browse-page card or context.
-
-Disabled libraries are hidden from browse selection on both pages. Re-enabling remains an existing
-configuration action; this presentation rule does not change Active authority, API payloads,
-Storage confinement, file operations or Organize continuation.
+Both library pages show icon/name/selection/menu only on cards: no Storage/root/count/capacity.
+Selected context shows enabled state and exact path (`/` for root), not the name again. Storage is
+available in configuration/setup/recovery, not normal browse cards/context. Disabled libraries are
+hidden with the existing Web re-enable path. These explicit overrides govern older image labels.
 
 ## Selected-card Library Editing — 2026-09-25 A Revision
 
-The selected ResourceLibrary card action menu adds `编辑资源库` beside `删除资源库`; the selected
-MediaLibrary card adds `编辑媒体库` beside `移除媒体库`. Edit reuses the three-step configuration
-drawer, prefilled from exact Active state. ID is visible/read-only; name, enabled state, Storage and
-kind-specific relative root are editable. Save performs checked atomic activation and keeps
-correctable input on failure. A Storage/root edit changes configuration only and never moves,
-copies, creates or deletes files. This addition does not change normal card/context facts or file
-entry command menus.
-
-## Implementation Status — 2026-09-22
-
-The current implementation already establishes the data and authority boundary required by this
-page:
-
-- Files discovery is ResourceLibrary-scoped. The page loads enabled ResourceLibraries from the
-  Active runtime, then reads `GET /api/v1/resource-libraries/{resourceLibraryId}/files` with only
-  a ResourceLibrary-relative `path` and server-issued `cursor`.
-- The runtime Files browser reads live Storage through the configured ResourceLibrary root. Its
-  optional `file_index` constructor argument is retained only for older composition code and is
-  intentionally not consulted by the UI-V2 Files projection.
-- The typed Files model excludes FileIndex membership, `fileId`, occurrence and fingerprint
-  authority. The backend payload may retain bounded `recognitionResult` / `businessStatus` fields
-  for existing authorities and reconciliation, but the current Files page does not render them.
-  Raw FileIndex identifiers remain excluded from ordinary page display.
-- Files-originated organization Preview is also FileIndex-independent. The page submits
-  `scopeKind: "file"`, `resourceLibraryId` and `relativePath` to
-  `POST /api/v1/operations/previews`. The server maps the path through the Active
-  ResourceLibrary/Storage binding, calls `Storage.stat()`, creates the immutable
-  `SourceIdentity`, and enters the existing zero-mutation Preview planner.
-- The Files-originated Preview path then calls `create_from_sources`; it does not resolve a
-  `fileId`, read a FileIndex row or echo occurrence/fingerprint authority from the browser. The
-  resulting Preview remains the source of truth for the existing server-authoritative organize
-  continuation and Worker revalidation.
-- The page admits bounded multi-item Organize continuation through the existing durable
-  Intent -> Preview -> Execute journey and preserves independent item outcomes.
-- Slice 37 delivered the complete backend-authoritative common file command set from Files:
-  Create Folder/Text File, Rename, Copy, Move, Delete and bounded text Edit. Direct browser Upload
-  and Download were subsequently removed from the current product surface by A's 2026-09-20 scope
-  revision and are no longer part of the page. The remaining commands stay distinct from media
-  organization and retain the same live-Storage authority, explicit intent, bounded scope and
-  OrganizerExecutor-only mutation guarantees.
-
-The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
-indexed discovery and older file-scoped APIs. Those paths are not the source or authority for the
-ResourceLibrary Files page. The page does not present FileIndex recognition/business-status
-feedback, and completed Organize or direct file-management mutations may reconcile their known
-terminal outcome back to FileIndex. FileIndex is never the source/path/execution authority and a
-reconciliation failure never replays Storage mutation.
-
-The Slice 37 implementation contains the replacement shared shell, live Files composition,
-ResourceLibrary activation, common file commands and Organize/FileIndex reconciliation. Its
-controlled screenshot is reference-aligned but not pixel-identical. Under the 2026-09-14 A
-acceptance refinement, pixel-diff counts are diagnostic evidence rather than an independent
-pass/fail gate; the final review evidence and non-blocking baseline debts remain in the historical
-Slice 37 Contract identified above, with its closure in [Progress](progress.md).
+Selected-card `编辑资源库`/`编辑媒体库` sits beside configuration removal and opens the prefilled
+three-step drawer. ID is read-only; name/enabled/Storage/kind-relative root are editable. Save uses
+checked atomic Active publication, preserves hidden fields/input/old Active on failure, and never
+creates/moves/migrates/deletes media. Ordinary file commands remain separate.
 
 ## Scope
 
-Slice 37 owns the shared V2 shell presentation and one primary operator-facing workspace:
-
-- the shared shell chrome rendered across every V2 route;
-- the V2 **Files** page;
-- the Files page's local "Add ResourceLibrary" drawer shown in the reference image;
-- the ResourceLibrary-scoped browse, selection, Create Folder/Text File, Rename, Copy, Move, Delete,
-  bounded text Edit and organize continuation journey rendered on that page. Direct browser Upload
-  and Download are outside the current product surface.
-
-The following remain behaviorally frozen:
-
-- Dashboard, Operations, Review, Configuration, Notifications, Settings and all other page
-  business journeys, although their shared outer shell intentionally changes;
-- the V1 `/ui` surface;
-- existing route/auth/deep-link semantics and Python business authority;
-- FileIndex as a physical file source, source identity authority or execution authority. A bounded
-  display projection and post-mutation synchronization/reconciliation are allowed.
-- unrelated backend endpoints, schema rewrites, new providers and new Storage capabilities.
-
-The old dark horizontal shell is explicitly not frozen. It must be replaced with the reference
-left rail/top bar through the single shared shell component. Non-Files page bodies may adapt to the
-new available content rectangle but must not acquire new business behavior or lose existing route,
-permission, loading, failure or recovery semantics.
+The accepted baseline covers the replacement shared light shell, Files body/Add drawer, bounded
+live browse/selection/common maintenance and ResourceLibrary organization. No browser Upload/Download.
+Other pages' business behavior was frozen only for that historical Slice, not every later Contract.
+V1/API authority, exact source/pin, RBAC, capability/confinement and OrganizerExecutor-only mutation
+remain protected. Pending FileIndex retirement follows active45; its compatibility/sync obligations
+must not be inferred from old visual acceptance after that target is implemented and accepted.
 
 ## Reference State
 
@@ -379,7 +278,7 @@ The page must be documented and later implemented as one vertical journey:
 | Stage | Files page contract |
 |---|---|
 | Goal | Browse and fully manage common file operations in configured ResourceLibraries, create a ResourceLibrary, or choose media to organize |
-| Entry | Select `文件` from the shell or open `/ui-v2/library/files` |
+| Entry | Select `文件` from the shell or open `/ui-v2/resourcelib/files` |
 | Visible state | The replacement shared shell, ResourceLibrary summary, directory tree, file table, common file commands/progress, selection footer and add-library drawer |
 | Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit eligible content, organize selected media or complete the local add-library flow |
 | Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page matches the reference |
@@ -429,6 +328,6 @@ Slice 37 was accepted only when all of the following were true:
       focused direct-file, ResourceLibrary activation and post-mutation reconciliation behavior
       stays within the revised Files journey.
 
-The final browser evidence, visual-diff reporting and implementation Task history remain in Git and
-the Closure Packet/A Final Review in [`SLICE.md`](../SLICE.md). This document records the accepted
-visual and journey contract; it does not select the next Slice.
+Historical browser evidence, visual differences, Task history and final review remain in Git at
+the accepted ranges listed in [Progress](progress.md). Root Slice is the current Contract, not the
+old closure packet. This document does not select the next Slice or change its product boundaries.

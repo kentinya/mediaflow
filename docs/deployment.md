@@ -1,18 +1,9 @@
 # MediaFlow Docker deployment
 
-This document covers the V1.0.0 maintenance deployment boundary delivered by Slice 29. V2 keeps the
-same Python production runtime and deployment authority while its frontend program is developed on
-`main`; since Task 30.2 the built V2 static artifact is part of the same one-image deployment. This
-document covers the Task 29.2
-health/readiness model, the Task 29.4 restart/fault matrix and the Task 29.5
-backup/upgrade/migration recovery journey, and the Task 29.6 release-security
-validation: one installable image, four
-independent Compose services, production WSGI serving, a persistent local
-`/data` volume, explicit container-visible media mounts, distinct liveness,
-management/API readiness and processing-Worker readiness signals, durable
-restart/fencing guarantees, verified preflight/rehearsal/restore recovery, and
-verified absence of deployment secret values and private local state from the
-image, Compose topology, runtime output and authenticated projections.
+Operate one immutable Python image with four independent Compose services, local `/data`, explicit
+media mounts/secrets, separate liveness/readiness and fenced durable work. V1 release facts are in
+[Release](release.md); V2 ships static frontend assets in the same image. This guide owns runnable
+installation, health, restart, backup/upgrade/restore and failure-recovery procedures, not Task history.
 
 ## Boundary
 
@@ -213,58 +204,24 @@ The production artifact flow is one image, two stages, one Python runtime:
 
 ## CURRENT — Resident services across empty setup and publication (Slice 40)
 
-All three resident services — Worker, Scheduler and Notification Worker — start
-from deployment-owned database/principal authority alone, before any Active
-configuration exists, and without a media mount. They register a durable
-heartbeat in the shared runtime database, which is what makes their presence an
-observed fact.
+Worker/Scheduler/Notification Worker start from deployment DB/principal authority, register durable
+heartbeats and wait without Active/media mounts. Empty Active is healthy infrastructure with
+unconfigured work. Eligible publication is adopted without restart; recoverable DB/config faults
+retain the process/work and bounded waiting reason. Configuration publication creates no work.
 
-A resident process stays alive across the whole lifecycle:
-
-- **No Active yet.** The Scheduler and Notification Worker report a bounded
-  waiting reason (normally `unconfigured`) and do nothing. Reading configuration
-  or activating an empty baseline creates no Job, Task, delivery or Storage
-  mutation.
-- **Empty Active.** The same: services are healthy, the work is unconfigured, and
-  the operator is told exactly what to configure next.
-- **Eligible publication.** The Scheduler resolves the *current* Active at each
-  admission rather than binding to whatever existed at startup, so a new
-  schedule or Automation definition is adopted with no restart. The Notification
-  Worker resolves its delivery configuration at every claim for the same reason.
-- **Recoverable faults.** A briefly unreadable Active or database is a waiting
-  state, not a crash: the process keeps running, records a bounded reason and
-  retries. Killing a resident service never repairs a configuration and always
-  loses in-flight progress.
-
-Two boundaries are deliberately strict, because violating them would silently
-issue or deliver work nobody authorised:
-
-- The Scheduler emits an occurrence only against one current valid Active
-  snapshot, so a missing or corrupt Active schedules nothing and never advances
-  an occurrence that was not issued. Occurrence identity, idempotency, scope,
-  grants and capacity protections are unchanged.
-- The Notification Worker never claims a delivery whose durable target it cannot
-  deliver to. With no usable target it waits without claiming, so no attempt is
-  burned and no delivery is dead-lettered; a target that current configuration no
-  longer publishes converges with a truthful `configuration` failure rather than
-  being silently retargeted. Bounded retry/dead-letter, leases and at-least-once
-  semantics are unchanged.
-
-Admitted work keeps its own immutable pin: new work is admitted against current
-Active, while already-admitted or in-flight work keeps the revision it was
-admitted under. A missing current Active does not invalidate an intact admitted
-pin, and a broken pin blocks that work before any new mutation.
+Scheduler emits only from one current valid snapshot with existing idempotency/grant/capacity gates,
+never stale cache or advancing an unissued occurrence. Notification Worker waits without claiming/
+burning targetless attempts, preserves recipient/signing identity and reports changed/unpublished
+target as configuration failure, never retargeting. Retry/dead-letter/lease/at-least-once rules remain.
+New admission uses Active; intact older admitted pins stay valid, broken pins block before mutation.
 
 ## CURRENT — Worker startup and transfer readiness (Slice 39)
 
-The resident Worker starts and registers before a managed Active exists, advertises both transfer
-command families, and can consume a later admitted OpenList Move without restart. Each admitted
-transfer reconstructs its own immutable revision/digest and library-kind boundary; current Active
-controls only new admission. Registration/schema readiness, command readiness and current-Active
-availability remain separate signals, and task projections expose bounded waiting/recovery reasons.
-The Worker container check verifies live schema-compatible registration and command support without
-contacting OpenList or another Provider, scanning media, enqueueing work or mutating it. Lease,
-mutation-fence, restart and uncertain-effect protections remain in force.
+The resident Worker advertises both library-kind transfer families before Active, then reconstructs
+each admitted revision/digest and scope under its claim/lease/mutation fence. It consumes later
+eligible transfers without restart. Container readiness verifies live schema-compatible registration
+and supported commands, not current-Active equality or external Storage/Provider probes. Bounded
+Task projections explain waiting; restart never replays completed/uncertain effects.
 
 ## Health and readiness signals
 
@@ -582,7 +539,7 @@ confused with configuration adoption.
 If a Docker daemon cannot bind-mount the platform temporary directory, point the
 harness at a directory the daemon can see with `MEDIAFLOW_SMOKE_TEMP_DIR`.
 
-The Task 29.3 health harness adds the full signal journey:
+The health harness verifies the complete signal journey:
 
 ```bash
 python3 scripts/docker_health_smoke_test.py
@@ -594,7 +551,7 @@ Worker, verifies no-Worker/stale and ready transitions, degrades a media mount
 and the API secret reference, and confirms bounded recovery plus secret-free
 output.
 
-The Task 29.4 restart harness adds the durable restart and fault journey:
+The restart harness verifies durable restart and fault behavior:
 
 ```bash
 python3 scripts/docker_restart_fault_smoke_test.py
@@ -606,7 +563,7 @@ each service, and verifies scheduler idempotence, stale-owner fencing,
 uncertain-mutation refusal and notification at-least-once behavior on temporary
 isolated paths.
 
-The Task 29.5 upgrade harness adds the image-to-image backup/migration journey:
+The upgrade harness verifies the image-to-image backup/migration journey:
 
 ```bash
 python3 scripts/docker_upgrade_recovery_smoke_test.py
@@ -618,7 +575,7 @@ rehearsal, injects a migration failure, proves restore/recovery boundaries and
 successfully upgrades the four-service Compose project on temporary isolated
 paths.
 
-The Task 29.6 release-security harness adds image/build-context,
+The release-security harness verifies image/build-context,
 Compose-topology, non-root/mount, API-token/RBAC and canary redaction
 acceptance on the exact candidate image:
 

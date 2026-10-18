@@ -1,8 +1,10 @@
 # Architecture
 
-This document describes the architecture implemented at the current repository head and separates
-remaining V1.x/V2 targets from current behavior. It is organized by component and boundary; development
-Phase, Fix and Task names are historical evidence, not architecture states.
+This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
+from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
+owns active changes. Slice45 has B-reviewed Task Center/Scan-removal implementation but no A closure;
+FileIndex exit remains pending. No wording cleanup here grants acceptance or changes scope.
+Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 
@@ -46,116 +48,32 @@ provider SDK APIs directly. It uses domain interfaces and application services.
 
 ## V1 order and architecture decisions
 
-The V1 release line is version `1.0.0`; Slices 26 through 29 form its released baseline.
-
-Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 business-capability sequence is:
-
-```text
-Slice 26 — Web-first fresh setup and Storage
-    → Slice 27 — Manual operations and file lifecycle
-    → Slice 28 — Web-first configuration and operations administration
-    → Slice 29 — Docker production self-hosted release
-```
-
-These are vertical product slices. They do not authorize a rewrite of the closed processing engine
-or a split into independent API/database/frontend products.
+V1 `1.0.0` and its accepted capability boundaries are recorded in [Release](release.md) and
+[Progress](progress.md). Vertical business Slices do not authorize a processing-engine rewrite or
+independent competing API/database/frontend products.
 
 ## V2 program architecture
 
-V2 is a release/program level on `main`, not one mega-Slice. Its independently reviewable roadmap is:
+`web/` is a feature-first React/TypeScript/Vite SPA with TanStack Router/Query, strict frontend-owned
+models and a central authenticated API/query boundary. Python domain/application services and
+`/api/v1/*` remain authoritative; presentation/cache never owns business decisions, pins or mutation.
 
-```text
-Slice 30 — V2 Frontend Platform & Architecture
-    → Slice 31 — Operator Shell & Information Architecture
-    → Slice 32 — Library & Files Experience
-    → Slice 33 — Operations Workspace
-    → Slice 37 — Files Workspace, Common File Management and V2 Shell
-    → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
-    → Slice 39 — Storage Management Workspace (PASS / CLOSED)
-    → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
-    → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
-    → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
-    → Slice 43 — V2 Automation Workspace and Engine Settings (PLANNED; FROZEN BY USER, unaccepted)
-    → Slice 44 — Existing V2 Pages Functional Improvements (PASS / CLOSED)
-    → Slice 45 — V2 Task Center Redesign and Recovery Pages (ACTIVE; TARGET)
-```
+A Node build stage runs `npm ci` from `web/package-lock.json` and `npm run build`. Only static
+output enters the Python runtime at `/opt/mediaflow/web/dist`, selected by deployment-owned
+`MEDIAFLOW_UI_V2_ASSET_ROOT`. No Node/npm/source/dev server/SSR/CDN or second production HTTP service.
+Python serves `/ui-v2/` alongside V1 `/ui` and API; build/asset failure never silently serves stale work.
+See [Deployment](deployment.md#v2-frontend-artifact-and-serving) for serving/security details.
 
-Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
-`7c7c602c6531c60ddf2d6678857e2ef76c3860b6` and Implementation Head
-`6953b87afa09e61ff62ffea5eb2a9a7d96c55492`. Task 30.1 delivered the first proving unit of the
-architecture below: the `web/` React/TypeScript/Vite source boundary with TanStack Router and
-TanStack Query, a central typed API client with memory-only Bearer-token auth, the read-only
-Dashboard route, and Python static serving of the built artifact at `/ui-v2/` beside the unchanged
-V1 `/ui`. Vitest, React Testing Library and a minimal Playwright path cover it. Task 30.2
-delivered the production packaging boundary of the same architecture: the Docker build is
-multi-stage, running `npm ci` from the committed `web/package-lock.json` and `npm run build` in a
-Node build stage and copying only the built static files into the final Python runtime image at
-`/opt/mediaflow/web/dist`, where `MEDIAFLOW_UI_V2_ASSET_ROOT` binds the exact artifact directory
-consumed by the running Python process. The runtime image keeps no Node executable, npm,
-`node_modules`, frontend source, development server, SSR process, CDN dependency or second HTTP
-service, and the API service serves `/ui-v2/` and hashed assets beside the unchanged V1 `/ui` and
-`/api/v1/*` behavior. All Slice 30 outcomes are accepted; later Slices retain ownership of the
-business-surface migrations and cutover after the shared shell boundary.
+The shared responsive AppShell owns route/auth continuation, bounded return context and permission/
+unavailable/not-found recovery. Tokens remain memory-only; reject 401 authority and clear its queries,
+while 403 preserves authenticated identity. Exact path identity survives typed normalization, including
+boundary whitespace; navigation/cache cannot confer scope or rewrite an entry's name.
 
-Slice 31 is `PASS / CLOSED` at Base `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` and Implementation
-Head `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b`. Task 31.1 established the centralized information
-architecture, responsive shell, migration routes and browser proof. Task 31.2 completed the
-route/authentication lifecycle: a feature-independent authentication/route-continuation boundary
-ensures that an operator entering a supported deep route can connect through the memory-only
-principal boundary, continue to the intended safe route,
-and recover from absent/rejected authority (401), forbidden access (403), unavailable data or an
-unknown route without losing shell context. Dashboard consumes the shared lifecycle rather than
-retaining a competing authentication flow.
-
-Slice 32 is `PASS / CLOSED` at Base `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` and Implementation
-Head `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`. It composes the existing Python Active
-configuration, Storage Browser, FileIndex catalog/detail and by-source resolution into a read-only
-V2 Library route family. Frontend-owned strict models and the central authenticated API/query
-boundary consume bounded `/api/v1/*` projections; they do not create a second business authority.
-Stable directional paging stays in the authoritative FileIndex repository, physical/indexed links
-require an exact Active Storage and enabled ResourceLibrary binding, and detail evidence is bounded,
-allowlisted and redacted. All Library requests are GET-only; V1 `/ui`, operational mutations and
-OrganizerExecutor ownership remain unchanged.
-
-Slice 33's accepted implementation is at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
-Implementation Head `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`. Its post-closure Worker correction
-preserves exact current-source authority across the resident Worker boundary: the reviewed Preview
-persists Storage ID, source path and Storage-derived source fingerprint, and the Worker validates the
-live source by opening that Storage and calling `stat(source_path)` directly. Missing live sources or
-fingerprint mismatches fail closed before mutation; routine FileIndex rescans do not cause execution
-to re-resolve `file_id -> FileIndex -> path`. No accepted Operations behavior is removed.
-It composes the existing Python application,
-persistence and `/api/v1/*` authority into the V2 Operations route family: actionable Dashboard,
-durable Tasks/Jobs, bounded Scan/Preview, exact Web-native manual Organize, Automation definitions,
-schedules, grants and occurrences, and Webhook definitions, tests and delivery recovery. The
-frontend owns typed presentation and exact requests, not business decisions or mutation authority.
-
-The current V2 frontend foundation is a client-side React/TypeScript SPA built with Vite, TanStack
-Router and TanStack Query, organized feature-first with a central typed API boundary and
-project-owned design system foundation. Vitest and React Testing Library cover unit/component
-behavior, with a Playwright browser-smoke foundation. The Vite output is served by the existing
-MediaFlow Python application; Node is build/development tooling only and is never a production
-server runtime.
-
-The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
-API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
-and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
-Slice 37 is PASS / CLOSED at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation
-Head `aa54854c442d117c7eb23ae9800045c423db1368`. It replaced the former V2 shell presentation with
-the shared light shell in the canonical Files reference, completed Files common bounded file
-management, removed the direct browser Upload/Download vertical from the current surface,
-corrected formal `library/path` destination parity, and repaired exact Storage path identity. The
-Files page does not render recognition-result or organize-status feedback. The manual Organize Web
-choice editor now derives NamingPolicy, ClassificationPolicy and OrganizePolicy from the selected
-RecognitionType under the pinned snapshot, while preserving type identity and failing closed on an
-unavailable mapping. Non-Files business-surface migrations and final cutover remain outside the
-closed Slice; existing non-Files route behavior is retained inside the replacement shell. Slice 38
-has delivered its MediaLibrary route/browse/command baseline through the recorded implementation
-head, including page-local ResourceLibrary/MediaLibrary editing.
-
-V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
-It does not provide a built-in username/password database, cookie session, OIDC or implicit
-reverse-proxy identity. Token rotation and secret injection are deployment responsibilities.
+API-principal Bearer/RBAC, exact immutable Active/pinned work, explicit effect authority, audit,
+claim/lease/fence and completed/uncertain non-replay remain unchanged. V1 does not add a password DB,
+cookie session, OIDC or implicit proxy identity. TMDB stays behind MetadataProvider; unavailable
+credentials fail closed with no implicit Provider fallback. Closed shell/page/engine milestones and
+frozen43/active45 status are not duplicated here; use [Roadmap](roadmap.md).
 
 ### Interactive execution authorization: CURRENT V1 and V2
 
@@ -219,6 +137,11 @@ policies.
 
 Technical tags such as resolution, source, codec, audio and HDR are filename/path observations. No
 FFmpeg or FFprobe dependency or media-stream inspection is part of the architecture.
+
+Optional same-directory Kodi/Jellyfin-style NFO uses bounded read-only Storage discovery/reads,
+rejects DTD/ENTITY and oversized XML, normalizes movie/show/season/episode and Provider/external-ID
+evidence, and retains conflicts with filename evidence. NFO neither generates files nor creates a
+verified metadata identity by itself.
 
 ## Storage abstraction
 
@@ -346,97 +269,41 @@ every policy/Review/Recovery workspace.
 
 ## CURRENT — V2 organizing rules workspace (Slice 41)
 
-Slice 41 delivers one native V2 presentation/composition layer over the existing managed
-configuration and policy engines. It does not introduce new domain ownership. The authority path is:
-
 ```text
-/ui-v2/rules explicit Save
-  -> exact ManagedConfiguration Active + focused object candidate
-  -> internal successor composition + normalization + reference/audit/concurrency services
-  -> whole-document validation + applicable checked evidence
-  -> atomic Active publication and immutable runtime binding
-  -> existing Files / Operations / Automation / API / CLI consumers
+/ui-v2/rules focused Save
+  → exact Active + object candidate
+  → shared object/reference/audit/concurrency services
+  → whole-document validation + applicable evidence
+  → atomic publication/runtime binding
+  → existing Files / Operations / Automation / API / CLI consumers
 
-explicit Test / Preview before Save
-  -> exact bounded page-scoped candidate revision (non-Active)
-  -> Strategy Test / Metadata Test / Naming Preview /
-     Classification Preview / Organize authority explanation
-  -> evidence only; no activation or execution authority
+explicit object test / complete-flow test
+  → exact bounded non-Active candidate and sample
+  → shared production engine → evidence only
 ```
 
-The frontend route owns interaction and typed presentation only. It may maintain unsaved form state,
-search/filter state, selected tab/object and query cache, but none of those is configuration or
-runtime authority. Active comes only from the managed backend projection. Clicking Save submits the
-focused object candidate with the exact Active identity; one backend command composes a successor,
-validates the complete document, runs applicable checks and atomically activates it. The operator
-does not perform separate Save-Draft, Validate or Activate actions. Entry/read/search/filter/
-navigation creates no Draft or work.
+`RulesWorkspaceCommandService` composes `ConfigurationObjectService` and
+`ManagedConfigurationService`; generic revision/object APIs remain shared. Family-local analysis
+uses `stage_analysis_candidate`/`RulesObjectAnalysisService`; compatibility complete analysis retains
+`stage_preview_candidate`. Save constructs its own focused successor and never publishes sibling
+Draft edits. The API enforces READ/configuration/activation permissions and serializes runtime
+preparation with atomic publication. A failure preserves prior Active and correctable input;
+unknown publication is reconciled by reading authority before another submission.
 
-The current family-local test stages the exact non-Active submitted object through
-`RulesWorkspaceCommandService.stage_analysis_candidate` and uses `RulesObjectAnalysisService`.
-The compatibility full-test path retains `stage_preview_candidate`; Overview exposes a separate
-complete-flow check. These paths exclude unrelated general-configuration Draft changes. Save
-constructs its own focused successor and runs the shared applicable evidence before
-checked activation; preview success does not grant publication or execution authority.
+The eight inventories cover Overview, type binding, types, rules and Metadata/Naming/Classification/
+Organize policies. Default is full-width inventory; Add/Copy explicitly opens a create drawer and
+Edit a full-page route. Search/navigation creates no Draft, Provider call or work. Forms may retain
+correctable tab-scoped values, never credentials or Active/execution authority. Unavailable impact
+evidence blocks removal. Backend-legal IDs share one grammar across API/navigation/static entry;
+only allowlisted edit routes accept a file-like final ID, not arbitrary dotted assets/traversal.
 
-The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
-Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The six
-user-supplied images establish shared-shell/inventory composition, create-drawer form style and
-visual language, not data schema, sample fixtures or pixel-identical output. Metadata/Organize
-editors use the same composition without inventing fields absent from the current domain.
-
-Production domain semantics remain unchanged:
-
-- `RecognitionRuleEngine` evaluates compatible typed condition trees and resolves actual
-  priority/score/ambiguity/`stopOnMatch` evidence. The browser does not implement a second rule
-  evaluator or treat visual order as a different algorithm.
-- `RecognitionTypePolicyResolver` permits one enabled policy per RecognitionType and resolves four
-  references. Downstream reuse cannot replace RecognitionType; C remains C when it uses A policies.
-- `MetadataProvider` remains the provider abstraction and TMDB the current production provider.
-  Explicit live tests may use it under current timeout/retry/rate-limit/redaction; read/navigation
-  and offline tests do not call it.
-- Naming and Classification reuse their pure engines. Naming yields safe components; Classification
-  yields MediaLibrary identity plus safe relative destination. Neither mutates Storage.
-- Organize Policy describes operation/conflict/attachments/duplicate/rollback/cleanup behavior. Its
-  editor and authority explanation do not issue a Task, persistent unattended grant or execution
-  authority.
-
-Existing generic `/api/v1/configuration/revisions/.../objects/...` routes and application services
-remain the source for object lifecycle. `/api/v1/operations/rules/*` adds bounded inventory, form,
-object/impact/copy projections, exact-candidate analysis and page-level checked publication.
-`RulesWorkspaceCommandService` composes the shared `ConfigurationObjectService` and
-`ManagedConfigurationService` normalization, reference, audit, exact-version, validation and
-activation services. The API enforces READ or configuration-management/activation permissions,
-serializes publication under its runtime-binding lock and prepares successor consumers before the
-atomic pointer change. Save starts from the observed exact Active and never publishes unrelated
-changes from another general-configuration Draft. V1 and V2 coexist without schema or semantic forks.
-
-Preview/test results are evidence, not runtime state. They are internally bound to the exact
-revision/version/digest, become stale after relevant edits and remain bounded and secret-free.
-Offline recognition/naming/classification/organize analysis performs zero Provider and Storage
-mutation. An explicit live Metadata test may call the configured Provider but creates no media
-Task/Job and never reads or mutates Storage. No Preview grants execution.
-
-Automatic activation after Save uses Slice 40's shared applicability decision: validate every
-populated object and declared reference, require only evidence applicable to configured enabled
-capabilities, reject a broken declared graph, and leave unrelated empty families legal. Publication
-starts no processing. A known failure keeps prior Active and correctable input/recovery candidate;
-an unknown outcome is resolved by rereading managed authority before any repeat.
-New admissions use the new Active; existing Preview/Task/Job/Automation work retains its immutable
-pin. Configuration history, results and media contents are never deleted by object removal.
-
-The route lives inside the existing React/TypeScript AppShell and central authenticated API/query
-boundary. Each rule-family route loads as a complete full-width inventory with no selected object,
-editor or drawer. An explicit Add action opens the create drawer; row selection, search, filter, tab
-navigation and refresh do not. Existing-object Edit is an explicit full-page state/route. Narrow
-presentation remains complete and preserves focus, unsaved-state protection and safe deep links.
-The Python backend remains authoritative for RBAC, policy decisions, Active identity and every
-mutation boundary. `OrganizerExecutor` remains the sole Storage mutator, and this workspace performs
-no Storage mutation. Correctable form values use tab-scoped browser storage; tokens and Active
-publication authority remain outside it. Backend-legal Rules IDs share one grammar across typed
-API/navigation and Python static entry. Only the exact allowlisted edit route treats a file-like
-final ID as identity data; unknown dotted assets and traversal still fail closed. Failed impact
-reads remain unavailable evidence rather than fabricated reference counts.
+Production priority/score/ambiguity/stop-on-match and one enabled binding per type remain unchanged.
+C keeps its identity under A policy reuse. Offline tests use pure engines; explicit live Metadata
+calls only the configured Provider. Evidence binds revision/version/digest and goes stale on edits;
+analysis grants neither publication nor execution. Save uses shared applicability without forcing
+unrelated empty families. Detailed operator inputs/results are in
+[Configuration](configuration.md#native-v2-organizing-rules-management) and
+[Product Experience](product-experience.md#recognition-and-rules).
 
 ## CURRENT — Object-scoped Rules analysis and complete-flow separation
 
@@ -478,8 +345,8 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `45`, configuration-management schema `10` and
-managed document schema `1`. These are compatibility markers, not feature statuses.
+Compatibility versions are declared by the runtime/configuration repositories and managed-document
+loader; inspect those constants rather than treating a copied schema number as a feature status.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
 migration rehearsal and upgrade preflight are read-only or explicitly isolated boundaries; they do
@@ -498,9 +365,9 @@ processing disposition is persisted on the current source occurrence. Storage-de
 occurrence/fingerprint evidence and historical occurrence rows bind TaskItem and Result records to
 the observed occurrence, while path-only legacy rows are explicitly unverified. The FileIndex
 projection exposes current versus historical Result relevance. Explicit Reprocess is an audited,
-exact-occurrence admission marker for a later Scan/Preview workflow; it creates no Task, Provider
-request or Storage mutation. File-/ResourceLibrary-scoped Scan and the manual processing workflow
-use the same bounded current-source identity and authority rules.
+exact-occurrence admission marker for later supported preparation; it creates no Task, Provider
+request or Storage mutation. Supported preparation uses bounded current-source identity and authority
+rules; the removed standalone Scan product is not a prerequisite.
 
 `MediaLibrary` defines a destination Storage and relative root. Classification selects the library
 and relative path; Naming supplies directory and filename. The final target is composed from the
@@ -559,7 +426,7 @@ durable admission or the pinned snapshot, never silently from current Active; mi
 evidence remains explicitly unavailable.
 
 Progress is projected per work kind from durable evidence, independently of success rate. Unknown
-scan totals remain unknown; primary item counts reconcile, while scan errors and attachment steps
+discovery totals remain unknown; primary item counts reconcile, while discovery errors and attachment steps
 remain separate. Waiting/ignored/uncertain items do not become successes. Details compose per-item
 plan/step/result/checkpoint and bounded linked logs/audit; result truth does not depend on logs.
 The existing secret-free result-package service remains export authority.
@@ -596,127 +463,44 @@ These are accepted CURRENT facts at Implementation Head
 
 ## TARGET — Task Center query, summary confirmation and typed recovery (Slice45)
 
-The selected user journey and nine visual references are in
-[task-center-page-spec.md](task-center-page-spec.md); acceptance is V2-OPS-009–012 and the ACTIVE
-root Contract. This is TARGET, not an implementation claim. The accepted Slice42 CURRENT read
-model above remains the actual baseline until implementation and A closure.
+[The Task Center specification](task-center-page-spec.md), stable `V2-OPS-009–012` and the committed
+Contract own complete page/journey acceptance. Compose existing authorities:
 
 ```text
-Nine task-center list routes + native task/type-scoped processing
-  -> shared typed authenticated query/command boundary
-  -> Python authorized run/recovery projection and shared application orchestration
-  -> existing Job / Task / TaskItem / Result / blocker / checkpoint / continuation repositories
-  -> explicit bounded prepare -> in-context exact plan summary -> explicit confirmation
-  -> existing admission / resident Worker / OrganizerExecutor
+nine task/recovery routes → typed query/command boundary
+→ authorized full-population Task/Job/item/problem/checkpoint projection
+→ bounded preparation → exact in-context summary → separate confirmation
+→ atomic admission → resident Worker → OrganizerExecutor
 ```
 
-Extend the unified run read model with explicit view/recovery-kind semantics and bounded source,
-text/type/time filters. Query the complete authorized population before grouping each recovery
-kind by its real Task/run identity; derive Task totals and distinct affected-item totals on a
-consistent read basis. Ordinary Pending is not automatically a human-action blocker. Current
-linked blockers/checkpoints/actions determine membership; a historical failed Result alone cannot
-keep a resolved item pending. One Task may belong to several views for different unresolved items.
-Do not fetch an arbitrary page of Tasks and join/filter it in the browser or invent relations from
-labels, paths or timestamps. Preserve pre-Task admissions, historical pinned display and unknowns.
+Query before grouping/paging; bind cursors/counts to the authorized consistent population. Group each
+problem by durable Task/run links; current problems, effects and lifecycle remain distinct. Never
+infer links from labels/times, count pending automatically as human attention, or hide pre-Task failures.
+Recovery uses existing decisions/checkpoints/continuations, retaining siblings/history and immutable
+pins. Save/analysis grants no mutation; confirmation binds exact sources/plans/subset/effect scope.
+Material change needs a fresh summary. Unknown submissions reconcile, never automatically resubmit.
+No second queue, lifecycle, configuration or recovery engine; internal Preview records may remain
+without forcing a separate operator page. General DryRun/Rules diagnostics stay supported.
 
-Keep runtime lifecycle, per-item disposition, current problem and effect certainty separate.
-Recovery classification/action decisions belong to Python application behavior; persistence supplies
-bounded queries and indexes as needed without creating another lifecycle/queue/authority. Additive
-schema changes, if necessary, retain supported-work outcomes, immutable pins, Results and audit
-meaning. Original and continuation attempts remain explicitly traceable rather than overwritten.
-The prelaunch Scan amendment below removes a dedicated old standalone-Scan compatibility obligation;
-it does not authorize deleting runtime/history data or weakening shared persistence safety.
-
-Manual creation composes live ResourceLibrary source selection, existing confined discovery and
-exact source identities with the production recognition/metadata/policy/planning/attachment chain.
-Long preparation uses existing durable work/Worker boundaries, not a synchronous HTTP media loop.
-The current creation interface renders its persisted exact summary (source/completeness, eligible
-subset, attachments, operations/destinations, unready findings and destructive effects) before a
-separate explicit confirmation. Preparation has zero Storage mutation and no execution authority;
-REQ-ORG-011 remains intact. Unselected/unready preparation records remain independently inspectable
-without becoming executable authority or a fabricated formal-review backlog.
-
-Confirmation atomically binds the reviewed plans, exact selected ready subset, actor/permissions,
-source evidence, immutable runtime and permitted effects to existing execution admission. Use the
-existing revalidation, deduplication, locks/leases/fences and OrganizerExecutor mutation boundary.
-Changed material source/plan evidence requires an updated summary and fresh intent in the same
-interface. A legal old pin does not silently become today's Active. Unknown submissions reconcile
-the exact durable request; reads and reconnects never re-admit work.
-
-Recovery pages group cross-Task problems but processing stays on the selected Task/type's files.
-Reuse TaskItemRecoveryService, legal review/correction/conflict services, checkpoint admission and
-durable continuations. Safely compose analysis, then display the fresh exact summary and confirm
-mutation in context. Remove mandatory standalone Preview UI/routes/actions from creation, recovery
-and remaining-scope reauthorization; retain any useful backend immutable plan/Preview storage as an
-internal mechanism. General DryRun and Rules tests remain outside retirement. Existing within-Task
-bounded batch analysis keeps per-item acceptance/refusal; no new cross-Task mutation engine.
-
-Retire standalone Scan admissions and executable standalone command/retry/continuation branches
-across Web/API/CLI, then remove exclusive code. Keep genuinely shared Scanner, scan_filters and
-Storage discovery/stability behavior. Under the user-approved 2026-10-18 prelaunch revision, there is
-no production old-Scan population to migrate: do not retain/build a Scan-only historical service,
-detail/cancel/export surface, startup cleanup, owner takeover or old-work migration mechanism.
-The final first-deployment instruction supersedes thin retirement refusals: remove Scan routes,
-aliases, CLI registration/help, dedicated readiness/action entries and specialized retirement guards.
-Ordinary not-found/argument errors and shared supported-type validation reject before discovery,
-admission or authority creation; no retirement page, 410, guidance or hidden diagnostic alias remains.
-Organization/Automation dependencies that instruct operators to run Scan must
-perform bounded observations within their own workflow, retaining real elapsed stability checks.
-Other supported Task/Result/pin/audit/claim safety and history remain unchanged; no media/runtime data
-is cleared. Remove definition-bound scan-only/scan-and-plan values/aliases/defaults and exclusive
-publication/scheduling/admission/dispatch/continuation as the user-authorized narrow exception to
-frozen Slice43. Shared planning, supported scheduled Preview and diagnostic Preview/DryRun/Rules tests
-remain where actually consumed; do not replace removed defaults with implicit organizing permission.
-Fresh supported schema omits Scan-exclusive tables; no old-Scan/V1 parity, migration or history layer
-is required. Same-version supported-work reopen/restart/recovery remains required. FileIndex removal
-stays a separate unit in this Slice; the remaining Automation workspace/settings scope stays frozen.
-
-Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
-columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,
-one-shot authority, revoked unattended authority and per-item unknown effects preserve existing
-semantics. Historical Task/Job deep links remain diagnostic native reads. Bounded visible polling,
-queries, exports and navigation create no Jobs, Provider calls or Storage mutation. No Node runtime
-server, Provider/auth redesign, distributed persistence or general rollback is introduced.
+Scan is absent on first deployment, including definition modes and dedicated compatibility guards:
+ordinary route/argument/shared type validation rejects before discovery/admission/authority. Shared
+Scanner/filtering/real elapsed observation/planning remain inside supported workflows, without a
+manual Scan prerequisite. No old Scan migration/history/takeover obligation or runtime/media clearing.
+Supported same-version restart/results/pins/claims/non-replay remain required.
 
 ## TARGET — FileIndex retirement and shared live listing (Slice45)
 
-[The full retirement design](file-index-retirement-spec.md) adds V2-FILES-005/006 to the current
-Slice. CURRENT index descriptions elsewhere remain baseline facts pending implementation/acceptance.
+[The FileIndex retirement design](file-index-retirement-spec.md) owns `V2-FILES-005/006` and complete
+consumer/removal acceptance. CLI, ResourceLibrary Files and MediaLibrary resolve the same exact Active
+library kind/ID/root through shared bounded live Storage list/stat behavior. Browsing persists no
+catalog/observations/work, grants no authority and calls no Provider/Hash/mutation.
 
-```text
-CLI files list / ResourceLibrary Files / MediaLibrary Files
-  -> one library-kind/ID + relative-directory application boundary
-  -> exact Active -> confined Storage list/stat -> bounded live response
-
-Explicit organize/maintenance/recovery
-  -> work-scoped exact sources/observations/plans/pins
-  -> existing Task/Result/checkpoint/claim/lease/fence -> OrganizerExecutor
-```
-
-Reuse RuntimeFilesBrowserService and its two library projections for CLI and Web; remove its
-obsolete FileIndex composition argument. Browsing has no catalog/observation/Task/Result writes,
-Provider/Hash calls or media effects, and does not initialize/migrate a database as a listing side
-effect. Exact kind/ID/root/cursor/path/whitespace rules remain shared. No global index fallback.
-
-Remove FileCatalog/FileIndex products, domain/repositories/memory stand-ins, dedicated schema,
-Worker/API/CLI startup composition, global occurrence/disposition directory and Missing catalog
-reconciliation, automatic Result/direct-command synchronization and its repair/reprocess paths.
-Fresh supported runtime schemas contain no FileIndex tables. Dashboard and other projections lose
-index-only metrics/links without starting Storage walks or inventing totals; ordinary Task metrics remain.
-
-Existing Scanner/Automation/Preview/recovery consumers must use Storage and exact work-scoped
-evidence without constructing an index. Reuse existing bounded discovery/Task observation storage;
-do not rename the same global path catalog as cache or implement a no-op repository. Per-work
-fingerprints, scope, source version, stable-size elapsed observations, pinned plans, locks, completed
-steps, Results and audits remain necessary; they do not become a browse catalog. Task/Result
-publication errors never authorize replay of completed/uncertain mutation.
-
-No production old-index migration, dual write, historical FileID/API compatibility or takeover
-mechanism is required. Do not clear, drop or silently rebuild current runtime data/media; unsupported
-development old schemas fail with actionable new-isolated-data guidance. Current supported Task/
-Result reopen and ordinary failure atomicity remain. Shared dependency removal in existing Automation
-foundations is allowed; frozen business-mode retirement/workspace changes and frozen-branch imports
-remain excluded. Production wheel/Docker prove real listing and consumers with no index assembly.
+Remove global index/occurrence/disposition tables, repositories/stand-ins, product APIs/CLI,
+initialization, sync/reprocess/repair and all actual consumers. Do not rename it as a cache or install
+a no-op repository. Exact source/plan/pin/observation/results/locks remain bounded to explicit work;
+reopen/recovery cannot replay known or uncertain effects. Fresh deployments have no index schema;
+no old-index migration/dual-write/API compatibility and no automatic clear/drop/rebuild of user data.
+Necessary shared Automation coupling may be cleaned without preserving43 UI or resuming its redesign.
 
 ## Manual organize
 
@@ -741,8 +525,8 @@ with server-held one-shot authority, returns a durable execution/Task identity, 
 resident processing Worker claim it under a persisted fence before any mutation. Legacy Files and
 FileIndex provide separate bounded compatibility entry points, while the current V2
 ResourceLibrary Files path uses live Storage for its exact Preview and explicit manual Organize
-admission. The general Jobs API also supports bounded `scan`, `preview` and `organize` submission.
-Scan and Preview remain DryRun/zero-mutation operations. Organize requires explicit confirmation
+admission. The general Jobs API supports bounded `preview` and `organize` submission. Preview remains
+DryRun/zero-mutation. Organize requires explicit confirmation
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
@@ -792,9 +576,9 @@ source path. Scheduler emits durable occurrences and AutomationJobs idempotently
 Active snapshot at creation; the Worker runs the existing pipeline and records linked Task/TaskItem/
 Result evidence.
 
-CURRENT code supports scan-only, scan-and-plan and automatic-organization definitions. The
-user-approved single-mode transition below is TARGET; this documentation change removes no runtime
-branch and claims no delivery.
+The current implementation accepts automatic-organization only; removed Scan modes have no
+compatible executor or dedicated history layer. Broader Automation redesign remains TARGET below;
+this factual Scan-removal note is not Slice45 closure.
 
 Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Preview
 eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
@@ -804,74 +588,24 @@ replayed.
 
 ### TARGET — V2 Automation workspace and consumed engine settings (Slice 43)
 
-Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
-`ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
-Slice45's ACTIVE Contract owns Task Center, integrated manual confirmation and first-deployment Scan
-absence; its 2026-10-18 narrow exception includes removal of scan-only/scan-and-plan modes and their
-exclusive branches. The remaining Slice43 workspace/Run once/metrics/settings scope stays frozen.
+The remaining43 workspace/Run once/metrics/settings redesign stays frozen; its Contract is preserved
+at `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
+Only Scan-mode removal and required index coupling cleanup belong to 45. Merged 43 code and historical
+43.2 B PASS do not require preserving that UI, resume43.3 or constitute A acceptance.
 
-Following the user-authorized main merge, the user's later 2026-10-18 decision makes the merged
-Slice43 implementation no preservation or acceptance prerequisite for Slice45. Required Scan/FileIndex
-removal may adjust or remove its specific coupling without adapting the old Automation UI first.
-Automation-page redesign and implementation may follow Slice45 under a newly confirmed Contract;
-the old 43.3 plan does not resume automatically. Historical 43.2 PASS is retained as history only.
-Shared supported-work Storage/analysis/Worker authority, exact pins, results and non-replay remain
-mandatory. This is a TARGET scope decision, not a claim that code has already been removed.
+[V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain the
+full target: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused
+publication, not another queue/config store. Manual Run once uses complete bounded live discovery
+and separate exact Preview/one-shot intent; min(definition ceiling,100) bounds primaries, incomplete/
+overflow refuses a first-N prefix, schedule due state/grants do not become manual authority.
+Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
-Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
-admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
-focused successor publication; they cannot publish unrelated Draft edits. Read models add bounded
-inventory/history and full-population metrics with real admission links and mode-aware outcomes.
-Historical display context comes from durable admission/pins, never a lookup of today's renamed or
-removed definition. Removed definitions retain readable run history and revoked authority evidence.
-
-Automation's only mode is automatic organization, per `V2-AUTO-009` and the user's clarified
-2026-10-13 amendment. Remove scan-only/scan-and-plan mode values/aliases, selectors and definition-bound
-publication, Scheduler/admission and execution branches across Web/API/CLI. There is no grandfathered
-publication, compatible executor or dedicated conversion feature. The 2026-10-18 first-deployment
-amendment assigns this removal to Slice45 and supersedes old-mode cancel/history/retirement obligations.
-Removed values use ordinary shared validation before publication, discovery or admission, not special
-Scan guards; no compatibility model or old-work engine remains. Keep supported-work history, exact
-intent/pins/results and authority intact. Never clear existing data/media, reinterpret unsupported
-work as organization or replay completed/uncertain effects. The Automation-mode
-amendment itself does not retire independent diagnostics. Slice45's subsequent TARGET separately
-retires standalone Scan and integrates manual Preview UI; shared Scanner/Planner and general
-DryRun/Rules tests remain. CURRENT runtime behavior is not changed by these TARGET paragraphs.
-
-Run once adds a durable manual-origin association, not another queue or processing model.
-Manual automatic organization composes automatic live discovery from the published definition's
-ResourceLibrary/sub-scope, durable freezing of a complete bounded source manifest and the existing
-exact Preview/one-shot execution path. The normal Automation entry does not route through a Files
-picker. Reuse existing discovery eligibility/confinement, immutable pins, source fingerprints and
-admission services. The effective primary bound is min(definition ceiling, existing 100-primary
-manual/discovery bound); exceeding it or incomplete enumeration blocks execution and offers scope
-narrowing, publication and rediscovery/repreview, never an automatic first-N prefix. Empty
-discovery yields no work; changed scope/source evidence cannot reuse prior execution intent.
-Separate manual Files/Organize source selection is unchanged. A scheduled definition link does
-not authorize manual mutation. Admission reconciles the exact request/principal and
-definition pin atomically, preserves schedule due state, and resolves through the shared Operations
-run identity without a synthetic Job or duplicate count. Existing scheduled occurrence, miss/DST,
-grant revocation, claim/lock/fence and item recovery semantics remain authoritative.
-
-The current four Automation settings are retained. Capacity bounds the shared pending/running Job
-pool; stale age is observation of updates, not runtime termination/replay. At this Base, settings
-metadata labels poll fields hot-consumed but resident Worker/Scheduler copy the startup poll value
-into `ResidentLoop`. The API's settings-consumption projection verifies its own runtime binding;
-it does not establish another process's actual cadence. Slice 43 must implement safe loop-boundary
-adoption and fresh consumer-reported values/version before claiming these fields are effective.
-
-Separate the current engine control settings from each Job's immutable media pipeline pin. Support
-idle/busy transitions, startup without Active, bounded rechecks during long waits and unchanged
-heartbeat/lease ownership. Consumer evidence distinguishes target, adopted, pending, stale/missing
-and explicit deployment/CLI override; overrides retain precedence and cannot be changed by Web Save.
-Missing/corrupt Active does not permit stale business scheduling; independently valid old admitted
-pins retain existing execution rules. Additive persistence changes may store origin/display links
-and consumer evidence; preserve Base schema44 rows, authority, historical pins and compatibility.
-Do not add process supervision, new worker parallelism or another configuration store.
-
-These paragraphs are TARGET architecture, not a claim of completed implementation or a rewrite of
-earlier Slice acceptance. The preserved Slice43 Contract defines that journey and validation boundary; Slice45 does not inherit it.
+Capacity bounds pending+running Jobs; stale age observes updates. Polling adoption must be proved by
+fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's
+media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
+heartbeat/lease ownership and CLI/deployment overrides retain meaning; unavailable Active cannot
+schedule from cache. Preserve supported history/schema/pins and non-replay; no process supervisor
+or new execution parallelism. These are targets, not newly delivered behavior.
 
 ## API and Operator Web
 
@@ -882,7 +616,7 @@ at the shared service boundary; 401/403 behavior and Web/API projections are tes
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
 Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
-Settings, Rules and the Operations route family for Tasks, Jobs, manual Scan/Preview/Organize,
+Settings, Rules and the Operations route family for Tasks, Jobs, Preview/Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
 decision/recovery and supported paused-scope continuation. Global Review and arbitrary historical
 Reprocess remain compatibility/deferred journeys; Advanced JSON and the general configuration
@@ -913,6 +647,12 @@ surface manages Webhook definitions, event selection, deployment-owned secret re
 revision bounded tests, delivery detail and per-delivery retry/requeue recovery without exposing
 secret values or changing completed media work.
 
+Webhook signatures use HMAC-SHA256 over `timestamp + "." + exact UTF-8 body`. Transport/429/5xx
+failures use bounded backoff; other 4xx enter dead-letter. Claims use `deliveryLeaseSeconds` (default
+300); an expired claim permits another delivery attempt, with stable delivery ID for receiver
+deduplication of the unavoidable at-least-once crash window. Tests pin exact configuration and send
+one bounded signed request; reads expose no payload bodies or secrets.
+
 Operational logs use bounded redacted records with TRACE/DEBUG/INFO/WARN/ERROR semantics. Security
 and configuration audits are separate durable projections. Secret values, authorization headers,
 cookies, API keys, passwords and arbitrary provider exception text do not cross public evidence or
@@ -938,60 +678,13 @@ validate Python support, backup integrity, schema agreement and representative s
 changing the live database. Migration failure must leave the live authority untouched and fail
 closed before work resumes.
 
-## Current Slice 26 delivery
+## Delivery references
 
-Slice 26 delivered the management-only fresh bootstrap, first complete managed Draft through Web,
-guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic S3-compatible configuration and read-only
-tests, bounded Storage Browser/path selection, Local path recovery and first-runtime checked
-activation. It did not add mutation-based capability probes or arbitrary host-path access.
-
-## Current Slice 27 delivery
-
-Slice 27 delivered the real Storage Files/FileIndex distinction, current-source lifecycle and
-disposition, bounded manual Scan/Preview/Organize, conflict/review/recovery continuation, and
-Processing Worker readiness and fenced ownership across the shared Application, Persistence, API and
-Operator Web boundaries. These capabilities reuse the existing Storage abstraction, immutable Active
-snapshot authority, Task/TaskItem/Result model and OrganizerExecutor mutation boundary.
-
-## Current Slice 28 delivery
-
-Slice 28 delivered the day-2 managed-configuration lifecycle and object-management IA, including a
-natural Active-to-successor-Draft edit path, consistent create/copy/edit/enable/disable/delete and
-reference recovery, forms-first editing with Advanced JSON/import/export as explicit support paths,
-consumed System Settings, versioned secret-free configuration/result exchange and managed Webhook
-definition/test/delivery recovery. These capabilities reuse the existing revision authority, RBAC,
-redaction and immutable snapshot rules.
-
-## Current Slice 29 delivery
-
-Slice 29 packages one immutable image with independent Compose API, Worker, Scheduler and
-Notification Worker services, production Waitress WSGI serving, explicit local `/data` persistence,
-media bind mounts, non-root operation, liveness/management/business readiness, restart persistence,
-fenced ownership, fail-closed backup/migration upgrade behavior and release-security validation.
-The Jobs/Preview/Organize execution boundary remains explicit and OrganizerExecutor-only.
-
-## Current Slice 32 delivery
-
-Slice 32 adds the V2 Library landing, bounded Active Storage directory browser, FileIndex
-catalog/search/filter/directional paging, strict detail/evidence projection and uniquely confirmed
-physical/indexed navigation. It reuses managed Active snapshot, Storage and FileIndex/Application
-ports and existing authenticated `/api/v1/*` reads. The frontend stores no domain authority or
-credentials, renders no raw fingerprint/provider/private-path material, and exposes no Storage or
-workflow mutation. Its accepted behavior remains historical and unchanged.
-
-## Current Slice 33 delivery
-
-Slice 33 adds the V2 daily Operations command center with actionable Dashboard links, filterable
-Task/Job state and backend-advertised controls, bounded manual Scan and zero-mutation Preview,
-Web-native exact manual Organize, Automation definition/schedule/grant/occurrence operation, and
-Webhook definition/test/activation/delivery recovery. Long work returns durable identities and is
-claimed by the resident Worker; independent item/delivery outcomes and bounded failure handoffs stay
-visible. The final Worker correction reconstructs the exact pinned ResourceLibrary/Storage authority
-from the admitted execution's immutable runtime snapshot and fails closed before mutation on missing,
-stale or cross-authority evidence. The implementation preserves shared Python authority, exact Active
-snapshot and revision binding, memory-only Bearer/RBAC, explicit mutation intent, no automatic
-uncertain replay and OrganizerExecutor-only Storage mutation. Its accepted behavior remains
-historical and unchanged.
+Accepted delivery ranges and deferrals live once in [Progress](progress.md). Fresh setup and
+managed publication are described above; Storage lifecycle in [Configuration](configuration.md),
+production/restart/recovery in [Deployment](deployment.md), and operator outcomes in
+[Product Experience](product-experience.md). Earlier per-Slice delivery notes are reachable through
+this document's historical checkpoint; they are not independent architecture states.
 
 ## Slice 38 architecture — CURRENT delivered capability
 
@@ -1044,91 +737,36 @@ specialized notification channels remain outside the V1 architecture above.
 
 ## UI-V2 Files and Manual Organize authority update — 2026-09-13
 
-UI-V2 Files now treats ResourceLibrary as the operator-facing authority. The normal Files path is:
+```text
+ResourceLibrary ID + exact relative path
+→ exact Active Storage/root → guarded live list/stat
+→ explicit organize preparation → SourceIdentity + immutable plan
+→ separately confirmed durable execution → Worker live-source revalidation → OrganizerExecutor
+```
 
-ResourceLibrary -> configured Storage binding -> ResourceLibrary root path -> live Storage list/stat.
-
-The browser supplies only `resourceLibraryId`, ResourceLibrary-relative `path`, and a server-issued
-cursor. The server resolves the Active managed runtime, verifies the ResourceLibrary and backing
-Storage are enabled, joins the ResourceLibrary root with the relative path, and reads through the
-read-only Storage guard. `RuntimeFilesBrowserService` accepts a legacy `file_index` composition
-argument for compatibility but intentionally does not consult it to enumerate or authorize the UI-V2
-Files projection. The Files projection excludes FileIndex membership, `fileId`, occurrence,
-fingerprint and other raw authority fields. It may include a bounded recognition/business-status
-projection as display feedback. FileIndex remains a separate indexing and compatibility authority;
-it is not the source of physical Files entries or execution authority.
-
-UI-V2 manual organize admission now starts from ResourceLibrary source selection.  The normal single-file path is:
-
-ResourceLibrary -> live Storage file -> zero-mutation Preview -> SourceIdentity + server OrganizePlan -> confirmed Task -> Worker -> live Storage revalidation -> OrganizerExecutor.
-
-The Files page submits `scopeKind=file`, `resourceLibraryId` and `relativePath` to the
-server-bound Preview route. `ManualOrganizePreviewService.create_current_from_storage` resolves
-the Active runtime and bound Storage, calls `Storage.stat()`, creates SourceIdentity/fingerprint
-evidence and calls `ManualOrganizeIntentService.create_from_sources`; no FileIndex row or `fileId`
-lookup is involved. The zero-mutation planner persists the reviewed evidence. Execution validates
-the reviewed source against live Storage and the persisted Preview identity; it does not
-re-resolve the source through FileIndex. FileIndex-backed compatibility routes remain separate.
-
-FileIndex is permitted on the Files path only for the bounded business-status/recognition display
-projection. It must not determine physical listing membership, path validity, Preview source
-identity, execution authorization or Storage capability. After each terminal Organize item result
-is recorded, the application automatically synchronizes the known result/disposition to FileIndex.
-If that synchronization fails, the index-sync failure is recorded independently and the system does
-not replay any completed or uncertain Storage mutation.
+`RuntimeFilesBrowserService` does not consult its compatibility `file_index` argument for physical
+listing/authority. The frontend supplies library/path/cursor, not Storage paths, FileID, occurrence
+or fingerprints as authority. `create_current_from_storage` derives evidence from live stat and
+`create_from_sources`; execution opens the reviewed Storage/path directly, never re-resolves via
+FileIndex. Bounded index feedback/sync remains a pending-retirement dependency outside authority;
+its failure cannot replay media. The current Files page shows no recognition/organize-status feedback.
 
 ## UI-V2 direct file-management authority update — 2026-09-14
 
-The Files workspace adds deliberately short read and mutation paths for ordinary maintenance:
+Ordinary create-folder/text, rename, Copy/Move/Delete and allowlisted text Edit use shared confined
+application commands and OrganizerExecutor without media recognition/metadata/naming/planning/
+Preview or raw-token ceremony. Enforce RBAC, exact library kind/Active binding, capabilities,
+current entry evidence, path/selection/entry/depth/projection limits and explicit Delete/Replace/Save
+intent. Cross-kind direct transfer, Upload/Download, arbitrary binary/media editing, unbounded/root
+delete and host-path access remain outside scope.
 
-```text
-selected Active ResourceLibrary source/destination
-    -> live list/stat/read + capability/limit admission
-       └─ mutation command
-            -> OrganizerExecutor
-            -> per-item audit/result
-            -> refreshed live listing
-            -> optional FileIndex display reconciliation
-```
-
-This boundary supports CreateDirectory, bounded text-file creation, Rename, Copy, Move, Delete,
-bounded allowlisted text Read/Write for one item or a bounded selection. Direct browser Upload and
-Download are outside the current Files surface; generic Storage/provider transfer primitives remain
-available for supported backend workflows. It
-does not run Scanner, Parser, Recognition, Metadata, Naming, Classification, the organize Planner,
-organize Preview or execution-token review. The shorter journey does not create a second mutation authority: the
-application enforces backend RBAC, selected Active source/destination bindings, relative-path
-confinement, provider capability, item/depth/size limits, stale/conflict checks and explicit
-Delete/Replace/Save intent. Only OrganizerExecutor invokes CreateDirectory/Copy/Move/Delete/Write.
-
-Same-Storage Copy/Move uses advertised native capability without fallback. Cross-Storage Copy is an
-explicit transfer. Cross-Storage Move is modeled as a visible compound operation with per-item
-checkpoints:
-
-```text
-Copy destination -> verify destination -> delete source
-```
-
-Failed verification leaves the source intact. Failure after a verified copy records a partial
-result and recovery rather than concealing two extant copies or replaying an uncertain deletion.
-Bounded recursive/batch mutations use the existing Task system and independent item outcomes.
-Delete may include bounded non-empty directories after a lightweight item/size impact summary and
-one explicit confirmation, but ResourceLibrary roots and unbounded recursion are rejected.
-
-Direct browser Upload/Download controls, routes and services are removed from the current Files
-vertical. Arbitrary binary or media-content editing and arbitrary host paths remain outside this
-boundary.
-
-Live Storage is authoritative before and after each command. FileIndex may be reconciled to prevent
-stale display feedback, but it never admits the command; reconciliation failure is recorded and
-must never replay a completed or uncertain mutation.
-
-Rename and Delete use metadata-only server-observed evidence on both ResourceLibrary and
-MediaLibrary routes. Provider fingerprints are optional; an observed fingerprint remains binding
-and cannot disappear or change. Bounded text editing retains its separate loaded-version content
-digest, capped at 512 KiB. Cross-Storage Move retains explicit Copy→digest verification→Delete-source
-semantics; failed verification preserves the source. The current evidence and durable Delete
-boundary is described below.
+Same-Storage operations need advertised native capability, no silent fallback. Cross-Storage Move
+is explicit Copy→destination digest verification→Delete-source; failed verification preserves the
+source, known partial effects retain both-copy diagnosis and uncertain effects require investigation.
+Long/batch work uses durable per-item Tasks/checkpoints; live listing stays authoritative after work.
+Rename/Delete use metadata-only evidence with optional provider fingerprint: once observed it remains
+binding. Text Edit separately binds loaded content digest and is capped at 512 KiB. Optional known
+index reconciliation never admits/replays a command. The durable Delete/fencing detail follows.
 
 ## CURRENT — Slice 44 RO-1 metadata fences and durable Delete
 
@@ -1164,35 +802,13 @@ those categories to recovery guidance without exposing adapter exception text.
 
 ## UI-V2 Files and shared-shell contract update — 2026-09-14
 
-Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference
-for the Files route and shared V2 shell. One shared AppShell implementation must replace the former
-dark horizontal chrome with the reference light left rail and top bar across every supported V2
-route; the reference is not rendered as a nested Files card inside the old shell. Route identity,
-memory-only authentication continuation, query ownership, backend calls and non-Files page-body
-behavior remain unchanged even though their outer chrome changes.
+The shared light AppShell and Files hierarchy use [the Files visual specification](file-page-visual-spec.md).
+The supplied image is immutable reference input; samples are not runtime authority. Exact entry/path
+identity, responsive/keyboard navigation and bounded actionable states apply to both library kinds;
+page-specific commands remain behind the shared Python authority.
 
-The detailed Files layout, required copy/data, row command surfaces, open `添加资源库` drawer and
-reference-aligned visual acceptance rules are in
-[`docs/file-page-visual-spec.md`](file-page-visual-spec.md). Controlled pixel diffs are diagnostic;
-the architecture does not require identical raster output when the specified structure, state and
-interaction remain intact.
-The frontend owns presentation and exact user intent only. It does not become Storage authority or
-make FileIndex a physical-source/execution authority. Focused backend/application behavior for
-ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is
-part of the confirmed Files journey; unrelated business behavior remains unchanged.
 
 ## Slice 37 delivery — 2026-09-22
 
-The current implementation delivered the Slice 37 Files journey across the shared V2 shell,
-ResourceLibrary activation, live Storage browsing, bounded direct file commands, Storage-source
-Organize continuation, formal `library/path` destination parity, truthful refresh/presentation and
-exact Storage path identity plus exact FileIndex reconciliation.
-The direct browser Upload/Download vertical was removed from the current surface while generic
-Storage/provider transfer primitives remain available. The implementation preserves the single
-Python authority and
-OrganizerExecutor mutation boundary described above. The explicitly deferred binary/media editing,
-unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems,
-universal rollback and automatic uncertain replay remain deferred. The Files page does not render
-recognition-result or organize-status feedback; exact entry names and ResourceLibrary-relative paths
-are preserved through the frontend projection, including boundary whitespace, and are never retried
-as a trimmed sibling.
+See [Progress](progress.md) for accepted Base/Head and deferrals; closure did not grant unrelated
+business scope or automatic uncertain replay.

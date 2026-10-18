@@ -1,16 +1,14 @@
 # MediaLibrary Page Visual Specification
 
-Status: CURRENT TARGET — Slice 38; page-local library editing added 2026-09-25
+Status: CURRENT visual baseline — accepted Slice 38, including page-local editing
 Canonical image: [媒体库页.png](pics/媒体库页.png)
 Reference size: `1536 x 1024`
-Target route: `/ui-v2/medialib/files`
-Contract: [SLICE.md](../SLICE.md)
+Route: `/ui-v2/medialib/files`
+Current scope: [SLICE.md](../SLICE.md); accepted ranges: [Progress](progress.md)
 
-The supplied image controls the MediaLibrary page's visual hierarchy. The 2026-09-23 user decision
-removes library-card statistics and file thumbnails. The 2026-09-24 A presentation corrections make
-the MediaLibrary and ResourceLibrary Files library selector/context identical: card facts are not
-shown, and the selected context carries only enabled state and path. Reuse the Slice 37 shared
-shell and preserve the ResourceLibrary Files body and behavior.
+The supplied image defines hierarchy with explicit overrides below: no card statistics or thumbnails;
+both library selectors share cards with name/selection/menu and selected context with enabled state/
+path only. Reuse the shared shell; this visual specification adds no unrelated Files business scope.
 
 ## Required Composition
 

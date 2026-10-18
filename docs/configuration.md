@@ -6,25 +6,15 @@ operator guide, not a Phase or Task log. Large-Slice status is maintained in
 
 ## Configuration authority
 
-MediaFlow has two deliberately different configuration entry paths:
+| Path | Authority |
+|---|---|
+| JSON bootstrap (`MEDIAFLOW_CONFIG`) | Compatibility runtime input before managed activation; also supports legacy/exchange/recovery use. |
+| Managed Configuration | Explicitly activated immutable SQLite revision/digest; sole runtime authority after activation, with no JSON/Draft/stale-cache fallback. |
+| Minimal management bootstrap | Deployment-owned database locator and API-principal environment references keep status/setup/recovery available without business Active or workflow defaults. |
 
-1. **JSON bootstrap** is the compatibility path used before the first managed Active revision. The
-   full JSON document supplies runtime Storage, library, policy, Metadata, API and operational
-   settings. `MEDIAFLOW_CONFIG` selects this document.
-2. **Managed Configuration** is the runtime authority after an operator explicitly activates a
-   revision. The active revision is an immutable, digest-identified snapshot persisted in SQLite.
-   Runtime requests and queued work use that snapshot; JSON is not a fallback source.
-
-The bootstrap loader also has a minimal management boundary containing only the SQLite database
-locator and environment-owned API-principal references. That boundary keeps authenticated
-configuration status and recovery available when the managed Active revision is missing, corrupt,
-schema-incompatible or otherwise not runtime-consumable. It does not provide workflow defaults.
-
-The current fresh-instance path supports a minimal management-only bootstrap containing only the
-database locator and environment-owned API-principal references. An authenticated operator can
-create the first complete managed Draft through Web/API without supplying workflow defaults or a
-complete runtime JSON document. The compatibility JSON bootstrap remains supported for legacy,
-migration and compatibility operation; it is not a competing Active source after managed activation.
+A fresh operator creates/resumes the first Draft in Web Settings and may activate a valid empty
+business baseline. Populated objects/references still validate; missing capability and corrupt
+prior Active are distinct states. See [the setup journey](product-experience.md#first-time-setup).
 
 ## Bootstrap configuration
 
@@ -48,11 +38,10 @@ The compatibility document contains at least:
 }
 ```
 
-Runtime validation requires the complete configured catalog graph, including
-`recognitionRules`, `recognitionTypePolicies`, `metadataPolicies`, `namingPolicies`,
-`classificationPolicies`, and `organizePolicies`. Production loading does not fill missing sections
-from an A/B/C default. `config/strategy.example.json` is the canonical example; development and
-smoke constructors are test fixtures.
+For populated organizing capabilities, declare their actual recognition/type-policy/Metadata/
+Naming/Classification/Organize references; dangling objects fail validation. Unrelated empty families
+are legal and create no capability/defaults. `config/strategy.example.json` is the complete working
+example; A/B/C development/smoke constructors are test fixtures, never production fallback.
 
 Validate without scanning, contacting a Metadata Provider or mutating Storage:
 
@@ -93,35 +82,19 @@ recovery remain available through the bootstrap database locator.
 
 ### Files-page ResourceLibrary save
 
-The Files page provides a focused `+ 添加资源库` flow for creating a ResourceLibrary. Its final
-`保存` action is a page-local convenience over the managed lifecycle rather than a second
-configuration authority. The backend reads the current Active snapshot, merges the complete
-ResourceLibrary candidate, performs the same structural/reference validation and applicable checked
-activation work, and publishes a new immutable Active runtime only after all steps succeed.
-
-The operator does not separately click Validate or Activate in this flow. Any invalid field,
-duplicate ID, invalid Storage reference or path, failed Storage evidence, activation conflict or
-runtime-load error rejects the save and keeps the previous Active runtime authoritative. The
-ResourceLibrary must not be shown as saved when the activation command fails. The general
-Configuration page retains its explicit Draft/Validate/Activate journey.
+`+ 添加资源库` submits one complete candidate. The backend merges exact current Active, validates
+references/applicable read-only evidence and atomically publishes runtime. No separate ordinary
+Validate/Activate clicks. Invalid/duplicate/stale fields, failed evidence or runtime publication
+preserve prior Active and correctable input; a failed command cannot display a saved library.
 
 ### Current page-local library editing
 
-Slice 38 delivered the same convenience boundary for focused editing of an existing ResourceLibrary
-or MediaLibrary from its browse card.
-The edit form reads one exact Active object, keeps its ID immutable and may change only name,
-enabled state, Storage binding and the kind-specific relative root. The application must merge
-those fields into the complete existing object so scan/policy/directory-creation fields not exposed
-by the form are preserved.
+ResourceLibrary/MediaLibrary card Edit loads exact Active, keeps ID immutable, edits name/enabled/
+Storage/kind-relative root and preserves hidden fields. Save uses optimistic concurrency, whole
+validation, applicable evidence and atomic binding. It changes configuration only, never creates/
+migrates/moves/deletes media; admitted work keeps its old pin. Removal is reference-safe and media-free.
 
-Final Save binds the read Active revision through optimistic concurrency, performs the complete
-validation and applicable checked evidence, prepares runtime binding and atomically publishes the
-successor. Validation, evidence, persistence, concurrency or runtime-load failure preserves the
-prior Active and correctable input. Storage/root changes are configuration-only: they never create,
-move, copy or delete the root or its contents, and already admitted work remains pinned to its
-original immutable snapshot.
-
-CLI equivalents are:
+The general configuration CLI still exposes explicit lifecycle operations:
 
 ```bash
 mediaflow config status
@@ -130,9 +103,8 @@ mediaflow config draft-validate REVISION_ID
 mediaflow config activate REVISION_ID --expected-version VERSION
 ```
 
-The authenticated Web Configuration view exposes a forms-first successor-Draft journey through the
-same API. Whole-document JSON is an explicitly labelled Advanced/import-export/support path. Any JSON
-or package import creates an inactive Draft; it never silently changes Active.
+Web's general forms-first successor flow and Advanced JSON/import/export share these services.
+Imported packages/JSON are inactive Drafts, never implicit Active replacements.
 
 ## Immutable runtime snapshot
 
@@ -149,76 +121,37 @@ explicit Preview or execution request is required.
 
 ## Current managed object families
 
-The canonical managed document and object service preserve references and optimistic edits for:
+Storage; ResourceLibrary/MediaLibrary; RecognitionType/Rule/TypePolicy; MetadataPolicy (TMDB reference);
+Naming/Classification/Organize policies; Automation definitions; Webhooks/events. Applicable
+create/copy/edit/enable/disable/reference-safe delete uses bounded redacted audit, strict IDs/fields,
+optimistic versions and dependency impact. Referenced deletion fails; valid unreferenced deletion
+is not blanket-refused. Generic edits return a Draft; focused page commands may compose activation.
 
-- Storage definitions;
-- ResourceLibrary and MediaLibrary definitions;
-- RecognitionType, RecognitionRule and RecognitionTypePolicy mappings;
-- MetadataPolicy, including the configured TMDB Provider reference;
-- NamingPolicy, ClassificationPolicy and OrganizePolicy;
-- Automation Task Definitions;
-- managed Webhook definitions and event selection.
-
-The object service provides create, copy, edit, enable, disable and delete actions where applicable.
-It rejects unknown fields, validates IDs and references, records bounded redacted audits, shows
-reference impact, and blocks deletion while an object is referenced. A valid unreferenced object can
-be deleted; the reference check is not a blanket refusal of all deletion. Generic object edits apply
-to the Draft and return it to `Draft`. Focused business-page commands, including Rules Save, compose
-those edits with validation and checked atomic activation.
-
-The current Web Configuration page leads with the exact Active identity and the explicit action to
-create a successor Draft. Typed cards and forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 and
-generic S3-compatible Storage, ResourceLibrary, MediaLibrary, Recognition, MetadataPolicy, Naming,
-Classification, Organize, Automation Task Definition and Webhook management. Some nested rule and
-policy fields use bounded JSON inside their typed object form. The raw whole-document editor remains
-under Advanced JSON for import/export, compatibility and support rather than as the ordinary editing
-entry point.
-Remote Storage definitions and their deployment-owned secret references remain editable in Drafts;
-redaction applies to read projections and evidence, while actual secret values are never persisted or
-exposed.
-
-System Settings use the same managed configuration authority. The Settings surface reads the exact
-Active revision and its consumption evidence, creates a successor Draft when Active values are
-edited, validates typed values and preserves bootstrap-owned and restart-required boundaries. It
-fails closed instead of presenting settings from another snapshot as consumed Active state.
+Typed forms cover every supported Storage kind and object family; bounded nested JSON and whole-
+document Advanced exchange remain support surfaces. Secrets stay environment references. System
+Settings distinguishes actual runtime Active/consumption from editable successor and deployment/
+restart-only values; another snapshot's values cannot be labelled consumed.
 
 ## Native V2 organizing-rules management
 
-Open `整理规则` at `/ui-v2/rules` to manage the complete RecognitionType policy graph through typed
-forms. Overview and seven rule-family inventories read the actual immutable Active; navigation,
-search, filtering and refresh create no Draft. Explicit Add/Copy opens a candidate, while Edit uses
-a full-page deep route and keeps object ID immutable. Empty/partial guidance identifies missing
-dependencies without generating policies. Settings provides first empty activation if no Active
-exists and returns to the originating rule family on explicit intent.
+`/ui-v2/rules` reads Overview and seven family inventories from exact Active without creating Drafts.
+Add/Copy explicitly opens a candidate; Edit is a full-page route with immutable ID. One checked Save
+publishes the focused successor, preserving unrelated Drafts/hidden configuration, prior Active on
+known failure and correctable input. Unknown publication is read back before another submission.
+Failed reference-impact evidence blocks removal; navigation/tests do not publish.
 
-One `保存`, or a confirmed lifecycle action, composes the focused successor from the exact Active
-observed by the form, runs complete graph validation and applicable read-only evidence, prepares
-runtime consumers and atomically publishes the successor. There is no separate ordinary
-Save-Draft/Validate/Activate step. Reference-protected removal deletes no media, historical snapshot
-or Result; copy defaults disabled only for object kinds supporting enabled state.
+Family-local tests validate only the exact non-Active object and necessary inputs/references using
+production engines. Overview separately checks the full flow. Offline tests call no Provider/media
+Storage, explicit live Metadata uses the configured Provider, and neither grants execution or
+publication. [Product Experience](product-experience.md#object-scoped-tests-and-complete-flow-checks)
+defines each test's input/result/recovery; C remains C under A policy reuse. Save still checks the
+whole successor and applicable evidence, not merely local success.
 
-Family-local tests stage the exact non-Active submitted candidate and validate only that object
-and necessary references. RecognitionType definition needs no binding/sample; RecognitionRule
-reports real bounded condition truth without downstream policies. Binding/Metadata/Naming/
-Classification/Organize use their relevant inputs and production engines; C remains C under A
-policy reuse. Local offline tests call neither Providers nor media Storage. Overview separately
-checks the exact Active complete flow, labels supplied synthetic identity and reports missing stages;
-explicit live Metadata uses the configured Provider abstraction. Analysis starts no media work and
-grants no activation/execution authority; Save still checks the whole successor.
-
-New Classification rules use `mediaLibraryId` plus safe `path`; final composition adds no library
-name/ID prefix. A labelled legacy `library/path` rule keeps old semantics until explicit checked
-conversion with destination-impact acknowledgement. Conversion preserves `path` without silently
-adding a legacy label; historical snapshots/Previews/Tasks/grants retain their original semantics.
-ResourceLibrary include/exclude/depth/stability configuration is consumed from the same pinned
-runtime by manual folder/mixed discovery and Scanner, with genuine elapsed size observations.
-
-Known Save rejection preserves prior Active and correctable input. Read current authority before
-reapplying a stale change; verify unknown outcomes before another explicit submission. Failed
-reference-impact reads remain unavailable evidence and require reread/refresh before removal.
-Correctable browser-tab form values do not become Active, credentials or execution authority. V1
-configuration lifecycle and CLI remain compatible; whole-document JSON is unnecessary for the
-ordinary delivered Rules journey.
+New Classification uses MediaLibrary ID plus safe path without a name/ID prefix; labelled legacy
+`library/path` remains until explicit impact-acknowledged checked conversion. Preserve its path and
+all historical pin semantics. Scanner/manual discovery consume the same pinned filters/depth and
+real elapsed stability policy. Forms retain tab-scoped correctable values, never credentials or
+runtime authority. Empty/partial graphs explain missing dependencies without generating policies.
 
 ## Storage configuration model
 
@@ -320,37 +253,14 @@ that the guided safety checks passed.
 
 ## Web, API and CLI surfaces
 
-Current authenticated Web/API surfaces share application services, permission checks and recovery
-semantics. They include:
-
-- Configuration status, exact Active-to-successor-Draft creation, forms-first object management,
-  validation and checked activation, with Advanced JSON as an import/export/support path;
-- versioned secret-free configuration package import/export and bounded result package export;
-- exact-revision Strategy Test, Metadata candidate/correction, Naming, Classification, Organize
-  authority, destination preview, per-Storage read-only checks, Local diagnostic and
-  provider-neutral destination precheck;
-- managed System Settings with exact Active consumption evidence and typed successor-Draft editing;
-- page-local ResourceLibrary creation from Files with backend-composed validation and atomic
-  activation on final Save;
-- Dashboard, Files list/detail/stats, Task/TaskItem and Job observability;
-- Recognition, Metadata, Classification and conflict review actions;
-- bounded manual Preview and reviewed one-shot manual execution;
-- processing checkpoint recovery and bounded batch recovery;
-- real configured Storage Files, separate FileIndex/current-source lifecycle and disposition,
-  bounded Preview and explicit Reprocess admission;
-- conflict/review/recovery continuation with independent per-item outcomes;
-- Processing Worker registration/readiness, heartbeat, ownership and claim-fencing evidence;
-- Automation Task Definition validation/Preview, persistent scoped grant/revoke, occurrences and
-  per-item outcome/recovery;
-- schedules, managed Webhook definitions/event selection/exact-revision tests, notification delivery
-  detail and per-delivery retry/requeue/dead-letter recovery, security audit and redacted operational
-  logs.
-
-The read-only System status view remains a bounded runtime/configuration projection. The separate
-System Settings surface is managed and consumed through the immutable configuration lifecycle.
-Webhook definitions and delivery recovery are also managed through Web/API. Delivery failure,
-retry, expired-lease recovery or dead-letter requeue changes only notification delivery state and
-never changes already completed media work.
+Authenticated surfaces share application behavior/RBAC/audit: exact Active/successor lifecycle,
+objects/reference impact, versioned secret-free configuration/result exchange, Settings and Rules,
+bounded tests/checks/Preview, library Save, live Files/maintenance, Task/Job/results, review/recovery,
+Worker readiness, Automation/grants/occurrences and Webhook delivery recovery.
+[Product Experience](product-experience.md) owns complete ordinary journeys; [Architecture](architecture.md)
+owns execution and [Deployment](deployment.md) runtime administration. Configuration reads/tests/
+publication create no media work. Notification retry/requeue changes only that delivery, not media.
+FileIndex still has separate pending-retirement dependencies; it is never live Files authority.
 
 ## Secret boundary
 
@@ -391,35 +301,29 @@ authority and does not replace checked activation evidence.
 
 ## Schema and compatibility markers
 
-The implementation currently declares:
-
-- runtime SQLite schema: `45` in `mediaflow/infrastructure/sqlite_runtime.py`;
-- configuration-management SQLite schema: `10` in
-  `mediaflow/infrastructure/sqlite_configuration_management.py`;
-- managed configuration document schema: `1` in
-  `mediaflow/application/configuration_snapshot.py`.
-
-These numbers are compatibility facts, not feature-phase labels. Runtime and configuration
-repositories refuse a newer unsupported schema and run their additive initialization/migration
-logic for older databases. Do not infer a product capability from a historical migration marker.
+Compatibility versions are declared in `mediaflow/infrastructure/sqlite_runtime.py`,
+`mediaflow/infrastructure/sqlite_configuration_management.py` and
+`mediaflow/application/configuration_snapshot.py`. These are compatibility markers, not feature
+statuses. Repositories reject newer unsupported schemas; supported upgrades/restore follow the
+explicit [deployment maintenance procedure](deployment.md#backup-upgrade-and-migration-recovery).
+Do not infer a feature or permission to rebuild user data from an old schema number.
 
 ## Current limitations and post-V1 / V2 boundaries
 
-Slices 26, 27, 28 and 29 are `PASS / CLOSED`. The V1 self-hosted deployment release is delivered,
-and the remaining items below are explicit V1.x/post-V1 or V2 boundaries rather than unfinished V1
-release work:
+Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
+automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
+host paths or mutation-based capability probes. Native Settings and Rules are delivered; that does
+not imply V1 cutover, the remaining frozen Automation workspace or active45 completion.
+Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
+See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.
 
-| Status | Capability |
+### Operational setting meanings
+
+| Setting | Implemented meaning |
 |---|---|
-| V1.x/V2 | Provider switching and additional production Providers, built-in user/session identity, OIDC, general Secret Store and broader recovery such as automatic uncertain-mutation replay or historical rollback |
-
-Managed configuration remains the current V1 authority. V2 Configuration Administration is a later
-program Slice; this section does not claim that migration or new V2 configuration surfaces are
-implemented.
-
-Arbitrary host-path access and mutation-based capability probes are not current capabilities. The
-setup Storage Browser, read-only setup checks and provider-neutral destination precheck remain bounded
-first-setup evidence; the runtime Files browser and Slice 27 manual operations are separate current
-operator surfaces. The `wsgiref.simple_server` listener remains development / trusted-loopback;
-production Docker serving uses the Waitress-backed `api serve-production` boundary documented in
-`docs/deployment.md`.
+| `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
+| `automation.maximumActiveJobs` | Default 100; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. |
+| `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. |
+| Preview Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Definitions/scheduled organizing use their separate explicit grant boundary. |
+| Organize Hash/attachments | Hash defaults NONE with zero reads; FAST is bounded prefix evidence, FULL is bounded streaming. Failed/unknown comparison adds a conflict and never authorizes overwrite/delete. Opt-in attachments are matched only in the primary directory; unknown files are not included/cleaned. |
+| Source cleanup / rollback | Cleanup defaults none; only fully verified successful MOVE may clean bounded ancestors below the exclusive ResourceLibrary root. `rollback.enabled` defaults false, `cleanupCreatedDirectories` true; compensation covers only this invocation's verified effects, never changed targets, reappeared sources or older executions. Complete policy constraints remain in Requirements. |

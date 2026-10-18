@@ -79,74 +79,25 @@ must be a new absolute local `.json` path in an existing directory; publication 
 contains no endpoint or credential. The matrix covers production-adapter lifecycle plus
 Local→OpenList, OpenList→Local, and OpenList→OpenList COPY/MOVE.
 
-### OpenList Phase 19.23.2 isolated result
+### Isolated lifecycle results and corrections
 
-On 2026-08-22 the suite was run against a loopback-only official
-`openlistteam/openlist:v4.2.2` container with a generated credential and a Local driver rooted in a
-new temporary directory. Health and root stat succeeded. The empty-root list returned the real v4.2.2
-shape `data.content = null` with `data.total = 0`; production `HttpOpenListClient.list_page` requires
-`content` to be a list and therefore reported `INVALID_RESPONSE` / `StorageErrorCode.IO_ERROR`.
+These are historical results, not new validation. Original diagnosis/run notes remain at
+`865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/storage-acceptance.md`.
 
-Result: `FAIL`. The fail-closed preflight created no remote object, cleanup required no remote deletion,
-and Local↔OpenList/OpenList↔OpenList mutation rows were not run. The container, credential, token, and
-temporary backend were removed. The non-secret report remains outside Git at
-`/tmp/mediaflow-openlist-v4.2.2-acceptance-20260822.json`. This failure must be repaired in a separate
-task and the complete matrix rerun; it is not OpenList acceptance.
-
-### OpenList Phase 19.23.3 repair and rerun
-
-The infrastructure mapper now accepts the exact empty-directory pair `content: null, total: 0` as an
-empty page while rejecting null with inconsistent totals, bool/negative/missing totals, and other
-malformed content. A new loopback-only official `openlistteam/openlist:v4.2.2` instance then passed
-the full production-adapter matrix: empty-root preflight, lifecycle/no-overwrite, same-service
-copy/move, Local→OpenList COPY/MOVE, OpenList→Local COPY/MOVE, OpenList→OpenList Organizer COPY/MOVE,
-content/size/source assertions, and allowlisted cleanup.
-
-Result: `ISOLATED PASS` for the self-hosted OpenList service using its Local driver. The container,
-credential, token, and temporary backend were removed. The non-secret PASS record is retained outside
-Git at `/tmp/mediaflow-openlist-v4.2.2-acceptance-pass-20260822.json`. This does not certify individual
-third-party OpenList drivers or remote atomic publication semantics.
+| Run | Actual result and scope | Retained non-secret report |
+|---|---|---|
+| OpenList 19.23.2, 2026-08-22 | FAIL on official loopback v4.2.2 Local driver: empty `content:null,total:0` mapped to INVALID_RESPONSE/IO_ERROR. Preflight created no object; mutation matrix did not run. Isolated container/credential/backend removed. | `/tmp/mediaflow-openlist-v4.2.2-acceptance-20260822.json` |
+| OpenList 19.23.3 rerun | ISOLATED PASS after accepting only the consistent empty pair and rejecting malformed totals/content. Fresh v4.2.2 Local driver passed empty-root/lifecycle/no-overwrite/same-service and Local↔OpenList/Organizer Copy/Move/content/size/source/allowlisted cleanup. No third-party-driver or remote atomic certification; fixture destroyed. | `/tmp/mediaflow-openlist-v4.2.2-acceptance-pass-20260822.json` |
+| MinIO 19.24, 2026-08-22 | ISOLATED PASS on official loopback `quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z`: lifecycle/no-overwrite, Local↔S3/S3↔S3 Organizer Copy/Move/content/size/source/cleanup. Generic S3 evidence only, not AWS/R2. | `/tmp/mediaflow-minio-2025-07-23-acceptance-pass-20260822.json` |
+| Samba 19.24, 2026-08-22 | FAIL on `servercontainers/samba:smbd-only-a3.21.3-s4.20.6-r1`: real errno EEXIST(17) mapped to IO_ERROR. Transfers did not run and adapter cleanup failed; isolated deployment/backend removed. | `/tmp/mediaflow-samba-4.20.6-acceptance-fail-20260822.json` |
+| Samba 19.24.1 rerun | ISOLATED PASS on fresh Samba 4.20.6 root after structural errno mapping and enumeration metadata removed implicit default-port 445 stat. Empty preflight/lifecycle/no-overwrite/Local↔SMB/SMB↔SMB Organizer Copy/Move/content/size/source/cleanup passed. Generated objects/container/share/credential destroyed. Together with MinIO this bounded 19.24 profile passed; no AWS/R2/fault/atomic certification. | `/tmp/mediaflow-samba-4.20.6-acceptance-pass-phase-19.24.1-20260822.json` |
 
 ### Samba and MinIO Phase 19.24 command contract
 
-Real suites use `TEST_REAL_SMB_*` and `TEST_REAL_S3_*` variables. Each requires explicit endpoint,
-credentials, Share/Bucket, a relative `mediaflow-acceptance-*` root, the exact destructive confirmation
-`DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA`, and a new absolute `.json` report path. Partial
-configuration fails closed; no configured media library is consulted. The former Endpoint-only S3/R2
-test with a default `mediaflow-test` prefix has been removed.
-
-### Phase 19.24 isolated result
-
-On 2026-08-22, pinned `servercontainers/samba:smbd-only-a3.21.3-s4.20.6-r1` and official
-`quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z` containers were bound to host loopback with
-generated credentials and temporary data.
-
-MinIO passed lifecycle/no-overwrite, Local↔S3 COPY/MOVE, S3↔S3 Organizer COPY/MOVE, content/size/source
-assertions, and allowlisted cleanup. This is `ISOLATED PASS` for generic S3-compatible behavior, not
-AWS S3 or Cloudflare R2 service acceptance. Its report is retained outside Git at
-`/tmp/mediaflow-minio-2025-07-23-acceptance-pass-20260822.json`.
-
-Samba passed connection, empty-root preflight, write/read/stat, then failed no-overwrite error
-classification: real `SMBOSError` carried `errno=EEXIST (17)` but `SmbProtocolClient._convert_error`
-mapped it to `IO_ERROR`, not `ALREADY_EXISTS`. The fail-fast matrix did not run SMB transfers, and
-adapter cleanup also failed, so the temporary backend was removed only with the isolated deployment.
-Result is `FAIL`; report: `/tmp/mediaflow-samba-4.20.6-acceptance-fail-20260822.json`. A separate repair
-and complete rerun are required before Phase 19.24 can pass.
-
-### Phase 19.24.1 Samba repair and rerun
-
-The SMB client now maps standard errno values structurally, including real Samba `EEXIST` as
-`ALREADY_EXISTS`. Directory enumeration consumes metadata already returned by `scandir` instead of
-issuing an implicit follow-up stat on default port 445. This keeps loopback/non-default-port
-deployments on the configured endpoint and avoids an extra request per directory entry.
-
-A fresh empty root on the pinned Samba 4.20.6 container passed empty-root preflight,
-lifecycle/no-overwrite, Local↔SMB COPY/MOVE, SMB↔SMB Organizer COPY/MOVE, content/size/source
-verification, and allowlisted cleanup. Result: `ISOLATED PASS`. The non-secret report is retained at
-`/tmp/mediaflow-samba-4.20.6-acceptance-pass-phase-19.24.1-20260822.json`; the container, generated
-objects, temporary share, and credential were destroyed. Together with the retained MinIO PASS,
-Phase 19.24 is PASS for self-hosted Samba and generic S3-compatible MinIO. AWS S3, Cloudflare R2,
-provider-specific fault injection, and remote atomic publication are not certified by this result.
+`TEST_REAL_SMB_*` / `TEST_REAL_S3_*` require explicit endpoint, dedicated credentials, Share/Bucket,
+relative `mediaflow-acceptance-*` root, exact `DELETE_ONLY_GENERATED_MEDIAFLOW_ACCEPTANCE_DATA`
+confirmation and a new absolute `.json` report path. Partial configuration fails closed; no default
+prefix or configured media library is consulted. Suites never derive consent from runtime config.
 
 ### Phase 19.25 endurance and interrupted-transfer result
 

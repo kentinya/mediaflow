@@ -135,25 +135,13 @@ defines the CLI and end-to-end journey. No implementation is claimed.
 
 ## Automation workspace requirements — TARGET (Slice 43)
 
-Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
+Slice43 remains user-frozen; its preserved Contract is
 `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
-Slice45's ACTIVE Contract owns Task Center, integrated manual plan-summary confirmation and first-
-deployment Scan absence. The user-approved 2026-10-18 narrow exception moves removal of scan-only/
-scan-and-plan modes and exclusive branches into Slice45; the remaining Slice43 work stays frozen.
-Old-mode inventory/history/parity clauses below are historical targets superseded by V2-OPS-011,
-not Scan compatibility obligations. Supported automatic-organization history and safety remain.
-
-Following the user-authorized main integration, the user's later 2026-10-18 decision makes the
-merged Slice43 implementation no preservation, compatibility or acceptance prerequisite for
-Slice45. Required Scan/FileIndex cleanup may adjust or remove its specific coupling; the Automation
-page may be redesigned and implemented after Slice45 under a newly confirmed Contract. Historical
-43.2 PASS is preserved as history, not a current implementation obligation or automatic resumption
-of 43.3. Shared supported-work safety, exact pins/results, authority and audit remain required.
-
-The existing Automation/Settings foundations remain CURRENT. The following complete workspace
-journey is TARGET, selected from `docs/pics/自动化.png` and `docs/pics/自动化-全局设置.png` for business
-logic and visual style only. Activation is not a delivery claim; the preserved Slice43 Contract owns its bounded scope.
+Only Scan-mode removal and required FileIndex coupling cleanup are selected into 45. Merged 43
+implementation/historical 43.2 PASS is not a preservation, compatibility or acceptance prerequisite;
+future Automation redesign needs a newly confirmed Contract. Shared safety/pins/results/audit remain.
+These stable targets are retained, not a claim of delivered work or automatic 43.3 resumption.
+Historical old-mode parity/inventory clauses are superseded by `V2-OPS-011` first-deployment absence.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -184,67 +172,25 @@ boundaries are.
 
 ## UI-V2 Files Contract — 2026-09-14
 
-The bullets below retain the accepted historical baseline. Slice45's later `V2-FILES-005/006`
-TARGET explicitly supersedes their FileIndex display/synchronization/compatibility allowances;
-they do not authorize retaining an index after that outcome is implemented and accepted.
+The accepted baseline is consolidated in [Product Experience](product-experience.md#real-storage-files),
+[Architecture](architecture.md#ui-v2-files-and-manual-organize-authority-update--2026-09-13) and
+[the Files specification](file-page-visual-spec.md). ResourceLibrary/live Storage owns physical
+entries, exact relative paths and server-derived SourceIdentity; browser FileID/fingerprints or
+FileIndex membership never confer listing/organizing/execution authority. Same-kind bounded ordinary
+commands keep capabilities, current evidence, explicit Delete/Replace/Save, independent outcomes and
+OrganizerExecutor-only mutation; cross-Storage Move verifies before source removal. No direct browser
+Upload/Download or arbitrary binary/media editing. Page-local library Save composes checked atomic
+Active publication; failure preserves prior Active.
 
-- UI-V2 Files exposes ResourceLibrary as the first-level business object.
-- Files browsing is ResourceLibrary-scoped and backed by live Storage reads.
-- UI-V2 Files requests use `resourceLibraryId` plus ResourceLibrary-relative `path`; browser-supplied `storageId` and arbitrary Storage paths are not authority.
-- FileIndex catalog/detail journeys are not ordinary UI-V2 user routes.
-- Files entries must not expose FileIndex membership, `fileId`, occurrence IDs, fingerprints, claim
-  tokens or plan hashes as ordinary page authority. A bounded recognition/business-status projection
-  may be shown as display feedback when available; missing feedback must not hide or rewrite the live
-  Storage entry.
-- Manual organize Preview admission from UI-V2 Files uses `resourceLibraryId` and `relativePath`; the server creates SourceIdentity and OrganizePlan.
-- The UI-V2 Files path is FileIndex-independent for physical listing and organize Preview. The
-  server resolves the Active ResourceLibrary/Storage binding and derives source identity from live
-  Storage; it does not re-resolve the selected path through FileIndex. FileIndex may be consulted
-  only for the bounded display feedback projection.
-- The `+ 添加资源库` action creates a ResourceLibrary. Its final `保存` action submits one complete
-  candidate; the backend bases it on the current Active configuration, runs the existing validation
-  and checked-activation flow internally, and publishes a new immutable Active runtime only on
-  success. Any error rejects the save and preserves the previous Active runtime.
-- Every terminal Organize item automatically synchronizes its known outcome to FileIndex after the
-  OrganizerExecutor result is recorded. A synchronization failure is an independent durable
-  recovery state and never authorizes replay of an uncertain Storage mutation.
-- Browsing, selection, ResourceLibrary configuration and Preview admission must not otherwise
-  introduce a FileIndex dependency.
-- The current Slice 37 Files surface exposes Create Folder/Text File, Rename, Copy, Move, Delete and
-  allowlisted bounded text Edit. Direct browser Upload/Download controls, routes, services and
-  projections are outside the current delivery boundary; generic Storage/provider transfer
-  primitives remain available for supported backend workflows. The page does not render
-  recognition-result or organize-status feedback; its live entry names, breadcrumb paths and
-  current directory path preserve exact Storage identity, including boundary whitespace, and
-  visibly disambiguate that whitespace.
-- Direct file commands do not run the media Organize pipeline or require its Preview/execution-token
-  ceremony. Conflicts default to no overwrite, Delete requires one explicit permanent-effect
-  confirmation, and Replace/Edit Save are explicit overwrite intents bound to current Storage state.
-- Bounded selection and bounded directory recursion preserve per-item outcomes. Same-Storage
-  operations require advertised native capability; cross-Storage Copy is explicit, and cross-Storage
-  Move is an explicit Copy/verify/Delete-source compound operation that never deletes the source
-  after failed verification and never masquerades as a fallback.
-- Unbounded recursion and arbitrary binary/media editing remain outside this requirement. Any future
-  browser transfer surface must preserve the same bounded, backend-authoritative and
-  OrganizerExecutor-only safety boundary.
-- A known direct-operation result may reconcile bounded FileIndex display state after Storage
-  outcome is recorded. FileIndex does not authorize the operation, and reconciliation failure does
-  not replay it.
-- FileIndex-backed compatibility and legacy operation paths may remain elsewhere in the product,
-  but they are not valid physical-listing, source-identity or execution dependencies of the
-  ResourceLibrary Files page. The bounded display-feedback exception and terminal-result
-  synchronization above are the only permitted Files-page uses.
+The current Files page displays no recognition/organize-status feedback. Original optional feedback,
+result synchronization and index-compatibility allowances are superseded for the selected target by
+`V2-FILES-005/006`, without claiming all runtime dependencies have exited. Until that outcome passes,
+known sync failure remains independent and never permits replay. Exact accepted historical text is
+retained at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/v2-requirements.md`.
 
 ## UI-V2 Files Visual Contract — 2026-09-14
 
-- The sole visual reference is [`docs/pics/文件页.png`](pics/文件页.png) at `1536 x 1024`.
-- The exact page composition, copy, data fixture, drawer state and screenshot acceptance are
-  defined in [`file-page-visual-spec.md`](file-page-visual-spec.md).
-- The reference left navigation rail and top bar replace the previous dark horizontal V2 shell
-  through the single shared shell used by every V2 route. This is not a Files-only alternate shell.
-- This visual contract does not move authority into the frontend or make FileIndex a source or
-  execution authority. Focused backend behavior for direct file commands, ResourceLibrary
-  save/activation and post-mutation reconciliation is part of the confirmed Files journey.
-- Under the closed Slice 37 visual boundary, non-Files business features and routes were preserved
-  while their shared shell changed. Slice 38's explicit MediaLibrary requirements above now
-  authorize that page and its route integration while preserving the Files body.
+The immutable [`文件页.png`](pics/文件页.png), at 1536×1024, defines the replacement shared light shell
+and Files composition. [Files specification](file-page-visual-spec.md) owns copy/fixture/layout and
+visual acceptance; [MediaLibrary specification](media-library-page-visual-spec.md) owns its separate
+page. Shared chrome does not create another authority or imply unrelated business-page redesign.

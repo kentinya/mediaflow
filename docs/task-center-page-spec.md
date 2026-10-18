@@ -1,7 +1,7 @@
 # 任务中心最终方案 — Slice45（TARGET）
 
-本文件记录用户确认的任务中心页面、整理创建与恢复旅程。状态为 **TARGET / 待实现**，
-不是 CURRENT 交付声明。业务边界和验收以根目录 [SLICE.md](../SLICE.md) 为准；
+本文件记录用户确认的任务中心页面、整理创建与恢复旅程，仍为 **TARGET / 待整 Slice 验收**。
+部分实现已获 B Task PASS，不代表 A 交付或关闭；实际状态、业务边界与验收以 [SLICE.md](../SLICE.md) 为准；
 稳定要求见 [V2 Requirements](v2-requirements.md) 的任务中心 TARGET 章节（V2-OPS-009–012）。
 开发与审核只遵循 [Development Workflow](development-workflow.md)。
 

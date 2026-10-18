@@ -1,1197 +1,408 @@
 # MediaFlow Product Experience
 
-This document defines the canonical operator journeys for MediaFlow V1 and the explicitly separated
-V2 migration program. It describes user-visible behavior and completion semantics, not
-implementation history or frontend styling. Large-Slice order and status are maintained in
-[`roadmap.md`](roadmap.md); the current Slice authority is in [`SLICE.md`](../SLICE.md).
+This document owns operator journeys and completion semantics. Stable scope/IDs live in
+[Requirements](requirements.md) and [V2 Requirements](v2-requirements.md); technical boundaries in
+[Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
+The committed [Slice](../SLICE.md) owns active changes. Slice45's B-reviewed implementation is not
+A closure; its complete target specifications below remain the acceptance authority.
+Detailed superseded delivery notes are retained at
+`865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
 ## Product Experience Priority
 
-MediaFlow is designed around operator goals, not its internal architecture. User experience is the
-primary product-design and acceptance criterion: ordinary journeys should take the most natural,
-direct and lowest-friction path that still satisfies every correctness, security, authority and
-data-integrity invariant.
-
-- Ask for the minimum necessary user decisions. Safely enforce scope, permissions, capabilities,
-  limits, authorization binding and concurrency in the product rather than making the operator
-  orchestrate internal protocols.
-- Keep tokens, grants, revisions, claims, locks, checkpoints and fencing identifiers invisible when
-  they add no user value. Expose bounded identifiers only when they help diagnosis or support.
-- Complete normal operator journeys through Web-native actions. CLI remains an administration,
-  debugging, migration, automation, compatibility and emergency/support surface, not the fallback
-  completion path for an ordinary Web journey.
-- Interrupt for meaningful human intent: privilege escalation, unresolved ambiguity, uncertain
-  mutation, genuine conflict, expanded scope or irreversible/destructive effects. Do not repeat a
-  confirmation when no new intent or risk boundary has appeared.
-- Errors are action-oriented and recovery-oriented: say what failed, what remains durable, what is
-  safe to repeat and what the user can do next, without requiring raw exception interpretation.
-- Safe defaults reduce decisions instead of creating arbitrary blockers. Preview builds confidence
-  by explaining what will happen; it is not ceremony for ceremony's sake.
-
-These principles do not weaken RBAC, backend-authoritative permissions, explicit mutation intent,
-no silent overwrite/delete, bounded scope, auditability, redaction, Storage confinement, immutable
-Active snapshot pinning, stale/concurrent authority fencing, zero-mutation reads/Preview,
-OrganizerExecutor-only mutation or the prohibition on automatic replay of uncertain mutation.
+Choose the most direct complete Web journey that preserves correctness, security and data integrity.
+Automate determinable scope/capability/permission/freshness checks; interrupt for meaningful intent,
+authority escalation, ambiguity, conflict, uncertain effects or irreversible/destructive scope.
+Internal tokens/grants/revisions/claims/fences remain backend mechanisms, not ordinary user chores.
+CLI supports administration, automation and diagnosis; it cannot complete a required ordinary Web flow.
 
 ## Product completion contract
 
-Every operator-facing capability is evaluated as:
+Every capability completes **goal → entry → visible state → action → success → failure → recovery**.
+API and Web share application behavior. Active is the actual immutable runtime snapshot; admitted
+work retains its legitimate pin. Analysis/Preview has zero media mutation and no execution authority.
+Only OrganizerExecutor mutates Storage after explicit effect permission. No silent overwrite/delete,
+link fallback, unsafe path, secret leakage, successful-sibling replay or automatic uncertain replay.
 
-```text
-Goal → Entry → Visible state → Action → Success → Failure → Recovery
-```
-
-An Application service, repository, migration, CLI command or API route is not by itself a complete
-Web journey. API and Web use the same application behavior, permissions, validation, state and
-safety rules. CLI remains important for administration, debugging, migration and automation, but it
-does not replace a required Web management surface.
-
-All journeys share these rules:
-
-- DryRun/Preview is the default before media mutation.
-- Overwrite and source deletion are never silent.
-- Active means the exact immutable configuration snapshot consumed by runtime.
-- Automated decisions expose bounded, secret-free explanations.
-- Batch items retain independent state, result and recovery.
-- Retry repeats work; recovery explains durable state, known effects, safe repeatability and the
-  explicit next action.
-- Errors identify the affected object or item and processing stage without exposing secrets.
+Show bounded decision explanations. On failure identify item/stage, durable state, known effects,
+safe repeatability and the legal next action. Retry alone is not recovery. Unknown submission outcomes
+are reconciled from durable identity before another explicit attempt; reads never replay work.
 
 ## Configuration lifecycle
 
-### Current
+- **Goal/entry:** change runtime behavior through Settings/Configuration or focused business forms.
+- **State:** JSON_BOOTSTRAP versus MANAGED authority; Draft/Validated/Active/Superseded, exact version/
+  digest, references, validation/current evidence and capability readiness. Unsaved input is not Active.
+- **Action:** explicitly create/resume a Draft or successor, edit typed objects, inspect impact,
+  validate/test and checked-activate. Advanced whole-document JSON/import/export is a labelled support
+  path; imports create inactive Drafts. Business-page Save bundles shared validation and activation.
+- **Success:** one immutable candidate becomes runtime Active atomically; old work keeps its pin.
+  Publication starts no media Task/Job, scheduled occurrence, notification or Storage mutation.
+- **Failure/recovery:** stale/concurrent or invalid reference/evidence/runtime, denied permission or
+  unknown Save is actionable. Known rejection preserves prior Active and correctable input. Refresh
+  stale authority, repair named blockers, rerun relevant checks; verify unknown publication before
+  resubmitting. Corrupt Active stays explicit, never silently falls back to Draft/cache/JSON.
 
-The authenticated Configuration view and API now expose the managed lifecycle as a forms-first
-journey. Operators can create a successor Draft from the exact Active snapshot, inspect revision
-identity/version/digest, manage the canonical configuration object graph through typed cards and
-forms, review reference impact, run exact-revision validations/tests/previews, and checked-activate
-only the intended immutable snapshot. Whole-document JSON remains available only as an explicitly
-labelled Advanced/import/export/support path, not the ordinary editing authority. The compatibility
-JSON bootstrap remains supported for legacy, migration and compatibility operation.
-
-The visible states are:
-
-- **Draft**: editable and not consumed by runtime;
-- **Validated**: one exact version passed structural/reference validation and is still inactive;
-- **Active**: explicitly activated immutable snapshot consumed by runtime;
-- **Superseded**: former Active revision retained for history and pinned work.
-
-Editing invalidates prior evidence. Activation is atomic and fail-closed. A failed or unavailable
-Active revision leaves recovery/status routes available and does not start media work.
-
-The Files-page `+ 添加资源库` journey is a page-local convenience around this same managed
-configuration authority. Its final `保存` action submits one complete ResourceLibrary candidate;
-the backend uses the save-time Active snapshot as its base, performs the required validation and
-checked-activation steps internally, and publishes the new immutable Active runtime only when the
-whole flow succeeds. The operator does not perform separate Validate or Activate actions in this
-drawer. Any validation, dependency, Storage check, activation or runtime-load error rejects the
-save and preserves the previous Active runtime.
-
-## CURRENT — Storage management workspace
-
-Slice 39 delivers the authenticated V2 Storage management journey at `/ui-v2/storage`.
-
-- **Goal:** understand and safely maintain configured Storage locations without confusing
-  configuration state with the runtime Active snapshot or changing media contents.
-- **Entry:** choose `存储管理` in the shared V2 shell or continue through a supported authenticated
-  Storage deep link.
-- **Visible state:** bounded provider summaries and search, stable Storage identity/type/root,
-  enabled/read-only state, provider-safe check/readiness state, exact Active authority and bounded
-  ResourceLibrary/MediaLibrary references. Credentials, secret values and arbitrary host paths are
-  not shown.
-- **Action:** inspect detail/references, add/edit/copy/enable/disable/remove through typed forms,
-  or explicitly run a zero-mutation Connection/Read check. Setup-required state offers the existing
-  V1 Configuration handoff; transfer progress exposes Worker waiting/readiness and durable recovery.
-- **Success:** a complete checked successor becomes the immutable Active runtime, read evidence is
-  recorded without media work, or an admitted ResourceLibrary/MediaLibrary Copy/Move proceeds under
-  its own pinned revision and library kind.
-- **Failure:** invalid or unavailable provider/root, stale Active, blocked reference, missing setup,
-  unsupported command, schema mismatch or unavailable pinned context identifies durable state and
-  the next action without exposing secrets or requiring internal tokens.
-- **Recovery:** correct the named configuration/deployment blocker, refresh current authority, use
-  the existing setup journey, restore a compatible Worker or inspect the durable transfer projection.
-  Failed saves preserve the prior Active; admitted work is not resubmitted and uncertain effects are
-  never automatically replayed.
-
-### Journey
-
-- **Goal:** safely change the runtime behavior.
-- **Entry:** open Configuration with an API-principal bearer token, or use the configuration CLI.
-- **Visible state:** authority (`JSON_BOOTSTRAP` or `MANAGED`), revision status, version, digest,
-  validation errors, evidence currentness and Active identity.
-- **Action:** import or edit a Draft, validate it, run applicable exact-revision tests, then choose
-  checked activation or the explicitly labelled compatibility activation.
-- **Success:** the selected revision becomes the sole Active runtime authority; no scan, Job or
-  mutation is started by activation itself.
-- **Failure:** stale version/digest, invalid reference, missing or stale evidence, corrupt Active,
-  concurrent edit or runtime incompatibility is shown with the durable state and next action.
-- **Recovery:** refresh the revision, correct the Draft, rerun validation/checks, or stage an explicit
-  replacement Draft. A prior Active remains intact when replacement fails.
+[Configuration](configuration.md) owns exact fields, lifecycle APIs, secret references and checked
+publication. Reference-safe removal preserves media, Results and historical snapshots; it cannot
+silently publish unrelated Draft changes.
 
 ## First-time setup
 
-### Current boundary
+- **Goal/entry:** authenticate a management-only installation and open `系统设置`
+  (`/ui-v2/configuration`) or a setup-required page. Viewers get read state and admin guidance.
+- **State/action:** distinguish no Draft, resumable Draft, empty Active and broken prior Active.
+  Explicitly create the first Draft, inspect/export labelled JSON and activate empty or populated
+  configuration. No mandatory media forms or generated Storage/type/policy defaults.
+- **Success:** show `配置已激活，媒体业务尚未配置` for empty Active. Validate populated objects and
+  their declared references; require applicable library/Storage/recognition/destination evidence,
+  without blocking unrelated empty families. Browsing/transfer need not require the media pipeline.
+- **Failure/recovery:** retain saved Draft and input across reload/reconnect without duplicate
+  initialization. Fix named mount/secret/reference/schema/permission blockers. Broken prior Active
+  uses recovery, not automatic first setup. Return to the allowlisted originating page and refetch.
 
-A fresh instance currently starts from a minimal management-only bootstrap containing the database
-locator and environment-owned API-principal references, with no workflow defaults or Active runtime.
-An authenticated operator can create the first managed Draft through Web/API, including guided
-Storage and library setup. The compatibility JSON bootstrap remains available for legacy, migration
-and compatibility operation. A Draft or Validated revision can open the setup-only Storage Browser,
-which lists bounded immediate children and selects only Storage-relative directories; this is not the
-File Catalog and never becomes a general host filesystem browser.
+JSON defaults to actual Active; before activation label Draft/no-Draft. Portable exports retain safe
+environment references and supported managed fields, excluding database/principal/token deployment
+authority and unsafe URL credentials. Advanced edits are backend schema/field-allowlisted; restart-
+only settings are never presented as already consumed.
 
-For Local Storage, `rootPath` is an absolute path visible inside the MediaFlow execution
-environment. A self-hosted Docker deployment must bind-mount the directory explicitly with the
-intended read-only/read-write permission and make it readable by the container UID/GID. Unmapped
-host paths, host `/`, the Docker socket and arbitrary host filesystem access are unsupported. A
-missing or permission-denied root remains a bounded setup failure after reload with a recovery
-action to correct the deployment mount/ownership or Draft path and retry.
+Fresh Compose needs no media mount. Local roots must be explicit paths visible to the running
+container/UID/GID; host `/`, Docker socket and arbitrary unmapped paths are unsupported. Correct a
+missing/denied root by fixing the mount/ownership or Draft path, then retry the bounded read/check.
+V1's complete-configuration setup remains a compatibility path, not the native empty-first requirement.
 
-### Slice 26 delivered
+## Storage management and root recovery
 
-- **Goal:** turn a minimal fresh instance into a tested, immutable first runtime without hand-editing
-  SQLite or a complete runtime JSON document.
-- **Entry:** authenticate against management-only bootstrap state with no Active workflow revision.
-- **Visible state:** setup required, Draft contents, validation errors, Storage/library selections,
-  per-Storage read-only check evidence, destination precheck evidence and checked-activation
-  readiness.
-- **Action:** create the first complete Draft, configure Local/SMB/OpenList/AWS S3/Cloudflare R2/
-  generic S3-compatible Storage and libraries, select bounded paths, validate, test and
-  checked-activate.
-- **Success:** the first immutable Active snapshot is bound to runtime and can be used by an explicit
-  Preview or work request.
-- **Failure:** missing secret reference, invalid path, permission/authentication/timeout/not-found,
-  stale evidence, broken dependency or concurrent edit blocks activation without discarding the
-  Draft or any prior Active.
-- **Recovery:** correct only the stated blocker, rerun the bounded read-only action and activate the
-  same or a new Draft after exact evidence becomes current.
+- **Goal/entry:** inspect or maintain configured locations through `存储管理` (`/ui-v2/storage`).
+- **State/action:** real provider/identity/root, enabled/read-only/readiness and library references;
+  typed add/edit/copy/enable/disable/reference-safe removal, or explicit Connection/Read check.
+  No secrets/private host paths or mutation-based capability probes.
+- **Success:** checked successor publication or bounded read evidence; supported transfers keep their
+  own library-kind/pin. No media work from configuration management.
+- **Failure/recovery:** name unavailable root/provider, stale Active, blocked reference, missing setup,
+  schema/secret/permission issues and the correction/refresh/setup action. Preserve prior Active.
+  Worker waiting leads to readiness diagnosis, not request resubmission or unsafe replay.
 
-Checked activation is provider-neutral. It requires current read-only per-Storage checks for every
-enabled Storage referenced by a library, a current Recognition Strategy Test, and a current
-read-only destination precheck for the MediaLibrary destination on any supported Storage kind. The
-older Local-only setup check stays available as a Local diagnostic and is not required for
-activation.
+OpenList `rootPath` may be empty or `/`: display `提供商根目录` and preserve the exact provider-valid
+value through Save, inventory, detail and Edit. Other providers retain their own rules. A failed
+list read after Save is a read/presentation failure, not proof of rollback: verify durable state,
+never automatically Add again, reset the database or move media. Existing saved values remain readable.
 
-### CURRENT — V2 Settings and empty-business activation
+## Recognition and rules
 
-Slice 40 delivers this journey. It replaces the earlier mandatory Storage/library/policy wizard and
-business-page first-Draft proposal. The existing V1 setup handoff remains available during migration.
+- **Goal/entry:** manage the RecognitionRule→RecognitionType→four-policy graph at `/ui-v2/rules`,
+  or inspect recognition/metadata decisions from an explicit test, Preview or Task recovery.
+- **State:** actual Active, object identity/enabled state/references/readiness and separate unsaved
+  candidate. Overview, bindings, types, rules and Metadata/Naming/Classification/Organize inventories
+  open full-width without a selected editor. Add/Copy opens a drawer; Edit is a full-page route.
+- **Action:** typed lifecycle/reference impact, exact object test or policy preview and one `保存`.
+  Search/filter/navigation are read-only and create no Draft, Provider call or work. Forms retain
+  correctable tab-scoped input, not credentials or publication authority.
+- **Success:** focused whole-graph checked publication becomes Active for every consumer. Real rule
+  priority/score/ambiguity/stop-on-match remains authoritative; one enabled binding per type. C keeps
+  C under A Naming/Classification/Organize reuse. Save starts no work or execution authority.
+- **Failure/recovery:** show incompatible condition/operator, unsafe regex/template/path, duplicate
+  binding, missing/disabled reference, denied/stale/invalid response or Provider/test failure on the
+  affected object. Preserve input/Active; refresh stale authority, inspect/repoint references and
+  rerun necessary evidence. An unknown Save needs state verification before another submission.
 
-- **Goal:** make a fresh installation manageable and incrementally configure its capabilities without
-  having to define media business objects during deployment or first activation.
-- **Entry:** authenticate, open `系统设置` at `/ui-v2/configuration`, or follow a setup-required
-  business-page link. Viewers receive permitted read-only state and administrator guidance.
-- **Visible state:** no first Draft, resumable Draft, actual Active, and per-command capability
-  readiness. Distinguish an intentionally empty Active from unavailable/corrupt Active and invalid
-  responses. Empty activation says `配置已激活，媒体业务尚未配置`.
-- **Action:** explicitly create the first Draft, view/export labelled JSON, edit backend-supported
-  settings absent from other management pages, and explicitly activate. No mandatory Storage,
-  libraries, RecognitionType, rules or policy forms; no synthetic defaults. Then configure each
-  business capability through its supported page with existing exact-successor publication.
-- **Success:** the empty or populated candidate is the immutable runtime-consumed Active. Populated
-  objects pass structural and declared-reference validation; applicable enabled library/Storage,
-  recognition and destination checks remain mandatory. Unrelated empty families do not block saving.
-  A valid library may support browsing/transfer before media recognition/organizing is configured.
-- **Failure:** invalid populated objects/dependencies, stale authority/evidence, permission, secret,
-  mount, database/schema or publication failure identifies durable state and a meaningful next action.
-  Active existence alone never claims all media work is ready.
-- **Recovery:** retain the first Draft and failed-edit input; reload/reconnect resumes saved state
-  without duplicate creation. Correct named blockers and verify unknown publication outcomes before
-  another explicit attempt. Broken prior Active uses recovery, not automatic first initialization.
-  Return to the originating allowlisted application page and refetch actual authority.
+Reference images define hierarchy/style, not real names, counts, conditions or backend algorithms.
+TMDB remains the configured Provider abstraction; no implicit fallback or V1 Provider switching.
+Production identity selection explains parser/rule/policy/candidate score; unrecognized/ambiguous/
+below-threshold/credential/timeout/malformed evidence cannot fabricate an identity.
 
-JSON defaults to the actual Active; before first activation show Draft/no-Draft explicitly, and let
-users deliberately inspect a labelled Draft. A corrupt Active cannot silently fall back to Draft or
-cache. View/export includes all supported managed configuration without secret values or unsafe URL
-credentials. Portable exports retain permitted environment references but exclude deployment-owned
-database and API-principal/token authority; validated import binds to the receiving deployment.
-Advanced edits are schema/field-allowlisted, use the same permissions, audit, validation and activation
-as other surfaces, and never provide unrestricted JSON writes. Deployment/restart-only values must
-not be presented as already consumed by a running process.
+### Object-scoped tests and complete-flow checks
 
-Entry, refresh, creation and activation do not start media work. Worker, Scheduler and Notification
-Worker start and wait without Active, then adopt eligible configuration without restart. Worker
-retains supported commands, published pins, leases/fences and explicit uncertain-effect recovery;
-Scheduler never schedules from stale Active cache; Notification Worker neither claims targetless
-deliveries nor silently retargets an existing delivery. Configuration faults expose waiting reasons.
-Process liveness, DB/schema/registration/heartbeat and work readiness are separate. Fresh Compose
-needs no media mounts; Local Storage mounts remain explicit deployment prerequisites when used.
-Adding a mount may require container recreation; publishing configuration alone does not.
+`测试与预览` tests the edited candidate and relevant inputs; `完整流程检查` is a separate Rules
+Overview action using the exact complete graph. Local success does not imply production competition,
+whole-flow readiness, publication or execution permission. Save still validates its whole successor.
 
-This journey does not migrate every policy workspace or retire V1. Existing API/Web share one
-backend authority and preserve memory-only authentication, RBAC, exact snapshots and mutation rules.
+| Edited object | Local test and visible outcome |
+|---|---|
+| RecognitionType | Validate identity/name/description/enabled state without binding/sample. Optional associated-rule tests report real output; no rules shows `类型定义有效；暂无关联规则可供试识别`. Never force that type or resolve unrelated policies. |
+| RecognitionRule | Parse the submitted synthetic path and show bounded condition/group expected/actual/truth for this rule alone. Missing downstream bindings cannot turn a real local match into failure. Exact context stays visible; library selection never silently prepends a root. |
+| Binding | Check type, uniqueness and four references. |
+| Metadata | Offline configuration validity is distinct from credential/live identity; live testing is separate explicit intent and applies the configured policy. |
+| Naming | Typed identity/episode/tag sample renders the actual Movie/TV template family without other policies. |
+| Classification | Test its rules and MediaLibrary/safe path without Naming or Storage probes. |
+| Organize | Explain own effects, permissions and capabilities; destination/conflict/execution readiness stays `未检查` until contextual complete-flow analysis. |
 
-## Storage root display and save recovery
+Non-match/not-applicable/disabled are honest outcomes. Show only applicable fields and named input/
+reference corrections, never raw PolicyResolutionError. Offline local tests call no Provider or media
+Storage and create no executable work. Evidence binds non-Active candidate/purpose/sample/context and
+goes stale after relevant edits. Full-flow analysis retains real competition/policy resolution and
+planning, labels synthetic identity, exposes missing stages and uses bounded read-only destination
+checks; explicit live Metadata is separate.
 
-Provider-valid root values must round-trip from typed input through Save, Active inventory, detail
-and Edit. OpenList permits an empty root or `/` for its service root. Show an empty OpenList root as
-`提供商根目录` without changing the stored identity or pretending it is a host filesystem root.
-Other providers keep their own backend rules; Local still requires a valid confined absolute root.
-A legitimate empty root must not invalidate the whole inventory or cause a row to disappear.
+### Naming and classification destination
 
-A successful Save followed by a failed list read is a read/presentation failure, not proof that Save
-was rolled back. Preserve the durable result where known, offer explicit state verification when
-unknown, and never repeat Add or activation automatically. Existing saved empty-root configurations
-must become readable after the correction without a database edit, delete/recreate or media move.
+Inspect policy IDs, rendered names/directory, MediaLibrary/path, operation/capability/conflict and
+destructive effects before authorizing media work. Unsafe/missing/stale policy or destination fails
+the affected action; correct the named reference and rerun the exact preview. No silent fallback.
 
-## Recognition and metadata
-
-- **Goal:** identify the RecognitionType and actual movie/show without changing files.
-- **Entry:** submit a scan, Preview, File detail action or Strategy Test.
-- **Visible state:** parser evidence, matched rule, RecognitionType, selected RecognitionTypePolicy,
-  MetadataPolicy/provider identity, candidate list, score explanation and status.
-- **Action:** run offline Strategy Test by default; explicitly run the live TMDB test when needed;
-  choose an exact persisted candidate or provide a bounded Metadata correction when the current
-  review allows it.
-- **Success:** a bounded identity is selected or a clear automatic match proceeds to Naming and
-  Classification. RecognitionType remains independent of downstream policy reuse; C remains C even
-  when it uses A's Naming/Classification/Organize policies.
-- **Failure:** unrecognized, ambiguous, below-threshold, provider, credential, timeout or malformed
-  response failures remain visible and do not fabricate a type or identity.
-- **Recovery:** edit the relevant Draft/rule, rerun the exact Strategy Test, resolve the review, or
-  continue one resolved File correction as a new pinned DryRun. Provider switching is not a V1
-  capability; the production provider is TMDB through the Provider abstraction.
-
-## Naming, classification and organize policy
-
-- **Goal:** understand and approve what name, destination and operation the current policies produce.
-- **Entry:** Configuration policy editor, exact-revision preview, Strategy Test, File detail or
-  Automation Preview.
-- **Visible state:** selected policy IDs, rendered directory/filename, RecognitionType ownership,
-  MediaLibrary and relative path, operation, conflict strategy, required capabilities, warnings and
-  composed destination.
-- **Action:** edit the Draft, run Naming/Classification/Organize authority and destination previews,
-  and run the read-only destination precheck where applicable.
-- **Success:** the operator can inspect a complete explainable plan; a Preview remains zero-mutation.
-- **Failure:** unsafe template/path, missing library, unsupported capability, conflict, stale
-  revision/evidence or unavailable destination blocks the affected action.
-- **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
-  Unsupported operations never silently fall back to another operation.
-
-### CURRENT — Classification destination compatibility
-
-New Classification rules select a MediaLibrary and one safe relative `path`. Destination preview
-and runtime compose `MediaLibrary.rootPath + path + Naming.directory + Naming.filename` without
-adding the library display name or ID. Legacy `library/path` rules retain their old composition
-and are visibly labelled. An explicit conversion selects the destination library, preserves the
-existing path and acknowledges the changed destination; it never silently prefixes an old label.
-Save publishes a checked successor; old snapshots, Previews, Tasks and scheduled grants retain
-their original semantics and authority. Invalid/stale conversion leaves prior Active in use and
-keeps input available for correction and a fresh preview.
-
-### CURRENT — V2 organizing rules workspace (Slice 41)
-
-Slice 41 delivers this native Web journey over the existing managed configuration and policy
-engines. The ordinary path uses typed forms; V1 and Advanced JSON remain compatibility/support
-surfaces. Create/copy input is kept within the browser tab for correction and refresh; credentials
-and publication authority never become browser-persisted form state.
-
-- **Goal:** maintain and understand the complete rule graph from RecognitionRule through
-  RecognitionType and its Metadata/Naming/Classification/Organize binding, then click one `保存`
-  action that automatically validates and activates the exact candidate without raw JSON or V1 UI as
-  the ordinary path.
-- **Entry:** choose `整理规则` in the shared V2 shell, open `/ui-v2/rules`, or follow a capability
-  recovery link from Settings. Entry, refresh, search, filter and selection are read-only and do not
-  create a Draft, call a Provider or start work.
-- **Visible state:** show runtime-consumed Active separately from unsaved editor input and any
-  recoverable failed-Save candidate. The workspace contains Overview, Type Bindings, Recognition
-  Types, Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize
-  Policies. Each inventory shows stable identity, enabled state, references/impact and bounded
-  readiness. Unsaved or failed candidates are never presented as Active merely because Save was
-  attempted.
-- **Action:** add/copy/edit/enable/disable or reference-safe delete one object; run an exact-candidate
-  Strategy Test or policy preview; click `保存`. The backend persists the candidate, validates the
-  complete graph, runs applicable checks and atomically activates it. Internal revision and digest
-  fences remain backend-managed; the ordinary user has no separate Validate or Activate action.
-- **Success:** the exact immutable candidate becomes Active immediately after Save, the workspace
-  refetches runtime truth and downstream Files/Operations/Automation resolve the same policy
-  semantics. Save/activation starts no scan, Task, Job, scheduled occurrence, notification or
-  Storage mutation.
-- **Failure:** incompatible condition/operator, unsafe regex/template/path, duplicate enabled type
-  binding, missing/disabled reference, missing Provider secret, failed explicit test, stale Save
-  candidate, denied permission, malformed response, validation/evidence failure or unknown Save outcome
-  names the affected object/stage and leaves the previous Active in use when failure is known.
-- **Recovery:** preserve correctable input and any durable recovery candidate; refresh stale
-  authority before reapplying intent; follow reference impact to repoint dependents; rerun only
-  stale/failed explicit evidence; verify actual Active after an unknown Save outcome before another
-  Save attempt.
-
-The supplied `策略绑定.png`, `识别类型.png`, `识别规则.png`, `元数据类型.png`, `命名规则.png` and
-`分类规则.png` images define business relationship, full-width inventory composition, create-drawer
-form style and visual language. Their sample IDs, names, counts, priorities, conditions, templates,
-targets and status values are illustrative only, and pixel-identical reproduction is not required.
-The eight sections share a header whose search is scoped to the current family. The default page
-state is the complete inventory; explicit Add/copy opens a drawer, while existing Edit is a
-separate full-page state. Purpose-built forms retain a single checked Save and correctable failures.
-The production rule engine remains authoritative:
-priority/score/ambiguity/`stopOnMatch` are not replaced by visual list order; one enabled binding is
-allowed per RecognitionType; Classification selects a MediaLibrary plus safe relative path; Movie
-and TV naming retain their actual template families.
-
-Tests and previews are bounded analysis. Offline Strategy Test performs no Provider call; a live
-Metadata test occurs only after explicit intent through the configured Provider abstraction. Naming
-Preview never renames, Classification Preview never creates/moves and Organize authority/whole-chain
-Preview never grants execution. RecognitionType identity remains independent: C stays C when it
-uses policies associated with A.
-
-### CURRENT — Object-scoped Rules tests and separate complete-flow checks
-
-Local testing answers whether the object being edited behaves as intended; Overview's separate
-complete-flow analysis checks the exact current Active graph through shared production planning.
-Save retains full successor validation, applicable checks and atomic activation. Submitted local
-candidates remain non-Active, and accepted earlier delivery records retain their historical scope.
-
-- **Goal/entry:** test the current Add/copy/Edit candidate in its family-specific `测试与预览`
-  section; deliberately open `完整流程检查` from Rules Overview for combined analysis.
-- **Visible state:** current object/sample, relevant parsed fields and conditions, actual match or
-  calculated result, input errors, applicability and freshness. Full-flow readiness is separate.
-- **Action:** supply only relevant path/context or typed sample fields and explicitly run that
-  object's test. RecognitionType can optionally test its bounded associated rules. Complete-flow
-  and live Metadata tests are separate explicit actions, not automatic consequences of a local test.
-- **Success:** a valid type definition or locally correct rule/policy result remains successful
-  despite absent unrelated bindings/policies. A single-rule match does not imply it wins production
-  competition or that the complete organize journey is ready.
-- **Failure:** invalid current fields/references/sample, stale/denied/unavailable analysis and
-  explicit live Provider errors name the relevant object/stage. Non-match and not applicable are
-  normal conclusions; raw `PolicyResolutionError` is not useful recovery guidance.
-- **Recovery:** preserve input and known candidate/evidence, show which condition/reference needs
-  correction, refresh changed authority, then explicitly rerun. Unknown reads/test outcomes never
-  trigger automatic submission; tests leave Active and media unchanged.
-
-RecognitionType defines identity/name/description/enable state; RecognitionRule owns conditions.
-A new valid unbound type needs no sample just to validate its definition. With no associated rules,
-show `类型定义有效；暂无关联规则可供试识别`. Associated tests report actual rules, conditions and
-output identity without forcing the selected type or resolving downstream policies.
-
-A RecognitionRule test parses the submitted synthetic path and evaluates only that rule. Show
-each bounded condition/group's expected value, actual value and truth. For a path-contains-`电影`
-condition, `电影/Example.Movie.2024.mkv` matches and `Example.Movie.2024.mkv` does not. Neither
-requires a physical file or type binding. Missing downstream policies may yield separate readiness
-guidance but cannot turn that local match into a failure. Show exact tested context; choosing a
-ResourceLibrary does not silently prepend its root. Do not expose ignored title/type fields.
-
-Binding tests check type/uniqueness/four references. Offline Metadata checks its own configuration,
-not live credentials or a verified identity; explicit live testing applies that policy directly.
-Naming renders from typed identity/episode/tag inputs without other policies. Classification tests
-its own rules and referenced MediaLibrary/path without Naming or Storage probes. Organize explains
-its own effects/permissions/required capabilities; actual destination/conflict/execution readiness
-stays `未检查` until contextual full-flow analysis. Disabled state is visible rather than silently
-changed for a test. Relevant missing/invalid references still fail.
-
-All local offline tests perform zero Provider and media Storage I/O and create no executable work.
-Evidence identifies the non-Active submitted candidate/purpose/sample/context and becomes stale
-after relevant changes. Complete-flow analysis retains real rule competition, policy resolution
-and complete planning through shared backend semantics, exposes missing stages, labels supplied
-synthetic identity and requires explicit live Metadata intent. Necessary bounded destination reads
-remain read-only. Local evidence never grants publication or execution, and old strategy evidence
-retains its original scope.
+New Classification rules use MediaLibrary plus safe `path`: root + path + Naming directory/filename,
+without a library name/ID prefix. Labelled legacy `library/path` preserves old semantics until explicit
+checked conversion with destination-impact acknowledgement. Preserve path; do not silently add a
+legacy label. Old snapshots/Previews/Tasks/grants retain their original meaning; failed conversion
+keeps prior Active and correctable input.
 
 ## Real Storage Files
 
-### Current
-
-Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
-Storage-relative directory/file views. Current listings are lazy, deterministic and read-only,
-with confined roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path
-access. Closed Slice 37 delivered Create Folder/Text File, Rename, Copy, Move, Delete and supported
-bounded text Edit commands to this Files workspace, with bounded multi-selection where meaningful.
-Direct browser Upload/Download is outside the current Files surface; generic Storage/provider
-transfer primitives remain available for supported backend workflows. Live Storage remains the
-physical source and authority. The current Files presentation does not render recognition-result or
-organize-status feedback; FileIndex remains available only for bounded post-mutation reconciliation
-and separate indexed routes, never as physical listing or execution authority. Exact entry names,
-breadcrumb paths and the current directory path preserve Storage identity, including boundary
-whitespace, and the UI visibly disambiguates that whitespace. Viewing it does not recursively scan
-Storage or create work merely by viewing it. Both library pages preserve these names in list/grid, expose the full name on hover/focus and keep breadcrumbs
-within a scrollable bound. Long paths cause toolbar controls to reflow without overlapping content;
-display shortening never changes the selected path.
-
-### Journey
-
-- **Goal:** inspect the real configured Storage and choose a bounded file or ResourceLibrary scope.
-- **Entry:** **Files** navigation, Dashboard or a ResourceLibrary action.
-- **Visible state:** ResourceLibrary identity, its configured Storage binding, relative
-  root/breadcrumb, bounded live entries, pagination and provider/error state. Recognition-result and
-  organize-status feedback, FileIndex membership, occurrence, fingerprint and other authority
-  fields are not Files-page display state.
-- **Action:** browse a directory, select a bounded file/directory scope, refresh, create a folder or
-  text file, rename/copy/move/delete eligible content, edit supported bounded text, or continue to
-  the shared Scan/Preview/Organize journey.
-- **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without using
-  FileIndex as source authority; a common file command refreshes the live listing after its audited
-  per-item results, and a new ResourceLibrary becomes browseable only after the backend has successfully
-  activated its complete configuration.
-- **Failure:** missing root, permission, timeout, provider, capability, conflict, stale-entry or
-  path-escape failures identify the affected Storage-relative request and do not imply success.
-- **Recovery:** correct the configured Storage/path, retry the bounded read, or correct and resubmit
-  a failed ResourceLibrary save or direct command. A failed save leaves the previous Active runtime
-  intact; browsing and selection do not start an automatic scan, Provider request, Task or Storage
-  mutation, and an uncertain mutation is never replayed automatically.
-
-### Common file management from Files
-
-- **Goal:** perform ordinary, bounded maintenance without entering the media-organize workflow.
-- **Entry:** use the Files toolbar, selection action bar or one live entry's action menu.
-- **Visible state:** exact source/destination ResourceLibraries and relative paths, operation,
-  relevant capabilities, bounded selection/impact, per-item transfer progress and concise conflict,
-  stale or partial-state explanations; text editing shows bounded text rather than a media editor.
-  Single-entry commands are exposed through the accessible context menu; folders also open on left
-  click without an inline Open button.
-- **Action:** create a folder or supported text file; use the entry context menu to open, rename,
-  copy, move or delete one file/directory, or save supported text. Batch commands remain in the
-  selection action bar.
-- **Success:** the backend revalidates RBAC, selected Active Storage bindings, confinement,
-  capability and current entry evidence; OrganizerExecutor performs requested mutations with
-  independent results, and Files returns to refreshed live truth.
-- **Failure:** unsupported capability/type, root or unbounded deletion, destination conflict,
-  transfer limit/verification failure, stale evidence, denied authority or uncertain execution fails
-  closed with independent affected-item state and a safe next action.
-- **Copy/Move bounds:** source media byte totals are impact/progress information and do not by
-  themselves reject a transfer. Boundedness comes from top-level selection, recursively enumerated
-  entry count and depth, safe relative paths, and bounded manifest/checkpoint/operator projections.
-- **Recovery:** refresh and retry only known-safe items, choose another name/destination, inspect and
-  resolve partial transfers, reconfirm current delete/replace scope, or reopen changed text before
-  saving. Cross-Storage Move never deletes its source before verified Copy. These commands do not
-  require organize recognition, metadata, naming/classification, Preview or execution-token
-  ceremony, but retain mandatory mutation invariants. Generic Storage reads remain confined and
-  zero-mutation.
-
-### CURRENT — Shared ordinary maintenance on both library kinds
-
-ResourceLibrary Files and MediaLibrary Files share the ordinary maintenance behavior above with
-kind-specific authority; equal IDs never exchange evidence or scope. Rename/Delete require no
-Provider fingerprint to exist, but a fingerprint observed by the server remains binding. Exact
-kind/library/Storage/root/pin/path and type/size/modification evidence are rechecked without reading
-selected file bytes. Indistinguishable replacements and external check-to-write windows remain
-limits of provider observations. Text Edit uses its separate bounded loaded-content digest.
-
-Delete shows the bounded current scope/impact and asks once for permanent-effect intent. Long/batch
-work uses durable per-item Task results and cooperative controls. Unknown admission is read back
-through its retained request identity; known safe continuation preserves the reviewed scope, while
-uncertain effects require inspection and are never automatically replayed. Cross-Storage Move is
-explicit Copy→digest verification→Delete source, with partial states and recovery shown per item.
-
-### Add ResourceLibrary from Files
-
-- **Goal:** add a source ResourceLibrary without requiring the operator to manage internal
-  Draft/Validated/Active mechanics.
-- **Entry:** choose `+ 添加资源库` on the Files page.
-- **Visible state:** a page-local three-step drawer for basic information, Storage location and
-  confirmation, with bounded field errors and the current configuration context.
-- **Action:** complete the ResourceLibrary form and choose `保存`.
-- **Success:** the backend merges the candidate with the current configuration, completes the
-  existing validation and checked-activation flow, publishes a new immutable Active runtime, and
-  returns the new ResourceLibrary for selection on Files.
-- **Failure:** any invalid field, duplicate ID, invalid Storage reference/path, failed Storage
-  evidence, activation conflict or runtime-load failure rejects the save. The prior Active runtime
-  remains authoritative and the ResourceLibrary is not presented as saved.
-- **Recovery:** correct only the reported blocker and submit the same bounded form again; no
-  partially activated configuration or silent fallback is exposed.
-
-### CURRENT — Edit ResourceLibrary or MediaLibrary from its browse card
-
-Slice 38 delivered this focused journey through the shared managed configuration authority.
-
-- **Goal:** correct an existing library's ordinary configuration and make the validated result the
-  runtime Active configuration without entering the general Draft editor.
-- **Entry:** select a ResourceLibrary or MediaLibrary card, open its configuration menu and choose
-  `编辑资源库` or `编辑媒体库` beside the existing removal action.
-- **Visible state:** the three-step form is prefilled from one exact Active object. ID is visible but
-  read-only; name, enabled state, Storage and the kind-specific relative root are editable. The
-  confirmation step identifies Storage/root changes as configuration-only and does not imply file
-  movement.
-- **Action:** review the prefilled values, change only the required fields and choose `保存并激活`.
-  Revision/version/digest evidence remains backend-managed.
-- **Success:** the backend merges the focused fields without losing hidden object configuration,
-  completes validation and checked activation, and publishes one immutable Active successor. An
-  enabled edit refreshes the card and browse authority; a root/Storage change returns to that
-  library's root, while a name-only edit preserves a still-valid directory. A disabled result is
-  hidden truthfully with the existing configuration recovery handoff.
-- **Failure:** stale Active authority, invalid field/path, unavailable Storage/root, graph
-  dependency, permission, validation/evidence, persistence or runtime-binding failure leaves the
-  previous Active and Storage contents unchanged and keeps the entered values correctable.
-- **Recovery:** refresh a stale form before reapplying intended changes, correct the named blocker
-  and submit explicitly. Unknown outcomes are verified from current Active state and never
-  automatically replayed.
-
-## FileIndex and Media
-
-### Current
-
-This remains the accepted implementation baseline. The selected Slice45 TARGET below and
-[FileIndex retirement design](file-index-retirement-spec.md) replace this indexed journey completely;
-they are not a claim that the current CLI/runtime dependencies have already exited.
-
-FileIndex presents indexed discovery records separately from the real Storage Files view. Only files
-discovered by a ResourceLibrary scan appear in its catalog. Its `scanStatus` describes
-discovery/stability, while processing disposition, current source occurrence and bounded fingerprint
-evidence describe whether the indexed occurrence is organized, skipped, blocked or failed. The
-Files page may consume only a bounded display projection of recognition and processing feedback;
-the FileIndex record remains a separate authority boundary. Prior Results are marked current,
-historical or unverified. An explicit Reprocess request is shown only when the exact current
-occurrence is eligible; admission records a durable next action and does not create processing work
-or mutate Storage.
-
-- **Goal:** determine what MediaFlow knows about a file and what safe action is available next.
-- **Entry:** the current FileIndex view, Dashboard,
-  Task/Job, review, notification or history link.
-- **Visible state:** bounded FileIndex fields, source/library identity, scan and stability state,
-  parser/recognition/metadata evidence, policies, target, latest Results, related reviews/conflicts,
-  checkpoint and available actions.
-- **Action:** search/filter, open detail, resolve a review, start manual Preview or enter a recovery
-  action. Retired direct re-recognition, re-match and re-plan requests are not exposed.
-- **Success:** the operator can see why the file was classified, what happened and what can be done
-  without reading SQLite or internal logs.
-- **Failure:** missing, stale or unavailable evidence is shown as unavailable; the page does not
-  invent a decision or silently rebuild a plan.
-- **Recovery:** follow the stated review, Preview, checkpoint or recovery-continuation action. Reads
-  never mutate Storage or invoke a Provider unless the explicit live action requires it.
-
-## Manual organize
-
-### Current V1
-
-- **Goal:** review and execute a bounded, explicit one-shot organization for the generic indexed
-  V1 path. The V2 ResourceLibrary Files path uses live Storage for source authority and may use
-  only the bounded FileIndex business-status projection described in the Files journey.
-- **Entry:** select current Files and choose manual organize.
-- **Visible state:** durable intent, choices, exact Preview, pinned configuration identity, source and
-  destination, attachments, conflicts, capabilities, destructive implications and per-item state.
-- **Action:** choose allowed metadata/classification decisions, create a zero-mutation Preview,
-  select the exact Preview items and provide the separate confirmation/execute authorization.
-- **Success:** the existing OrganizerExecutor performs only the reviewed selected operations; each
-  TaskItem and Result records source, target, completed effects and certainty.
-- **Failure:** stale/changed source, conflict, unsupported capability, insufficient authority,
-  pre-mutation failure, partial effect or uncertain effect is attributed to the item.
-- **Recovery:** inspect the checkpoint/effects and use the explicitly offered safe recovery or
-  reconciliation action. Known successful siblings remain terminal; uncertain mutation is never
-  automatically replayed.
-
-### Current V2
-
-Slice 33 delivers routine interactive organization as a complete Web-native journey. The operator
-reviews an exact durable Preview, selects the intended items, separately permits any overwrite or
-source-cleanup effect, and chooses Execute once. The backend binds server-held, short-lived,
-single-use authority to the authenticated principal, exact Preview/configuration/item set and
-permitted effects, atomically admits the durable execution, and consumes the authority without
-asking the operator to issue a CLI token or copy a raw secret. The resident Worker claims the
-execution under a fence and only OrganizerExecutor may mutate Storage.
-
-The V1 one-shot token mechanism remains available for API automation, local administration,
-debugging, compatibility and emergency/support use. For the V2 Files-originated path, the page
-sends only `resourceLibraryId` and a ResourceLibrary-relative path. The server resolves the Active
-ResourceLibrary/Storage binding, calls `Storage.stat()`, builds the immutable SourceIdentity and
-creates the zero-mutation Preview through `create_from_sources`; it does not resolve the selected
-file through FileIndex or accept browser-supplied `fileId`, occurrence or fingerprint authority.
-The reviewed Preview is the operator-facing source of truth: it pins Storage ID, source path and
-source fingerprint, and the Worker validates that exact Storage object directly before mutation.
-RBAC, revalidation, bounded authority, limits, audit, conflict handling and no automatic replay of
-uncertain effects remain mandatory. Older FileIndex-backed operation routes remain compatibility
-surfaces outside this Files-originated journey.
-
-### CURRENT — Bounded folder organization with safe discovery restart
-
-The operator selects folders/files on ResourceLibrary Files or enters from Operations, deliberately
-starts bounded discovery, sees exact scope/pinned context, progress, exclusions, waiting and read
-errors, then reviews the frozen sources through existing exact Preview and separately confirms
-execution. MediaLibrary remains outside organizing-source scope. List/grid support the journey with
-at most 100 selected scopes and 100 primary sources; actual pinned filters, depth and elapsed stability
-apply. Matching enabled Trailers are attached to the retained main rather than frozen as separate
-primaries, including explicit files in mixed selections.
-
-Normal cooperative Pause/Continue and cancel remain available. If unfrozen discovery is interrupted
-and safe continuation cannot be proved, show the failed/stopped stage, retained findings and zero
-media effects, then offer explicit new discovery after the old attempt is settled/fenced. The new
-attempt is visibly distinct; reads never restart work. Waiting stability is re-observed only after
-the required interval; lost observations do not count as proof.
-
-A lost admission response either recovers a proved original request or remains unresolved with
-native Operations inspection/resolution and retained request context. Do not select another
-root/pin or automatically resubmit. Guaranteed seamless recovery across simultaneous activation,
-every old duplicate/interrupted discovery and arbitrary control/crash combinations is locally
-deferred by the user-approved PARTIAL / RESCOPE in root `SLICE.md`. This reduces discovery recovery
-promises without claiming the old promises shipped or changing stable product recovery targets.
-
-Exact legal long names survive discovery and manual handoff. Read failures preserve unaffected
-findings and allow only an explicitly reviewed known subset; material bounds cannot expose an
-executable first-N prefix. Repeated/concurrent Freeze converges on one linked intent. Exact Preview
-permissions, source checks, independent outcomes and completed/uncertain-effect non-replay remain
-mandatory. Durable discovery status and controls are also available in the unified Operations
-inventory, with command-specific Worker readiness and a return to Files.
-
-## Manual operations and file lifecycle
-
-### Current
-
-Slice 27 delivers the bounded daily-operations journey across real Storage Files, FileIndex state,
-manual Scan/Preview/Organize, conflict/review/recovery continuation and Processing Worker readiness.
-The current V2 Files page narrows its own path further: physical display and Files-originated
-organize Preview use ResourceLibrary/live Storage authority, while a bounded FileIndex projection may
-provide recognition and processing feedback for display. FileIndex remains a separate indexed
-discovery and compatibility surface and is not used as source or execution authority by Files.
-
-- **Goal:** start from a real configured Storage or from MediaFlow's indexed processing view and
-  safely complete a file- or ResourceLibrary-scoped manual operation.
-- **Entry:** **Files** for bounded live-Storage browsing, **FileIndex** for indexed discovery and
-  processing state, or a ResourceLibrary manual-action entry. These are separate authority paths;
-  Files-originated Preview/Organize does not query FileIndex for source identity or execution
-  authority; only the bounded display projection and post-Organize result synchronization are
-  permitted.
-- **Visible state:** Files shows ResourceLibrary-relative live entries plus bounded recognition and
-  processing feedback when FileIndex has a matching current record; FileIndex shows indexed
-  discovery, scan/discovery state and processing disposition. Current source occurrence/fingerprint,
-  prior result relevance, worker readiness, Preview findings and any real execution blocker remain
-  on the indexed/processing surfaces and are not exposed as Files authority.
-- **Action:** choose bounded **Scan**, **Preview** or **Organize**; Preview records only inspectable
-  findings, while Organize requires the correct one-shot manual authority. Explicit Reprocess is
-  available when a current source occurrence is otherwise protected from accidental duplicate work.
-- **Success:** Preview performs zero mutation and creates no mandatory review backlog; Organize
-  records an independent result/disposition for every selected item and automatically synchronizes
-  each terminal outcome to FileIndex.
-- **Failure:** an actual Organize item may enter Attention/Conflict/Review/Recovery with known
-  effects and retry safety. A queued request with no live processing Worker is reported as such
-  rather than remaining inexplicably Pending. A FileIndex synchronization failure is recorded as
-  an independent post-result failure and does not make an uncertain Storage mutation eligible for
-  automatic replay.
-- **Recovery:** save the operator decision without executing it, re-analyze the exact item, obtain
-  explicit continuation authority, or repair the bounded FileIndex synchronization state. Continue
-  the original Organize journey without replaying successful siblings or uncertain mutation.
-
-## CURRENT — Transfer continuity and Worker readiness (Slice 39 implementation)
-
-- **Goal/entry:** from existing ResourceLibrary or MediaLibrary Files, explicitly submit Copy/Move
-  after setup without restarting a Worker that was already running.
-- **Visible state:** distinguish process alive, registered/DB/schema ready and command/pin capable.
-  Current Active availability describes new admission; older admitted work shows its own execution
-  prerequisites. Do not imply that a healthy container or API guarantees transfer execution.
-- **Action/success:** review and submit once; follow durable progress and revisit through Operations.
-  Eligible queued work proceeds when a compatible Worker is available. New B work uses B; admitted
-  and running A work keep A. Configuration publication alone starts no transfer.
-- **Failure:** show `等待可用 Worker` before or immediately after submission when applicable, with
-  no/stale Worker, unsupported command, schema mismatch or unavailable pinned context explained.
-  Invalid task snapshot/secrets blocks new mutation, never falls back or silently loses the queue.
-- **Recovery:** retain admission, known effects and independent item outcomes; offer the applicable
-  start/restore Worker, repair schema/deployment prerequisite, inspect configuration or read refresh
-  action. Do not tell users to resubmit admitted work or copy internal revision/fence identifiers.
-  Finished and uncertain operations are never replayed; slow OpenList work keeps ownership.
-
-The current implementation reuses existing Files/Operations surfaces and adds no new transfer
-command or setup/authentication UI. Slice acceptance remains governed by `SLICE.md` and its review
-workflow rather than this factual journey description.
-
-## Per-item failure and recovery
-
-- **Goal:** continue a failed or waiting item without hiding successful siblings or replaying unknown
-  effects.
-- **Entry:** Task detail, File detail, recovery batch or linked review.
-- **Visible state:** Task/TaskItem stage, pinned configuration identity, source/target, completed
-  operations, effect certainty, error category, durable checkpoint and available actions.
-- **Action:** resolve Recognition/Metadata/Classification review, retry a failed read-only stage,
-  continue a resolved correction as DryRun, resume a safe checkpoint or create a bounded recovery
-  batch; ignore a waiting item only through the explicit terminal ignore action.
-- **Success:** the item gets an independent new continuation/Result where appropriate; successful,
-  skipped, ignored and DryRun siblings remain unchanged and visible.
-- **Failure:** snapshot unavailable, stale request, duplicate admission, cancellation, permission or
-  uncertain mutation remains durable and actionable.
-- **Recovery:** repair the stated dependency, revalidate exact snapshot identity and choose the
-  permitted action. A retry is not presented as recovery when effect certainty is unknown.
-
-## Scheduled unattended organization
-
-### Current
-
-The authenticated Automation view manages a ResourceLibrary-scoped Automation Task Definition,
-interval/Cron schedule, exact Preview, persistent revocable unattended authority, occurrences,
-linked Tasks/TaskItems/Results and recovery. Each due run pins the Active snapshot at Job creation
-and rechecks scope, authority, capabilities, conflicts and current authority at every mutation
-boundary.
-
-### Journey
-
-- **Goal:** run a reviewed, bounded organization schedule without a click for every due run.
-- **Entry:** open Automation and create or edit a definition for an existing ResourceLibrary.
-- **Visible state:** enabled state, scope, schedule/timezone, next run, Active identity, Preview,
-  grant/revocation state, occurrence history and per-item outcomes.
-- **Action:** validate, Preview, explicitly grant scoped unattended authority, then inspect or revoke
-  the definition and its runs.
-- **Success:** each due occurrence creates one pinned AutomationJob and uses the existing pipeline;
-  item outcomes and recovery remain independently visible.
-- **Failure:** invalid snapshot/reference/provider, unstable input, conflict, unsupported capability,
-  revoked authority or another safety gate stops only the affected item/run and records next action.
-- **Recovery:** repair the definition or configuration, rerun Preview, regrant when scope changed,
-  and use the item checkpoint/recovery path. No uncertain mutation is automatically replayed.
-
-### TARGET — V2 Automation workspace and engine settings (Slice 43)
-
-Slice43 is frozen by user request (2026-10-15). Its unchanged business Contract is preserved at
-`ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-These retained Automation workspace targets are not inherited by Slice45 or a delivery claim.
-Slice45 owns its manual journey and first-deployment Scan absence; the 2026-10-18 narrow exception
-also removes scan-only/scan-and-plan modes and exclusive branches. The remaining Slice43 workspace,
-Run once, metrics and settings-consumption work stays frozen, without importing its unaccepted code.
-
-The subsequent user-authorized main integration and 2026-10-18 scope decision supersede that
-isolation rule: merged Slice43 pages/Run once are not preservation or acceptance prerequisites for
-Slice45. Scan/FileIndex cleanup may remove their necessary coupling without first adapting the old
-Automation UI. The page can be redesigned and implemented after Slice45 against a newly confirmed
-journey/Contract; historical Task43.2 PASS does not require preserving that implementation. Shared
-supported-work safety, exact pins/results and audit remain; no unrelated redesign is started here.
-
-The two Automation references define composition/style and business relationships only. Their
-names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
-CURRENT; this complete redesign and actual per-process settings adoption are not yet delivered.
-
-The user-approved 2026-10-13 change makes automatic organization the only Automation mode in this
-TARGET journey. The clarified instruction entirely removes scan-only/scan-and-plan Automation modes,
-their definition-bound execution branches and compatibility paths; there is no conversion feature.
-That Automation amendment itself does not retire standalone diagnostics; Slice45's later TARGET
-separately retires standalone Scan and integrates the selected organization's Preview UI.
-General diagnostic DryRun and internal analysis remain. CURRENT code still supports the old modes until
-the transition is implemented. Existing accepted journeys and historical outcomes are not rewritten.
-
-- **Goal/entry:** open shared-shell `自动化` to manage long-lived source/schedule intent, inspect
-  each run and adjust the engine. Use `任务列表 / 执行记录 / 全局设置`; the header settings shortcut
-  and System Settings link resolve to the same managed settings authority.
-- **Visible state:** real definition/source/limit/schedule with fixed `自动整理` intent, enabled
-  versus authorized/readiness state, next run and actual latest outcome; server-paged inventory/history and labelled monthly
-  metrics. Draft-only objects remain recoverable but never appear as published. Job completion is
-  not media success, and reaching an item bound is not proof that the source is exhausted.
-- **Configure:** native typed create/copy/edit/enable/disable/reference-safe removal and one checked
-  Save publish only the intended exact successor. Preserve unrelated open Drafts. Copy starts
-  disabled without authority; removal preserves historical runs and revokes future unattended
-  mutation. Disabling future scheduling, cancelling existing work and revoking authority are
-  separate actions with explicit effects.
-- **Removed-mode data:** old configuration requesting either removed mode is unsupported and offers
-  existing configuration correction/removal guidance; old work stops safely with cancel/history
-  guidance. There is no legacy-mode inventory, compatible running path or conversion action. Preserve
-  historical intent/results/pins; no import, copy or upgrade silently turns old work into organization.
-- **Preview/authorize:** show the existing bounded zero-media-mutation chain and expected effects;
-  separately confirm scoped unattended permission. Valid future scheduled runs need no repeated
-  execution click. Relevant changes require fresh evidence/authority under the existing gates.
-- **Run once:** use the published automatic-organization source/limit with current permissions,
-  even if its schedule is disabled. Automatically discover eligible live sources in that saved
-  scope and freeze the complete bounded manifest; no normal file picker is required. Show exact
-  Preview, then separately confirm one-shot execution of that manifest. Display the definition
-  ceiling and the existing 100-primary manual/discovery bound; apply the smaller limit. Overflow
-  or incomplete discovery explains why execution is blocked and offers narrowing the definition
-  scope, publishing and fresh discovery/Preview; never silently choose the first N files. Empty
-  discovery reports no work. Item ambiguities use existing decisions/recovery, and changed scope
-  or sources require fresh evidence/intent. Do not reuse scheduled grants as manual permission or
-  change the next due time. Show durable discovery/analysis immediately after its admission and
-  the actual run after execution admission; preflight is not an admitted media execution.
-  Adding a definition chooses its ResourceLibrary/sub-scope, not individual files. The separate
-  Files/Organize manual-selection journey retains its existing behavior.
-- **Results/recovery:** cross-definition records preserve manual/scheduled origin and historical
-  scope, then link to native Operations detail, per-item decisions and safe continuation with
-  return context. Failed admission, capacity, invalid dependency, conflict, revoked authority,
-  stale Preview and uncertain effects explain durable state and the specific permitted next step.
-  Unknown submissions are reconciled before another attempt; successful siblings are preserved.
-- **Global settings:** present shared pending-plus-running Job capacity, no-update stale threshold,
-  Worker polling and Scheduler polling. One checked Save publishes only these fields. Show target
-  values separately from fresh actual consumer values/version; pending adoption, stopped/stale
-  process or deployment override cannot be shown as effective. Supported resident loops adopt
-  polling changes safely without routine restart; normal users do not manipulate revisions/tokens.
-- **Failure/recovery:** stale/failed Save preserves prior Active and correctable input; unknown Save
-  reads durable truth. Missing consumer evidence leads to refresh/readiness diagnosis, not a false
-  success banner. Empty Active offers dependency setup, broken prior Active offers recovery, and
-  insufficient permission offers appropriate administrator guidance. Ordinary journeys stay in Web.
-
-Statistics count each admitted definition-linked run once across Job/Task/execution links. Month
-windows use the declared system timezone; success is relative to run mode and excludes active/waiting
-work from the terminal denominator while partial/cancelled/failed/terminal-uncertain are not successes.
-Standalone diagnostic/grant-preflight Previews, discovery alone and rejected admissions are not runs;
-previously admitted scan/plan work retains its historical mode and does count, without being
-relabelled as organization. Previous-month comparison uses equivalent elapsed
-local calendar time, clamped to month end; absent denominators/data are explicitly unavailable.
-
-## Operations administration
-
-### Current
-
-Slice 28 delivered this day-2 operations administration journey.
-
-- **Goal:** administer the running installation after first setup.
-- **Entry:** Configuration, Settings, configuration/result import-export or Notifications.
-- **Visible state:** the immutable Active and its editable successor Draft, discoverable object
-  lifecycle/reference impact, forms-first editors with Advanced JSON, consumed settings and Active
-  identity, versioned secret-free exports, Webhook definitions/events/readiness, delivery state,
-  leases, dead letters and recovery actions.
-- **Action:** create a Draft from Active, manage configuration objects consistently, edit and
-  activate settings, export/import a Draft, create/edit/enable/disable a Webhook, run its explicit
-  read-only test, inspect delivery and retry/requeue safely.
-- **Success:** day-2 operational behavior is managed through Web/API with durable audit and no
-  secret leakage.
-- **Failure:** invalid setting, secret reference, delivery or stale import is isolated and does not
-  change completed media work.
-- **Recovery:** correct the Draft or endpoint, validate again, and use the delivery-specific retry
-  or dead-letter action.
-
-## Docker self-hosted operation
-
-### Current Slice 29 delivery
-
-- **Goal:** deploy and operate MediaFlow as a durable production self-hosted service.
-- **Entry:** prepare deployment-owned secrets and explicit media mounts, then run Docker Compose.
-- **Visible state:** independent API/Worker/Scheduler/Notification Worker health, business/runtime
-  readiness, `/data` persistence and actionable mount/permission/migration status.
-- **Action:** start, inspect health, restart, back up, preflight and upgrade the image.
-- **Success:** production WSGI serving works behind an explicit LAN/reverse-proxy boundary; restart
-  preserves state without duplicate schedules or mutation replay.
-- **Failure:** missing mount, non-root permission issue, missing secret, unsupported exposure, schema
-  incompatibility or migration failure is explicit and fail-closed.
-- **Recovery:** fix deployment inputs, retain backup/previous artifact, rerun preflight or restore
-  through the documented migration/recovery path. TLS and public exposure remain deployment duties.
-
-## V1 and post-V1 boundary
-
-Slices 26, 27, 28 and 29 are PASS / CLOSED. The V1 self-hosted deployment journey is delivered.
-Provider switching and additional production Providers, built-in username/password or OIDC identity,
-a general Secret Store, automatic uncertain-mutation replay, historical rollback and specialized
-email/chat/media-server notifications remain V1.x/V2 or deployment-specific work.
-
-## V2 Operator Web migration
-
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31, 32 and 33
-have delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
-operator shell, centralized information architecture, shared route/authentication recovery,
-read-only Library journey and the complete Operations workspace. Slice 33's accepted Worker
-correction reconstructs the exact pinned source authority across the resident Worker boundary and
-fails closed before mutation when source evidence cannot be proved. Closed Slice 37 replaced the
-old V2 shell presentation with the shared shell shown in the Files reference and completed the
-current Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). Its
-post-closure correction also aligned formal `library/path` destination semantics with the local
-CLI and removed the direct browser Upload/Download vertical. Closed Slice 38 delivered the separate
-MediaLibrary journey; Slice 39 delivered Storage management and transfer continuity; Slice 40
-delivered native Settings, empty-business activation and resident configuration adoption. Slice 41
-delivered the native organizing-rules graph journey, exact-candidate analysis and one-Save checked
-publication. Slice 42 delivered the unified task center, durable safe Web continuation and native
-task-linked decision/failed-analysis recovery. The previously planned Slice 34–36 migration
-boundaries remain retired.
-
-### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
-
-- **Goal:** enter V2 at the root or a supported deep route, remain oriented in the operator shell,
-  and open the read-only Dashboard or a truthful migration landing. The operator connects through
-  the existing memory-only principal boundary, continues to the intended safe route, and recovers
-  from absent/rejected authority, forbidden access, unavailable data or an unknown route without
-  losing shell context.
-- **Entry:** enter the V2 migration surface at `/ui-v2` (or the repository-selected equivalent) and
-  authenticate with the existing API-principal Bearer token. Root entry connects to Overview/Dashboard;
-  direct deep entry preserves the intended destination and continues there after connection.
-- **Visible state:** the token exists in browser memory only; the shell renders persistent identity,
-  primary navigation, active page context and connection controls across wide and narrow viewports.
-  The route issues a typed query through the central API boundary and shows loading, empty, success,
-  error, unauthorized, forbidden and unavailable states inside the shell.
-- **Action:** inspect the bounded Dashboard result or request a bounded refresh. A refresh is a
-  read-only retry of the same query, not a new work request. Disconnect clears the token, query
-  cache and intended route, returning to the entry boundary.
-- **Success:** the operator sees the typed Dashboard data and its current permission state without
-  creating a Job/Task, invoking a Metadata Provider or changing Storage.
-- **Failure:** transport, API, invalid/expired token (401), unauthorized or forbidden (403) responses
-  remain visible as distinct bounded states without exposing secrets or raw internal errors. A 401
-  clears rejected authority and query state; a 403 retains the authenticated identity and offers
-  only valid navigation or reconnection actions.
-- **Recovery:** re-enter the API principal token in memory or retry the bounded read. Recovery does
-  not replay unknown work because this proving journey creates no backend work.
-
-### CURRENT V2 LIBRARY — Storage Files and FileIndex
-
-- **Goal:** answer separately what is physically present in configured Active Storage and what the
-  durable FileIndex currently knows about a source, then move between a uniquely linked physical
-  file and indexed record without starting work.
-- **Entry:** open `/ui-v2/library` or a supported Storage Files, FileIndex catalog or detail deep
-  link through the shared memory-only authentication continuation.
-- **Visible state:** the Library landing separates fresh Storage reads from durable discovery;
-  Storage Files shows Active Storage selection, relative breadcrumbs and bounded pages; the current
-  Files page does not render recognition-result or organize-status feedback. FileIndex shows submitted
-  filters, stable
-  pages, discovery versus processing state, and bounded detail/history/evidence with current,
-  historical, legacy, truncated and unavailable facts kept distinct.
-- **Action:** browse, search, filter, page, inspect, refresh and follow a uniquely confirmed
-  physical/indexed link. These actions are authenticated bounded GETs and do not submit Scan,
-  Preview, Organize, Reprocess, review/recovery or configuration work.
-- **Success:** the operator understands physical and indexed state, current relevance and the next
-  honest destination while retaining safe list/breadcrumb context.
-- **Failure:** absent Active configuration, invalid or stale paths/cursors, empty data,
-  missing/ambiguous linkage, malformed/unavailable responses and 401/403 remain bounded,
-  secret-free shell states rather than fabricated authority or current evidence.
-- **Recovery:** retry or restart the read, select another Active Storage, reset filters, return to a
-  valid Library parent, reconnect, or use an explicit V1 handoff for a journey not yet migrated.
-
-### CURRENT V2 OPERATIONS — Daily command center
-
-- **Goal:** start and follow bounded daily work from V2 without translating backend protocols or
-  copying raw execution authority, while retaining independent item outcomes and safe recovery.
-- **Entry:** open `/ui-v2/operations`, follow an actionable Dashboard count/failure, or continue
-  from a supported Library file, FileIndex record or ResourceLibrary scope. Task, Job, Preview,
-  execution, Automation, occurrence, Webhook and delivery details are refresh-safe deep routes.
-- **Visible state:** Worker readiness, source scope, Active/pinned configuration, admission versus
-  processing state, Task/Job/item outcomes, Preview choices/conflicts/capabilities/effects,
-  Automation Draft/Active/schedule/grant/occurrence state and Notification definition/delivery
-  state remain distinct and bounded.
-- **Action:** submit a bounded Scan or zero-mutation Preview; create, review and execute an exact
-  manual Organize; use only backend-advertised Task/Job controls; manage, preview, checked-activate
-  and grant/revoke an Automation definition; or manage, exact-test, checked-activate and recover one
-  eligible Webhook delivery.
-- **Success:** long work returns a durable identity immediately. Manual execution is bound to the
-  exact reviewed selection and separately permitted destructive effects; scheduled runs pin their
-  runtime and grant; every item and delivery retains an independent outcome.
-- **Failure:** missing Worker/Active runtime, stale source/Preview/revision, denied permission,
-  conflict/capability failure, expired or consumed authority, failed occurrence/delivery and
-  uncertain media effect are shown on the affected object without hiding successful siblings or
-  presenting unsafe replay as recovery.
-- **Recovery:** refresh the durable state, repair readiness, rerun a stale Preview, reauthorize the
-  exact reviewed operation, repair/repreview/regrant Automation or use the delivery-specific
-  recovery action. Slice 42 adds native task-linked decisions, checkpoint/remaining-scope
-  continuation and single/bounded failed-analysis recovery below. The closed Slice 33 did not
-  deliver those surfaces; its historical boundary is unchanged. Global Review and arbitrary
-  historical Reprocess remain outside the new native task-center journey.
-
-### CURRENT — V2 Operations and Tasks Workspace (Slice 42 PASS / CLOSED)
-
-- **Goal:** find and follow one admitted run, understand every file outcome, and complete safe
-  task-linked control/recovery in V2 without CLI commands, V1 fallback or internal-token handling.
-- **Entry:** shared-shell `操作与任务`, an existing Task/Job link, Files completion or an Automation
-  run. Its original visual reference remains in the accepted Slice42 Git checkpoint; names,
-  counts, dates, paths, posters, progress and ETA in that reference are illustrative. Entry has a full
-  list without selected detail; explicit selection/deep link opens the right panel, full-screen on
-  narrow layouts.
-- **Visible state:** server-filtered/searchable runs, authoritative scoped counts, operation kind,
-  historical source/target scope and trigger. Explicitly linked Job/Task records count once, including
-  queued/pre-Task failure; distinct occurrences/continuations remain traceable. Queue, stage, item
-  outcome and attention are separate facts. Unknown totals are indeterminate; partial/waiting/ignored
-  or uncertain outcomes are not success. Current Active cannot rewrite old scope labels.
-- **Action:** search by name/safe scope, filter status/kind/time, inspect detail/operation records,
-  export bounded secret-free results, or choose `新建整理任务`. Creation uses contextual live
-  ResourceLibrary file selection, existing exact Preview and explicit execution, then returns to
-  the selected admitted run. Reuse Files; do not make MediaLibrary an organizing source.
-- **Control:** use backend-advertised cooperative pause/cancel and native Continue for safely paused
-  supported asynchronous work. Show request versus acknowledgement and in-flight effects. Continue
-  queues only the remaining admitted safe scope with exact pin, ownership and applicable authority;
-  it does not acquire execution permission merely because a Task once had it.
-- **Success:** admission immediately becomes discoverable; independent item outcomes, operation
-  steps, result and linked attempts survive refresh/restart. A finished Job cannot hide a failed or
-  partial Task. Counts reconcile across pages, and unavailable data does not become zero.
-- **Failure:** explain missing/stale Worker, unavailable pin/dependency, permission denial, changed
-  source/Preview, stale decision, failed analysis, known partial effects and uncertain effects on
-  the affected run/item. Retain successful siblings and correctable input. Redact secrets/host roots.
-- **Recovery:** complete task-linked Recognition selection/ignore, Metadata candidate/correction/
-  ignore, Classification and conflict decisions using existing legal choices, followed by explicit
-  bounded analysis/Preview and separate execution intent where needed. Single and selected bounded
-  failed-analysis batches have independent accepted/refused outcomes. Original/continuation/results
-  remain linked; successful/ignored/unknown effects are not replayed. Unknown effects stay
-  investigation-only. Unknown submission first reads durable state; no automatic resubmission.
-
-The accepted journey includes durable Worker-backed Web continuation and native task-scoped
-recovery. A standalone global Review inbox, cross-task bulk review, history
-deletion/retention, unbounded whole-library organize, arbitrary historical Reprocess, Automation or
-Notifications redesign, universal rollback and V1 retirement remain outside this delivery. Retired
-file-level retry/re-recognition/rematch/re-plan entry points remain retired. A accepted the complete
-Slice Base..Implementation Head on 2026-10-06; its CURRENT scope does not expand earlier closures.
-
-### TARGET — 任务中心与分类恢复（Slice45）
-
-最终页面与九张参考图见 [任务中心最终方案](task-center-page-spec.md)。
-本节是用户确认的 TARGET；上方 Slice42 CURRENT 和既有交付事实保持不变。
-
-- **目标/入口：** 在任务中心发起真实整理、查看逐文件结果，并从同一横向导航行的
-  全部任务、进行中、需要处理、已结束、识别恢复、元数据恢复、分类恢复、冲突处理、失败恢复
-  直接进入各自的列表。每个恢复页跨任务展示该类型尚需处理的任务，无须先选择一个任务。
-- **可见状态：** 任务一行一个，显示稳定业务名称、来源范围、当前阶段/结果、问题摘要及涉及
-  文件数；任务数与文件数区分，同一任务可属于多个视图。后端统一查询、分页及统计，
-  普通排队不等于需要人工处理，旧失败不等于当前问题未解决，未知数据不显示成零或成功。
-- **创建动作：** 新建仅提供整理，选择 Active 资源库和安全目录/文件范围；Files 单项、多项、
-  文件夹来源复用同一旅程。显式准备执行内部有界发现、稳定性观察与完整计划计算，长操作
-  有持久进度；同一创建界面先展示实际计划摘要，再明确确认就绪选择。摘要含来源/完整性、
-  主文件/附件数、未就绪原因、操作与目标、可展开来源→目标及冲突/覆盖/清理影响。
-  没有独立 Scan 模式或独立 Preview 页面；普通操作者无需操作原始授权材料。
-- **成功结果：** 确认仅授权精确计划及所选就绪范围，受理后立即可跟踪。未选/未就绪项保留
-  独立准备状态与补正入口，不自动执行；准备本身不制造正式执行 Review/Conflict 待办。
-  正式整理中真实阻塞、逐项结果和恢复尝试独立持久，已成功文件不被其他项覆盖。
-- **恢复动作：** 恢复列表一行是一个任务在该类型下的范围，点击进入该任务该类型的文件处理
-  界面。识别、Metadata 候选/修正、分类、冲突和失败使用合适的原生表单；安全分析后在当前
-  界面显示新的摘要并明确继续，不跳转独立 Preview，不要求操作者管理内部 DryRun Task。
-  当前允许的任务内有界批量分析保留逐项结果，不新增跨任务批量执行。
-- **失败恢复流转：** 保留原任务每文件/附件的成功、失败、等待决定及效果未知；类型页进入问题
-  文件列表，先解释失败阶段、来源/目标、已完成步骤及允许动作。用户修复依赖或补充合法决定，
-  显式重新检查；新阻塞转入对应类型。只对可安全继续的范围显示新摘要、选择就绪子集并确认。
-  受理后跟踪关联恢复尝试，受理不算已解决；按当前问题更新清单，再次失败给出新原因和下一步，
-  原失败历史及成功兄弟项不覆盖。详细动作和混合结果示例见最终页面规范第 4 节。
-- **失败/补正：** 缺少权限/Worker/固定配置、来源变化、不完整发现、过期决定和不可用依赖
-  解释持久状态与可采取动作。保留输入和其他成功项；提交结果未知先核对持久状态，不猜测
-  最近任务或自动重发。未知真实效果只核查。处理后按实际问题更新相应类型列表，保留返回的
-  类型、筛选、分页、详情和原任务/续作历史。
-  修复依赖后仍需原固定上下文；发布新 Active 不替换旧任务配置，原上下文不可恢复时明确拒绝
-  继续。新方案仅在既有准入允许时重新准备并明确确认，不成为任意历史重处理入口。
-- **详情/控制：** 原生详情、操作记录和有界脱敏导出保留，Job/Task 只按真实关联去重；
-  暂停/取消区分已请求与生效，继续重验剩余范围和当前实际权限；必要摘要确认在当前界面完成。
-  页面/统计/刷新/导出/标签切换不创建工作、不调用 Provider、不变更媒体。
-- **Scan 不存在：** 按用户于 2026-10-18 确认的首次部署范围，独立入口及 scan-only/scan-and-plan
-  定义模式、专用执行/恢复/数据结构与退役兼容层删除。无页面/路由/导航/API aliases、CLI 注册/
-  帮助、readiness/action 专用项、410、退役说明/指引或专用防线；旧 URL/命令/类型走正常认证下的
-  普通 not-found/参数/不支持类型错误，在发现/准入/许可前停止，不转换为整理。无旧 Scan/V1
-  parity、停止/接管、迁移/转换或专用历史兼容。保留其他功能需要的发现/过滤/真实稳定观察/
-  零变更计划、diagnostic Preview/DryRun/Rules 测试及受支持的 scheduled Preview，不靠名称误删。
-  其他工作仍可重启/重开/恢复，结果/pin/权限/审计及未知效果非重放不变；不清空媒体/运行数据/
-  用户文件或改写 Git 历史。定义模式删除是冻结范围窄例外，其余自动化工作区仍冻结。FileIndex
-  完全退出仍属当前 Slice 的下一完整业务单元，见下方旅程。
-
-此处明确选入跨任务分类列表，取代此前对此类列表的延期；跨任务批量 mutation、任意历史
-Reprocess、历史清理、通用回滚、不确定效果重放及冻结 Slice43 的其余工作仍不在本 Slice。
-
-### TARGET — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
-
-用户要求的完整旅程和 CLI 示例见 [FileIndex 退役设计](file-index-retirement-spec.md)。
-在 CLI `mediaflow files list` 或文件页/媒体库页选一个资源库/媒体库并打开相对目录，
-三入口共用同一应用行为读取当前 Active 绑定的 Storage，只展示真实条目与有界分页。
-刷新/翻页不记录文件目录、观察、Task/Job/Result，不授予执行许可，不调用 Provider/Hash 或修改媒体。
-长名/空白、同名跨种类库、游标/越界和错误处理一致；故障不伪装空列表，也不回退索引。
-
-FileIndex 专用 CLI/API/V1/V2 列表、详情、统计、reprocess、同步修复与后台目录全部退出；
-旧 FileID/参数/链接只给退役与库级浏览/任务中心指引，不保留历史查询引擎。
-查看“发生了什么/如何恢复”通过现有 Task/Result/checkpoint/审计完成。明确发起的整理和
-文件维护继续保存必要逐项结果，列表不记录不意味着执行不留记录。
-无预扫描来源仍能在整理内完成真实稳定观察、同页摘要、精确确认和结果；工作重开/恢复不依赖索引。
-
-未上线环境不建设旧索引迁移、双写、历史兼容或在途接管，也不自动清空现存数据库/媒体。
-必要的共享 Automation 依赖移除在本范围；Scan 模式删除另按上方窄例外纳入当前 Slice，
-冻结 Slice43 的其余页面/Run once/指标/设置消费保持延期。
-这些是 TARGET；其他 CURRENT/已接受闭合事实待本 Slice 实际验收后统一核对。
-
-### Migration coexistence and deferrals
-
-- **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
-  authoritative. Existing Bearer authentication and RBAC continue to apply.
-- **CURRENT V2 FOUNDATION:** the separate V2 entry provides the centralized product-area model,
-  persistent responsive shell, typed routing/query/API boundaries, safe deep-link continuation,
-  shared route/authentication recovery and production static serving by the existing Python
-  application with no Node production runtime.
-- **CURRENT V2 LIBRARY:** the implemented Library route family composes existing Python
-  `/api/v1/*` read authority into distinct Active Storage and FileIndex journeys with strict typed
-  models, bounded paging/detail evidence and zero-side-effect physical/indexed navigation.
-- **CURRENT V2 OPERATIONS:** the implemented Operations route family composes shared Python
-  `/api/v1/*` authority into actionable Dashboard, Task/Job, bounded Scan/Preview, Web-native exact
-  manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
-  binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
-- **CURRENT V2 RULES:** the Rules workspace completes typed recognition/type-binding and downstream
-  policy management, reference-safe lifecycle, exact-candidate tests/previews and automatic checked
-  publication over the same Python authority. Settings shows corresponding rule-family readiness
-  and returns explicitly to the originating family.
-- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Global Review,
-  cross-task bulk review, arbitrary historical Reprocess, Provider switching and actual media
-  execution from Rules remain outside the delivered workspaces.
-  Slice 40's historical deferrals are unchanged; Slice 41 delivers its organizing-policy migration
-  portion without claiming the other deferred journeys have migrated.
-- **CURRENT V2 TASK CENTER:** Slice 42 delivers the reference-aligned inventory, truthful historical
-  detail/records, contextual live-file organize entry and native task-scoped recovery/continuation
-  above. Global Review and other unselected migration work remain deferred.
-
-## Files Journey Update — 2026-09-14
-
-The Files journey is: choose or create a ResourceLibrary, browse its directories, inspect live
-Storage entries, perform bounded
-common Create Folder/Text File/Rename/Copy/Move/Delete/supported text Edit actions, or select one
-or more files to create a zero-mutation organize Preview, confirm the reviewed result,
-and follow progress in Operations. The
-`+ 添加资源库` action creates a ResourceLibrary; its final `保存` action wraps the existing managed
-configuration validation and activation flow on the server. A successful save publishes a new
-immutable Active runtime; any error rejects the save and preserves the prior Active runtime.
-
-Common file management is deliberately lower-friction than media organization: it does not invoke
-recognition, metadata, naming/classification, organize Preview or execution-token review. It still
-requires backend RBAC, Active Storage binding, path confinement, provider capability and current
-entry checks, explicit Delete/Replace/Save intent, OrganizerExecutor-only mutation and audit-safe
-results. Bounded batch/recursive work preserves per-item outcomes; Copy/Move content byte totals are
-display evidence rather than admission authority, while selection, entry/depth/path and
-control-plane evidence remain bounded. Cross-Storage Move is explicit Copy/verify/Delete with source
-preservation on failed verification. Direct browser Upload/Download remains outside the current
-Files surface.
-
-FileIndex is retained as a separate indexed route and bounded post-mutation reconciliation target.
-The Files-originated organize Preview and direct file commands still derive authority from live
-Storage and do not resolve the selected path through FileIndex. Browsing, selection, ResourceLibrary
-configuration and command admission must not otherwise introduce a FileIndex dependency; failed
-reconciliation cannot silently replay a Storage mutation.
-
-## Files Current Delivery Update — 2026-09-23
-
-Slice 37 is `PASS / CLOSED` at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and
-Implementation Head `aa54854c442d117c7eb23ae9800045c423db1368`. The current Files page keeps the
-live Storage and ResourceLibrary authority described above, but does not render recognition-result
-or organize-status feedback. Exact Storage entry names and relative paths, including leading or
-trailing whitespace, survive the frontend model boundary and navigation; the page makes boundary
-whitespace visible and accessible, and a genuinely absent path retains bounded not-found recovery.
-The shared shell, direct file-management commands and Organize continuation remain otherwise
-unchanged. In the manual Organize choice editor, RecognitionType is the operator-facing choice
-source: its pinned NamingPolicy, ClassificationPolicy and OrganizePolicy mapping is displayed
-read-only, preserved for RecognitionType C→A reuse, and unavailable mappings fail closed with a
-reload recovery action.
-
-## Files Page Visual Fidelity Update — 2026-09-14
-
-Slice 37 made [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
-page and shared V2 shell at `1536 x 1024`. The reference light navigation rail and top bar replace
-the previous dark horizontal shell across supported V2 routes; this is a complete shared-shell
-replacement, not a Files card rendered inside the old shell. The Files composition,
-ResourceLibrary summary, directory tree, file table, selection footer, row actions and open
-`添加资源库` drawer are specified in [`file-page-visual-spec.md`](file-page-visual-spec.md). The
-reference success state is a structural and design-intent acceptance target: the controlled
-screenshot and pixel diff remain evidence, but nonzero raster differences are not independently a
-failure when the required hierarchy, fixture state, labels and controls remain complete,
-recognizable and operable. Loading, empty, permission, provider, direct-command and
-configuration-activation failures remain bounded recovery states. Other pages' business journeys
-and backend behavior are frozen, while their shared outer chrome intentionally changed to the
-replacement shell. Slice 37 is PASS / CLOSED at Base
-`b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`aa54854c442d117c7eb23ae9800045c423db1368`.
+- **Goal/entry:** browse physical sources at `文件` (`/ui-v2/resourcelib/files`), Dashboard or a
+  ResourceLibrary link; MediaLibrary has the separate destination journey below.
+- **State:** enabled ResourceLibrary cards, exact relative root/breadcrumb, bounded deterministic live
+  entries/list/grid, paging, selection and meaningful capability/error state. No FileIndex membership,
+  FileID/occurrence/fingerprint authority, recognition-result or organize-status feedback.
+- **Action:** navigate/refresh/select a bounded file/folder scope, use ordinary maintenance or explicitly
+  prepare organization. Viewing is a bounded read, never recursive discovery, Provider lookup or work.
+- **Success:** exact names/paths survive normalization, hover/focus, breadcrumbs and long-name toolbar
+  reflow. Boundary whitespace is visibly/assistively distinguished; shortening never changes identity.
+  Refresh reconciles directory-tree memory/selection and removes vanished entries without losing a
+  still-valid selected library/path.
+- **Failure/recovery:** explain missing/denied root, timeout/provider, invalid/stale cursor/path,
+  capability/conflict or escape. Correct binding/path or retry the bounded read; absent paths never
+  trigger alternate trimmed-path guesses. Preserve read-failure state when the current directory vanished.
+
+Library cards show icon/name/selection/menu, no Storage/root/count/capacity. Selected context shows
+enabled state and exact configured path only, not a repeated name. Disabled libraries are hidden
+truthfully with an existing Web re-enable path. The immutable visual references and responsive/
+keyboard states are in [Files specification](file-page-visual-spec.md) and
+[MediaLibrary specification](media-library-page-visual-spec.md).
+
+### Common file maintenance
+
+Use toolbar/selection bar or an accessible entry context menu to create folder/text, rename one
+entry, Copy/Move/Delete or edit allowlisted bounded text. Folders open on left click; no inline Open
+button. No browser Upload/Download, arbitrary binary/media editing, host paths, root delete or
+unbounded recursion. These commands do not run media recognition/metadata/naming/planning/Preview or
+require raw execution tokens; backend confinement, capabilities, authority and audit still apply.
+
+Show exact source/destination/library kind, operation, current evidence, bounded impact, per-item
+progress/conflict/partial effects and explicit Delete/Replace/Save intent. Transfer byte totals are
+impact/progress, not an admission ceiling; selection/entry/depth/path/manifest/control projections
+remain bounded. Cross-Storage Move explicitly Copy→digest-verify→Delete-source; failed verification
+preserves source. Same-Storage requires advertised native capability and no silent fallback.
+
+Rename/Delete use kind/library/Storage/root/pin/path/type/size/mtime evidence without reading media
+bytes; provider fingerprints are optional but remain binding once observed. Text Edit binds its own
+loaded-content digest. External replacement/check-to-write windows remain provider observation
+limits. Delete asks once after current bounded scope/impact. Long/batch commands persist independent
+Task/results and cooperative controls; unknown admission is read back by exact request. Correct a
+name/destination, refresh/reopen changed input or explicitly continue only known-safe remaining work.
+Uncertain effects are investigated; index reconciliation failure never replays a mutation.
+
+### Library Add/Edit/removal
+
+Add ResourceLibrary from `+ 添加资源库`; edit either library kind through its selected-card menu.
+The three-step drawer is `基本信息 → 存储位置 → 确认`, opened only by explicit intent. Edit loads exact
+Active, keeps ID read-only and allows name/enabled/Storage/kind-relative root while preserving hidden
+configuration. One Save/`保存并激活` composes shared structural/reference/applicable checks and atomic
+runtime publication; no ordinary Draft/Validate/Activate ceremony.
+
+Success makes an enabled library selectable. Storage/root changes return to that root; a name-only
+edit preserves a valid directory. Disabled results remain labelled/recoverable. Changes are
+configuration-only and never create/move/migrate/delete physical contents. Reference-protected
+removal differs from Delete of interior entries. Invalid/duplicate/stale input, failed checks,
+persistence or activation/runtime errors preserve prior Active and correctable fields; refresh
+stale authority and explicitly resubmit only after unknown outcomes have been verified.
 
 ## CURRENT — MediaLibrary files and separate ResourceLibrary navigation
 
-The MediaLibrary workspace, separated ResourceLibrary Files route, common commands, configuration
-create/removal baseline and symmetric page-local editing are delivered through the reviewed Slice 38
-Implementation Head.
+- **Goal/entry:** maintain destination files at `媒体库` (`/ui-v2/medialib/files`). Old `/ui-v2/library`
+  and `/ui-v2/library/files` provide explicit recovery links without automatic work or redirect.
+- **State/action:** the shared cards/tree/exact breadcrumbs/list-grid/selection/paging, ordinary
+  maintenance and Add/Edit/removal above. No library-card statistics/placeholders/thumbnails or
+  thumbnail collection. Per-file size, selected count/known size and bounded impact remain visible.
+- **Success:** live entries are independent of prior organization/index membership, and enabled Save
+  publishes actual Active. Copy/Move uses MediaLibrary endpoints for both sides on same/across Storage;
+  equal IDs never exchange ResourceLibrary/MediaLibrary scope or evidence.
+- **Failure/recovery:** missing Active/library, unavailable root, denied/unsupported action, conflict,
+  stale input, partial or unknown effect stays per-item. Use Web configuration/re-enable, choose another
+  library/root, refresh/revalidate or inspect durable Task/results. No replay on refresh/reconnect.
 
-- **Goal:** maintain files stored below a configured MediaLibrary root, while retaining the complete
-  ResourceLibrary Files/Organize journey.
-- **Entry:** `媒体库` opens `/ui-v2/medialib/files`; `文件` opens
-  `/ui-v2/resourcelib/files`. Both share shell/authentication and preserve valid deep-link context.
-  The old `/ui-v2/library` and `/ui-v2/library/files` retire with explicit recovery links and no
-  automatic action or compatibility redirect.
-- **Visible state:** shared library cards with name and selection, followed by selected-library
-  context showing only enabled state and exact configured root path; Storage is retained in
-  configuration/recovery surfaces but not normal browse-page cards/context. Directory tree, exact
-  relative breadcrumbs, list/grid with type icons, physical file facts, selection, bounded paging
-  and meaningful capability/error state remain. No card counts, capacity, statistics placeholder or
-  file thumbnails are shown or collected.
-- **Action:** browse/search within the existing bounded semantics, refresh, add/edit/remove a library
-  configuration, create folder/text, rename one entry, copy/move, delete and edit supported bounded
-  text. Copy/Move selects the current or another MediaLibrary on the same or another supported
-  Storage. No MediaLibrary Organize, Scan/Preview, browser Upload/Download or arbitrary media editing.
-- **Success:** rows reflect live Storage regardless of FileIndex or prior organization. A successful
-  enabled-library Save publishes actual Active runtime configuration and makes the library
-  immediately selectable. Commands persist independent results and refresh live truth; long work
-  remains discoverable through existing Task/Operations progress and supported lifecycle actions.
-- **Failure:** missing Active, disabled/missing library, invalid input/reference, inaccessible root,
-  denied/unsupported command, conflict, stale evidence, activation conflict and partial/uncertain
-  effects explain the affected item, durable state and safe next action.
-- **Recovery:** keep and correct form input; use existing Web setup/configuration for unavailable
-  bindings, references or re-enabling; return to root/choose another library; refresh and revalidate;
-  follow per-item durable progress and only backend-advertised safe continuation. No unknown
-  mutation is replayed on refresh/reconnect.
+No MediaLibrary Organize/Scan/Preview, general cross-kind direct transfer, browser Upload/Download or
+arbitrary media edit. Source Files retains its separate organization and return context.
 
-The Add/Edit drawer is `基本信息 → 存储位置 → 确认` and opens only on explicit intent. Edit is
-prefilled from exact Active, keeps ID read-only and preserves unexposed fields. One Save composes
-current managed validation, applicable read-only checks, atomic activation and runtime binding; any
-failure preserves prior Active. A disabled library is saved truthfully but hidden from normal
-browsing with a Web re-enable path. Storage/root edits never migrate physical contents.
-Configuration removal is reference-protected and never deletes physical files. It is distinct from
-explicit Delete of selected interior entries.
+## FileIndex and Media
 
-Per-file size, selected count/known size and bounded operation impact/progress remain visible where
-useful; they are not library-card statistics. Deleting or overwriting remains explicit, and
-OrganizerExecutor still owns every mutation despite the absence of media Organize UI. Library kind,
-scope and pinned runtime are enforced on the backend. Source Files keeps its existing commands,
-Organize choices/Preview/execution, exact paths and return context at the new address.
+FileIndex is still a separate baseline catalog/runtime dependency pending complete Slice45 RO-7
+retirement. It is never physical listing or Files-originated execution authority. Do not present
+retirement as delivered merely because Files already reads live Storage.
 
-See [the MediaLibrary visual specification](media-library-page-visual-spec.md) for the picture's
-hierarchy and explicit exclusions. Shared-shell reuse does not redesign the existing Files body.
+The baseline catalog distinguishes discovery/stability, processing disposition, current occurrence
+and current/historical/unverified Results. Search/filter/detail explains parser/recognition/metadata,
+policies/target/history, blockers/checkpoint and allowed next actions. Missing/truncated/unavailable
+evidence stays labelled. Exact eligible Reprocess records intent only, never processing/mutation.
+Retired direct re-recognition/re-match/re-plan/review-retry surfaces remain absent. Reads neither
+rebuild plans nor contact Providers; use current legal review/Preview/Task recovery when needed.
+Optional existing index sync is an independent recovery state, never permission to replay media.
+
+## Manual organize
+
+- **Goal/entry:** explicitly organize selected live ResourceLibrary files or bounded folders from
+  Files/Operations. MediaLibrary is not a new source. Legacy indexed paths are separate and cannot
+  authorize physical Files selection.
+- **State/action:** exact source identities, durable intent, allowed recognition/metadata/classification
+  choices, zero-mutation plan/attachments/conflicts/capabilities/effects and selected items. Review
+  the plan and separately confirm exact execution plus any permitted overwrite/source cleanup.
+- **Success:** server-held short-lived single-use authority binds authenticated principal, immutable
+  plan/configuration/item subset/effect scope; atomic admission consumes it and returns durable work.
+  Worker rechecks reviewed Storage/path/fingerprint directly and OrganizerExecutor executes only that
+  scope. No CLI issuance, raw token transfer or FileIndex re-resolution for normal V2 work.
+- **Failure/recovery:** source/plan change, stale permission/pin, conflict, capability or pre-mutation/
+  partial/unknown effect explains durable state per item. Re-analyze the legal scope and obtain fresh
+  intent when necessary; completed/ignored/uncertain siblings are not re-executed.
+
+V1's explicit one-shot token remains an administration/API-automation/support mechanism, never a
+replacement for the normal V2 journey. Source preparation cannot accept browser-provided raw Storage
+paths, fingerprints, occurrences or IDs as execution authority. In-context summary/confirmation is
+the active Task Center target below; separate Preview is no longer a required organizing-page action.
+
+### CURRENT — Bounded folder organization with safe discovery restart
+
+Explicit Files/Operations discovery shows pinned scope, progress/exclusions, real stability waiting
+and read errors before freezing sources for exact planning/confirmation. At most 100 selected scopes
+and 100 primaries; pinned filtering/depth and true elapsed stability apply to direct and walked files.
+Matching enabled trailers attach to the retained main even in explicit mixed selection. Exact legal
+long names survive handoff; first stat/old mtime/lost observation is not a stable-size interval.
+
+Normal Pause/Continue/cancel is cooperative. If safe unfrozen continuation cannot be proved, retain
+stage/findings/zero media effects, settle/fence the old attempt and offer visibly distinct explicit
+new discovery. No automatic restart on read. Unknown admission recovers the proved original request
+or stays unresolved with native inspection, never another root/pin or a guessed newer attempt.
+
+Read errors preserve unaffected findings for an explicitly reviewed known subset. Material bounds
+cannot expose an executable first-N prefix. Repeated/concurrent Freeze converges on one linked intent.
+Seamless continuation across every old duplicate, activation/crash/control combination remains
+explicitly deferred; exact pins, source checks, independent results and non-replay are mandatory.
+Discovery controls/progress/readiness and return-to-Files remain visible in Operations.
+
+## Tasks, results and per-item recovery
+
+- **Goal/entry:** find one admitted run from Task Center, Files, Dashboard, Automation or a Task/Job
+  deep link, then understand and safely resolve its actual files. Default list has no open detail.
+- **State:** server-authorized search/filter/time/paging/counts and historical name/scope/trigger;
+  queue/Task stage/item outcome/problem/effect certainty are distinct. Only durable Job→Task links
+  deduplicate runs; pre-Task failures and independent occurrences/continuations remain visible.
+  Task and file counts differ; attention overlaps and ordinary queued state is not a human blocker.
+- **Action:** inspect detail, source/target/policies, completed primary/attachment steps, relevant
+  audit/logs and bounded secret-free JSON; use backend-advertised pause/cancel/continue or enter the
+  current task/type's recognition, Metadata, classification, conflict or failure handling.
+- **Success:** durable per-file Results and linked recovery attempts survive reload/reconnect/restart.
+  Queue completion cannot overwrite Task failure/partial/unknown state. Current Active cannot rename
+  historical work or substitute its legitimate pinned context; unavailable totals never become zero.
+- **Failure/recovery:** show missing/stale Worker, pin/dependency, denied/stale decision, source change,
+  known partial or uncertain effects with legal next action. Retain input/successful siblings. Controls
+  distinguish request from acknowledged effect; they do not interrupt an in-flight call or roll back.
+
+Continue rechecks exact remaining safe scope, current authority and fences; consumed/revoked grants
+are not reissued. Recognition selection/ignore, persisted Metadata candidate/correction/ignore,
+classification and conflict use backend-offered legal inputs. Saving is non-executing. Bounded single/
+batch failed-analysis recovery keeps independent admitted/refused items and linked original history.
+Repair dependencies or save a legal decision, explicitly re-analyze, handle any new blocker, inspect
+new summary/remaining steps and confirm the eligible subset. Admission/running is not resolution;
+repeated failure supplies its new cause. Original pin unavailable means refusal/recovery guidance,
+not silent repinning or arbitrary historical Reprocess. Unknown effects offer evidence/source-target
+inspection/log-export only, never retry/force-replay/automatic rollback.
+
+Primary verified success remains complete despite attachment failure/unexecuted/conflict warnings.
+Retain each attachment's cause/source/target/completed steps and guidance from actual fixed
+OrganizePolicy; human movement is only a policy-permitted example. Warnings remain visible, no
+attachment-only automatic recovery or main-file replay. Preparation-only unready findings stay in
+preparation and do not fabricate execution recovery work.
+
+## Scheduled unattended organization
+
+- **Goal/entry:** configure reusable bounded ResourceLibrary/schedule intent in Automation and inspect
+  due occurrences, granted authority and linked results.
+- **State/action:** enabled/published/readiness/grant/revocation are distinct; inspect interval/Cron/
+  timezone/next due, run exact zero-mutation Preview and separately grant scoped revocable unattended
+  authority. Valid due runs need no repeated per-run click. Enable alone is not authority.
+- **Success:** Scheduler emits idempotent snapshot-pinned Jobs; existing Worker/Task/Result pipeline
+  checks current authority/scope/capability/conflicts before each unperformed mutation.
+- **Failure/recovery:** invalid pin/reference/secret/provider, instability, conflict or revoked grant
+  stops affected work with next action. Correct/publish/Preview and regrant when scope changed;
+  inspect independent checkpoints without replaying known/uncertain effects.
+
+Automatic organization is the only supported definition mode in current code; removed Scan intents
+cannot be reinterpreted as execution permission. Diagnostic/supported scheduled Preview stays separate.
+The remaining native Automation workspace, Run once, metrics and engine-settings redesign is frozen
+under 43; merged code presence and historical B PASS do not confer current acceptance or resume it.
+[V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain
+complete targets including complete bounded discovery, manual/scheduled authority separation,
+truthful historical metrics and actual resident settings consumption. Necessary45 coupling cleanup
+need not preserve its old UI; future redesign requires a newly confirmed Contract.
+
+## Operations administration
+
+Configuration/Settings manages exact Active/successor and reference-safe object lifecycle; versioned
+secret-free configuration/result exchange stays explicit. Notifications manages Webhook definition/
+events/secret references, exact test, enable state, deliveries, leases/dead letters and recovery.
+Actions share RBAC/audit/validation and preserve prior Active/correctable input on failed Save.
+
+Delivery failure never changes media results. Retry/requeue is scoped to the delivery, with bounded
+safe backoff and durable target identity; missing/changed target waits/refuses rather than silent
+retargeting. Correct endpoint/secret/configuration then explicitly use its permitted recovery.
+Payloads/secrets/raw exception details are not read-projection fields. Settings target publication
+must not be confused with a resident consumer's actual adopted value.
+
+## Docker self-hosted operation
+
+Start/inspect/restart/backup/preflight/upgrade from [Deployment](deployment.md); verified non-overwriting
+offline restore is in [Release](release.md#offline-restore-procedure). Four independent services,
+local `/data`, explicit Local media mounts and non-root permissions retain process isolation.
+TLS/certificates/proxy/public exposure and environment-secret injection are deployment-owned.
+
+Worker/Scheduler/Notification Worker start and wait without Active/media mounts, then adopt eligible
+configuration without routine restart. Scheduler never uses stale configuration; Notification Worker
+never burns targetless claims or retargets durable deliveries. Older intact work pins remain usable
+independently of new-admission Active; broken pins fail before mutation. Process liveness, DB/schema/
+registration/heartbeat and command/pin readiness are separate; no-Active waiting is not a dead process.
+Recoverable DB/config faults retain processes/work with bounded reasons. No API process supervision.
+Adding mounts may recreate containers; publication alone does not. Schema/mount/permission/secret/
+upgrade failures explain the fix, preserve backup/previous artifact and never replay uncertain media.
+
+## V2 Operator Web migration
+
+The shared responsive light shell provides persistent navigation, identity/connection controls,
+safe deep links and bounded return context. Root opens Overview/Dashboard. Memory-only token auth
+continues supported routes; reconnect never replays work. A 401 clears rejected authority/query state;
+a 403 retains identity and offers legal navigation. Disconnect clears token/cache/intended route.
+Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailable/not-found distinctly.
+Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. No independent Node
+production service, replacement identity model or implicit V1 cutover is introduced.
+
+### TARGET — 任务中心与分类恢复（Slice45）
+
+The complete selected journey is [Task Center page specification](task-center-page-spec.md),
+`V2-OPS-009–012` and the committed Slice: nine sibling task/recovery lists; bounded live selection;
+zero-mutation preparation; same-interface exact plan summary followed by explicit ready-subset
+confirmation; task/type-scoped native decision/re-analysis/recovery with independent results.
+No ordinary separate Preview page/CLI/internal authorization-material burden. Global type lists
+use current durable problems over the complete authorized population, not page-only filtering.
+
+The specification defines all five recovery inputs, summary/attachment/effect warnings, new-blocker
+transitions, precise confirmation and refresh/restart/unknown-response behavior. Scan products,
+definition modes and dedicated retirement/compatibility layers are absent on first deployment;
+old routes/commands/types ordinarily reject before discovery/admission/authority. Shared internal
+filtering/real stability/planning/diagnostics and supported-work safety stay intact. No old Scan
+migration/history/settlement obligation or existing media/runtime clearing. This target selection
+and B Task PASS do not declare the whole Slice delivered.
+
+### TARGET — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
+
+[FileIndex retirement design](file-index-retirement-spec.md) and `V2-FILES-005/006` define the complete
+CLI/ResourceLibrary/MediaLibrary same-library live list journey and removal of all global-index
+products/consumers/schema/sync/repair/stand-ins. Browse/refresh/page creates no catalog/observations/
+work/authority, Provider/Hash or media effects; explicit work retains exact evidence/results/audit.
+Old indexed inputs offer library browsing/Task Center guidance, no compatibility engine or data clear.
+No-index real stability→summary→confirmation→execution→recovery/reopen is required before acceptance.
+
+## V1 and post-V1 boundary
+
+V1 `/ui` and shared API authority remain until explicit cutover/parity acceptance. Current delivered
+workspaces do not include cross-Task bulk mutation, arbitrary historical Reprocess, universal rollback,
+automatic uncertain replay, Provider switching/new production Providers, built-in users/session/OIDC,
+general Secret Store or specialized email/chat/media-server channels. Selected45 cross-Task problem
+lists supersede earlier deferral of those lists only. Active/frozen scope and earlier accepted
+exceptions are authoritative in Slice/Progress; documentation consolidation does not extend them.

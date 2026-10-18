@@ -22,100 +22,22 @@
 
 ## V2 requirements boundary
 
-`docs/requirements.md` owns the complete canonical V1 definition and its stable requirement IDs.
-V2 requirements are kept in the separate [`docs/v2-requirements.md`](v2-requirements.md) layer so V1
-IDs remain stable while the active V2 program adds migration and operator-surface acceptance
-properties. Meaning changes require an explicit user-approved product amendment such as the one below.
-The V2 document records durable product and authority boundaries, not transient Task paths,
-package versions, test counts or internal function names.
+This file owns the complete V1 definition and stable `REQ-*`/`UX-*` IDs. Explicit user-approved
+V2 amendments supersede only the listed meanings; all other scope and safety remain intact.
+Detailed stable acceptance lives once in [V2 Requirements](v2-requirements.md); current Slice/Task
+scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Progress](progress.md).
 
-**Explicit product amendment for the current V2 program — 2026-10-13:** the user authorized A to
-retain only automatic organization and clarified that the two other Automation modes are entirely
-unwanted. `REQ-SCHED-001/002`, §自动整理 and §定时任务 below reflect that change; `V2-AUTO-009` records its
-V2 acceptance. Remove scan-only/scan-and-plan mode values/aliases and definition-bound publication,
-scheduling/admission/execution paths, without a conversion feature or compatible old-mode executor.
-The 2026-10-18 first-deployment amendment below supersedes old Scan-mode compatibility obligations;
-unsupported mode values use ordinary validation, never automatic organizing authority. Supported-work
-intent, pins, results and audits remain intact. That amendment did not retire standalone
-Scan/Preview/DryRun; the subsequent
-2026-10-15 amendment below now supersedes standalone Scan and selected Web Preview-entry obligations.
-Internal discovery/planning and zero-mutation guarantees remain required. This is an explicit product
-change, not a Task-local deferral or delivery claim; prior V1 meanings and accepted release evidence
-remain in Git and are not retroactively re-reviewed. All other stable requirement meanings and
-safety invariants remain unchanged.
+| Authorized amendment | Superseded V1 meaning / retained boundary |
+|---|---|
+| 2026-10-13, `V2-AUTO-009` | Only automatic organization remains: remove scan-only/scan-and-plan values/aliases/defaults and exclusive branches, with no conversion or compatible executor. Unsupported values never grant organizing authority. |
+| 2026-10-15, `V2-OPS-009–012` | Nine sibling Task/recovery lists and in-context exact summary followed by explicit selected execution/continuation replace mandatory independent Preview pages and standalone `REQ-SCAN-001` entry. Cross-Task recovery is selected; cross-Task bulk mutation stays deferred. Shared full planning/diagnostics and `UX-006` separate authority remain. |
+| 2026-10-18, `V2-OPS-011` | Treat Scan as absent on first deployment, including definition modes: remove routes/aliases/help, work/schema/execution/recovery and dedicated retirement/history/migration layers. Ordinary authenticated not-found/argument/shared unsupported-type validation stops before discovery/admission/authority; no automatic conversion. Preserve shared filtering/real elapsed stability/planning, diagnostic/scheduled Preview, supported-work restart/pins/results/audit/permissions and completed/uncertain non-replay. No data/media clearing or V1-wide removal. |
+| 2026-10-18, `V2-FILES-005/006` | Replace global `REQ-SCAN-004` indexing, `REQ-ORG-012` result sync and indexed `REQ-WEB-003`/`REQ-SAFE-009` exceptions with shared library/live-Storage CLI/Web lists and complete FileIndex exit. Browsing records no catalog/observations/work/authority or Provider/Hash/media effects; explicit work retains exact scoped evidence. No global stand-in, dual write, old FileID/API migration/compatibility or data clearing. `REQ-SCAN-006` source identity/safety remains. |
 
-**Explicit product amendment — 2026-10-15, task center (TARGET):** the user selected nine sibling
-task-center lists, including cross-Task Recognition/Metadata/Classification/conflict/failure recovery,
-and complete retirement of the standalone Scan product across its Web/API/CLI admission and executable
-paths. This supersedes the standalone manual Scan-entry meaning of `REQ-SCAN-001` for the current V2
-program; shared internal discovery, filtering, stability and supported-work historical evidence remain
-required, subject to the prelaunch standalone-Scan compatibility amendment below.
-Organization creation and recovery first show an exact plan summary in the current interface and
-then require explicit execution confirmation; no independent Preview page/action is a mandatory or
-alternative organization step. `UX-006`, `REQ-ORG-003/004/008/011`, per-item recovery and all safety
-invariants retain their zero-mutation calculation, exact-plan and separate-authority meanings.
-General diagnostic DryRun/Preview and Rules tests are not retired. Cross-Task recovery lists are now
-selected; cross-Task bulk mutation remains deferred. Prior V1/closed-Slice evidence stays historical.
-Stable acceptance is `V2-OPS-009`–`V2-OPS-012`; [the final page specification](task-center-page-spec.md)
-and root Contract define the selected journey. These are TARGET requirements, not delivered behavior.
-
-**Explicit product amendment — 2026-10-18, Scan never existed / first deployment (TARGET):**
-the user confirmed that the service has not launched and selected a fresh-deployment product with no
-Scan compatibility obligation, including V1. Remove standalone Scan pages/routes/navigation, API aliases,
-CLI registration/help, supported-work type entries, scheduling/execution/retry/continuation branches,
-dedicated readiness/action projections, models/services/repositories/schema and unused exclusive code.
-Do not retain retirement pages, 410 errors, guidance, specialized Scan guards, hidden aliases, old-work
-settlement/takeover, migration/conversion or dedicated history/detail/cancel/export compatibility.
-Missing URLs use ordinary not-found under normal authentication; old CLI commands use ordinary unknown-
-command/argument errors; unsupported submitted work uses shared supported-type validation. Reject before
-discovery, admission or execution-authority creation; never reinterpret Scan as organization.
-
-Removal of scan-only/scan-and-plan definition-mode values, aliases, defaults and their exclusive
-publication/scheduling/admission/dispatch/continuation branches is now part of Slice45's V2-OPS-011.
-This is a narrow user-authorized exception to frozen Slice43; its remaining workspace, Run once,
-metrics and engine-settings consumption stay frozen, without importing its unaccepted implementation.
-Keep shared discovery/filtering/real elapsed stability, zero-mutation planning, general diagnostic
-Preview/DryRun/Rules tests and supported scheduled Preview where actually consumed. Do not erase shared
-capabilities by identifier matching. Removing a mode default never grants implicit mutation authority.
-
-No old Scan migration, V1 parity or historical compatibility matrix is required. First deployment does
-not authorize clearing/rebuilding media, runtime databases or user files, or rewriting Git history;
-supported Tasks still require same-version restart/reopen/recovery, exact sources/plans/pins, Results,
-audit, permissions/fencing and completed/uncertain-effect non-replay. This is not global V1 UI removal.
-The FileIndex amendment below remains a separate complete unit in the same Slice. Frozen V1 meanings
-and accepted closure facts stay historical; no implementation or acceptance is claimed here.
-
-**Explicit product amendment — 2026-10-18, complete FileIndex retirement in Slice45 (TARGET):**
-the user expanded the current Slice to remove FileIndex completely and make `mediaflow files list`
-use the same library-scoped live Storage application behavior as the ResourceLibrary Files and
-MediaLibrary pages. List/navigation/refresh/paging only display bounded live entries: no file catalog,
-discovery observation, Task/Job/Result, execution authority, Provider call or media mutation is created.
-Configuration may be read; explicit later organization/maintenance retains its durable safety evidence.
-
-For current V2 this supersedes the global durable-index and New/Modified/Unchanged/Missing catalog
-obligation of `REQ-SCAN-004`, FileIndex result synchronization in `REQ-ORG-012`, and the FileIndex
-display/sync exceptions in `REQ-SAFE-009` and indexed portions of `REQ-WEB-003`. Stable IDs and frozen
-V1/accepted facts remain historical. `REQ-SCAN-006` still distinguishes actual source occurrences and
-processing outcomes through exact work-scoped evidence; it does not require a global index.
-All FileIndex products, runtime consumers, repositories/stand-ins, dedicated schema, sync/reprocess/
-repair paths and dead code exit; no hidden or renamed global file catalog replaces them.
-Shared internal discovery/filtering/real stability, Task/Result/pin/audit/locks/permission and unknown-
-effect non-replay remain. Existing Automation consumers must lose the shared dependency without
-implementing frozen Slice43 business features or importing its branch.
-
-The service is prelaunch: no old FileIndex database migration, dual write, historical FileID/API
-compatibility or takeover framework is required. Do not clear/rebuild existing runtime databases or
-media to implement retirement. Fresh supported deployments and supported-work reopen/safety are
-verified. Stable acceptance is `V2-FILES-005/006`; the selected CLI, journey and full boundary are in
-[file-index-retirement-spec.md](file-index-retirement-spec.md). This is TARGET authorization, not a
-claim that current indexed CLI/runtime code has already been removed.
-
-`REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
-and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
-over convenience” must not be interpreted as permission to impose avoidable CLI fallback, raw-token
-transfer, implementation-identifier handling or redundant confirmation on an ordinary Web journey.
-Interaction design is governed by `V2-UX-*`; the original no-data-loss, explicit-authority and safe-
-recovery meaning remains unchanged.
+These are scope authorization, not implementation or A acceptance. Necessary Slice43 Scan/index
+coupling cleanup is allowed by Slice45; remaining Automation redesign is deferred. Accepted V1 facts
+and original amendments remain in Git. `REQ-GEN-004` still requires fail-closed data integrity;
+UX-first does not weaken safety or justify unnecessary CLI/internal-token ceremony.
 
 ## Traceability and derivation rules
 
@@ -825,123 +747,11 @@ CURRENT；未明确列出的后续目标不得描述为已实现。
 
 ### **V1 当前实现基线（已发布）**
 
-#### **已完成**
-
-- Local、SMB、OpenList、S3/R2 Storage Adapter，以及统一能力和错误模型。
-- ResourceLibrary 配置驱动扫描、扩展名/忽略规则、深度、并发、取消、文件稳定检测。
-- 生产 CLI 持久 SQLite FileIndex，全量/增量状态、稳定性与安全 Missing 对账。
-- 文件名与路径解析、电影/剧集/多集格式和技术标签提取；不使用 FFprobe/FFmpeg。
-- RecognitionRule、RecognitionType 和独立 RecognitionTypePolicy 映射。
-- TMDB Movie/TV/Season/Episode、外部 ID、缓存、限流、重试、429、候选评分。
-- 本地化/别名标题匹配、canonical year 与 regional year 分离、有限候选增强。
-- Naming、Classification、OrganizePlan、冲突检测、DryRun、OrganizerExecutor。
-- Local↔Local、Local↔OpenList、OpenList↔Local、OpenList↔OpenList 的 Storage-aware 计划。
-- OpenList 同存储且目录/名称同时变化时使用服务端 Move→Rename；跨存储 Move 使用
-  Copy→校验→Delete。
-- `mediaflow config validate|scan|analyze|preview|organize`，默认 DryRun，只有显式
-  `organize --execute` 允许变更 Storage。
-- 版本化 SQLite Task/TaskItem/Result/Lock、显式恢复/失败重试和 JSON Lines 执行历史。
-- Skip/Rename/Manual/Overwrite 目标冲突确认、持久 NeedConfirm 和显式覆盖授权。
-- 可选字幕、NFO、海报、Fanart、相关图片和 Trailer 的只读发现、成组计划与执行记录。
-- Local/SMB/OpenList/AWS S3/Cloudflare R2/通用 S3-compatible JSON Runtime、环境变量密钥和
-  provider-neutral 只读 Storage 预检。
-- Local、Samba 4.20.6、OpenList v4.2.2 Local driver、MinIO S3-compatible 的隔离真实
-  生命周期与传输矩阵；128 文件批次、128 MiB 流式对象、中断 MOVE 保源、显式重试和清理
-  profile 已通过。该证据不等同于 AWS/R2、第三方 OpenList driver 或远端原子发布认证。
-- NFO 作为本地解析信息源已接入：通过 Storage 只读有界发现/读取，拒绝 DTD/ENTITY 和超限
-  XML，规范化电影/剧集/单集语义及 Provider/External ID 证据，并保留文件名冲突；不生成 NFO。
-- OrganizePolicy 可配置 NONE/FAST/FULL Hash 重复证据；默认 NONE 零读取，FAST 为大小加有界
-  前缀证据，FULL 受大小限制并流式读取。匹配或不确定只增加冲突，不自动覆盖、删除或执行。
-- OrganizePolicy 可显式启用同次调用有界 Rollback；仅补偿该次执行记录并重新验证的目标，按
-  逆序处理附件/主文件/新目录，来源重现、目标变化或补偿失败时保持文件并报告 PARTIAL。
-- 只读/DryRun REST API、持久作业 Worker、interval/Cron 时区调度和不可变发出审计。
-- 持久通知 Outbox、HMAC-SHA256 签名 Webhook、受限重试、死信和显式重放。
-- 通知投递租约、崩溃后过期领取恢复及稳定 Delivery ID 的 at-least-once 去重语义。
-- 默认关闭的远程真实执行、独立一次性票据、摘要持久化、原子消费及授权审计。
-- 配置化 API Principal、viewer/operator/executor/auditor/admin 最小权限角色、401/403
-  路由授权，以及 SQLite v9 脱敏安全审计和本地/API 查询。
-- CLI/API 只读运营 Dashboard：聚合资源库/媒体库、FileIndex、Task、Job、待确认和通知死信；
-  不访问 Storage/网络，最近失败不暴露原始错误和媒体路径。
-- 受 RBAC 保护的冲突确认列表、详情、审计及 Skip/Rename 决策 API；确认、决策审计和
-  TaskItem 状态原子提交，远程 Overwrite 与自动执行被禁止。
-- NeedConfirm/Ambiguous 元数据结果的持久复核队列；候选和评分以受限脱敏快照保存，
-  TaskItem 原子进入 `waiting_metadata`，CLI/API/Dashboard 只读展示且不会自动选片或执行。
-- 操作者可按持久候选 rank 显式选择；决策、审计及 TaskItem 转换原子提交。选择阶段不联网、
-  不创建 Job、不自动恢复，后续显式 resume 才校验策略并查询规范化 Provider 详情。
-- 未分类项目可从当前 ClassificationPolicy 已启用规则中显式选择；不允许提交任意媒体库或
-  路径，决策原子审计，后续 resume 重新校验当前配置后才进入 Planner。
-- 最小安全 Web 操作台：Dashboard、Task/Job/Result、确认/复核、Scheduler/Notification、
-  脱敏日志、系统配置状态，以及显式 Job 取消和 scan/preview DryRun 提交；不提供配置编辑、
-  任意真实执行或完整媒体文件管理。
-- SQLite Runtime 在线一致性备份/校验、非覆盖离线恢复、协作维护锁、隔离迁移演练和升级预检。
-- Automation Job 活动容量、陈旧只读观察、claim fencing 与协作心跳。
-- Task 支持持久 pause request、安全项间检查点和显式 resume；在途媒体项正常完成，继续任务
-  保留原范围/上限、排除成功结果且不能提升真实执行授权。
-- 统一日志端口、持久脱敏操作日志和策略测试。
-- 已交付有界人工处理与文件目录能力：持久 Recognition/Metadata/Classification
-  复核、单项和有界批量决策/忽略、文件列表/筛选/详情及显式 Task
-  retry/recovery。旧的 Web/API re-recognize、re-match、re-plan 和 Recognition retry 请求
-  入口已在后端治理中退役；实际继续处理仍遵循显式 Task resume 和原执行授权边界。
-- Managed Configuration 以独立 Draft/Validated/Active revision 作为唯一发布权威，
-  API/Web 已提供所有 V1 Storage（Local/SMB/OpenList/AWS S3/Cloudflare R2/通用 S3-compatible）、
-  Library、Recognition、MetadataPolicy、NamingPolicy、
-  ClassificationPolicy 和 OrganizePolicy 的对象级编辑、引用保护、有界测试/预览和
-  checked activation；Active 是 Task/Job/Scheduler 在创建边界 pin 的不可变运行时快照。
-- Slice 23 已交付阶段感知逐项恢复：每个持久 TaskItem 可从 API/Web 查看重启安全的 Processing
-  Checkpoint、已知/不确定效果、固定配置、阻塞项、重试安全性和当前允许动作；精确版本 admission
-  可把安全的变更前失败作为单项或最多 100 项的独立 DryRun continuation 重新进入现有 Worker
-  主链，并持久关联新的 Task/TaskItem/Result。成功、Skipped、DryRun、Ignored 和未选中兄弟项
-  不会被重放，批次分别对账 ignored 与 unchanged；不确定 mutation 只允许调查/拒绝。
-- Slice 24 已交付并关闭有界 Files/Media 详情与人工整理旅程：认证 API/Web 提供文件详情、解析/
-  识别/元数据/策略/计划/历史解释、持久人工选择、精确 Preview、显式一次性执行、逐项 Result
-  和检查点恢复。Preview 零 mutation；真实 Move/Copy/HardLink/SoftLink、附件及源清理仍只经
-  OrganizerExecutor 和显式权限。Result/evidence 在写入、重载和详情投影边界保持脱敏，历史不安全
-  行只读时脱敏而不重写；RecognitionType C 在复用 A 下游策略时保持为 C。
-- Slice 25 已交付并关闭计划自动化与 unattended organization 旅程：认证 API/Web 提供有界
-  Automation Task Definition 的创建、复制、编辑、启用、禁用、验证和精确零 mutation Preview，
-  Scheduler 原子发出配置快照 pin 的 occurrence，Worker 复用现有 Task/TaskItem/Result 主链，
-  持久授权可独立授予/撤销并在每个待执行 Storage mutation 边界重新校验。每项结果、失败效果、
-  checkpoint、恢复动作和 RecognitionType C 均保持独立、可见、脱敏且 fail closed；生产外部
-  Scheduler/Storage 服务专项验收仍未宣称通过。
-- Slice 26 已交付并关闭 Web-first Fresh Setup and Storage Completion：认证 API/Web 可从最小
-  management-only bootstrap 创建首个 managed Draft，完成 Local/SMB/OpenList/AWS S3/Cloudflare R2/
-  通用 S3-compatible Storage 的引导配置、环境变量 secret reference、只读 Storage check、
-  bounded Storage Browser/path selection、ResourceLibrary/MediaLibrary 绑定、既有策略配置和
-  provider-neutral checked activation。Activation 只发布精确 immutable runtime snapshot，不启动
-  scan/Job/Task/Automation/Provider 或媒体 mutation；失败保留 Draft 与旧 Active。
-- Slice 27 已交付并关闭 Manual Operations and File Lifecycle：认证 API/Web 提供真实 Storage Files
-  与 FileIndex 的语义区分、current source occurrence/disposition、bounded Scan/Preview/Organize、
-  per-item conflict/review/recovery continuation，以及 Worker readiness、owner heartbeat 和
-  fenced ownership evidence。所有操作复用既有 Active snapshot、Task/Result、RBAC、redaction 和
-  OrganizerExecutor-only mutation 边界；生产外部 Worker/Storage 服务仍按部署专项边界验收。
-
-#### **部分完成**
-
-- 持久任务、显式恢复/失败重试、协作 pause/resume、持久 scan/preview 作业队列、常驻
-  Worker、协作取消、claim fencing/心跳和 interval/Cron 时区调度已完成；外部调用强制
-  中断和不确定真实执行自动恢复尚未完成；只读执行前阶段的规范化暂时错误已有默认关闭、
-  配置化且有界的自动重试。
-- 目标冲突确认、元数据候选/查询修正、RecognitionType 与分类规则选择的持久决策基础已完成；
-  Web UI 已有安全运维操作台、文件列表/搜索筛选/详情、有界 Managed Configuration 旅程和
-  Task 项 checkpoint→精确版本决策→DryRun continuation→关联结果恢复。Provider switching 按
-  2026-09-02 A 决策属于 V1.x / V2，不是 Docker release blocker。
-- 重复媒体可根据目标、Provider ID 和可选 Hash 提示；Hash 尚不持久化复用，FAST 不代表完整内容相同。
-- SMB/OpenList/通用 S3-compatible 隔离矩阵已完成；AWS S3、Cloudflare R2、第三方
-  OpenList driver、多小时 soak、服务/主机终止和远端原子发布仍需部署专项验收。
-- 操作历史继续以 JSON Lines 兼容保存；API 安全审计、脱敏操作日志、配置/结果
-  Web 导入导出、Webhook 管理恢复和完整 System Settings 对象旅程已完成；现有配置修改
-  Before/After 审计基础保持有效。
-
-#### **未开始**
-
-- NFO 生成、图片下载、媒体服务器刷新通知。
-- 历史/崩溃后完整 Rollback，以及变更操作的不确定结果逐项恢复。
-- Provider switching、更多 production Provider 和任意 Provider 插件（已由 A 决策移入 V1.x / V2）。
-- Docker/Compose production release、`/data` 持久化、容器生命周期、restart/upgrade E2E 已由
-  Slice 29 交付并通过隔离验收；外部部署专项兼容性仍按明确边界执行。
-- 数据库用户/登录与外部身份源；V1 保留部署环境拥有的 API Principal Bearer Token，不在核心
-  系统内临时自建弱认证或明文凭证库。
-- Secret Store 和 Docker Secrets 专用接入；V1 使用环境变量引用和部署侧 secret injection。
+交付、部分完成和延期的历史明细保留于
+`865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/requirements.md`，不在需求定义内重复进度台账。
+现行发布事实见 [Release](release.md)，接受的 Base/Head 与范围见 [Progress](progress.md)，
+完整用户旅程见 [Product Experience](product-experience.md)。下方产品要求、格式、字段、边界与
+验收场景仍是完整定义；实现状态不能削弱需求，V2 仅按上方明确修订替换指定含义。
 
 #### **当前发布验收边界**
 
@@ -1008,13 +818,10 @@ Worker 不得覆盖后继 owner；升级必须经过 backup/preflight、schema m
 ```Plain Text
 Storage.rootPath
     Adapter 拥有的根；Local 可为绝对路径，OpenList 为服务端 API 根路径
-
 ResourceLibrary.storagePath
     相对 Storage 根的扫描路径；这是无路径扫描真正使用的字段
-
 ResourceLibrary.displayRootPath（可选）
     显式传入主机路径时用于关联 ResourceLibrary；旧 rootPath 作为兼容别名
-
 MediaLibrary.rootPath
     相对目标 Storage 根的目标路径
 ```
@@ -1053,21 +860,13 @@ StorageID + Storage-relative Path
 系统应重点解决以下问题：
 
 - 不同来源存储统一访问。
-
 - 不同资源格式使用不同识别方式。
-
 - 不同识别类型可以复用相同的命名规则。
-
 - 不同识别类型可以复用相同的分类规则。
-
 - 自动连接 TMDB 等网站确认影视作品。
-
 - 自动规范文件及目录名称。
-
 - 自动移动至正确的媒体库目录。
-
 - 整理过程可预览、可追踪、可重试。
-
 - 整理失败不得造成未知的数据丢失。
 
 ### **核心设计原则**
@@ -1077,34 +876,24 @@ StorageID + Storage-relative Path
 ```Plain Text
 Storage
 存储
-
 Resource Library
 资源库
-
 Recognition Rule
 识别规则
-
 Recognition Type
 识别类型
-
 Recognition Type Policy
 识别类型策略
-
 Metadata Provider
 元数据服务
-
 Naming Policy
 命名规则
-
 Classification Policy
 分类规则
-
 Organize Policy
 整理规则
-
 Media Library
 媒体库
-
 Task
 整理任务
 ```
@@ -1171,9 +960,7 @@ TMDB ID = xxxx
 
 ```Plain Text
 The.Matrix.1999.1080p.mkv
-
 ↓
-
 The Matrix (1999).mkv
 ```
 
@@ -1222,13 +1009,11 @@ Movie
 → Movie 命名规则
 → Movie 分类规则
 → Move
-
 TV
 → TV 元数据策略
 → TV 命名规则
 → TV 分类规则
 → Move
-
 SP
 → SP 元数据策略
 → Movie 命名规则
@@ -1416,23 +1201,14 @@ Storage ID
 支持：
 
 - 新增。
-
 - 修改。
-
 - 删除。
-
 - 复制配置。
-
 - 启用。
-
 - 禁用。
-
 - 测试连接。
-
 - 测试读取。
-
 - 测试写入。
-
 - 查看连接状态。
 
 ### **本地存储**
@@ -1550,17 +1326,13 @@ Move
 List()
 Stat()
 Exists()
-
 Read()
 Write()
-
 CreateDirectory()
-
 Rename()
 Move()
 Copy()
 Delete()
-
 HardLink()
 SoftLink()
 ```
@@ -1612,17 +1384,12 @@ ResourceLibrary ID
 存储
 根目录
 启用状态
-
 扫描方式
 扫描深度
-
 包含规则
 排除规则
-
 文件稳定策略
-
 默认识别规则集合
-
 备注
 ```
 
@@ -1731,9 +1498,7 @@ iso
 10分钟内文件大小没有变化
 AND
 最后修改超过5分钟
-
 ↓
-
 允许进入识别
 ```
 
@@ -1761,22 +1526,17 @@ NFO
 标题
 原标题候选
 年份
-
 Season
 Episode
 Episodes
-
 分辨率标签
 来源标签
 编码标签
 音频标签
-
 HDR标签
 Dolby Vision标签
-
 版本标签
 发布组
-
 语言标签
 其他Release标签
 ```
@@ -1792,10 +1552,8 @@ The.Last.of.Us.S01E03.2023.2160p.WEB-DL.H265.mkv
 ```Plain Text
 TitleCandidate = The Last of Us
 Year = 2023
-
 Season = 1
 Episode = 3
-
 ResolutionTag = 2160p
 SourceTag = WEB-DL
 VideoCodecTag = H265
@@ -1854,10 +1612,8 @@ Episodes = [1, 2]
 ```Plain Text
 Rule ID
 规则名称
-
 启用状态
 优先级
-
 文件名条件
 路径条件
 目录条件
@@ -1865,7 +1621,6 @@ Rule ID
 关键词条件
 正则条件
 排除条件
-
 输出 RecognitionType
 ```
 
@@ -1885,9 +1640,7 @@ NOT
 Path Contains "/SP/"
 AND
 Extension IN ["mkv", "mp4"]
-
 ↓
-
 RecognitionType = SP
 ```
 
@@ -1928,12 +1681,10 @@ Priority DESC
 A
 B
 C
-
 Movie
 TV
 Anime
 Documentary
-
 自定义类型
 ```
 
@@ -1958,14 +1709,11 @@ Recognition Type Policy 是系统核心配置。
 ```Plain Text
 Policy ID
 名称
-
 RecognitionType
-
 Metadata Policy
 Naming Policy
 Classification Policy
 Organize Policy
-
 启用状态
 优先级
 ```
@@ -1974,7 +1722,6 @@ Organize Policy
 
 ```Plain Text
 RecognitionType = Movie
-
 MetadataPolicy = Movie-TMDB
 NamingPolicy = Naming-Movie
 ClassificationPolicy = Classification-Movie
@@ -1985,7 +1732,6 @@ B：
 
 ```Plain Text
 RecognitionType = TV
-
 MetadataPolicy = TV-TMDB
 NamingPolicy = Naming-TV
 ClassificationPolicy = Classification-TV
@@ -1996,7 +1742,6 @@ C：
 
 ```Plain Text
 RecognitionType = SP
-
 MetadataPolicy = Movie-TMDB
 NamingPolicy = Naming-Movie
 ClassificationPolicy = Classification-Movie
@@ -2041,15 +1786,11 @@ TMDB
 ```Plain Text
 SearchMovie()
 GetMovie()
-
 SearchTV()
 GetTV()
-
 GetSeason()
 GetEpisode()
-
 FindByExternalId()
-
 GetImages()
 ```
 
@@ -2064,22 +1805,15 @@ Media Identifier 不直接调用具体网站 API。
 ```Plain Text
 名称
 API认证信息
-
 语言
 地区
-
 代理
-
 连接超时
 请求超时
-
 并发数量
-
 重试次数
 重试间隔
-
 缓存时间
-
 启用状态
 ```
 
@@ -2117,23 +1851,17 @@ Anime-TMDB
 
 ```Plain Text
 名称
-
 Provider
-
 媒体查询类型
     Movie
     TV
     Auto
     None
-
 语言
 地区
-
 搜索策略
-
 自动匹配分数阈值
 人工确认分数阈值
-
 备用Provider
 缓存策略
 ```
@@ -2224,7 +1952,6 @@ The.Last.of.Us.S01E03.2023.mkv
 ```Plain Text
 TitleCandidate = The Last of Us
 Year = 2023
-
 Season = 1
 Episode = 3
 ```
@@ -2270,14 +1997,10 @@ TMDB 的 Find API 支持通过已有外部标识符寻找对应对象，因此 M
 标题相似度
 原标题相似度
 别名相似度
-
 年份匹配
-
 Movie / TV 类型匹配
-
 Season匹配
 Episode匹配
-
 路径信息
 识别类型上下文
 ```
@@ -2289,10 +2012,8 @@ Episode匹配
 ```Plain Text
 Score >= 90
 → 自动确认
-
 Score 70 - 89
 → 待人工确认
-
 Score < 70
 → 识别失败
 ```
@@ -2312,34 +2033,24 @@ MediaIdentity
 ```Plain Text
 Provider
 ProviderID
-
 MediaType
-
 Title
 OriginalTitle
 AlternativeTitles
-
 Year
 ReleaseDate
-
 Season
 Episode
 Episodes
 EpisodeTitle
-
 Overview
-
 Genres
 Countries
 Languages
-
 ExternalIDs
-
 Poster
 Backdrop
-
 RecognitionType
-
 Confidence
 MatchedBy
 ```
@@ -2356,17 +2067,11 @@ Provider 或注入任意 MediaIdentity，RecognitionType C 始终保持 C。
 ```Plain Text
 修改搜索关键词
 修改年份
-
 切换 Movie / TV
-
 重新搜索
-
 查看候选结果
-
 手动选择结果
-
 直接输入 TMDB ID
-
 重新识别
 ```
 
@@ -2386,15 +2091,11 @@ Metadata 请求必须支持缓存。
 
 ```Plain Text
 Search Result
-
 Movie Details
 TV Details
-
 Season
 Episode
-
 External ID
-
 Images
 ```
 
@@ -2416,14 +2117,10 @@ Images
 ```Plain Text
 最大并发
 请求节流
-
 Timeout
-
 Retry
 指数退避
-
 Proxy
-
 429处理
 ```
 
@@ -2446,14 +2143,10 @@ Naming Policy 只负责：
 ```Plain Text
 NamingPolicy ID
 名称
-
 目录模板
 文件模板
-
 字符清理规则
-
 缺失变量处理
-
 启用状态
 ```
 
@@ -2464,17 +2157,13 @@ NamingPolicy ID
 ```Plain Text
 {title}
 {original_title}
-
 {year}
-
 {season}
 {episode}
 {episodes}
 {episode_title}
-
 {provider}
 {provider_id}
-
 {resolution}
 {source}
 {video_codec}
@@ -2482,7 +2171,6 @@ NamingPolicy ID
 {hdr}
 {version}
 {release_group}
-
 {ext}
 ```
 
@@ -2507,7 +2195,6 @@ release_group
 ```Plain Text
 目录：
 {title} ({year})
-
 文件：
 {title} ({year}).{ext}
 ```
@@ -2579,17 +2266,12 @@ The Last of Us (2023)/
 ```Plain Text
 非法字符删除
 非法字符替换
-
 多个空格合并
 前后空格删除
-
 中英文标点转换
-
 Unicode标准化
-
 最大文件名长度
 最大路径长度策略
-
 自定义替换表
 ```
 
@@ -2609,25 +2291,18 @@ Classification Policy 负责：
 
 ```Plain Text
 RecognitionType
-
 MediaType
-
 Title
 Year
-
 Genre
 Country
 Language
-
 ResolutionTag
 SourceTag
 VersionTag
-
 Provider
 ProviderID
-
 ResourceLibrary
-
 原始路径
 原始文件名
 ```
@@ -2663,9 +2338,7 @@ A：
 
 ```Plain Text
 Classification-动画电影
-
 ↓
-
 MediaLibrary = Main
 SubPath = 动画电影
 ```
@@ -2680,9 +2353,7 @@ B：
 
 ```Plain Text
 Classification-剧集
-
 ↓
-
 MediaLibrary = Main
 SubPath = 剧集
 ```
@@ -2756,17 +2427,11 @@ Root Path
 
 ```Plain Text
 MediaLibrary ID
-
 名称
-
 Storage
-
 Root Path
-
 启用状态
-
 是否允许自动创建目录
-
 备注
 ```
 
@@ -2834,10 +2499,8 @@ Naming Filename
 ```Plain Text
 媒体库：
 /Media
-
 分类：
 电影
-
 命名：
 The Matrix (1999)/
 The Matrix (1999).mkv
@@ -2869,20 +2532,13 @@ SoftLink
 ```Plain Text
 OrganizePolicy ID
 名称
-
 Operation
-
 冲突策略
 重复策略
-
 附件策略
-
 源目录清理策略
-
 失败策略
-
 回退策略
-
 启用状态
 ```
 
@@ -2944,14 +2600,10 @@ Target 创建副本
 ```Plain Text
 字幕
 NFO
-
 Poster
 Fanart
-
 图片
-
 Trailer
-
 其他同名附件
 ```
 
@@ -3006,29 +2658,20 @@ Dry Run：
 
 ```Plain Text
 Source
-
 Filename Parse Result
-
 Matched Recognition Rule
 RecognitionType
-
 Metadata Policy
 Metadata Result
 Confidence
-
 Naming Policy
 New Name
-
 Classification Policy
 Media Library
 Classification Path
-
 Organize Policy
-
 Target
-
 Conflict
-
 Warning
 ```
 
@@ -3037,25 +2680,18 @@ Warning
 ```Plain Text
 SOURCE
 /Downloads/SP/The.Matrix.1999.mkv
-
 识别规则
 SP-Rule
-
 识别类型
 SP
-
 元数据
 TMDB / The Matrix / 1999
-
 命名策略
 Naming-Movie
-
 分类策略
 Classification-Movie
-
 整理策略
 Move
-
 TARGET
 /Media/A/The Matrix (1999)/The Matrix (1999).mkv
 ```
@@ -3214,9 +2850,7 @@ Behind The Scenes
 
 ```Plain Text
 不处理
-
 删除真正的空目录
-
 删除仅包含允许忽略文件的目录
 ```
 
@@ -3275,27 +2909,16 @@ MetadataRefreshTask
 
 ```Plain Text
 Pending
-
 Scanning
-
 Parsing
-
 Recognizing
-
 FetchingMetadata
-
 Planning
-
 WaitingConfirm
-
 Organizing
-
 Completed
-
 PartialSuccess
-
 Failed
-
 Cancelled
 ```
 
@@ -3305,24 +2928,17 @@ Cancelled
 
 ```Plain Text
 Task ID
-
 Task Type
-
 ResourceLibrary
-
 创建时间
 开始时间
 完成时间
-
 总文件数
-
 识别成功
 识别失败
-
 整理成功
 整理失败
 跳过
-
 当前进度
 ```
 
@@ -3332,18 +2948,12 @@ ResourceLibrary
 
 ```Plain Text
 开始
-
 暂停
 继续
-
 取消
-
 重试
-
 仅重试失败项
-
 查看详情
-
 删除历史记录
 ```
 
@@ -3405,19 +3015,12 @@ OrganizePlan
 
 ```Plain Text
 Source
-
 Target
-
 RecognitionType
-
 MediaIdentity
-
 NamingPolicy
-
 ClassificationPolicy
-
 OrganizePolicy
-
 Operations
 ```
 
@@ -3481,28 +3084,18 @@ DEBUG
 ```Plain Text
 [INFO] 发现媒体文件
        /Downloads/SP/The.Matrix.1999.mkv
-
 [INFO] 命中识别规则
        Rule=SP
-
 [INFO] RecognitionType=SP
-
 [INFO] 开始元数据识别
-
 [INFO] Metadata Provider=TMDB
-
 [INFO] 匹配媒体
        The Matrix (1999)
-
 [INFO] NamingPolicy=Movie
-
 [INFO] ClassificationPolicy=Movie
-
 [INFO] 目标路径
        /Media/Movie/The Matrix (1999)/The Matrix (1999).mkv
-
 [INFO] Operation=Move
-
 [INFO] 整理成功
 ```
 
@@ -3512,39 +3105,22 @@ Debug 模式额外记录：
 
 ```Plain Text
 原始路径
-
 原始文件名
-
 文件名预处理结果
-
 Token解析结果
-
 正则匹配过程
-
 识别规则匹配过程
-
 RecognitionType选择过程
-
 Metadata搜索参数
-
 Metadata候选结果摘要
-
 候选评分详情
-
 最终MediaIdentity
-
 Naming模板
-
 Naming模板展开过程
-
 Classification规则判断过程
-
 最终Target计算过程
-
 Storage操作过程
-
 Retry过程
-
 异常Stack Trace
 ```
 
@@ -3624,29 +3200,22 @@ CSV导出
 ```Plain Text
 StorageConnectionError
 StoragePermissionError
-
 FileNotFoundError
 FileLockedError
 FileConflictError
-
 ParseError
 RecognitionError
-
 MetadataConnectionError
 MetadataRateLimitError
 MetadataNotFoundError
 MetadataMatchError
-
 NamingError
 ClassificationError
-
 MoveError
 CopyError
 LinkError
 DeleteError
-
 TimeoutError
-
 UnknownError
 ```
 
@@ -3656,21 +3225,13 @@ UnknownError
 
 ```Plain Text
 ErrorCode
-
 Message
-
 TaskID
-
 StorageID
-
 Source
-
 Stage
-
 Timestamp
-
 Retryable
-
 DebugDetails
 ```
 
@@ -3710,11 +3271,8 @@ Status = Unrecognized
 
 ```Plain Text
 重新识别
-
 人工指定 RecognitionType
-
 建立新的识别规则
-
 忽略
 ```
 
@@ -3752,17 +3310,11 @@ Status = MetadataNotFound
 
 ```Plain Text
 修改关键词
-
 修改年份
-
 Movie / TV切换
-
 使用当前配置的Provider
-
 直接填写Provider ID
-
 人工选择候选
-
 忽略
 ```
 
@@ -3790,13 +3342,9 @@ tasks resume 消费持久 MetadataSelection。
 
 ```Plain Text
 RecognitionType
-
 Metadata Result
-
 NamingPolicy
-
 ClassificationPolicy
-
 OrganizePolicy
 ```
 
@@ -3814,21 +3362,13 @@ Target Preview
 
 ```Plain Text
 批量重新扫描
-
 批量识别
-
 批量重新识别
-
 批量设置RecognitionType
-
 批量Metadata识别
-
 批量Dry Run
-
 批量整理
-
 批量重试
-
 批量忽略
 ```
 
@@ -3868,42 +3408,29 @@ Plan
 
 ```Plain Text
 SOURCE
-
 文件名解析
-
 识别规则匹配：
 Rule-SP
-
 RecognitionType：
 SP
-
 Metadata Policy：
 Movie-TMDB
-
 Metadata：
 The Matrix (1999)
-
 Confidence：
 98
-
 Naming Policy：
 Movie
-
 Naming Result：
 The Matrix (1999).mkv
-
 Classification Policy：
 Movie
-
 Media Library：
 Main
-
 SubPath：
 Movie/The Matrix (1999)
-
 Organize Policy：
 Move
-
 TARGET：
 /Media/Movie/The Matrix (1999)/The Matrix (1999).mkv
 ```
@@ -3916,26 +3443,17 @@ TARGET：
 
 ```Plain Text
 Storage
-
 Resource Library
-
 Media Library
-
 Metadata Provider
 Metadata Policy
-
 Recognition Rule
 Recognition Type
 Recognition Type Policy
-
 Naming Policy
-
 Classification Policy
-
 Organize Policy
-
 Schedule
-
 System Settings
 ```
 
@@ -4033,7 +3551,6 @@ RecognitionType SP
 ```Plain Text
 导出配置
 导入配置
-
 备份
 恢复
 ```
@@ -4069,33 +3586,23 @@ ConfigVersion
 
 ```Plain Text
 FileID
-
 StorageID
 ResourceLibraryID
-
 Path
 Filename
 Extension
-
 Size
 ModifiedTime
-
 FastHash
 FullHash
-
 ParseResult
-
 RecognitionType
 RecognitionStatus
-
 Provider
 ProviderID
-
 OrganizeStatus
 TargetPath
-
 LastTaskID
-
 CreatedAt
 UpdatedAt
 ```
@@ -4131,35 +3638,20 @@ Modified
 
 ```Plain Text
 Discovered
-
 Pending
-
 Parsing
-
 Recognizing
-
 Recognized
-
 MetadataMatching
-
 Identified
-
 NeedConfirm
-
 Planning
-
 Ready
-
 Organizing
-
 Organized
-
 Skipped
-
 Ignored
-
 Failed
-
 Missing
 ```
 
@@ -4169,24 +3661,16 @@ Missing
 
 ```Plain Text
 Storage状态
-
 资源库数量
 媒体库数量
-
 媒体文件总数
-
 待识别
 识别失败
-
 待确认
-
 待整理
-
 今日整理成功
 今日整理失败
-
 运行中任务
-
 最近错误
 ```
 
@@ -4196,21 +3680,13 @@ Storage状态
 
 ```Plain Text
 文件名
-
 路径
-
 资源库
-
 RecognitionType
-
 识别结果
-
 TMDB等Provider信息
-
 整理状态
-
 目标路径
-
 最近更新时间
 ```
 
@@ -4275,19 +3751,13 @@ Shell 更新。Files 页的资源库摘要、目录树、文件表、选择操�
 路径
 Title
 Provider ID
-
 RecognitionType
-
 Resource Library
 Media Library
-
 识别状态
 整理状态
-
 年份
-
 Task ID
-
 时间范围
 ```
 
@@ -4325,28 +3795,17 @@ RBAC、引用校验、Storage 检查、审计和 fail-closed 约束。
 
 ```Plain Text
 原始文件信息
-
 文件名解析结果
-
 RecognitionType
-
 命中的Recognition Rule
-
 元数据
-
 Provider
 Provider ID
-
 Naming Policy
-
 Classification Policy
-
 Organize Policy
-
 Target
-
 历史整理记录
-
 错误记录
 ```
 
@@ -4361,13 +3820,9 @@ Files/Media 详情显示解析、识别、元数据、策略、
 
 ```Plain Text
 重新识别
-
 修改RecognitionType
-
 重新匹配Metadata
-
 重新生成Plan
-
 重新整理
 ```
 
@@ -4377,24 +3832,17 @@ Files/Media 详情显示解析、识别、元数据、策略、
 
 ```Plain Text
 数据库目录
-
 工作目录
 缓存目录
-
 日志目录
 结果导出目录
-
 默认语言
 默认时区
-
 默认日志等级
-
 日志保留时间
-
 最大扫描并发
 最大识别并发
 最大整理并发
-
 默认Retry策略
 ```
 
@@ -4420,7 +3868,6 @@ Cron
 
 ```Plain Text
 每30分钟自动整理新增文件
-
 每天03:00自动整理指定范围
 ```
 
@@ -4445,14 +3892,11 @@ Automation Task Definition 是用户长期管理的业务定义，至少负责�
 
 ```Plain Text
 名称与稳定身份
-
 ResourceLibrary / source scope
 可选的扫描子目录或范围
-
 Schedule
 Timezone
 Enabled state
-
 所属的受管配置权威
 是否允许 unattended execution
 受授权范围限制的运行边界
@@ -4563,7 +4007,6 @@ Automation Task Definition 的 source scope 或授权边界被扩大时，不得
 ```Plain Text
 Manual / remote execution
     → 保留一次性、可消耗的 execution ticket
-
 Scheduled unattended execution
     → 使用绑定 Automation Task Definition 的持久、可撤销、受限授权
 ```
@@ -4603,14 +4046,10 @@ TaskItem / Result / Log 证据，并说明安全恢复操作。
 
 ```Plain Text
 SMB Password
-
 OpenList Token
-
 TMDB Token / API Key
-
 R2 AccessKey
 R2 SecretKey
-
 其他Provider认证信息
 ```
 
@@ -4642,25 +4081,15 @@ Move后删除源
 
 ```Plain Text
 修改Storage
-
 修改Recognition Rule
-
 修改RecognitionTypePolicy
-
 修改Naming Policy
-
 修改Classification Policy
-
 修改Organize Policy
-
 人工修改RecognitionType
-
 人工修改Metadata结果
-
 Overwrite
-
 Delete
-
 取消任务
 ```
 
@@ -4668,17 +4097,11 @@ Delete
 
 ```Plain Text
 User
-
 Action
-
 Object
-
 Before
-
 After
-
 Timestamp
-
 Result
 ```
 
@@ -4699,31 +4122,20 @@ CLI
 
 ```Plain Text
 /api/storages
-
 /api/resource-libraries
-
 /api/media-libraries
-
 /api/metadata-providers
 /api/metadata-policies
-
 /api/recognition-rules
 /api/recognition-types
 /api/recognition-type-policies
-
 /api/naming-policies
-
 /api/classification-policies
-
 /api/organize-policies
-
 /api/files
 /api/media
-
 /api/tasks
-
 /api/logs
-
 /api/settings
 ```
 
@@ -4735,49 +4147,37 @@ Storage
 ├── SMBStorage
 ├── OpenListStorage
 └── S3Storage
-
 Scanner
-
 Parser
 ├── FilenameParser
 ├── PathParser
 ├── DirectoryParser
 └── NfoParser
-
 Recognition
 ├── RuleEngine
 ├── RecognitionTypeResolver
 └── RecognitionTypePolicyResolver
-
 Metadata
 ├── MetadataProvider
 ├── TMDBProvider
 ├── MetadataMatcher
 └── MetadataCache
-
 Naming
 └── NamingEngine
-
 Classification
 └── ClassificationEngine
-
 Organizer
 ├── Planner
 ├── ConflictResolver
 ├── Executor
 └── AttachmentOrganizer
-
 Task
 ├── Scheduler
 ├── Queue
 └── Worker
-
 Database
-
 Logger
-
 API
-
 WebUI
 ```
 
@@ -4790,8 +4190,6 @@ Storage
    ↑
    │
 ResourceLibrary
-
-
 RecognitionRule
       ↓
 RecognitionType
@@ -4892,135 +4290,86 @@ Move / Copy / HardLink / SoftLink
 ##### **Storage**
 
 - Local
-
 - SMB
-
 - OpenList
-
 - R2 / S3
 
 ##### **Library**
 
 - Resource Library
-
 - Media Library
 
 ##### **Recognition**
 
 - 文件扫描
-
 - 文件过滤
-
 - 文件稳定检测
-
 - 文件名解析
-
 - 路径解析
-
 - 季集解析
-
 - Recognition Rule
-
 - Recognition Type
-
 - Recognition Type Policy
 
 ##### **Metadata**
 
 - TMDB Provider
-
 - Movie Search
-
 - TV Search
-
 - Movie/TV Details
-
 - Season/Episode
-
 - 候选评分
-
 - 人工选择
-
 - Metadata Cache
-
 - Provider 重试
-
 - 429 处理
 
 ##### **Policies**
 
 - Naming Policy
-
 - Classification Policy
-
 - Organize Policy
 
 ##### **Organizer**
 
 - Dry Run
-
 - Move
-
 - Copy
-
 - HardLink
-
 - SoftLink
-
 - 字幕整理
-
 - 冲突处理
-
 - 重复检测
 
 ##### **Task**
 
 - Task Queue
-
 - 任务状态
-
 - 暂停
-
 - 继续
-
 - 取消
-
 - 重试
 
 ##### **Log**
 
 - INFO
-
 - DEBUG
-
 - ERROR
-
 - 单文件完整整理日志
-
 - 整理结果 JSON
 
 ##### **UI**
 
 - Dashboard
-
 - Storage 管理
-
 - 资源库管理
-
 - 媒体库管理
-
 - Metadata Provider 管理
-
 - Recognition Type 管理
-
 - Policy 管理
-
 - Task 管理
-
 - 文件列表
-
 - 人工识别
-
 - Dry Run
 
 ### **第二阶段**
@@ -5029,35 +4378,20 @@ Move / Copy / HardLink / SoftLink
 
 ```Plain Text
 更多Metadata Provider
-
 Provider switching
-
 更多Storage Provider
-
 更多字幕处理能力
-
 多版本媒体
-
 质量优先级策略
-
 自动媒体升级
-
 海报及背景图下载
-
 NFO生成
-
 媒体服务器刷新通知
-
 完整权限系统
-
 Audit Log增强
-
 完整Rollback
-
 高级统计
-
 邮件/聊天专用通知 Provider 与媒体服务器刷新通知
-
 完整 Secret Store / Docker Secrets 集成
 ```
 
@@ -5146,7 +4480,6 @@ Movie Metadata
 
 ```Plain Text
 RecognitionType = **SP**
-
 NamingPolicy = **Movie**
 ClassificationPolicy = **Movie**
 ```
