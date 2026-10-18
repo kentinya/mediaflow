@@ -1842,6 +1842,17 @@ class AutomationTaskDefinitionPreviewService:
         )
 
     @staticmethod
+    def _analysis_checkpoint(
+        callback: Callable[[str, int, int, int], None] | None,
+        phase: str,
+        visited_entries: int,
+        analysed_items: int,
+        total_items: int,
+    ) -> None:
+        if callback is not None:
+            callback(phase, visited_entries, analysed_items, total_items)
+
+    @staticmethod
     def _aggregate_status(
         items: Sequence[AutomationTaskDefinitionPreviewItem],
     ) -> AutomationTaskDefinitionPreviewStatus:
