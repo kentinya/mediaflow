@@ -7,12 +7,12 @@
 ```text
 Task ID: 45.3
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CORRECTS TASK45.3 AGAINST THE CHECKPOINTED CONTRACT
+Next Action: B REVIEWS THE TASK45.3 CHECKPOINT AND MATCHING FINAL EVIDENCE
 ```
 
 ## Goal
@@ -597,7 +597,7 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
 预存图片删除意图、未跟踪图片/.DS_Store/zip/旧测试产物保持，私有配置ignored/untracked/unstaged。
 可复用经验：无新增，留待A在Slice收尾统一整理。
 
-### Developer correction — Review 9 / 2026-10-18（候选验证中）
+### Developer correction — Review 9 / 2026-10-18（READY FOR B REVIEW）
 
 - 按已提交的附件语义澄清修正同一 Task：主文件先完成并验证，附件异常不回滚/重放主文件；
   已知附件异常独立记录，未知附件效果只核查，冲突目标与源均保留。
@@ -610,8 +610,47 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
   标记放入同一事务；实际 Task Base 旧库保留 pin、结果、授权和恢复链，新增字段缺省不冒充完成。
 - 开发期首败和复跑留在 `.git/validation-evidence/task45.3-review9/development/`。
   已有图片删除、未跟踪图片/目录、私密配置和用户运行 DB 均未读取、修改或纳入候选。
-- 最终 T4 门禁尚未完成；本节不声明 READY、B PASS 或 Slice 完成。完整 SHA、原始日志索引及
-  最终门禁结果在候选冻结后补充。
+- 已补正跨 Storage 附件 COPY 完成、删除来源被拒绝时的精确 effect 身份；主文件与附件不会
+  共用错误来源/目标。实际视觉检查发现同页摘要长目标在 380px 裁切，新增断言先复现 3 例，
+  复用精确路径换行样式修正，并补实际表单截图；没有改变执行权限或路径计算。
+
+最终 executable checkpoint：`1bd67c7e5cbf37a4523af89bf73089beedadf61f`。
+Task Base 保持 `8f5cf4e284766bcc8894817d7640231e85050fb2`。本报告提交仅修改 TASK.md，
+通过实际 diff 证明 executable inputs 未变后复用下面证据；不复用旧候选全量结果冒充最终结果。
+
+最终候选全部指定 T4 门禁实际完成：
+
+| 门禁 | 实际结果 |
+|---|---|
+| 全 Python | 2517 tests / 191.503s / OK，7 skipped |
+| Web 全 unit/component | 77 files / 1133 passed |
+| 完整 fake E2E | 246 passed |
+| 完整 real-Python inventory / Unicode / visual | 37 / 1 / 2 passed |
+| 治理、ruff format/check、compileall、pip check、两份示例配置、禁止依赖搜索、diff | PASS；禁止依赖搜索无匹配，预期 exit1 |
+| Web typecheck/lint/format/production build | PASS |
+| 实际 Task Base schema45→47、重开、两处 ALTER 故障回滚 | PASS；旧 pin/结果/许可/历史保留 |
+| wheel build/smoke、安装后真实恢复链 | PASS；独立安装 lineage 5 tests，附件/准备/确认 15 tests，耐久告警投影 1 test |
+| Docker 实际四服务/常驻 Worker 恢复与附件告警 | PASS，6 个测量状态 |
+| Docker release-security | PASS |
+| 镜像源码/served assets、wheel 源码与候选比对 | PASS，163 Python / 4 Web 文件逐字节匹配 |
+
+- 已实看本候选九视图、桌面/窄屏输入与摘要、暂停精确授权/未知确认、新 Metadata 阻塞和
+  原生/容器附件告警图；长目标已换行，浏览器逐目标 DOM 溢出断言通过。实际 keyboard/focus/
+  contrast 断言见完整浏览器日志；不以截图数量或 capture exit 替代人工查看。
+- 完整原始日志、命令/cwd/exit/耗时、AC 逐例映射、实际截图、依赖/产物身份与失败历史：
+  `.git/validation-evidence/1bd67c7e5cbf37a4523af89bf73089beedadf61f/final/INDEX.md`。
+  证据仅本地可达，未推送；实际 runtime 为 Python3.13.14 / Node22.23.3 / npm10.9.9。
+- 最终镜像 `mediaflow:task45-3-1bd67c7-review9`：
+  `sha256:27ca9a9a47baade221fd8488e8840545d243b034bafe87ac8c2ba5096940d16d`。
+  wheel SHA256：`0ddc454cef4a9bc432261dc74a7a147e508318e2ad2eb8edcbedba0c96480f98`。
+- 7 项跳过为未提供的4个隔离 endurance profile及3个真实外部 Storage 验收环境，逐项见
+  `declared-skips.log`，不是生产服务验收 PASS。ResourceWarnings、jsdom/Node/Vite warnings
+  保留，未声明已在 Base 证明既有，也未用于豁免失败。开发首败/重跑和旧候选日志均保留。
+- 本轮未改 Slice/Roadmap/Progress/稳定需求/Architecture；没有附件-only admission、通用补偿、
+  主文件重放、静默 overwrite/delete。Scan 退役不属于本 Task，不声明 Slice 完成。
+
+**READY FOR B REVIEW。** 这是 Developer 交接，不是 B PASS；历史 B Review 结论原文保留。
+未发现尚未解决的本轮实现阻塞，最终判定交 B；无新增经验条目，不规划下一 Task、不关闭 Slice。
 
 ## B Review Result
 
