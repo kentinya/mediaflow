@@ -12,7 +12,7 @@ Task Base: f02443917bcd5b3ef645a32c432b191dc4f12aa3
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CONTINUES TASK45.4 WITH THE CHECKPOINTED PRELAUNCH SCOPE ADJUSTMENT
+Next Action: DEVELOPER CONTINUES TASK45.4; RO-7 IS PLANNED AFTER THIS TASK PASSES
 ```
 
 ## Goal
@@ -28,6 +28,8 @@ Slice43 的定义绑定 Automation 模式边界。
 适用要求：V2-OPS-009–012、V2-UX-001–003、V2-AUTH-001–003、V2-SAFE-001、
 V2-MIG-001–003、REQ-SCAN-002–006、REQ-TASK-*、REQ-RECOVERY-*、REQ-SAFE-*、UX-001–010。
 REQ-SCAN-001 的独立入口按已授权 V2 修订退役，内部发现与稳定性义务不降低。
+FileIndex 完全退出及 CLI/两种库页实时列表统一现属同一 Slice 的 RO-7，留给本 Task PASS
+后的一个连贯 Task；本 Task 不承担 RO-7 验收，不得在 Scan 退役后将 Slice 记为完成。
 
 ## Previous Task Review / Why This Task Exists
 
@@ -62,8 +64,10 @@ REQ-SCAN-001 的独立入口按已授权 V2 修订退役，内部发现与稳定
 | RO-4 / S-5 | 其他受支持工作的详情/记录/导出/协作控制及恢复连续性保留；按 A 修订取消旧独立 Scan 历史/停止兼容 |
 | RO-5 / S-7 | **未完成**：仍有独立 Scan Web/API/CLI/Job/恢复分支与“先 Scan”依赖，本 Task 完成 |
 | RO-6 / S-6 | 已有统一权威及 Task 证据；仍需退役集成和之后 B 的 Slice-final 验证 |
+| RO-7 / S-8、S-9 | **未完成**：后续 A 修订加入同 Slice；FileIndex 仍有完整运行依赖，CLI 仍读索引。45.4 PASS 后规划一个完整退出与列表统一 Task |
 
 **All Required Outcomes satisfied: NO → NEXT TASK。** 不提交 Closure Packet，不宣布 Slice 关闭。
+本表已反映随后 A 新增的 RO-7，不将其倒记为 Task45.3 当时已交付的结果。
 规划前 `python3 scripts/check_governance.py` PASS；HEAD:SLICE.md 与工作树一致，Slice45/Roadmap ACTIVE。
 Task Base 固定为上述规划前 HEAD，不随规划、实现或修正提交移动。
 
@@ -94,10 +98,43 @@ Developer 已有未提交的代码和新测试，不能 reset/restore/clean 掉�
 | `tests/test_scan_retirement.py` 的 submit/alias/CLI 拒绝反例 | 保留必需退役/RBAC/零工作断言，随最终实现扩展；尚未作为本轮通过证据 |
 
 普通 Task/Result/pin/权限/审计、当前有效工作重连/重启、未知效果非重放继续受保护；不执行
-数据库清空、媒体删除或 FileIndex 完全退出。无其他消费者的 Scan 专用模型/读写/取消代码可
-删除；仍由共享 Scanner 或冻结定义绑定流程消费的部分必须保留。
+数据库清空或媒体删除。FileIndex 完全退出不属于本 Task，后续同 Slice 的 RO-7 承担。
+无其他消费者的 Scan 专用模型/读写/取消代码可删除；仍由共享 Scanner 或冻结定义绑定流程
+消费的部分必须保留。
 A 的8个文档修改在完整 Task Base..Head 中按上述 SHA 单独归属，Developer 不得将其当自己的
 实现或再改范围；冻结文档对照此 A checkpoint，Task/code 仍对照原 Task Base。
+
+### FileIndex 纳入 Slice 后的 B 范围复核 — 2026-10-18
+
+```text
+Contract Checkpoint: 0237b7d366bd24e9182797a72cb4939b528602ba
+Decision: TASK45.4 CONTINUES; RO-7 REQUIRES ONE NEXT COHERENT TASK AFTER PASS
+Task ID / Base / Goal: UNCHANGED
+Difficulty / Test Level: High / T4 — UNCHANGED
+Implementation Review: NOT PERFORMED; NO PASS CLAIM
+```
+
+B 在 A 提交后运行 `python3 scripts/check_governance.py`，结果 PASS；已提交 Slice45/Roadmap
+为 ACTIVE，Contract 与工作树一致，原 Slice/Task Base 保持。核对当前未提交代码、现有测试
+及三个列表入口：CLI 使用 FileCatalog/SQLiteFileIndex；两种库页已共用 RuntimeFilesBrowserService；
+Scanner、整理/恢复、Result 同步和 Automation 基础仍有索引消费者。此前未提交实现均保留。
+
+当前 Scan 退役目标和已开发部分仍合法，继续同 Task；不把新增 RO-7 塞入已在开发的范围，
+也不创建第二个活动 Task。45.4 PASS 后 B 必须重新核对全部 Outcome，再按
+[退役设计](docs/file-index-retirement-spec.md) 规划一个完整 FileIndex 退出与 CLI 统一 Task，
+覆盖所有运行消费者/新库/生产装配及真实无索引整理恢复，不能仅改 list 或按模块拆碎。
+
+给当前 Developer 的边界：
+
+1. 继续下方 Scan 入口/执行路径删除、内部真实稳定性和 T4，不实施 FileIndex 仓储/schema/
+   统计/reprocess 的整套退出，也不提前改变 `files list` 接口。
+2. 为移除“先 Scan”前置复用现有 live Storage 和工作内观察；不要新增索引补偿、兼容服务、
+   no-op 仓储或双写。现有仍被消费的索引暂由后续 RO-7 单元统一移除，不是最终交付例外。
+3. 不建设旧 Scan/FileIndex 生产迁移、历史兼容或接管框架，不清空数据库/媒体；现有普通
+   Task/Result/pin/权限/未知效果非重放与共享稳定性不回归。
+4. A 本次10个文档的变更归属上述 Contract checkpoint；连同先前 A 修订从实际 Base..Head
+   中单列，不当作 Developer 实现。冻结文档以本 checkpoint 对照，代码仍对照原 Task Base。
+5. 完成报告明确列 RO-7 尚待后续 Task。B 不能因本 Task PASS 提交 Closure Packet 或宣布关闭。
 
 ### 实际代码与复用边界
 
@@ -206,6 +243,8 @@ A 的8个文档修改在完整 Task Base..Head 中按上述 SHA 单独归属，D
   原 pin 不可用/历史身份不足时明确拒绝并指向既有合法的新准备或只读核查。
 - 不能只替换文案后仍永远要求一个已不可能生成的 Scan Task/READY 记录；也不能把 FileIndex
   旧记录、年龄或“无错误”当作新的 live source/stable-size 证明。
+- 不为这些过渡路径新增 FileIndex 同步修复/兼容机制；完整索引退出按 RO-7 的后续同 Slice
+  Task 一次收敛，当前只修复 Scan 退役直接造成的不可达前置。
 - 定义绑定模式、配置/调度/Run once 保持冻结边界；只修该 Contract 明确要求的共享稳定性依赖。
   不能导入冻结 Slice43 的未接受实现来满足本 Task。
 
@@ -353,7 +392,8 @@ retry配置、exit/counts/skips/duration、首次失败/复跑、日志/截图/t
 - 修改 SLICE.md、Roadmap、Progress、稳定需求、CURRENT交付声明；不改变Slice Base/范围或关闭Slice。
 - 冻结Slice43的模式退役、页面/定义发布/调度/Run once/统计/全局设置消费；不导入未接受代码。
 - 通用DryRun/Rules测试退役、V1整体cutover、删除历史/用户媒体、MediaLibrary Organize、新Provider。
-- 旧独立Scan的停止/接管、升级迁移、专用历史读取/取消/导出兼容；FileIndex完全退出留待后续Slice。
+- 旧独立Scan的停止/接管、升级迁移、专用历史读取/取消/导出兼容；FileIndex完整退出和CLI列表
+  统一属于本Slice的RO-7，待本Task PASS后另一个连贯Task完成，不属于本Task范围。
 - 新队列/Scanner/观察/恢复/执行引擎、扩大有界限制、任意历史Reprocess、自动repin、
   附件-only执行、补偿/回滚引擎、主文件/已完成/不确定effects重放。
 - 已验收创建/恢复界面整体重做、额外可选证明或P2清理、Developer规划下一Task或做A最终审查。
@@ -367,12 +407,12 @@ Decisions、Remaining In-Slice Work、Risks/Deviations和完整checkpoint SHA；
 ## B Review Result
 
 ```text
-Contract Recheck: 90cc8897e6f8e43eb9c215c5bf4a48b7b8f88a71
-Scope Decision: TASK45.4 CONTINUES WITH LEGAL SCOPE ADJUSTMENT
+Contract Recheck: 0237b7d366bd24e9182797a72cb4939b528602ba
+Scope Decision: TASK45.4 CONTINUES; RO-7 IS NEXT AFTER PASS
 Implementation Reviewed: NOT REVIEWED
 Implementation Decision: PENDING
 Slice Required Outcomes all satisfied: NO
-Next: DEVELOPER CONTINUES TASK45.4 WITH THE ADJUSTED SCOPE
+Next: DEVELOPER CONTINUES TASK45.4; B PLANS RO-7 AFTER PASS
 ```
 
 Task45.3 PASS记录见上方；本节只属于新Task45.4，不是其预先验收或Slice最终结论。
