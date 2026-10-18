@@ -35,6 +35,13 @@ FIX REQUIRED on main; preserve Task43.2's historical B PASS, do not start Task43
 The combined tree requires its own integration checks; earlier candidates' T4/PASS is not new merge
 validation. Original branches/checkpoints and local unrelated dirty files remain preserved.
 
+The user's subsequent 2026-10-18 scope decision removes preservation of the merged Slice43
+implementation as a Slice45 prerequisite. Scan/FileIndex cleanup may adjust or remove its necessary
+coupling without first adapting the old Automation UI. The Automation page can be redesigned and
+implemented after Slice45 under a newly confirmed Contract; no automatic resumption of Task43.3 is
+implied. Historical Task43.2 PASS remains historical, not acceptance of the current tree. Shared
+supported-work safety/results remain required; this documentation change implements no deletion.
+
 Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
 **Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
 Contract, Task43.3 plan and Task43.2 B decision are retained at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on

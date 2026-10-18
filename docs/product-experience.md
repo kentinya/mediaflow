@@ -730,6 +730,13 @@ Slice45 owns its manual journey and first-deployment Scan absence; the 2026-10-1
 also removes scan-only/scan-and-plan modes and exclusive branches. The remaining Slice43 workspace,
 Run once, metrics and settings-consumption work stays frozen, without importing its unaccepted code.
 
+The subsequent user-authorized main integration and 2026-10-18 scope decision supersede that
+isolation rule: merged Slice43 pages/Run once are not preservation or acceptance prerequisites for
+Slice45. Scan/FileIndex cleanup may remove their necessary coupling without first adapting the old
+Automation UI. The page can be redesigned and implemented after Slice45 against a newly confirmed
+journey/Contract; historical Task43.2 PASS does not require preserving that implementation. Shared
+supported-work safety, exact pins/results and audit remain; no unrelated redesign is started here.
+
 The two Automation references define composition/style and business relationships only. Their
 names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
 CURRENT; this complete redesign and actual per-process settings adoption are not yet delivered.

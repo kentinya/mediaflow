@@ -811,6 +811,14 @@ Slice45's ACTIVE Contract owns Task Center, integrated manual confirmation and f
 absence; its 2026-10-18 narrow exception includes removal of scan-only/scan-and-plan modes and their
 exclusive branches. The remaining Slice43 workspace/Run once/metrics/settings scope stays frozen.
 
+Following the user-authorized main merge, the user's later 2026-10-18 decision makes the merged
+Slice43 implementation no preservation or acceptance prerequisite for Slice45. Required Scan/FileIndex
+removal may adjust or remove its specific coupling without adapting the old Automation UI first.
+Automation-page redesign and implementation may follow Slice45 under a newly confirmed Contract;
+the old 43.3 plan does not resume automatically. Historical 43.2 PASS is retained as history only.
+Shared supported-work Storage/analysis/Worker authority, exact pins, results and non-replay remain
+mandatory. This is a TARGET scope decision, not a claim that code has already been removed.
+
 Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
 admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
 focused successor publication; they cannot publish unrelated Draft edits. Read models add bounded

@@ -138,6 +138,24 @@ Scan 首次部署移除和 RO-7 后续完整 FileIndex 单元按既定 Contract 
 整合前分支另保存在 `preserved/main-before-slice45-merge-20261018` 与
 `preserved/slice45-before-main-merge-20261018`；原冻结分支和逐检查点证据保持可达。
 
+### A scope revision — 2026-10-18，Slice45 不以 Slice43 实现为保留前提
+
+用户进一步明确：Slice45 开发暂不考虑 Slice43 的实现；自动化页可在 Slice45 完成后重新设计
+和实现。本修订取代此前把已合并 Task43.1/43.2 实现视为必须保持完整的约束。它们已进入 main
+是代码事实，但其页面、原生编辑/发布、Run once、分析页面、统计及引擎设置消费不构成 Slice45
+必须保留、恢复、兼容或逐项验收的产品承诺，也不能阻止 Scan 产品及 FileIndex 的完整删除。
+
+实现 RO-5/RO-7 必需时，可直接调整或清理这些 Slice43 专属耦合；无需先适配旧自动化页面，
+不得为保护它们保留 Scan 模式、退役层、索引或替代目录。本 Slice 不主动开展无关自动化页
+重设计；后续以重新确认的用户旅程和 A Contract 设计实现，不自动恢复旧43.3计划或照搬旧43验收。
+Task43.2 的 B PASS、原 Contract/Task 和冻结分支仍作为历史事实保存，不表示当前树必须维持
+原43实现，也不表示 Slice43 已关闭。
+
+现有受支持基础流程实际需要的 Storage/发现/过滤/真实稳定观察、规划、Task/Worker、权限、
+精确 pin/结果/审计和未知效果非重放继续保留；不为43恢复第二套实现，不删除用户媒体或运行数据。
+Slice45/Task45.4 的 ID、Base、ACTIVE/FIX REQUIRED、High/T4、RO-5 与随后 RO-7 单元不变。
+当前代理按用户指示更新 A-owned 范围，不进行自身工作的 B PASS 或 A Final Review。
+
 ## Suspended work preservation
 
 - Slice43 original Base: `853973dbbf8289fa2ad40657033e94e870a690e4`.
@@ -301,7 +319,8 @@ FileIndex 的 CLI/API/V1/V2 专用列表/详情/统计/reprocess、domain/仓储
 全局 occurrence/disposition 目录、schema、后台/Result/文件维护同步、修复路径及死代码
 完整退出，新建运行库不创建其专用表。所有实际消费者（含 Worker、普通整理/恢复及现有
 Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为；不得只让 Files 不依赖它。
-共享模块内的必要依赖移除允许实施，冻结 Slice43 的业务功能不扩展、不导入。
+共享模块内的必要依赖移除允许实施；已合并的 Slice43 专属实现不构成保留前提，按上方最新修订
+清理必要耦合，其自动化页重新设计留到 Slice45 完成后。
 
 精确来源/计划/pin/版本、当前锁/准入去重、已完成/未知效果和真实稳定性观察仍按显式工作
 范围保存在既有 Task/Result/checkpoint/发现工作中，不形成更名的长期文件目录。
@@ -352,8 +371,9 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
 
 ## Explicitly Deferred
 
-- 冻结 Slice43 的页面、Run once、指标与实际全局设置消费；不得导入其未接受实现。
-  scan-only/scan-and-plan 产品/模式专用路径删除已由本次用户修订选入 RO-5，不再作为冻结例外保留。
+- Slice43 自动化页、原生编辑/Run once、指标与全局设置消费的重新设计实现留到 Slice45 完成后。
+  已合并43代码不是本 Slice 必须保留或验收的前提；可清理 RO-5/RO-7 必需的耦合，不主动重做页面。
+  scan-only/scan-and-plan 产品/模式专用路径删除仍属 RO-5，不能以43冻结为由保留。
 - 整体 DryRun 退役、Rules 测试删除、其他诊断命令或 Provider/身份/配置体系重设计。
 - 跨任务批量 mutation、批量覆盖、历史删除/保留策略、任意旧结果 Reprocess、通用回滚、
   不确定 mutation 自动重放、V1 UI 全面退役。

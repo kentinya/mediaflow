@@ -220,6 +220,10 @@ schema 与无消费者代码。不保留墓碑页、410、退役说明/新整理
 也在本范围，作为用户授权的冻结 Slice43 窄例外。删掉默认模式不等于取得自动整理权限。其余
 自动化页面、Run once、统计和全局设置消费继续冻结，不导入或宣称交付未接受的 Slice43 实现。
 
+后续 main 合并及用户同日最新决定以上方根 Contract 为准：已合并的 Slice43 页面和 Run once
+实现不是 Slice45 必须保留或验收的前提。Scan/FileIndex 删除可清理其必要耦合；不为旧自动化页
+增加兼容或恢复义务。自动化页留到 Slice45 完成后重新设计实现，当前不展开无关页面重做。
+
 保留其他支持功能实际需要的 Scanner、Storage list/stat、资源发现、过滤、临时排除、真实稳定
 观察与零变更计划，以及 diagnostic Preview/DryRun、Rules 测试和受支持的 scheduled Preview。
 按真实消费者判断，不按 scan/preview 名称盲删。整理内部有界完成真实经过时间/大小/指纹观察，

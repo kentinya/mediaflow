@@ -144,6 +144,13 @@ scan-and-plan modes and exclusive branches into Slice45; the remaining Slice43 w
 Old-mode inventory/history/parity clauses below are historical targets superseded by V2-OPS-011,
 not Scan compatibility obligations. Supported automatic-organization history and safety remain.
 
+Following the user-authorized main integration, the user's later 2026-10-18 decision makes the
+merged Slice43 implementation no preservation, compatibility or acceptance prerequisite for
+Slice45. Required Scan/FileIndex cleanup may adjust or remove its specific coupling; the Automation
+page may be redesigned and implemented after Slice45 under a newly confirmed Contract. Historical
+43.2 PASS is preserved as history, not a current implementation obligation or automatic resumption
+of 43.3. Shared supported-work safety, exact pins/results, authority and audit remain required.
+
 The existing Automation/Settings foundations remain CURRENT. The following complete workspace
 journey is TARGET, selected from `docs/pics/自动化.png` and `docs/pics/自动化-全局设置.png` for business
 logic and visual style only. Activation is not a delivery claim; the preserved Slice43 Contract owns its bounded scope.

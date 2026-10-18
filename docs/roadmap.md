@@ -42,7 +42,12 @@ Slice45 retains immutable accepted Slice44 Base `a72252091d5d46edf3e2114b994036a
 The user authorized merging main and `slice/45-scope-pending` on 2026-10-18, retaining Slice45 conflict
 changes and both sides' nonconflicting work. Development now continues on main, incorporating its
 existing Task43.1/43.2 implementation but not starting later Slice43 work. Task43.2's historical B PASS
-is preserved; the merge itself is not a new acceptance or reuse of old-candidate validation. Implementation is in
+is preserved as history. The user's subsequent 2026-10-18 scope decision makes that implementation
+no preservation, compatibility or acceptance prerequisite for Slice45. Necessary Scan/FileIndex
+cleanup may adjust or remove Slice43-specific coupling; the Automation page may be redesigned and
+implemented after Slice45, against a newly confirmed Contract rather than automatically resuming 43.3.
+Shared supported-work safety and durable results remain required. The merge itself is not a new
+acceptance or reuse of old-candidate validation. Implementation is in
 progress; ACTIVE does not mean A acceptance or closure. The final user-approved 2026-10-18 Scan revision
 removes standalone products, definition-bound scan-only/scan-and-plan modes and retirement compatibility
 layers. Old inputs use ordinary not-found/argument/unsupported-type errors before work or authority, not
