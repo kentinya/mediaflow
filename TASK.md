@@ -1,7 +1,19 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
 遵循 [Development Workflow](docs/development-workflow.md)；当前 [Slice45](SLICE.md) 保持 ACTIVE。
-本轮按用户要求仅审查 Task45.4，不规划下一 Task，不提交 Slice Closure Packet。
+
+## 当前 Contract 范围复核 — 独立 Preview 纳入 Slice
+
+A Contract checkpoint：`2b26925320d6b6c6c92363099cd92aa776c392f9`。B 在提交后运行治理检查，
+结果 PASS；当前没有活动 Task 可调整，Task45.4 的 ID/Base/已审范围/PASS 及验证例外保持。
+
+- RO-1–6 保留既有 Task45.1–45.4 结论，不把新增范围倒记为已实现或完整 T4 通过。
+- RO-7 / S-8、S-9：FileIndex 完全退出与 CLI/Web 实时列表统一，仍未交付。
+- RO-8 / S-10：独立 Preview 按 Scan 的首次部署方式完整退出，仍未交付；共享分析/固定计划/
+  整理摘要和执行权限分离保留，详见 [Preview 退役设计](docs/preview-retirement-spec.md)。
+
+下一步由 B 在已提交范围内规划连贯实现 Task；本轮仅同步范围，不创建活动 Task，
+不提交 Closure Packet 或宣布 Slice 完成。下方保留 Task45.4 当次审查事实。
 
 ## Task45.4 — B Review PASS（2026-10-18）
 
