@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B REVIEWS TASK 45.5 AT IMPLEMENTATION HEAD 72682d1e3277343b674d62e5ceda99a824036c00
+Next Action: DEVELOPER CORRECTS B BLOCKERS IN THE SAME TASK; BASE / GOAL / T4 UNCHANGED
 ```
 
 ## Goal
@@ -267,19 +267,66 @@ READY FOR B REVIEW at implementation HEAD `72682d1e3277343b674d62e5ceda99a824036
 ## B Review Result
 
 ```text
-Reviewed: NOT YET — no implementation candidate
-Decision: NOT REVIEWED
-Acceptance runs: NOT RUN — planning checkpoint only
-Task blockers: NOT ASSESSED
+Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..72682d1e3277343b674d62e5ceda99a824036c00
+Decision: FIX REQUIRED — early rejection on independently reproduced P1 blockers
+Acceptance runs: 10 focused tests OK; independent Active / replaced-source reproductions FAIL product invariants
+Task blockers: B-1 exact Active integrity; B-2 recovery source revalidation and truthful evidence
 Slice Required Outcomes / Surfaces all satisfied: NO — RO-7 / RO-8 pending
-Next: DEVELOPER IMPLEMENTS Task45.5
+Next: SAME TASK FIX LOOP; B COMPLETES REMAINING DIFF REVIEW / ASSIGNED T4 ON CORRECTED CANDIDATE
 ```
+
+候选固定为上述实现 Head；交接 `214947ed0b90a01b75a2b1798f0a93d8a8d47bd5` 相对候选仅改
+`TASK.md`，执行输入相同。本轮已检查变更清单及关键配置/来源/schema/恢复链路；按 workflow §6
+已证实阻塞提前拒绝，未声称完成全部 diff 审查或 T4。Developer 报告的全量结果不等同于本轮
+B 验收；其已披露 direct-files 失败尚未由 B 独立确认，不认定为 Base failure 或豁免。
+
+### 同一 Task 的必需修正
+
+1. **B-1 / P1 — 精确 Active。** 只读 CLI 在创建 Storage/列举前，执行与现有 managed runtime
+   同义的文档 schema、canonical payload digest 完整性校验；优先复用/提取现有纯校验，保持
+   `mode=ro`，不得为此初始化/升级/写入仓库。损坏/不支持配置返回有界原因、未变更状态及
+   Settings/恢复指引，不读取被改写的 root、不回退 JSON。增加真实 CLI 反例：只改 Active
+   payload（保留旧 digest）以及只改文档 schema 为不支持值；两者均拒绝，数据库字节/表结构
+   和媒体不变；合法 Active、缺库/缺 Active 继续按原旅程处理。
+2. **B-2 / P1 — 恢复来源。** 恢复 Worker 在消费旧决定及 Provider 分析前，通过原 pin 下
+   的 live Storage stat 对比原 TaskItem 的精确 occurrence/fingerprint/path/library，不能仅
+   把旧证据复制给新 TaskItem/Result。变更/缺失/不可验证来源必须保留原历史并拒绝该项、给出
+   明确重新选择/准备路径，不能形成成功续作或把新内容关联到旧身份。审查本 Task 同时移除索引
+   检查的 metadata-correction continuation 等直接消费者，使用共享来源验证边界，保留合法旧
+   pin、成功兄弟及未知效果非重放；不恢复索引或引入第二套恢复引擎。
+3. 修正 `test_worker_continuation_preflight_rejects_stale_occurrence_before_pipeline` 的验证方法：
+   用可工作的本地 Storage 和计数 fake Provider，对排队后替换、缺失、原来源未变分别驱动真实
+   `worker run-next`。不能依赖故意抛异常的 Provider factory 让 Worker 失败，再把该失败当作
+   来源拒绝。断言真实拒绝原因、零 Provider 请求/媒体变更、无误标完成/错误关联；合法未变来源
+   必须完成分析，旧 Active pin 在新发布后仍合法。保留有意义的原安全断言。
+
+Developer 本次修正先跑下列失败/直接受影响组；新增/修改其他消费者时追加本 Task 原有对应
+受影响组及 changed-file ruff 检查，不跑全仓/发布矩阵：
+
+```bash
+python3 scripts/check_governance.py
+PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_metadata_correction_continuation test_manual_organize_intent test_task_center_recovery_lineage
+git diff --check
+```
+
+B 在修正固定 SHA 上重做上述独立反例、审完原 Base..新 Head，其余 Required Tests 中的全部
+B T4/真实入口/wheel/安装消费者/Docker/视觉门禁仍由 B 执行；原清单不减项，不交回 Developer。
+匹配 B 证据可复用，执行输入改变刷新分配验收；所有尚未执行项保持 pending。
+
+本轮证据（本机 ignored storage，非远程产物）：
+`.git/validation-evidence/72682d1e3277343b674d62e5ceda99a824036c00/task45.5/b-review/`。
+包含两份独立复现脚本、JSON 实际结果、10 tests 日志和复核说明。Active 两反例均被 canonical
+校验拒绝但被 CLI 接受；替换来源续作实际 `completed` / `dry_run`、1次 Provider 搜索、仍携带
+旧 fingerprint，媒体 mutation 为0。现有10 tests虽OK，不能覆盖/推翻独立反例。
+按已证实阻塞停止昂贵门禁；本轮测试命令用时少于5秒，复核开始至记录已超过3分钟，低于50%。
 
 45.4原PASS/Base/Reviewed Head/验证例外不变，完整指针见Task Base的 `TASK.md`。
 45.5 PASS后B复核全部RO/Surfaces；未满足才规划下一连贯Task，全部满足即停止造Task，
 补齐/复用最终验证并交Closure Packet：SLICE READY FOR A REVIEW，只有A可以关闭。
 
-本次preflight：main@3e2cb31aca211a7dcb7fa7c4ba4883d55b951974，治理PASS，workspace/Git可写。
+本轮B preflight：main@214947ed0b90a01b75a2b1798f0a93d8a8d47bd5，治理PASS，workspace/Git可写；
+原规划preflight为main@3e2cb31aca211a7dcb7fa7c4ba4883d55b951974。
 预存修改保留且不纳入Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
 `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
