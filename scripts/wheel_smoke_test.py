@@ -100,7 +100,8 @@ def smoke(wheel: Path, project: Path) -> None:
                 "assert 'scan-only' not in [item.value for item in AutomationTaskRunMode]; "
                 "assert 'scan-and-plan' not in [item.value for item in AutomationTaskRunMode]; "
                 "import mediaflow.domain.automation as automation; "
-                "assert not hasattr(automation, 'ManualScanTask')",
+                "assert not hasattr(automation, 'ManualScanTask'); "
+                "print(automation.__file__)",
             ],
             cwd=root,
             environment=environment,
@@ -109,6 +110,10 @@ def smoke(wheel: Path, project: Path) -> None:
             raise RuntimeError(
                 "installed wheel contains a removed Scan mode/model: " + mode_check.stderr
             )
+        module_path = mode_check.stdout.strip()
+        if "site-packages" not in module_path:
+            raise RuntimeError(f"installed module did not load from site-packages: {module_path}")
+        print(f"Installed Automation module: {module_path}")
         database = root / "runtime.sqlite3"
         run(
             [
