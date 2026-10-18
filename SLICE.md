@@ -1,8 +1,8 @@
-# Slice 45 — V2 Task Center Redesign and Recovery Pages
+# Slice 45 — V2 Task Center, Recovery and FileIndex Retirement
 
 ```text
 Slice ID: 45
-Name: V2 Task Center Redesign and Recovery Pages
+Name: V2 Task Center, Recovery and FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
@@ -11,7 +11,7 @@ Working Branch: slice/45-scope-pending
 Development Authorization: CONTRACT REVISED BY A; B RECHECKS TASK45.4 BEFORE CONTINUING
 Risk: High
 Final Test Level: T4
-Next Action: B RECHECKS TASK45.4 AGAINST THE PRELAUNCH SCAN RETIREMENT CONTRACT
+Next Action: B RECHECKS TASK45.4; COMPLETE RO-7 BEFORE SLICE FINAL
 ```
 
 ## Authority and baseline
@@ -65,12 +65,31 @@ B 仍须先定义合法 Task；本次不创建 Developer Task、不导入冻结�
 或重建旧任务状态。
 
 本次不执行媒体/运行数据库/历史数据清空，不削弱其他受支持任务的结果、pin、权限、审计和
-未知效果非重放规则。整理内部发现、过滤、真实稳定性观察和既有限制保留；FileIndex 完全退出
-由后续 Slice 另行规划，当前依赖不借此次删除。冻结 Slice43 的定义绑定模式范围不变。
+未知效果非重放规则。整理内部发现、过滤、真实稳定性观察和既有限制保留。该次修订曾将
+FileIndex 完全退出留给后续 Slice；该安排由下方新增 RO-7 的用户修订取代。
+冻结 Slice43 的定义绑定模式范围不变。
 
 Slice ID、ACTIVE 状态和不可变 Base 保持。A 先提交本 Contract 修订；B 随后核对实际未提交
 改动，判断 Task45.4 在相同 ID/Base 下合法调整后继续。当前代理此前执行过 B 审查；本次用户
 仅授权 A 的范围调整，不进行对自身 B 结论的 A Final Review，也不宣布 Task/Slice 验收完成。
+
+### A Contract revision — 2026-10-18，FileIndex 纳入当前 Slice
+
+用户随后明确要求 FileIndex 完全退役纳入当前 Slice，并使 `mediaflow files list` 与文件页、
+媒体库页统一为实时 Storage 列表，只列举、不保存文件记录；同样不建设未上线系统的旧数据兼容。
+这替换上一修订的 FileIndex 延期安排，新增 RO-7 / S-8、S-9 / AC-7；不是交付声明。
+Slice ID、ACTIVE 状态和原 Base 保持，正式名称反映扩展后的业务范围。
+
+完整范围与 CLI TARGET 方式见 [FileIndex 退役设计](docs/file-index-retirement-spec.md)。
+“列表不记录”不取消显式整理/维护 Task、Result、精确来源、计划、审计和稳定性工作证据。
+FileIndex 的产品/运行装配/全局目录仓储与 schema、后台同步和专用死代码全部退出；
+不能只隐藏入口、加 no-op 仓储或更名为全局缓存。旧 FileIndex/Scan 兼容机制不要求建设，
+也不授权清空运行库或媒体。其他受支持工作的安全/持久结果保持。
+
+A 提交后 B 重核 Task45.4：已开发的独立 Scan 退役仍是合法完整单元，可在相同 ID/Base
+继续；新增 FileIndex 全部退出和 CLI 统一在随后一个连贯 Task 内规划，当前不并行创建第二个
+活动 Task。所有 Required Outcomes（含 RO-7）满足后才能 Slice-final/交 A，不提前关闭。
+冻结 Slice43 不因共享 FileIndex 依赖移除而恢复开发，业务模式/页面等延期仍保留。
 
 ## Suspended work preservation
 
@@ -96,6 +115,7 @@ reachable. Resuming Slice43 requires explicit A reactivation and reassessment of
 操作者在一个原生任务中心中发起并确认真实整理、跟踪各文件结果，通过问题类型直接找到
 跨任务的待处理工作，并完成明确、低摩擦、安全的恢复，无需独立 Scan/Preview 页面、
 CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢复的完整用户旅程。
+CLI 文件列表、文件页和媒体库页共用实时 Storage 浏览，文件目录索引及相关运行依赖完全退出。
 
 最终页面/旅程规范：[任务中心最终方案](docs/task-center-page-spec.md)。
 九张参考图统一位于 `docs/pics/任务中心-标签名.png`，其结构、层级及风格适用；
@@ -106,6 +126,8 @@ CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢�
 - V2-OPS-001–008 的既有统一工作、结果、权限及恢复基线，按 V2-OPS-009–012 的显式
   TARGET 产品修订实现新的入口、九标签、同页摘要与跨任务类型视图。
 - V2-UX-001–003、V2-AUTH-001–003、V2-SAFE-001、V2-MIG-001–003。
+- V2-FILES-005/006；REQ-SCAN-004、REQ-ORG-012、REQ-WEB-003、REQ-SAFE-009 等旧 FileIndex 义务
+  按本次明确 V2 修订替换；精确来源、稳定性、结果持久化和安全不变量保留。
 - UX-001–010，REQ-GEN-*，REQ-ORG-*，REQ-RECOVERY-*，REQ-TASK-*，
   REQ-SAFE-*，REQ-RESULT-* 与适用的 Storage/Library/Recognition/Metadata 要求。
 - REQ-SCAN-001 的独立手动扫描产品入口被当前 V2 修订取代；内部扫描、过滤、稳定性、
@@ -218,6 +240,29 @@ Web/API/Worker 使用同一应用行为、权限、固定来源/计划和恢复�
 通过自动化和原生浏览器验证。
 CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，不宣称实现。
 
+### RO-7 — FileIndex 完全退役与实时文件列表统一
+
+`mediaflow files list`、文件页与媒体库页通过同一库级应用浏览行为，以精确 Active 的
+ResourceLibrary/MediaLibrary→Storage/root 与库相对目录进行有界 list/stat。
+CLI 明确选择资源库或媒体库；同名跨种类库、游标、越界、空白/长名与错误规则一致。
+浏览显示真实目录条目，不受旧索引成员、媒体扩展名、识别或处理状态限制；不记录文件目录/
+扫描观察/任务/结果、不授予执行权、不调用 Provider/Hash、不变更媒体。
+
+FileIndex 的 CLI/API/V1/V2 专用列表/详情/统计/reprocess、domain/仓储/内存替代/装配、
+全局 occurrence/disposition 目录、schema、后台/Result/文件维护同步、修复路径及死代码
+完整退出，新建运行库不创建其专用表。所有实际消费者（含 Worker、普通整理/恢复及现有
+Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为；不得只让 Files 不依赖它。
+共享模块内的必要依赖移除允许实施，冻结 Slice43 的业务功能不扩展、不导入。
+
+精确来源/计划/pin/版本、当前锁/准入去重、已完成/未知效果和真实稳定性观察仍按显式工作
+范围保存在既有 Task/Result/checkpoint/发现工作中，不形成更名的长期文件目录。
+普通工作重连/重启和恢复正常；取消全局 New/Modified/Unchanged/Missing 索引产品与自动同步
+义务，来源变化与禁止错误重放的安全含义保持。
+
+仅按未上线环境验收，不建设旧 FileIndex 迁移、双写、历史 FileID/API 兼容或索引同步修复；
+旧入口薄拒绝并指向库级浏览/任务中心。不自动清空、drop 或重建现存运行数据库/媒体。
+完整旅程、边界和验收见上述设计，默认只读 CLI 不触发数据库初始化/升级。
+
 ## Required Surfaces
 
 | Surface | 必需结果 |
@@ -229,6 +274,8 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
 | S-5 详情/记录/导出/控制 | 真实结果、历史链与后端允许的协作动作 |
 | S-6 API/Worker/Persistence | 与 Web 同权威，耐久准入、固定上下文、去重和非重放 |
 | S-7 Scan 退役及内部依赖收敛 | Web/API/CLI 不再独立创建或运行，整理内部发现/稳定性可用；不建设旧 Scan 存量兼容 |
+| S-8 CLI/Web 实时文件列表 | files list 与文件页/媒体库页共享库级 live browse，只读、不存文件记录、同边界/分页/错误 |
+| S-9 无 FileIndex 的运行链 | 新库/装配/API/Worker/整理/恢复/结果和现有共享消费者不依赖索引，无索引产品或后台写入 |
 
 ## Product Experience / UX Constraints
 
@@ -244,8 +291,9 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
    全部零 Storage mutation；读取/刷新/切换标签不创建工作或调用 Provider。
 2. OrganizerExecutor-only mutation，Storage confinement/capabilities、无静默 fallback、
    明确许可的覆盖/删除/来源清理、审计/脱敏、RBAC 不变。
-3. ResourceLibrary→实时 Storage 是 Files 来源权威；MediaLibrary 非整理源；FileIndex 不变成
-   物理源路径/执行权威，结果同步失败不引发重放。
+3. ResourceLibrary→实时 Storage 是整理来源权威；MediaLibrary 非整理源。三种列表均是库级
+   实时 Storage 读取；没有 FileIndex 或替代全局目录作来源/执行权威。结果持久化/显示失败
+   不引发已完成或未知 mutation 重放。
 4. 不可变配置与精确来源/计划/选择绑定、乐观并发、claim/lease/fence 和原子准入保留；
    当前 Active 不替代合法旧 pin，已消费/撤销许可不因 Continue 重新获得。
 5. 逐项状态独立；主文件成功不因附件异常被重放，附件异常保留原因并提示策略允许的处理；成功、
@@ -256,7 +304,6 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
 ## Explicitly Deferred
 
 - 冻结 Slice43 的页面、定义绑定模式退役、Run once、指标与实际全局设置消费；不得导入其未接受实现。
-- FileIndex 完全退出，由后续 Slice 另行规划；本次独立 Scan 退役不删除其仍被消费的能力。
 - 整体 DryRun 退役、Rules 测试删除、其他诊断命令或 Provider/身份/配置体系重设计。
 - 跨任务批量 mutation、批量覆盖、历史删除/保留策略、任意旧结果 Reprocess、通用回滚、
   不确定 mutation 自动重放、V1 UI 全面退役。
@@ -283,9 +330,13 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
 - AC-5：独立 Scan 在 Web/API/CLI/非定义绑定执行路径完整退役，旧入口只给退役及新建整理指引，
   不暗中执行；内部整理发现/过滤/真实稳定性可用，不再提示先跑已删除功能。
   不要求旧独立 Scan 的停止/接管、迁移或专用历史兼容；不删除媒体/运行数据，其他受支持工作
-  的结果、pin、权限和历史不回归。FileIndex 完全退出不计入本 Slice。
+  的结果、pin、权限和历史不回归。FileIndex 依赖按 RO-7 另一个连贯 Task 完整移除。
 - AC-6：架构与全部安全不变量通过验证，C→A 策略身份回归通过；
   文档/视觉状态、CURRENT/TARGET、受测候选与证据真实一致，未完成项不冒充交付。
+- AC-7：三入口对同库/目录的真实列表和有界分页一致，列举不产生文件记录或工作/权限/媒体
+  变更。新库/生产装配和所有支持的处理消费者不再包含/调用 FileIndex，不保留全局目录替身、
+  索引同步/reprocess/兼容引擎；无索引仍完成稳定观察→摘要确认→执行→恢复/重开。
+  不要求旧 FileIndex 生产迁移或历史兼容，不清空现存运行库/媒体；其他任务持久结果和安全保持。
 
 ## Final Validation Expectations
 
@@ -303,9 +354,14 @@ Final Test Level 为 T4；本次激活文档只执行治理/链接/图片完整�
   精确就绪子集/附件摘要与按策略处理指引、受理与解决区分、再次失败、原固定上下文缺失和效果未知只核查。
 - 实际 mutation 使用临时 Local / fake / local-server Storage、假 Provider，检查操作及权限；
   不接生产媒体/外部生产服务，分析段以 mutation/Provider 计数等证明其边界。
-- 涉及 schema 时验证真实旧版本迁移/重开及失败原子性；涉及安装、生产产物/Worker 装配时验证
-  wheel/Docker 内同一确认/恢复路径及常驻消费，不以 mock 替代实际边界。
+- 涉及 schema 时验证仍受支持版本的迁移/重开及失败原子性；未上线的旧 Scan/FileIndex schema
+  不要求迁移，不得以自动清库替代拒绝。涉及安装、生产产物/Worker 装配时验证 wheel/Docker
+  内同一确认/恢复路径及常驻消费，不以 mock 替代实际边界。
 - 对 9 张实际截图及布局作视觉检查；例图数量不当作测试常量，缺失外部门禁明确披露。
+- CLI/文件页/媒体库页的真实 Storage 对照、反复 list/分页零文件记录/工作/Provider/媒体变更；
+  跨种类同名库、游标/路径/配置边界与无Active/权限/Storage故障验证。新库没有索引专用 schema，
+  源码/装配/产物无可运行索引、后台同步或 no-op 替身；完整消费者在无索引的 wheel/Docker
+  中实际执行。验证当前支持工作重开/故障原子性，不要求旧索引生产迁移矩阵。
 
 证据保存和复用按 workflow，完整 source SHA、实际命令、配置/依赖、结果计数及原始日志位于
 耐久证据索引；文档/报告 successor 只在明确证明 executable inputs 不变时复用。

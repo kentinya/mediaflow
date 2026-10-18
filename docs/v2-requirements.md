@@ -99,13 +99,14 @@ standalone Scan-entry obligation; exact zero-mutation plans, explicit execution 
 `V2-AUTH-*` / `V2-SAFE-*` requirements remain unchanged. The user-approved 2026-10-18 prelaunch
 amendment removes only old standalone-Scan settlement/migration and dedicated historical compatibility
 obligations: there are no production users or old production Scan jobs. Supported-work history and
-frozen accepted facts remain intact. Complete FileIndex retirement is for a later Slice.
+frozen accepted facts remain intact. The subsequent user-approved FileIndex amendment below adds
+complete retirement and CLI/Web live-list parity to the same Slice45.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
 | V2-OPS-009 | Task Center provides nine sibling list pages, including cross-Task recovery by problem type. | All/running/attention/ended and Recognition/Metadata/Classification/conflict/failure lists share one horizontal navigation row. Recovery lists group one Task per type with affected-file counts across the complete authorized population; tasks may belong to several views. Queries/counts/paging are server-authoritative, pending membership uses current problems rather than page-only filtering or blanket Pending status, and read/refresh/navigation has no work/Provider/Storage side effects. |
 | V2-OPS-010 | Organization creation first shows an exact plan summary in the current interface and then explicitly confirms its eligible selected scope. | Live ResourceLibrary file/folder selection uses bounded discovery, stability, production policy/planning and attachment behavior. Show source, completeness, ready/unready items, operations, destination, per-item effects/conflicts and destructive impacts. Preparation is zero-mutation and grants no execution authority; confirmation binds exact plans/sources/pins/subset and separately permitted effects atomically. Unselected/unready state remains independent; incomplete material bounds cannot execute a first-N prefix. Stale/unknown submission reconciles without automatic replay. No separate Preview page/action is required or offered inside the organizing journey. |
-| V2-OPS-011 | Standalone Scan is completely retired as a product while shared internal discovery and stability remain. | Remove its Web/API/CLI admission, standalone executable/retry/continuation paths and exclusive code; no hidden diagnostic alias or compatible executor. Under the user-approved prelaunch amendment, do not build old standalone-Scan settlement, takeover, upgrade migration or dedicated history/detail/cancel/export compatibility. Retired requests receive a bounded refusal directing to new organization; they never discover, execute or convert into organizing authority. This does not authorize media/runtime-data deletion or weaken other supported Task/Result/pin/audit/non-replay safety. Organization/Automation dependencies complete observations internally; shared Scanner/filtering/stability and general DryRun/Rules tests remain. Full FileIndex retirement is outside this amendment; definition-bound Automation mode retirement remains owned by its frozen Contract. |
+| V2-OPS-011 | Standalone Scan is completely retired as a product while shared internal discovery and stability remain. | Remove its Web/API/CLI admission, standalone executable/retry/continuation paths and exclusive code; no hidden diagnostic alias or compatible executor. Under the user-approved prelaunch amendment, do not build old standalone-Scan settlement, takeover, upgrade migration or dedicated history/detail/cancel/export compatibility. Retired requests receive a bounded refusal directing to new organization; they never discover, execute or convert into organizing authority. This does not authorize media/runtime-data deletion or weaken other supported Task/Result/pin/audit/non-replay safety. Organization/Automation dependencies complete observations internally; shared Scanner/filtering/stability and general DryRun/Rules tests remain. Complete FileIndex retirement is selected separately in the same Slice by V2-FILES-005/006; definition-bound Automation mode retirement remains owned by its frozen Contract. |
 | V2-OPS-012 | Recovery lists lead to native task/type-scoped file processing with integrated analysis, plan summary and explicit continuation. | Recognition, Metadata candidate/correction, Classification, conflict and failure use current legal backend choices/checkpoints and appropriate correctable forms. Save/analysis does not mutate media or confer execution authority; fresh mutation is confirmed against the in-context exact summary without a separate Preview route or operator-managed DryRun task. Pending lists/counts follow durable per-item resolution while retaining history, return context and successful siblings. Uncertain effects stay investigation-only; existing bounded within-Task analysis recovery preserves independent outcomes, with no new cross-Task bulk mutation. |
 
 For V2-OPS-012, the failure journey must expose the failed stage, source/target, completed steps,
@@ -117,6 +118,19 @@ failure explains its new cause and next step. Dependency repair never silently r
 new Active; unavailable pinned context refuses continuation with guidance. Unknown confirmation
 responses reconcile the exact durable request; uncertain effects have evidence/investigation only,
 and preparation-only unready items are not fabricated execution failures.
+
+## FileIndex retirement and shared live lists — TARGET (Slice45)
+
+The user-approved 2026-10-18 amendment adds complete FileIndex retirement to current Slice45.
+It supersedes V1 global indexing, FileIndex catalog/detail/statistics, automatic result sync and
+optional indexed Files feedback; it preserves supported Task/Result/pin/audit/permission/source
+safety and actual internal stability. [The retirement design](file-index-retirement-spec.md)
+defines the CLI and end-to-end journey. No implementation is claimed.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-FILES-005 | CLI `mediaflow files list`, ResourceLibrary Files and MediaLibrary browsing share library-scoped live Storage listing without recording a file catalog. | Resolve the same Active library kind/ID/root and bounded relative directory/cursor through shared application behavior. Preserve exact names, supported entry types, path confinement, kind-separated cursors, bounded/unknown totals and actionable errors. List/refresh/paging creates no file/observation records, Tasks/Jobs/Results, execution authority, Provider/Hash calls or media mutations; it never falls back to an index. Explicit subsequent work retains its required durable records. |
+| V2-FILES-006 | FileIndex fully exits the product and all runtime consumers under the prelaunch boundary. | Remove indexed CLI/API/UI/reprocess/statistics, global file-directory/occurrence/disposition persistence, repositories/stand-ins, dedicated schema, initialization, sync/repair paths and dead code. Fresh supported deployments and every supported CLI/API/Worker/discovery/organize/recovery/Automation foundation work without FileIndex; do not hide or rename it or substitute a no-op/global cache. Exact work-scoped source/plan/pin/stability/results, locks and completed/uncertain non-replay stay authoritative. No old FileIndex production migration, dual write, historical FileID/API or takeover compatibility is required; do not clear existing runtime data/media. Necessary shared dependency removal does not implement frozen Automation business features. |
 
 ## Automation workspace requirements — TARGET (Slice 43)
 
@@ -158,6 +172,10 @@ product requirements here; the Python runtime, authority, authentication, coexis
 boundaries are.
 
 ## UI-V2 Files Contract — 2026-09-14
+
+The bullets below retain the accepted historical baseline. Slice45's later `V2-FILES-005/006`
+TARGET explicitly supersedes their FileIndex display/synchronization/compatibility allowances;
+they do not authorize retaining an index after that outcome is implemented and accepted.
 
 - UI-V2 Files exposes ResourceLibrary as the first-level business object.
 - Files browsing is ResourceLibrary-scoped and backed by live Storage reads.

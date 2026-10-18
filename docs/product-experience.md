@@ -518,6 +518,10 @@ Slice 38 delivered this focused journey through the shared managed configuration
 
 ### Current
 
+This remains the accepted implementation baseline. The selected Slice45 TARGET below and
+[FileIndex retirement design](file-index-retirement-spec.md) replace this indexed journey completely;
+they are not a claim that the current CLI/runtime dependencies have already exited.
+
 FileIndex presents indexed discovery records separately from the real Storage Files view. Only files
 discovered by a ResourceLibrary scan appear in its catalog. Its `scanStatus` describes
 discovery/stability, while processing disposition, current source occurrence and bounded fingerprint
@@ -1018,11 +1022,29 @@ Slice Base..Implementation Head on 2026-10-06; its CURRENT scope does not expand
   明确指引到新建整理，不自动创建或执行。用户于 2026-10-18 确认服务尚未上线，因此不建设
   旧独立 Scan 任务的停止/接管、升级迁移或专用历史详情/取消/导出兼容。保留整理内部
   Scanner/过滤/真实稳定性观察，不要求用户先跑被删 Scan；其他受支持任务的历史、pin、结果、
-  审计与未知效果非重放不变。本次不清空媒体/运行数据；FileIndex 完全退出由后续 Slice
-  另行规划。通用 DryRun、Rules 测试和冻结自动化工作区不扩删。
+  审计与未知效果非重放不变。本次不清空媒体/运行数据。FileIndex 完全退出已由用户追加到
+  当前 Slice 的下一完整业务单元，见下方旅程；通用 DryRun、Rules 测试和冻结自动化业务工作区不扩删。
 
 此处明确选入跨任务分类列表，取代此前对此类列表的延期；跨任务批量 mutation、任意历史
 Reprocess、历史清理、通用回滚、不确定效果重放及冻结 Slice43 的其余工作仍不在本 Slice。
+
+### TARGET — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
+
+用户要求的完整旅程和 CLI 示例见 [FileIndex 退役设计](file-index-retirement-spec.md)。
+在 CLI `mediaflow files list` 或文件页/媒体库页选一个资源库/媒体库并打开相对目录，
+三入口共用同一应用行为读取当前 Active 绑定的 Storage，只展示真实条目与有界分页。
+刷新/翻页不记录文件目录、观察、Task/Job/Result，不授予执行许可，不调用 Provider/Hash 或修改媒体。
+长名/空白、同名跨种类库、游标/越界和错误处理一致；故障不伪装空列表，也不回退索引。
+
+FileIndex 专用 CLI/API/V1/V2 列表、详情、统计、reprocess、同步修复与后台目录全部退出；
+旧 FileID/参数/链接只给退役与库级浏览/任务中心指引，不保留历史查询引擎。
+查看“发生了什么/如何恢复”通过现有 Task/Result/checkpoint/审计完成。明确发起的整理和
+文件维护继续保存必要逐项结果，列表不记录不意味着执行不留记录。
+无预扫描来源仍能在整理内完成真实稳定观察、同页摘要、精确确认和结果；工作重开/恢复不依赖索引。
+
+未上线环境不建设旧索引迁移、双写、历史兼容或在途接管，也不自动清空现存数据库/媒体。
+必要的共享 Automation 依赖移除在本范围，冻结 Slice43 的业务模式/页面/设置消费保持延期。
+这些是 TARGET；其他 CURRENT/已接受闭合事实待本 Slice 实际验收后统一核对。
 
 ### Migration coexistence and deferrals
 

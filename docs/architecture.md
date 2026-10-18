@@ -660,8 +660,8 @@ A thin retirement refusal closes unsupported entry/dispatch paths before discove
 them into Organize. Organization/Automation dependencies that instruct operators to run Scan must
 perform bounded observations within their own workflow, retaining real elapsed stability checks.
 Other supported Task/Result/pin/audit/claim safety and history remain unchanged; no media/runtime data
-is cleared. Full FileIndex retirement belongs to a later Slice, and definition-bound Automation modes
-and the broader workspace remain the frozen Slice43 boundary.
+is cleared. The subsequent FileIndex amendment below adds complete retirement to this same Slice;
+definition-bound Automation business modes and the broader workspace remain the frozen Slice43 boundary.
 
 Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
 columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,
@@ -669,6 +669,46 @@ one-shot authority, revoked unattended authority and per-item unknown effects pr
 semantics. Historical Task/Job deep links remain diagnostic native reads. Bounded visible polling,
 queries, exports and navigation create no Jobs, Provider calls or Storage mutation. No Node runtime
 server, Provider/auth redesign, distributed persistence or general rollback is introduced.
+
+## TARGET — FileIndex retirement and shared live listing (Slice45)
+
+[The full retirement design](file-index-retirement-spec.md) adds V2-FILES-005/006 to the current
+Slice. CURRENT index descriptions elsewhere remain baseline facts pending implementation/acceptance.
+
+```text
+CLI files list / ResourceLibrary Files / MediaLibrary Files
+  -> one library-kind/ID + relative-directory application boundary
+  -> exact Active -> confined Storage list/stat -> bounded live response
+
+Explicit organize/maintenance/recovery
+  -> work-scoped exact sources/observations/plans/pins
+  -> existing Task/Result/checkpoint/claim/lease/fence -> OrganizerExecutor
+```
+
+Reuse RuntimeFilesBrowserService and its two library projections for CLI and Web; remove its
+obsolete FileIndex composition argument. Browsing has no catalog/observation/Task/Result writes,
+Provider/Hash calls or media effects, and does not initialize/migrate a database as a listing side
+effect. Exact kind/ID/root/cursor/path/whitespace rules remain shared. No global index fallback.
+
+Remove FileCatalog/FileIndex products, domain/repositories/memory stand-ins, dedicated schema,
+Worker/API/CLI startup composition, global occurrence/disposition directory and Missing catalog
+reconciliation, automatic Result/direct-command synchronization and its repair/reprocess paths.
+Fresh supported runtime schemas contain no FileIndex tables. Dashboard and other projections lose
+index-only metrics/links without starting Storage walks or inventing totals; ordinary Task metrics remain.
+
+Existing Scanner/Automation/Preview/recovery consumers must use Storage and exact work-scoped
+evidence without constructing an index. Reuse existing bounded discovery/Task observation storage;
+do not rename the same global path catalog as cache or implement a no-op repository. Per-work
+fingerprints, scope, source version, stable-size elapsed observations, pinned plans, locks, completed
+steps, Results and audits remain necessary; they do not become a browse catalog. Task/Result
+publication errors never authorize replay of completed/uncertain mutation.
+
+No production old-index migration, dual write, historical FileID/API compatibility or takeover
+mechanism is required. Do not clear, drop or silently rebuild current runtime data/media; unsupported
+development old schemas fail with actionable new-isolated-data guidance. Current supported Task/
+Result reopen and ordinary failure atomicity remain. Shared dependency removal in existing Automation
+foundations is allowed; frozen business-mode retirement/workspace changes and frozen-branch imports
+remain excluded. Production wheel/Docker prove real listing and consumers with no index assembly.
 
 ## Manual organize
 

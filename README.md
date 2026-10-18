@@ -98,6 +98,28 @@ artifact in the Python runtime image. See [deployment](docs/deployment.md) for p
 
 ## CLI
 
+### Slice45 target: live file lists
+
+The active Slice45 Contract selects shared live Storage browsing for CLI, Files and MediaLibrary.
+These target commands are pending implementation; each lists one configured library directory
+without creating FileIndex, Task, Result or discovery records:
+
+```bash
+mediaflow files list --resource-library source --path "incoming" --limit 100
+mediaflow files list --media-library media --path "Movies" --limit 100
+```
+
+Choose exactly one library; omit `--path` to list its root and use the returned `--cursor` for the
+next page. Global catalog filters, file-ID detail/statistics and standalone Scan are retiring.
+The service has not launched, so this work does not provide old FileIndex production-data migration
+or history compatibility. See [the FileIndex retirement target](docs/file-index-retirement-spec.md).
+Task/Result/audit and source-safety persistence for explicit work remain required.
+
+### Baseline command reference
+
+The examples below describe the implementation baseline. FileIndex and standalone Scan examples
+are scheduled for removal under Slice45; they do not define the new target behavior.
+
 ```bash
 mediaflow analyze "/path/to/movie.mkv"
 mediaflow analyze --offline "/path/to/movie.mkv"
@@ -383,8 +405,9 @@ it locally with `mediaflow security-audit list --limit 100`, or through auditor/
 request bodies, query strings, tokens, cookies, or exception text. The legacy single `api.tokenEnv`
 form is accepted as one admin principal for compatibility, but cannot be mixed with `principals`.
 
-The read-only operational dashboard summarizes configured libraries plus persisted FileIndex,
-Task, Job, confirmation, and notification state:
+The baseline read-only operational dashboard summarizes configured libraries plus persisted
+FileIndex, Task, Job, confirmation, and notification state. Slice45 removes FileIndex metrics and
+catalog links; it preserves Task, Result and other supported operational state.
 
 ```bash
 mediaflow dashboard --recent-limit 10
@@ -531,6 +554,12 @@ It stores FileIndex state, tasks, task items, normalized results, and active sou
 validation does not create the database. Resume/retry creates a separately auditable task; real
 mutation requires both original execute authorization and a fresh `--execute`. Existing JSONL
 operation history remains compatible.
+
+This describes the baseline schema. The [Slice45 target](docs/file-index-retirement-spec.md) removes
+FileIndex tables and runtime dependencies from fresh supported deployments, while retaining
+Task-scoped source observations, results, locks and audit needed for safe explicit work. Listing
+alone must not initialize or migrate a runtime database. No old production FileIndex migration or
+automatic deletion/rebuild of existing runtime data is part of this prelaunch change.
 
 ## Current capabilities
 

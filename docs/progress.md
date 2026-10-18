@@ -8,16 +8,20 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice45 — **V2 Task Center Redesign and Recovery Pages** — is **ACTIVE** on
+Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — is **ACTIVE** on
 `slice/45-scope-pending`, retaining accepted Slice44 Base
 `a72252091d5d46edf3e2114b994036ae21b08e2e`. The user-confirmed final Contract selects nine task/recovery
 lists, in-context exact plan-summary confirmation and complete standalone Scan retirement with shared
 internal discovery/stability preserved. [The final page specification](task-center-page-spec.md)
 indexes nine named references under `docs/pics/`. Implementation is in progress; Implementation Head
 for A final review is NOT SET and no Slice delivery/closure is claimed. The user-approved prelaunch
-revision removes assumed old standalone-Scan settlement/migration/history compatibility; shared
-discovery/stability remain and full FileIndex retirement belongs to a later Slice. Stable product
-amendments and TARGET documentation carry no unaccepted frozen Automation code.
+revision removes assumed old standalone-Scan settlement/migration/history compatibility. A further
+user amendment adds complete FileIndex retirement and CLI/Web shared live Storage listing without
+catalog recording to this same Slice as RO-7; [its specification](file-index-retirement-spec.md) is
+TARGET, not delivered behavior. Shared discovery/stability and supported Task/Result/source-safety
+facts remain, without requiring old FileIndex production migration or history compatibility.
+Task45.4 remains the active Scan retirement unit; B plans the coherent FileIndex unit after its PASS.
+Stable product amendments and TARGET documentation carry no unaccepted frozen Automation code.
 
 Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
 **Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
