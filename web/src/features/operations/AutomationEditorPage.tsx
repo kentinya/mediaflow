@@ -543,7 +543,7 @@ export function AutomationEditorPage() {
               <h3>Checked activation</h3>
               <p className="mf-dashboard-meta">
                 {activate.available
-                  ? "Activation runs the existing read-only Storage, strategy and destination checks server-side and publishes this exact Draft as the immutable Active configuration. No Scan, Job, Task or occurrence is started."
+                  ? "Activation runs the existing read-only Storage, strategy and destination checks server-side and publishes this exact Draft as the immutable Active configuration. No work is started."
                   : `Activation unavailable: ${activate.reason ?? "not advertised"}`}
               </p>
               {activate.available && (

@@ -76,7 +76,7 @@ function SourceIdentity({
         )}
         {matrix.source?.scanStatus && (
           <>
-            <dt>Scan status</dt>
+            <dt>发现状态</dt>
             <dd>{displayEnum(matrix.source.scanStatus)}</dd>
           </>
         )}

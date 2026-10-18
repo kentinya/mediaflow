@@ -740,7 +740,7 @@ export function OperationsLanding() {
                             filters.command === "all" ? "" : filters.command
                           }
                           maxLength={64}
-                          placeholder="如 scan、preview"
+                          placeholder="如 preview、organize"
                           onChange={(event) =>
                             applyFilters({
                               command:
