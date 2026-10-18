@@ -219,6 +219,9 @@ CLI 注册/帮助（含 preview、batch preview、jobs submit preview）、Job/T
 not-found/参数/不支持类型错误，在发现/Provider/准入/许可前停止，不自动转为整理。
 
 整理创建/Files/恢复保留同页分析→精确计划摘要→选择就绪子集→明确确认→实际执行。
+Web 摘要明确复用 Organize DryRun 的共享应用层分析/计划链，与 CLI 不执行模式同源；
+API 直接调用应用服务，保留各入口实际 scope/pin/策略选择，不启动 CLI 或另造分析引擎。
+先持久保存完整固定计划再投影摘要；确认后执行该份经重验仍合法的计划，实质变化须更新摘要并重新确认。
 `organize` 不带 --execute 的完整零媒体变更分析保留；Rules、配置完整流程检查及 Automation
 授权前校验复用共享分析/计划服务，保留原候选配置/精确定义和权限边界。长分析使用现有
 Task/Worker，不建立另一套分析队列或执行引擎，不要求用户管理独立 Preview 工作。

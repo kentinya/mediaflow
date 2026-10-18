@@ -511,8 +511,13 @@ scheduled/definition-bound dispatch/retry/continuation, exclusive schema/service
 composition or compatibility/retirement layer. Old inputs ordinarily reject under normal auth and
 shared supported-type validation before Storage/Provider/admission/authority; no conversion to Organize.
 
-Shared organizing preparation/analysis -> immutable source/configuration/plan/version evidence ->
-same-page summary -> exact explicit authority/admission -> existing Worker/OrganizerExecutor/Result.
+Web creation/Files/recovery and CLI organize without --execute call the same shared Organize DryRun
+application analysis/planning behavior, retaining each entrance's actual scope/pin/policy choices.
+API calls the application service directly; it does not spawn the CLI or add another analysis engine.
+Web flow: Organize DryRun -> persist complete immutable source/configuration/plan/version evidence -> project
+same-page summary -> exact explicit authority/admission -> revalidate the confirmed plan/source/permission
+-> existing Worker/OrganizerExecutor/Result. Summary text alone is not an execution plan; material
+source/plan changes require updated analysis/summary and fresh confirmation.
 CLI organize without --execute and Rules/configuration/Automation preflight reuse real planning.
 Preserve current candidate/definition/scope/permission boundaries, elapsed stability, findings,
 attachments, capabilities and source revalidation. Analysis grants no permission and creates no

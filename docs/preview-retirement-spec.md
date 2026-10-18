@@ -37,7 +37,13 @@
 ## 3. 保留并统一的能力
 
 `mediaflow organize` 不带 `--execute` 仍提供零媒体变更的完整分析/计划结果。
-Web 整理和恢复继续同页分析→摘要→精确确认→现有 Worker/OrganizerExecutor。
+Web 整理创建/Files/恢复的摘要明确复用 Organize DryRun 的共享应用层分析/计划链，
+与 CLI 不执行模式共用应用行为，并保留各入口实际来源范围、固定配置与策略选择。
+API 直接调用该应用服务，不启动 CLI 命令，不另建分析引擎或保留独立 Preview 服务生命周期。
+Web 流程为 Organize DryRun 分析→持久保存完整固定计划→投影同页摘要→精确确认→
+重验该计划/来源/权限→现有 Worker/OrganizerExecutor 执行。
+仅保存摘要文本不能作为执行依据；计划或来源实质变化须重新分析、更新摘要并重新确认。
+现有 DryRun 路径需适配下方 analysis-only 规则，确保仅分析不创建正式执行待办或权限。
 保留 Scanner/真实稳定观察、Parser/Recognition/Metadata/Naming/Classification/Planner、
 主文件/附件计划和策略解释，以及精确来源、固定配置/计划、版本、许可、锁/fence、Result/审计。
 
@@ -59,7 +65,8 @@ WAITING_CONFIRM/Review/Conflict/Recovery 待办，不自动执行、不授予权
    `_analysis_only_preview`；`service_api.py` 的独立 Preview 和整理摘要接口；V2 router 的
    PreviewNew/Detail、OrganizePreview、AutomationPreview 及 V1 UI；区分独立产品与共享分析。
 2. 找到需要承接的消费者：新建整理/Files、五类恢复、Rules/配置检查、Automation 授权前校验、
-   Worker 与安装/容器 harness。先将它们接入既有整理分析/固定计划服务，保留原 scope/pin/权限。
+   Worker 与安装/容器 harness。先统一接入 Organize DryRun 的共享应用层分析/固定计划服务，
+   保留原 scope/pin/策略选择/权限，Web 不通过 CLI 绕行。
 3. 将内部计划数据、版本和确认/恢复关联收敛到真实整理职责，保留原子发布、来源再验和有效
    许可绑定；长分析复用现有 Task/Worker。不得用新 Active 替换旧合法 pin。
 4. 删除独立入口/类型/调度/dispatch/继续路径；清理专属服务/模型/仓储/schema/装配和无消费者
