@@ -922,17 +922,19 @@ export function OperationsLanding() {
                     onSelectRun={selectRun}
                   />
                 )}
-                {problemRunId !== "" && problemFileType !== null && (
-                  <ProblemFilePanel
-                    key={`${problemRunId}:${problemFileType}`}
-                    runId={problemRunId}
-                    problem={problemFileType}
-                    cursor={problemPage.cursor}
-                    onPage={turnProblemPage}
-                    onOpenEvidence={openProblemItemEvidence}
-                    onClose={closeProblemRun}
-                  />
-                )}
+                {selectedId === "" &&
+                  problemRunId !== "" &&
+                  problemFileType !== null && (
+                    <ProblemFilePanel
+                      key={`${problemRunId}:${problemFileType}`}
+                      runId={problemRunId}
+                      problem={problemFileType}
+                      cursor={problemPage.cursor}
+                      onPage={turnProblemPage}
+                      onOpenEvidence={openProblemItemEvidence}
+                      onClose={closeProblemRun}
+                    />
+                  )}
               </div>
             </div>
             <WorkerReadinessSection query={readinessQuery} />
