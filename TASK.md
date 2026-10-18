@@ -21,6 +21,45 @@ Next Action: DEVELOPER REMOVES SCAN PRODUCTS/MODES/RETIREMENT LAYERS UNDER REVIS
 不等于合并树重新PASS。Scan模式可能已由main删除部分执行路径，Developer须按合并后真实
 消费者核对，不重复恢复旧代码。ID/Base/High/T4/FIX REQUIRED与当前首次部署要求均不变。
 
+### main 合并后的范围复核与 Scan 剩余清单 — 2026-10-18
+
+```text
+Contract Checkpoint: f1e67582022b565cf1ba2ef6f427081aa94cd901
+Decision: TASK45.4 CONTINUES WITH LEGAL SCOPE ADJUSTMENT
+Task ID / Base / Difficulty / Test Level: UNCHANGED / UNCHANGED / High / T4
+Implementation Decision: FIX REQUIRED; NO PASS OR SLICE CLOSURE
+```
+
+用户要求先记录范围并核查剩余代码，本轮不执行产品删除。A 已提交最新 Contract，治理检查
+PASS 后按实际 main 复核：当前仍是 Scan 首次部署移除与必要共享连续性的同一完整单元，
+沿原 ID/Base 继续。已合并 Slice43 的页面、原生编辑/发布、Run once、分析页面、指标和
+引擎设置消费不再是45必须保留、恢复、兼容或逐项验收的前提。RO-5/RO-7 必要删除可直接
+调整或清理其专属耦合，无需先适配旧自动化页；自动化页在45完成后另行确认设计和实现。
+不主动开展无关页面重做，不自动恢复43.3；43.2原B PASS只保留历史事实。共享受支持基础流程
+实际需要的来源/稳定性/规划、Task/Worker、授权、pin/结果/审计和非重放仍须验证。
+
+以下是 `c4aa9b9e217cbcc210b108429f2910631ca96c3b` executable（上述 Contract checkpoint
+仅改文档）的实际残留，不是新增 Task 或已完成声明：
+
+| 剩余类别 | 实际位置与现状 | 本 Task 后续处理 |
+|---|---|---|
+| Web 退役入口/契约 | `web/src/features/operations/ScanRetiredPage.tsx`；`router.tsx`、`destination-model.ts` 仍注册旧 new/detail；`manual-actions.ts` 仍要求 `actions.scan`/Scan modes | 删除页、路由、destination及专用动作字段；旧地址走普通认证/not-found，不留墓碑或跳转 |
+| API/专用错误 | `service_api.py` 仍识别 scans/manual-scan/manual-scans/operations/scans，通用 jobs POST 仍单独识别 scan；`application/manual_scan.py` 仅剩 `ManualScanError` | 删除 aliases/识别/410及错误模型；共享支持类型在发现/准入前普通拒绝 |
+| CLI 注册与帮助 | `final_cli.py` 仍注册顶层 scan、jobs submit 的 scan choice，包含多处专用报错、恢复与 queued dispatch 分支 | 删除注册/帮助/choices及专用分支；scan/flags/--help/jobs submit scan 均由 argparse 普通错误退出2 |
+| 产品类型、配置与调度 | `domain/automation.py` 仍有 `AutomationCommand.SCAN`、ScheduleDefinition 的 scan 支持；`infrastructure/runtime_configuration.py` 接受 scan schedule；`domain/scope_continuation.py` 的支持集合仍含 scan | 收敛为真实支持类型；删除 Scan 配置/调度及专用继续类型，不靠 Scheduler 静默跳过代替删除 |
+| Worker/重试/继续退役层 | `automation.py`、`automation_definition_execution.py`、`task_runtime.py`、`task_retry.py`、`recovery_admission.py`、`scope_continuation.py` 及 CLI 仍有 standalone_scan_retired、来源特判或 `require_supported_scan_origin` | 删除专用认识层及无消费者 helper；保留共享来源关联、pin/权限、claim/fence和通用非法类型拒绝 |
+| 定义模式历史兼容 | 合并后新定义已只允许 automatic-organization，但 `RECORDED_SCAN_*`/`decode_recorded`、旧值别名及 SQLite 读回仍存在；Web automation entity、Lifecycle/Editor 仍显示旧模式与显式纠正 | 删除旧模式存储解码/别名/展示/纠正及专用拒绝；不为旧43页面兼容，不把未知/省略模式变成执行授权 |
+| Readiness/投影与旧证明 | `service_api.py` 的 readiness/action matrix、`operations_lifecycle.py` 类型说明等仍认识 Scan；`test_scan_retirement.py` 和 `scripts/docker_scan_retirement_browser_proof.py` 仍断言410/退役页，其他 fixture仍用SCAN | 删除专用投影/提示，改不存在语义测试；通用安全/包装证明用支持工作，保留其原RBAC/secret/持久化/非重放断言 |
+
+隔离复现：CLI `--help` 仍列出 Scan，`scan` 返回2及 `standalone_scan_retired`；临时 SQLite
+上的 POST `/api/v1/scans`、`/api/v1/manual-scan`、`/api/v1/jobs`（command=scan）均返回
+410/该专用错误，Task/Job数量均0，runtime绑定未加载。证明当前是“退役拒绝”，尚未满足
+普通不存在；不复用旧测试通过来声明新要求完成。本轮未跑完整T4或浏览器验收。
+
+主要独立执行服务、独立domain/manual_scan及SQLite专用CRUD/新表已删除，保留这些有效删除。
+StorageScanner/ResourceLibraryScanner、scan_filters、整理内有界发现与真实稳定观察继续保留。
+FileIndex完整仓储/schema/同步及CLI实时列表统一仍属RO-7后续完整单元，不塞入45.4或提前关闭Slice。
+
 ## Goal
 
 当前服务按首次部署验收：Scan 产品及兼容层视为从未存在。移除独立 Web/API/CLI 入口、
@@ -36,8 +75,9 @@ scan-only/scan-and-plan 定义模式、别名、默认值和专用分支；无�
 
 完成 **RO-5 / S-7**，以及该退役所必需的 **RO-4 / S-5 其他受支持工作的历史/控制连续性**、
 **RO-6 / S-6 共享 API/Worker/Persistence 集成**。不改变 RO-1/2/3 已验收旅程或附件修订。
-定义绑定 Scan 模式删除是已提交 A 修订授权的冻结 Slice43 窄例外；其余页面/Run once/指标/
-全局设置消费继续冻结，不导入未接受代码，不把删默认值解释为隐式自动整理许可。
+定义绑定 Scan 模式删除由已提交 A 修订授权；已合并 Slice43 的页面/Run once/指标/全局设置
+实现不构成保留或验收前提。可清理必要耦合，自动化页重新设计留到45完成后；不把删默认值
+解释为隐式自动整理许可，不主动开展无关43开发。
 适用要求：V2-OPS-009–012、V2-UX-001–003、V2-AUTH-001–003、V2-SAFE-001、
 V2-MIG-001–003、REQ-SCAN-002–006、REQ-TASK-*、REQ-RECOVERY-*、REQ-SAFE-*、UX-001–010。
 REQ-SCAN-001 的独立入口按已授权 V2 修订退役，内部发现与稳定性义务不降低。
@@ -215,7 +255,8 @@ A 的10个范围文档修改单列归属上述 checkpoint，Developer 不再改�
 ## Implementation Scope / 逐步开发指导
 
 同一 Task 内按下列连贯阶段修正，不拆成删按钮/删命令/补测试等单点 Task。先建立受影响反例，
-修正已知问题后冻结新 executable 候选做完整 T4。不得导入冻结 Slice43 分支或修改 A-owned 范围。
+修正已知问题后冻结新 executable 候选做完整 T4。不继续导入冻结43工作或修改 A-owned 范围；
+按最新 Contract 清理必要43耦合，无需恢复/适配其旧页面实现。
 
 ### 1. 核对真实消费者并建立不存在语义反例
 
@@ -303,9 +344,10 @@ A 的10个范围文档修改单列归属上述 checkpoint，Developer 不再改�
 - [ ] **AC-4 真实稳定性：** 无预扫描的新来源在原整理内完成有界跨真实间隔观察与同页摘要；
   年龄/变化重置/临时排除/限制/精确pin保留，未稳定或不完整项不可执行，确认前零变更/许可。
   不再依赖/建议 Scan；shared discovery/planning、diagnostic/scheduled Preview、DryRun/Rules正常。
-- [ ] **AC-5 共享权威/冻结边界：** 不增加队列/配置/发现/恢复/执行引擎；真来源/pin、RBAC、
+- [ ] **AC-5 共享权威/自动化延期边界：** 不增加队列/配置/发现/恢复/执行引擎；真来源/pin、RBAC、
   claim/fence/原子准入、OrganizerExecutor-only、C→A身份与已完成/未知非重放不回归。模式删除
-  仅用最新A授权窄例外，其余Slice43页面/Run once/统计/设置仍冻结，不导入其未接受实现。
+  和必要耦合清理采用最新A授权；43专属实现不作为保留/验收前提，页面重新设计留到45完成后，
+  不主动扩展43功能，也不削弱其他受支持基础流程。
 - [ ] **AC-6 原生体验：** 新整理及其他支持工作桌面/380px/键盘/深链/返回/重连可用；普通404
   不伪装退役页，Worker/稳定性/权限/缺pin/未知请求有当前合法下一步，无CLI回退或内部材料负担。
 - [ ] **AC-7 T4/真实性：** 全量/真实Python/持久化/wheel/Docker证据匹配新候选及实际产物；
@@ -317,6 +359,10 @@ High/T4 来自删除跨 Web/API/CLI/发布/调度/Worker 的产品类型、共�
 不是旧 Scan 生产迁移风险。先修受影响反例，再对新精确 executable 完成全部门禁；full 包含 focused
 时记录覆盖，不机械重复。同版本 reopen/restart 不等于旧版兼容。ignored 运行库属用户环境，
 全量用精确候选干净隔离 checkout、临时 Local/SQLite/fake Provider，禁读改用户库/私密 config。
+
+最新自动化延期边界不降低 High/T4 或下列完整门禁。若为完成本 Task 合法调整/移除43专属
+实现，相关用例须按新支持表面同步，不要求旧页面/Run once逐项兼容；共享权限、pin、结果、
+未知效果非重放和其他受支持流程的原断言必须保留映射，不能以延期为由删安全证明或加skip造绿。
 
 ### Development and correction feedback
 
@@ -393,7 +439,8 @@ High/T4 来自删除跨 Web/API/CLI/发布/调度/Worker 的产品类型、共�
   不能为首部署清用户库或恢复Scan兼容代码；若确需改共享schema，验证本版本fresh/reopen和
   失败原子性，不删/改受支持历史含义。完整FileIndex schema退出留RO-7，不在本Task冒充完成。
 - `git diff --check`；完整Task Base..Head manifest/name-status/stat/diff、A文档与私密文件检查。
-  A-owned范围文件对照 `0b59846a2f85d2148b8f6de8d8eaa759e1be42cc`，Task/代码仍对照原Task Base。
+  A-owned范围文件对照最新授权 `f1e67582022b565cf1ba2ef6f427081aa94cd901`（早期授权仍在Git），
+  Task/代码仍对照原Task Base。
   新source/tests/harness/dependencies/config/assets必须匹配最终T4，不能复用旧退役语义报告。
 
 ### B independent verification
@@ -420,16 +467,16 @@ retry配置、exit/counts/skips/duration、首败/复跑、日志/截图/trace�
 ## Non-goals
 
 - Developer修改SLICE/Roadmap/Progress/稳定需求/CURRENT声明、移动Base/关闭Slice或规划下一Task。
-- 冻结Slice43其余页面/Run once/指标/全局设置消费和未接受代码导入；两种Scan模式及专用路径
-  删除已明确纳入本Task，不再是冻结保留例外。
+- Slice43自动化页/Run once/指标/全局设置的重新设计实现留到45完成后；本Task仅清理必要耦合，
+  不导入后续冻结开发，不要求保留/恢复/兼容旧43专属实现。Scan模式和专用路径仍完整删除。
 - 整体Preview/DryRun/Rules或支持scheduled Preview退役、V1整体cutover、新Provider/MediaLibrary Organize。
 - 旧Scan/V1 parity、历史/停止/接管/迁移/转换兼容层、删除现有数据库/媒体/用户文件/Git历史。
 - FileIndex完整退出与CLI列表统一属RO-7，待本Task PASS后一个连贯Task完成；不提前验收。
 - 新队列/Scanner/观察/恢复/执行引擎、扩大限制、任意历史Reprocess、自动repin、附件-only执行/
   补偿回滚、主文件/已完成/不确定effects重放，或已验收创建恢复界面整体重做。
 
-These are unmet existing acceptance and safety boundaries, not optional proof improvements or new
-business goals. The Contract is sufficient; no A rescope or weakening of requirements is requested.
+以上按最新已提交 A 修订实施，Task ID/Base 和安全/T4不变；未满足项继续在同一修正循环完成，
+不将延期的自动化页工作或RO-7后续单元当作本Task已交付。
 
 **历史候选报告，非当前完成声明。** 以下原文对应 cb5ebd8/ef1f1f3；本轮范围调整未改产品代码。
 其专用退役拒绝、旧链接指引和保留定义模式不满足新Contract；原测试总数不能作为新候选通过证据。
