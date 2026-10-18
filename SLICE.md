@@ -8,172 +8,40 @@ Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: NOT SET
 Working Branch: main
-Development Authorization: USER-AUTHORIZED MAIN INTEGRATION; CONTINUE TASK45.4 FIX LOOP
+Development Authorization: USER-AUTHORIZED MAIN INTEGRATION AND A WORKFLOW GOVERNANCE
 Risk: High
 Final Test Level: T4
-Next Action: CONTINUE TASK45.4 ON MAIN; COMPLETE RO-7 BEFORE SLICE FINAL
+Next Action: B PLANS RO-7; COMPLETE ALL OUTCOMES BEFORE SLICE FINAL
 ```
 
-## Authority and baseline
+## Current authority and progress
 
-用户于 2026-10-15 指定 A 冻结 Slice43，并从已接受的 Slice44 基线预留 Slice45；随后确认
-任务中心重构、独立 Scan 完整退役、整理内取消独立 Preview 页面、九个横向标签及跨任务
-分类恢复列表，最终选择“同页先显示计划摘要，再确认执行”，并要求将最终方案写入文档。
+本 Contract 保留 Slice44 closure 的不可变 Base；首次授权/修订/整合的详细记录保留于
+`479518e4aff0419da82c667bef6f127936774cec:SLICE.md`。本次仅合并现行约定并调整测试责任，
+不改变 Required Outcomes、Surfaces、安全、延期或产品验收含义，也不是 A Final Review。
 
-本次检查点激活该完整 Contract，仅是范围与 TARGET 设计授权，不是实现、B PASS 或 A 交付验收。
-B 仍须先定义合法 Task；本次不创建 Developer Task、不导入冻结代码、不推送。
+- 在 main 继续；用户授权过 main/Slice45 整合，双方非冲突工作保留、冲突采用 Slice45。
+- Scan 按首次部署不存在处理，含定义绑定模式和退役兼容层；不要求旧 Scan/V1 迁移或历史兼容。
+- FileIndex 完全退出纳入同一 Slice 的 RO-7，须以一个连贯 Task 完成，不能提前关闭 Slice。
+- 主文件验证完成即保留主项成功；附件异常独立记录原因/来源/目标/步骤，指引来自实际固定
+  OrganizePolicy。未知效果只核查，不新增附件-only 自动恢复或为附件重放主文件。
+- 已合并 Slice43 页面、Run once、指标和设置消费不是45保留/验收前提；可清理45必需耦合，
+  自动化页重新设计留到45后，不主动恢复43后续开发。共享支持流程的权限/pin/结果/审计保持。
+- Task45.1–45.4 已 B PASS；45.4 reviewed Head 为 `479518e4aff0419da82c667bef6f127936774cec`，
+  按用户当轮指令仅审实现、未核验全部 T4 证据。RO-7 仍未交付，未进行 Slice-final 或 A 验收。
+- 自本次流程修订起 Developer 只跑新增/修改及直接受影响测试，B 负责全量和最终验收；旧的
+  Developer 全量分配由 B 承接。此前接受/例外不重写，不倒记完整验证。
 
-不可变 Base 保持为 Slice44 closure `a72252091d5d46edf3e2114b994036ae21b08e2e`
-（接受的 Implementation Head 为 `8be263ea778df08aa374e9433f138a218c1d4af9`）。
-原分支的 scope-pending 名称是保留的历史名称，不改变其 ACTIVE Contract；当前分支按下方整合决定改为 main。
-前期范围说明检查点保留在 Git，未发生产品实现。
+### Suspended work preservation
 
-### A Contract revision — 2026-10-18
-
-用户明确授权调整附件语义：主文件执行并验证完成即可视为主项完成；附件若失败、未执行或目标
-冲突，必须保留逐附件原因、来源/目标、已完成步骤和按已绑定策略决定的处理指引；人工移动只是
-策略允许时的示例，不是统一动作。本 Slice
-不新增附件-only 自动恢复、补偿执行器或主文件重放路径。附件仍须进入计划摘要、持久结果、详情、
-导出和审计；附件警告不得被显示为无警告的完整成功，也不得把未知效果改成可重试。
-
-该修订保持 Storage confinement、OrganizerExecutor-only mutation、精确确认、逐项状态、未知
-效果只核查和固定 pin 不变；它明确收窄的是附件-only 继续整理的产品承诺，而不是安全规则。
-
-### A Contract clarification — 2026-10-18
-
-附件异常的下一步必须从实际固定的 OrganizePolicy/策略能力投影，使用有界、可操作且不越权的
-说明；不得把“手动移动”硬编码为所有附件的恢复动作。策略允许跳过、重命名、覆盖确认、重新
-分析或其他既有动作时，只展示该策略实际允许的动作；策略不允许安全继续时，展示原因和核查/补正
-路径。未知效果仍只能核查，不得给出暗示状态已知的移动或重放指引。
-
-例如主文件的固定 OrganizePolicy 为 `MOVE`，附件发生目标冲突，而主文件已成功并验证完成时，
-附件结果应显示具体冲突名，并给出“有冲突：<具体冲突名>，请修正后再进行‘移动’操作”这类
-以主文件策略动作标签为准的下一步。该提示不代表系统会自动重放主文件，也不取得附件 mutation
-许可；它只告诉用户修正冲突后应按既有策略处理该附件。其他主文件策略必须显示其实际动作标签，
-不能统一写成“手动移动”。
-
-### A Contract revision — 2026-10-18，未上线的 Scan 退役范围
-
-本节记录较早授权；薄拒绝和定义模式冻结例外已由下方“Scan 按首次部署不存在处理”修订取代。
-
-用户确认服务尚未上线，不存在需要兼容的生产旧 Scan 任务，并明确授权当前代理使用 A 权限，
-同步调整已开始开发的 Task45.4。本次是材料性范围收窄，不是仅修改文案：取消 RO-5 / S-7
-原有的旧独立 Scan 在途停止、接管、升级迁移与专用历史读取/取消/导出兼容义务。
-
-独立 Scan 的 Web/API/CLI 准入、执行、重试、继续和专用编排仍必须完整移除；必要的薄退役
-拒绝只说明功能已移除并指向新建整理，不能启动发现、自动转换成 Organize 或保留可运行后门。
-不要求为开发测试记录保留独立 Scan 历史服务、页面、路由、数据模型或启动清退机制；
-无其他消费者的专用代码应删除。遇到不支持的独立 Scan 命令仍须在执行前拒绝，这不要求迁移
-或重建旧任务状态。
-
-本次不执行媒体/运行数据库/历史数据清空，不削弱其他受支持任务的结果、pin、权限、审计和
-未知效果非重放规则。整理内部发现、过滤、真实稳定性观察和既有限制保留。该次修订曾将
-FileIndex 完全退出留给后续 Slice；该安排由下方新增 RO-7 的用户修订取代。
-冻结 Slice43 的定义绑定模式范围不变。
-
-Slice ID、ACTIVE 状态和不可变 Base 保持。A 先提交本 Contract 修订；B 随后核对实际未提交
-改动，判断 Task45.4 在相同 ID/Base 下合法调整后继续。当前代理此前执行过 B 审查；本次用户
-仅授权 A 的范围调整，不进行对自身 B 结论的 A Final Review，也不宣布 Task/Slice 验收完成。
-
-### A Contract revision — 2026-10-18，FileIndex 纳入当前 Slice
-
-用户随后明确要求 FileIndex 完全退役纳入当前 Slice，并使 `mediaflow files list` 与文件页、
-媒体库页统一为实时 Storage 列表，只列举、不保存文件记录；同样不建设未上线系统的旧数据兼容。
-这替换上一修订的 FileIndex 延期安排，新增 RO-7 / S-8、S-9 / AC-7；不是交付声明。
-Slice ID、ACTIVE 状态和原 Base 保持，正式名称反映扩展后的业务范围。
-
-完整范围与 CLI TARGET 方式见 [FileIndex 退役设计](docs/file-index-retirement-spec.md)。
-“列表不记录”不取消显式整理/维护 Task、Result、精确来源、计划、审计和稳定性工作证据。
-FileIndex 的产品/运行装配/全局目录仓储与 schema、后台同步和专用死代码全部退出；
-不能只隐藏入口、加 no-op 仓储或更名为全局缓存。旧 FileIndex/Scan 兼容机制不要求建设，
-也不授权清空运行库或媒体。其他受支持工作的安全/持久结果保持。
-
-A 提交后 B 重核 Task45.4：已开发的独立 Scan 退役仍是合法完整单元，可在相同 ID/Base
-继续；新增 FileIndex 全部退出和 CLI 统一在随后一个连贯 Task 内规划，当前不并行创建第二个
-活动 Task。所有 Required Outcomes（含 RO-7）满足后才能 Slice-final/交 A，不提前关闭。
-冻结 Slice43 不因共享 FileIndex 依赖移除而恢复开发；下方最新 Scan 修订仅另行选入模式删除，
-其余页面/Run once/指标/设置消费继续延期。
-
-### A Contract revision — 2026-10-18，Scan 按首次部署不存在处理
-
-用户在核对 Task45.4 的实际实现后明确要求：Scan 相关产品按从未存在处理，当前服务按首次部署
-验收，不考虑旧版或 V1 的 Scan 兼容。本修订取代上方及先前 Task 中保留薄退役入口、410、
-退役页/指引、Scan 专用防线和定义绑定 Scan 例外的要求，不是仅更换错误文案。
-
-删除独立 Scan 的页面/路由/导航、API/aliases、CLI 注册/帮助、Job/调度/执行/重试/继续分支、
-readiness/action matrix 专用字段、模型/服务/仓储/专用 schema 和无消费者代码；不保留墓碑页、
-专用退役错误、迁移/转换/接管/历史读取或 V1 兼容入口。旧 URL 使用正常认证边界下的普通
-not-found，旧 CLI 使用 argparse 未知命令/非法参数错误，通用提交/Worker 使用共享支持集合的
-普通不支持类型校验，均在发现、准入和执行权限生成前停止，不自动转换成整理。
-
-为彻底删除 Scan 产品，定义绑定 `scan-only` / `scan-and-plan` 值、别名、默认值及其专用
-发布/准入/调度/dispatch/继续分支的删除纳入 RO-5 / Task45.4。这是用户授权的冻结边界窄例外；
-Slice43 其余页面、Run once、统计和设置消费继续冻结，不导入其未验收分支，不宣称完成其工作区。
-普通 diagnostic Preview/DryRun、自动整理所用的零变更计划/发现和实际支持的 scheduled Preview
-等其他功能不因名称含 scan/preview 被一并删掉；逐项依真实消费者和当前支持意图判断。
-
-保留其他支持功能需要的 Scanner/Storage list-stat、过滤/临时排除、真实稳定观察、精确来源/计划/
-pin、Result/审计、权限/锁/fence 和不确定效果非重放。首次部署不取消同版本正常运行后的重启、
-重开、逐项恢复和失败原子性。无旧 Scan 升级/V1 parity/历史兼容验收义务，但不自动清空或
-重建现有工作区数据库、媒体、用户文件或 Git 历史，也不做无关 V1 整体下线。
-
-Slice ID/ACTIVE/Base、Task45.4 ID/Base 和 RO-7 后续完整 FileIndex 单元不变。A 先 checkpoint
-本材料性修订，B 随后重核并调整同 Task；既有实现/报告/审查是旧候选事实，本修订不表示
-代码已完成，不授予 Task PASS 或 Slice closure。
-
-### A integration authorization — 2026-10-18，在 main 汇合继续开发
-
-用户明确要求合并 main 与当前 Slice45 分支，冲突优先保留当前 Slice45 分支改动，后续在 main
-继续。整合前 main 为 `78ec108d4473e8c140174c1356d0e88a1ae42b34`，Slice45 为
-`df43fd1bc10b753f0f731cf47033fca38dcda156`；双方非冲突改动保留，冲突块采用 Slice45 内容，
-仅补必要的接口/导入拼接使合并可验证。不重置、压缩或改写任一方已审历史，不推送。
-
-这取代本文件及相关 Task/TARGET 文档原先“Slice45 不导入冻结 Slice43 代码”的分支隔离限制，
-允许纳入 main 已有的 Task43.1/43.2 实现作为整合基线，不表示重启 Slice43 后续开发。
-Task43.2 保留原 B PASS（精确记录见下方冻结快照），Task43.3 仍未开始，Slice43 其余工作
-继续暂停；不宣布 Slice43 A PASS/CLOSED，也不将旧候选 T4 或 B PASS 当作新合并树验证。
-本次整合不增加新产品目标、不移动 Slice45/Task45.4 Base，当前活动 Task 仍45.4 FIX REQUIRED；
-Scan 首次部署移除和 RO-7 后续完整 FileIndex 单元按既定 Contract 继续，合并不冒充完成。
-
-整合前分支另保存在 `preserved/main-before-slice45-merge-20261018` 与
-`preserved/slice45-before-main-merge-20261018`；原冻结分支和逐检查点证据保持可达。
-
-### A scope revision — 2026-10-18，Slice45 不以 Slice43 实现为保留前提
-
-用户进一步明确：Slice45 开发暂不考虑 Slice43 的实现；自动化页可在 Slice45 完成后重新设计
-和实现。本修订取代此前把已合并 Task43.1/43.2 实现视为必须保持完整的约束。它们已进入 main
-是代码事实，但其页面、原生编辑/发布、Run once、分析页面、统计及引擎设置消费不构成 Slice45
-必须保留、恢复、兼容或逐项验收的产品承诺，也不能阻止 Scan 产品及 FileIndex 的完整删除。
-
-实现 RO-5/RO-7 必需时，可直接调整或清理这些 Slice43 专属耦合；无需先适配旧自动化页面，
-不得为保护它们保留 Scan 模式、退役层、索引或替代目录。本 Slice 不主动开展无关自动化页
-重设计；后续以重新确认的用户旅程和 A Contract 设计实现，不自动恢复旧43.3计划或照搬旧43验收。
-Task43.2 的 B PASS、原 Contract/Task 和冻结分支仍作为历史事实保存，不表示当前树必须维持
-原43实现，也不表示 Slice43 已关闭。
-
-现有受支持基础流程实际需要的 Storage/发现/过滤/真实稳定观察、规划、Task/Worker、权限、
-精确 pin/结果/审计和未知效果非重放继续保留；不为43恢复第二套实现，不删除用户媒体或运行数据。
-Slice45/Task45.4 的 ID、Base、ACTIVE/FIX REQUIRED、High/T4、RO-5 与随后 RO-7 单元不变。
-当前代理按用户指示更新 A-owned 范围，不进行自身工作的 B PASS 或 A Final Review。
-
-## Suspended work preservation
-
-- Slice43 original Base: `853973dbbf8289fa2ad40657033e94e870a690e4`.
-- Latest executable candidate: `727317168cc62f859f19db1b54b8175cb08449de`.
-- Latest Developer report checkpoint: `78ec108d4473e8c140174c1356d0e88a1ae42b34:TASK.md`.
-- Exact pre-hold Contract and Task43.3 plan/B decision snapshot:
-  `c539429c2c3aaeaab4842b87d3c858e77106fed1:SLICE.md` / `c539429c2c3aaeaab4842b87d3c858e77106fed1:TASK.md`.
-- Frozen Contract checkpoint: `ed974e0df8b263f631bfe48b524da461013d8780`.
-- Preservation branch: `frozen/slice-43-2026-10-15`.
-- Slice43 status: PLANNED; Development Hold: FROZEN BY USER. Task43.1/43.2 are B PASS only;
-  Task43.3 remains PLANNED / NOT STARTED and suspended in the exact snapshot.
-- Inventory/statistics, consolidated history and actual engine-settings adoption remain incomplete.
-  Slice43 has no final validation, Closure Packet or A PASS / CLOSED.
-
-The same agent previously performed B review and is now explicitly authorized by the user for
-A's hold/reservation action. No A final review of its own prior B decisions is performed here.
-Git history and locally retained evidence remain available; nothing is pushed or claimed remotely
-reachable. Resuming Slice43 requires explicit A reactivation and reassessment of intervening changes.
+Slice43 保持 PLANNED / `Development Hold: FROZEN BY USER`；只有 Scan 模式删除选入45。
+原 Base `853973dbbf8289fa2ad40657033e94e870a690e4`，冻结 Contract
+`ed974e0df8b263f631bfe48b524da461013d8780`，精确 Task/审查快照
+`c539429c2c3aaeaab4842b87d3c858e77106fed1`，均保留于 `frozen/slice-43-2026-10-15`。
+其最新实现 `727317168cc62f859f19db1b54b8175cb08449de`、报告 `78ec108d4473e8c140174c1356d0e88a1ae42b34`
+以及整合前 `preserved/main-before-slice45-merge-20261018`、
+`preserved/slice45-before-main-merge-20261018` 保持可达。43.1/43.2 原 B PASS 只是历史，
+43.3 未开始；重启43须 A 显式激活并重评，不能据 main 已含代码声明43完成。
 
 ## User Goal
 
@@ -411,39 +279,37 @@ Automation 基础消费者）都能不装配 FileIndex 而完成支持的行为�
 
 ## Final Validation Expectations
 
-Final Test Level 为 T4；本次激活文档只执行治理/链接/图片完整性/范围/私有文件和 whitespace 检查。
-实现候选按 workflow 分阶段验证，B 在各 Task 给出精确命令、风险与独立关键复现，最终至少覆盖：
+Final Test Level 为 **T4，执行负责人 B**。Developer 仅执行 Task 指定的新增/修改与直接
+受影响测试；B 在后续候选验收和 Slice-final 完成以下覆盖。通用命令与复用规则只维护于
+[Development Workflow](docs/development-workflow.md#6-test-levels)，不在每个 Task 重复全量清单。
 
-- 全 Python regression：`python -m unittest discover -s tests`；
-  quality 中适用的 `ruff format --check .`、`ruff check .`、
-  `python -m compileall -q mediaflow tests scripts`、依赖/示例配置及禁止依赖审计。
-- Web typecheck/lint/format、完整 unit/component tests 与 production build；
-  实际构建产物上的原生九页面视觉、窄屏/键盘/深链/重连、各恢复及完整创建确认旅程。
-- Real-Python API/SQLite/Worker 浏览器证明：跨页全总体计数、混合类型/逐项解除、准入去重、
-  来源变化、未知提交核对、配置 pin、协作控制、恢复与不确定 effects 非重放。
-- 首次部署无 Scan 产品/注册/专用 schema 或退役层；旧 URL/CLI/通用提交使用普通不存在/
-  不支持错误且不构造发现/准入/执行权；定义绑定模式不绕过。支持工作在空库完成真实稳定观察
-  →摘要→确认→执行→重启/恢复；不要求旧 Scan 升级或 V1 兼容证明。
-- 恢复旅程包含混合成功/待决定/冲突/技术失败任务的分类计数，修复后重分析与新阻塞转类，
-  精确就绪子集/附件摘要与按策略处理指引、受理与解决区分、再次失败、原固定上下文缺失和效果未知只核查。
-- 实际 mutation 使用临时 Local / fake / local-server Storage、假 Provider，检查操作及权限；
-  不接生产媒体/外部生产服务，分析段以 mutation/Provider 计数等证明其边界。
-- 涉及 schema 时验证仍受支持版本的迁移/重开及失败原子性；未上线的旧 Scan/FileIndex schema
-  不要求迁移，不得以自动清库替代拒绝。涉及安装、生产产物/Worker 装配时验证 wheel/Docker
-  内同一确认/恢复路径及常驻消费，不以 mock 替代实际边界。
-- 对 9 张实际截图及布局作视觉检查；例图数量不当作测试常量，缺失外部门禁明确披露。
-- CLI/文件页/媒体库页的真实 Storage 对照、反复 list/分页零文件记录/工作/Provider/媒体变更；
-  跨种类同名库、游标/路径/配置边界与无Active/权限/Storage故障验证。新库没有索引专用 schema，
-  源码/装配/产物无可运行索引、后台同步或 no-op 替身；完整消费者在无索引的 wheel/Docker
-  中实际执行。验证当前支持工作重开/故障原子性，不要求旧索引生产迁移矩阵。
+- 完整 Python/Web regression、质量/依赖/示例配置/禁止依赖检查，C→NamingA/ClassA 身份回归。
+- production assets 上九页面、创建→摘要→精确确认→执行、各类恢复、详情/导出/控制：
+  桌面1536×1024与380×720、键盘/深链/返回/重连、真实数据及实际截图检查。
+- Real-Python API/SQLite/Worker 覆盖全总体查询/计数、混合问题/独立解除、新阻塞转类、精确
+  就绪子集/附件按策略指引、再次失败、原 pin 缺失、未知响应核对和不确定效果只核查。
+  `web/` 中执行 `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`，
+  Unicode principal 使用 `playwright.python.unicode-principal.config.ts` 与
+  `tests/e2e/operations-principal-identity.python.spec.ts`；视觉使用
+  `playwright.python.config.ts` 与 `tests/e2e/operations-task-center-visual.python.spec.ts`。
+- 无 Scan 注册/模式/专用 schema/退役层；旧 URL/CLI/类型普通拒绝且零发现/准入/许可，
+  fresh 来源在原工作内真实稳定观察→同页摘要→确认→Worker→重启/恢复，无预Scan。
+- 三列表入口同库/目录的 live Storage 对照、分页/游标/精确名称/越界/同名跨种类库、
+  无Active/权限/Storage故障；重复浏览零文件目录/观察/Task/Result/Provider/Hash/媒体变更。
+- 无 FileIndex 产品/仓储/schema/装配/后台同步或 no-op/更名替身；所有支持消费者在实际
+  wheel/Docker 中完成无索引整理/恢复/重开，保留精确来源、pin、授权、结果和非重放。
+- 对受影响的共享 schema 验证 fresh/reopen、支持版本迁移和失败原子性；首次部署不要求
+  旧 Scan/FileIndex 生产迁移，不清空或重建现存媒体/运行库。
+- 隔离 Local/fake/local-server fixture、假 Provider；分析零 mutation、实际权限/锁/fence/
+  RBAC/secret/未知效果非重放。完整 wheel/安装消费者/production Docker/restart/release-security
+  与候选源码及实际 served assets 一致；不以 mock、标签或打印SHA代替真实运行边界。
 
-证据保存和复用按 workflow，完整 source SHA、实际命令、配置/依赖、结果计数及原始日志位于
-耐久证据索引；文档/报告 successor 只在明确证明 executable inputs 不变时复用。
-B 在满足全部 Required Outcomes 后提交一个 Closure Packet，停止继续生成微型 Task。
+B 记录实际结果、必要日志/截图/产物身份和未提供外部门禁；匹配的本候选完整验收可复用，
+不机械重复。全部 Required Outcomes 满足后才提交 Closure Packet；A 保留独立最终审查权。
 
 ## Closure Packet
 
-Not submitted. Task45.4 is in development; this scope revision is not Slice-final validation or closure.
+Not submitted. RO-7 remains incomplete; no Slice-final validation or closure is claimed.
 
 ## A Final Review
 

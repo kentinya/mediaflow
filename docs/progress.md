@@ -8,72 +8,22 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — is **ACTIVE** on
-`main`, retaining accepted Slice44 Base
-`a72252091d5d46edf3e2114b994036ae21b08e2e`. The user-confirmed final Contract selects nine task/recovery
-lists, in-context exact plan-summary confirmation and first-deployment Scan absence with shared
-internal discovery/stability preserved. [The final page specification](task-center-page-spec.md)
-indexes nine named references under `docs/pics/`. Implementation is in progress; Implementation Head
-for A final review is NOT SET and no Slice delivery/closure is claimed. The final 2026-10-18 revision
-removes standalone Scan, scan-only/scan-and-plan modes and retirement compatibility layers: old inputs
-receive ordinary not-found/argument/unsupported-type errors before work/authority, not retirement
-pages/410/guidance/guards. No old Scan/V1 parity, migration or dedicated history is required. Mode
-removal is the narrow user-authorized exception to frozen Slice43; its other features remain frozen. A further
-user amendment adds complete FileIndex retirement and CLI/Web shared live Storage listing without
-catalog recording to this same Slice as RO-7; [its specification](file-index-retirement-spec.md) is
-TARGET, not delivered behavior. Shared discovery/stability and supported Task/Result/source-safety
-facts remain, without requiring old FileIndex production migration or history compatibility.
-Supported-work same-version restart/recovery remains; no existing data/media is cleared. Task45.4
-remains FIX REQUIRED and is adjusted against the new Contract; B plans the FileIndex unit after its PASS.
-The original stable-product/TARGET documentation checkpoint carried no frozen Automation code;
-the subsequent explicit integration below changes that code baseline, not the recorded acceptances.
+Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — remains **ACTIVE** on main,
+with immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` and A Implementation Head NOT SET.
+[SLICE.md](../SLICE.md) owns current scope; [TASK.md](../TASK.md) owns implementation/review status.
+Complete FileIndex retirement and shared CLI/Web live listing remain pending; no Slice delivery,
+final validation or closure is claimed. Shared discovery/stability, exact work evidence, permissions,
+results/audit and non-replay remain required; no existing media/runtime data is cleared.
 
-On 2026-10-18 the user authorized merging main with `slice/45-scope-pending`, preferring Slice45
-conflict changes while retaining nonconflicting work from both. The original isolation/no-import
-restriction is superseded for this integration of existing Task43.1/43.2 code. Continue Task45.4
-FIX REQUIRED on main; preserve Task43.2's historical B PASS, do not start Task43.3 or close Slice43.
-The combined tree requires its own integration checks; earlier candidates' T4/PASS is not new merge
-validation. Original branches/checkpoints and local unrelated dirty files remain preserved.
+Slice43 remains **PLANNED / FROZEN BY USER** on `frozen/slice-43-2026-10-15`; only Scan-mode
+removal moved into45. Main integration and necessary coupling cleanup do not resume43 or accept its
+current UI. Preserved Contract/Task/review checkpoints are listed in the current Slice.
+Slice44 and all accepted closure entries below remain unchanged.
 
-The user's subsequent 2026-10-18 scope decision removes preservation of the merged Slice43
-implementation as a Slice45 prerequisite. Scan/FileIndex cleanup may adjust or remove its necessary
-coupling without first adapting the old Automation UI. The Automation page can be redesigned and
-implemented after Slice45 under a newly confirmed Contract; no automatic resumption of Task43.3 is
-implied. Historical Task43.2 PASS remains historical, not acceptance of the current tree. Shared
-supported-work safety/results remain required; this documentation change implements no deletion.
-
-Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
-**Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
-Contract, Task43.3 plan and Task43.2 B decision are retained at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on
-`frozen/slice-43-2026-10-15`; the suspended Contract is checkpointed at `ed974e0df8b263f631bfe48b524da461013d8780`. Original Slice Base
-and historical unfinished commitments remain recorded; the latest narrow Scan-mode exception is owned
-by Slice45, not permission to resume the remaining work. The user originally authorized A to reserve Slice45
-from accepted Slice44; its now-defined task-center Contract remains separate from suspended Automation.
-There is no active implementation Task for the frozen Slice43.
-This scheduling exception changes no accepted closure entry below.
-
-Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.
-Its closure-ledger entry and all earlier accepted entries below are unchanged. The frozen Slice 43
-branch and exact review snapshots remain reachable as historical evidence.
-
-A post-closure backend-governance maintenance change retires the obsolete direct file
-re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
-CLI, Web UI and `/api/v1`, while retaining review resolution, metadata continuation and explicit
-Task retry/recovery paths. This maintenance does not reopen Slice 33 or create an active Task.
-At that historical checkpoint the next legal action was A selecting the next large Slice.
-
-A follow-up current-source execution alignment imports the `/opt/mediaflow` manual Organize
-correction while preserving the retired retry-surface cleanup on `main`: exact Previews persist the
-reviewed Storage ID, source path and Storage-derived source fingerprint, and the Worker executes by
-opening that Storage and calling `stat(source_path)` directly. If the source is missing or the live
-fingerprint differs from the Preview fingerprint, execution fails closed before mutation; routine
-FileIndex rescans no longer cause execution to re-resolve `file_id -> FileIndex -> path`. Conflicting
-legacy tests that asserted FileIndex-driven staleness were removed or converted to scanner-backed
-current-source fixtures. This maintenance does not reopen Slice 33 or create an active Task. The next
-legal action at that historical checkpoint was A selecting the next large Slice.
-
-Expanded closure narratives remain available in Git at `ed967d4:docs/progress.md`. The table below
-is the single compact summary of each accepted closure; its recorded facts are unchanged.
+Testing ownership now follows [Development Workflow](development-workflow.md): Developer runs
+new/changed/affected tests; B owns full acceptance. This process change does not rewrite prior
+acceptance or turn historical validation gaps into passes. Detailed previous pointers, maintenance
+and dated implementation notes remain in Git at `479518e4aff0419da82c667bef6f127936774cec:docs/progress.md`.
 
 ## Closure Ledger
 
@@ -105,62 +55,4 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 | 27 — Manual operations and file lifecycle | PASS / CLOSED | `306b77d0aad44ab0a2e233866f8972247b437a7d` | `34365121342557b0f40eacc7ad9bbb74499cc4cb` | A Final Review PASS / CLOSED — 2026-09-05 | Real Storage/Files and FileIndex distinction, current source lifecycle, bounded manual Scan/Preview/Organize, conflict/review/recovery continuation and Worker readiness/fencing | Slice 28 day-2 administration, Slice 29 Docker release, Provider switching, built-in identity, full Secret Store, distributed workers and uncertain-mutation replay |
 | 26 — Web-first fresh setup and Storage completion | PASS / CLOSED | `3c660d5a1512b5b221b0284bcff9ae6dd00bbf23` | `928b727552a2fbb298e694cb0312e082e4662dda` | A Final Review PASS / CLOSED — 2026-09-03 | Management-only fresh bootstrap, first managed Draft, all V1 Storage forms/tests, bounded Storage Browser/path selection and immutable checked activation | Slice 28 day-2 administration, Slice 29 Docker release, Provider switching, built-in identity, full Secret Store and mutation-based probes |
 
-Earlier completed delivery and every historical Task/Fix/test/review record remain available in Git
-and the legacy archive. They are intentionally not duplicated here or translated into new Slices.
-
-## 2026-09-13 — UI-V2 Files ResourceLibrary Contract
-
-- Reworked UI-V2 Files authority from Storage/FileIndex membership to ResourceLibrary -> live Storage.
-- Removed ordinary UI-V2 FileIndex catalog/detail routes and navigation entries.
-- Added ResourceLibrary-scoped Files API and frontend model without FileIndex membership fields.
-- Added Storage-source Preview admission that builds SourceIdentity from live Storage.stat without requiring a FileIndex row.
-- Preserved Worker execution revalidation against Preview SourceIdentity and live Storage.
-
-## 2026-09-14 — Files display and organize authority confirmation
-
-- Confirmed from the current code that `RuntimeFilesBrowserService.browse_resource_library` reads
-  the enabled ResourceLibrary's live Storage root and intentionally does not consult its optional
-  FileIndex composition argument.
-- Confirmed that `StorageFilesPage` sends `resourceLibraryId`, relative path and cursor for Files
-  reads; the typed Files model excludes FileIndex membership, `fileId`, scan status, occurrence and
-  fingerprint fields.
-- Confirmed that Files-originated organize Preview sends `scopeKind=file`,
-  `resourceLibraryId` and `relativePath`. `create_current_from_storage` resolves the bound
-  Storage, calls `Storage.stat()`, creates SourceIdentity and enters `create_from_sources` before
-  the existing zero-mutation Preview planner.
-- Confirmed by focused tests that a Storage-source Preview succeeds without a FileIndex row and
-  that Files and FileIndex remain separate API surfaces.
-- FileIndex-backed compatibility and legacy operation paths remain in the codebase but are not
-  valid dependencies for the ResourceLibrary Files display or organize path.
-
-## 2026-09-14 — Slice 37 Files Page Visual Fidelity Activation
-
-- Retired the previously planned Slice 34–36 roadmap boundary from current planning; historical
-  references remain immutable history.
-- Activated the Files-page-only Slice 37 contract with Base
-  `b507edba167f5af3af8c53bfcf1417ba4fefddf4`.
-- Added the canonical visual specification for `docs/pics/文件页.png` at `1536 x 1024`, including
-  exact copy, reference data, layout, drawer state, journey, frozen pages and pixel-level acceptance.
-- This activation changed documentation only. No code, tests, image asset or other-page behavior
-  changed.
-
-## 2026-09-22 — Slice 37 Post-reactivation Closure
-
-- A reviewed the original Slice Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` through final
-  Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283` and decided `PASS / CLOSED`.
-- Delivered the final exact Storage path-identity correction: Files preserves boundary whitespace
-  through normalization, visibly distinguishes it, and navigates with the exact encoded path while
-  retaining truthful refresh, bounded not-found recovery and no FileIndex authority.
-- Deferred scope remains unchanged: direct browser Upload/Download, arbitrary binary/media editing,
-  unbounded operations, new providers/identity systems, universal rollback and automatic uncertain
-  replay remain deferred or outside this Slice.
-
-## 2026-09-21 — Slice 37 Post-reactivation Closure
-
-- A reviewed the original Slice Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` through corrected
-  Implementation Head `2115d1839eb0611f097913eae8a43492d00346a2` and decided `PASS / CLOSED`.
-- Delivered formal `library/path` destination parity, source-linked offline Preview completion and
-  final safety/quality-gate reconciliation; the current Files surface excludes direct browser
-  Upload/Download while retaining the remaining bounded file-management and Organize journeys.
-- Deferred scope remains unchanged: arbitrary binary/media editing and stream inspection, unbounded
-  operations, new providers/identity systems, universal rollback and automatic uncertain replay.
+Earlier delivery, maintenance and review history remain reachable in Git and the legacy snapshots; they are not duplicated here.

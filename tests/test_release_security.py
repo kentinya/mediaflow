@@ -18,7 +18,7 @@ REQUIRED_RELEASE_QUALITY_COMMANDS = (
 
 class ReleaseSecurityPolicyTests(unittest.TestCase):
     def assert_release_quality_gate_documentation(self, task: str) -> None:
-        """Require execution gates for a real Task, not the canonical no-Task notice."""
+        """Keep Task test ownership explicit without copying shared full gates."""
 
         first_nonempty_line = next(
             (line.strip() for line in task.splitlines() if line.strip()),
@@ -27,8 +27,9 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
         if first_nonempty_line == NO_ACTIVE_TASK_HEADING:
             return
         self.assertNotEqual(first_nonempty_line, "", "TASK.md must declare a lifecycle state")
-        for command in REQUIRED_RELEASE_QUALITY_COMMANDS:
-            self.assertIn(command, task)
+        self.assertIn("docs/development-workflow.md", task)
+        self.assertIn("### Developer — affected tests", task)
+        self.assertIn("### B — acceptance and full regression", task)
 
     def test_dockerignore_covers_private_state_and_dockerfile_copies_only_runtime(self) -> None:
         dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
@@ -132,17 +133,30 @@ class ReleaseSecurityPolicyTests(unittest.TestCase):
             f"{NO_ACTIVE_TASK_HEADING}\n\nNext Action: A SELECTS THE NEXT LARGE SLICE\n"
         )
 
-    def test_active_task_still_requires_every_release_quality_command(self) -> None:
-        active_task = "# Task 99.1 — Test fixture\n\n" + "\n".join(
-            REQUIRED_RELEASE_QUALITY_COMMANDS
+    def test_shared_workflow_retains_every_release_quality_command(self) -> None:
+        workflow = (ROOT / "docs/development-workflow.md").read_text(encoding="utf-8")
+        for command in REQUIRED_RELEASE_QUALITY_COMMANDS:
+            with self.subTest(command=command):
+                self.assertIn(command, workflow)
+
+    def test_task_template_separates_developer_tests_from_b_acceptance(self) -> None:
+        template = (ROOT / "Task/TEMPLATE.md").read_text(encoding="utf-8")
+        self.assert_release_quality_gate_documentation(template)
+
+    def test_active_task_references_shared_gates_and_names_test_owners(self) -> None:
+        required = (
+            "docs/development-workflow.md#6-test-levels",
+            "### Developer — affected tests",
+            "### B — acceptance and full regression",
         )
+        active_task = "# Task 99.1 — Test fixture\n\n" + "\n".join(required)
         self.assert_release_quality_gate_documentation(active_task)
 
-        for command in REQUIRED_RELEASE_QUALITY_COMMANDS:
-            with self.subTest(missing=command):
+        for declaration in required:
+            with self.subTest(missing=declaration):
                 with self.assertRaises(AssertionError):
                     self.assert_release_quality_gate_documentation(
-                        active_task.replace(command, "command intentionally absent", 1)
+                        active_task.replace(declaration, "declaration intentionally absent", 1)
                     )
 
         with self.assertRaises(AssertionError):

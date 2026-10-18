@@ -1,561 +1,260 @@
 # MediaFlow Development Workflow
 
-This document is the sole authority for development management. `AGENTS.md` owns permanent product,
-architecture and safety invariants; this file owns Slice and Task lifecycle, A/B/Developer work,
-testing levels, Git checkpoints, review, closure and legacy migration.
+This is the sole authority for Slice/Task lifecycle, testing, Git, review and closure. Permanent
+product/safety rules live in [AGENTS.md](../AGENTS.md). Current rules stay here; detailed history
+stays in Git. The user-authorized 2026-10-18 testing allocation below replaces earlier instructions
+that assigned full regression to Developer; coverage and accepted historical decisions are unchanged.
 
 ## 1. Formal management objects
 
-MediaFlow has exactly two current development-management objects:
+- **Slice:** one complete business capability, owned by A in root `SLICE.md`.
+- **Task:** one coherent implementation unit inside that Slice, planned/reviewed by B in `TASK.md`.
 
-1. **Slice** — one complete business-capability range owned by A and defined in root `SLICE.md`.
-2. **Task** — one coherent implementation unit inside that Slice, planned and reviewed by B and
-   defined in root `TASK.md`.
-
-Phase names, historical A/B/C suffixes, rejected checkpoints and correction names remain reachable
-in Git or may appear in explicitly retained legacy snapshots, but they are not additional lifecycle
-objects. A fix is normally another pass through the original Task; it does not automatically create
-an F1/F2 Task or a new Slice.
+Fix rounds, old phase/letter names and rejected checkpoints are history, not additional objects.
+Do not create fix ladders or archive directories of completed Task documents.
 
 ## 2. Roles
 
-Role names are decision authorities, not model-size labels. The Developer must not issue B PASS for
-its own Task checkpoint, and B must not issue A Final Review for the same Slice. A review inspects
-actual repository state and tests rather than accepting a completion report. Any emergency exception
-requires explicit user authorization and must be disclosed in the review result.
+| Role | Owns |
+|---|---|
+| A — Slice Owner / Architect / Final Reviewer | User outcomes, surfaces, scope/deferrals/invariants, immutable Slice Base, Contract/Roadmap boundaries, final Base..Head review and closure |
+| B — Task Planner / Task Reviewer | Actual-code gap analysis, coherent Task plan, Difficulty/Test Level, acceptance, full regression, critical reproduction, Task PASS/FIX REQUIRED and Closure Packet |
+| Developer — Implementation Role | Active Task implementation, new/changed/directly affected tests, coherent checkpoint and concise handoff |
 
-### A — Slice Owner / Architect / Final Reviewer
-
-A:
-
-- audits requirements, journeys, architecture, code, tests and current repository state;
-- defines one large Slice, its Base SHA, user goal, applicable product/UX principles and constraints,
-  Required Outcomes, required surfaces, boundaries, safety/correctness invariants, Explicitly
-  Deferred work, acceptance criteria and final validation;
-- owns and materially changes `SLICE.md` and large-Slice Roadmap boundaries;
-- reviews the entire Slice Base..Implementation Head after B submits a Closure Packet;
-- decides `PASS`, `FIX REQUIRED`, or `PARTIAL / RESCOPE`;
-- after PASS, reconciles authoritative CURRENT documents once and declares the Slice `PASS / CLOSED`;
-- selects the next large Slice only after closure.
-
-A does not plan file-level implementation steps, perform routine Task review, or create another
-Slice merely to add a test, assertion, evidence key, UI label or non-blocking wording improvement.
-
-### B — Task Planner / Task Reviewer
-
-B starts every planning or review turn by reading `SLICE.md` and inspecting actual code and tests.
-B:
-
-- selects the largest reasonable next coherent implementation unit inside the Slice;
-- creates `TASK.md` with Goal, Difficulty, Test Level, scope, acceptance criteria, tests and
-  non-goals;
-- reviews the Developer's actual Task checkpoint or explicit Task Base..Head range;
-- returns `PASS` or `FIX REQUIRED` for the Task;
-- keeps fixes in the same Task unless the proposed work is a genuinely independent business goal;
-- after every Task PASS, answers: **Are all current Slice Required Outcomes satisfied?**
-
-If the answer is YES, B must not create another Task for test-only completeness, an additional
-falsification probe, a field already known to work, non-blocking copy, P2 cleanup, or an improvement
-unrelated to Required Outcomes. B runs the Slice-final gate, emits a Closure Packet with decision
-`SLICE READY FOR A REVIEW`, and stops.
-
-If the answer is NO, B may plan the next coherent Task. If a genuine P0/P1 correction is needed
-after Slice-final preparation, B creates one focused correction Task inside the same Slice.
-
-### Developer — Implementation Role
-
-Developer:
-
-- reads `SLICE.md`, the active `TASK.md`, required product/architecture guidance and actual code;
-- implements only the active Task without expanding the Slice;
-- runs the Task's assigned Test Level and records actual commands/results;
-- creates a coherent implementation checkpoint and reports its full SHA, changed files, behavior,
-  tests, decisions, remaining in-Slice work and risks;
-- continues in the same Task after `FIX REQUIRED` unless B explicitly authorizes a new Task.
-
-Developer does not define the next Task, materially edit `SLICE.md`, change the Roadmap, declare
-Task PASS, or declare a Slice closed.
+Developer cannot approve its own Task; B cannot conduct A Final Review of the same Slice. Explicit
+user-authorized role exceptions must be disclosed. A scope/document action does not constitute
+final review or acceptance. Read the corresponding [role experience](../AGENTS.md#testing-and-roles).
 
 ## 3. State machines
 
-### Task lifecycle
-
 ```text
-PLANNED
-→ IN PROGRESS
-→ READY FOR B REVIEW
-→ PASS
+Task:  PLANNED → IN PROGRESS → READY FOR B REVIEW → PASS
+Fix:   READY FOR B REVIEW → FIX REQUIRED → IN PROGRESS → READY FOR B REVIEW
+Slice: PLANNED → ACTIVE → READY FOR A REVIEW → PASS / CLOSED
+Fix:   READY FOR A REVIEW → FIX REQUIRED → B correction Task → READY FOR A REVIEW
 ```
 
-Correction loop:
+After Task PASS choose NEXT TASK or SLICE READY FOR A REVIEW. Task has no CLOSED state; only A
+closes a Slice. `READY FOR B READINESS CHECK` is legacy-only and resolves on its first assessment
+to ACTIVE with a real blocker/Task, or READY FOR A REVIEW with a Closure Packet.
 
-```text
-READY FOR B REVIEW
-→ FIX REQUIRED
-→ IN PROGRESS
-→ READY FOR B REVIEW
-```
+For a new P0/P1 regression in a closed Slice, A first checkpoints reactivation of that same Slice
+as ACTIVE with matching Roadmap. Preserve original Base, prior accepted Head/review/closure and
+add the correction through B; review original Base..corrected Head. P2 does not reopen a Slice.
 
-Task has no `CLOSED` state. After Task PASS there are only two legal outcomes:
+Only explicit user instruction permits suspending an unclosed Slice for another priority. A must:
 
-```text
-NEXT TASK
-```
-
-or:
-
-```text
-SLICE READY FOR A REVIEW
-```
-
-### Slice lifecycle
-
-```text
-PLANNED
-→ ACTIVE
-→ READY FOR A REVIEW
-→ PASS / CLOSED
-```
-
-Slice correction loop:
-
-```text
-READY FOR A REVIEW
-→ FIX REQUIRED
-→ B creates one focused correction Task
-→ Developer implementation
-→ B Review
-→ READY FOR A REVIEW
-```
-
-Post-closure P0/P1 correction loop:
-
-```text
-PASS / CLOSED
-→ A confirms that a newly discovered P0/P1 regression belongs to the closed Slice
-→ A reactivates that same Slice as ACTIVE in the checkpointed Contract and Roadmap
-→ B creates one focused correction Task
-→ Developer implementation
-→ B Review
-→ READY FOR A REVIEW
-→ A Final Review
-→ PASS / CLOSED
-```
-
-This loop is exceptional and does not erase or rewrite the earlier closure. A keeps the immutable
-Slice Base, prior accepted Implementation Head, Closure Packet and A Final Review as historical
-facts, records the regression and its current severity, and checkpoints the reactivation before B
-plans. The correction remains inside the original Required Outcome, surface or safety invariant;
-it does not create a replacement Slice, move the defect into the next planned Slice or invent a Fix
-lifecycle object. The Roadmap reuses `ACTIVE`, while Progress retains the prior closure-ledger entry
-and may update only its current-development pointer. After the correction passes, the new Slice
-review covers the original Base through the corrected Implementation Head and records a new closure
-without amending accepted history. P2 cleanup does not reopen a closed Slice.
-
-`READY FOR B READINESS CHECK` is a one-time legacy-migration state only. On its first assessment B
-must resolve it to `ACTIVE` with a genuine Required-Outcome blocker and Task, or to
-`READY FOR A REVIEW` with a Closure Packet. It must not become a permanent third workflow.
-
-Only A can set `PASS / CLOSED`.
-
-### User-authorized development hold and priority change
-
-Only at the user's explicit request, A may suspend an unclosed Slice and select another priority
-before closure. This is a scheduling exception, not acceptance or permission to weaken a Contract.
-Use the existing `PLANNED` status for the suspended Slice and its Roadmap row, with an explicit
-`Development Hold: FROZEN BY USER` annotation. A newly reserved Slice whose contents are pending
-also stays `PLANNED`. Neither state authorizes a B implementation Task.
-
-Before replacing root documents or switching the workspace, checkpoint all current Slice changes
-and the exact Task report/B decision on a dedicated Git branch. Record the immutable Slice Base,
-latest implementation checkpoint, preservation branch and review-snapshot SHA. Preserve unrelated
-dirty/private/user files; do not use stash, destructive reset, history rewriting or a Task archive
-directory. Keep accepted historical closures intact and do not count suspended work as CURRENT.
-
-Root `TASK.md` becomes `NO ACTIVE IMPLEMENTATION TASK`; the suspended Task remains recoverable
-from its recorded Git snapshot with the same ID, Base, Goal, Scope and unresolved blockers. A
-planning placeholder must identify missing scope and cannot invent outcomes or acceptance from
-an unspecified request. The governance guard accepts committed `PLANNED` plus no active Task and
-a matching `PLANNED` Roadmap row, and rejects every active Task against a `PLANNED` Slice.
-
-An intervening Slice uses an isolated branch based on the accepted implementation line, so it
-does not silently inherit unaccepted suspended code. A records the actual code baseline and the
-user-authorized priority exception. Only after the user supplies the content does A complete and
-checkpoint an ACTIVE Contract; only then may B plan an implementation Task. The hold itself does
-not change product requirements or authorize application behavior changes.
-
-Resumption requires an explicit A activation checkpoint. Recover the suspended Contract and Task
-from their preservation snapshots, retain the original Slice Base and Task ID/Base/Goal/Scope,
-and reassess any intervening accepted changes before integration. Never silently rebase, repin,
-merge rejected code, reset blockers or treat prior FIX REQUIRED work as PASS. Ordinary Task/Slice
-review and final acceptance rules then apply.
+1. Preserve exact Slice/Task/review checkpoints on a named branch, original Base and implementation
+   Head, and unrelated dirty/private files. Never rewrite history or stash/reset work away.
+2. Set the suspended Slice/Roadmap to PLANNED with `Development Hold: FROZEN BY USER`; root Task
+   becomes `NO ACTIVE IMPLEMENTATION TASK`. A reserved but unspecified Slice also stays PLANNED.
+3. Start intervening work on an isolated accepted baseline unless the user explicitly authorizes
+   integration. Complete and checkpoint an ACTIVE Contract before B plans.
+4. On resumption explicitly reactivate, recover the same Task ID/Base/Goal/Scope and reassess
+   intervening changes. No silent repinning, blocker reset or conversion of rejected work to PASS.
 
 ## 4. Slice Contract
 
-Root `SLICE.md` is A-owned and contains at least:
+`SLICE.md` contains ID/name/owner/status, immutable Base and Implementation Head, user goal,
+applicable requirements/journey, Required Outcomes/Surfaces, boundaries, safety invariants, explicit
+deferrals, acceptance, final validation, Closure Packet and A Final Review.
 
-- Slice ID / Name, Owner, Status, Base SHA and Implementation Head;
-- User Goal;
-- Required Outcomes and Required Surfaces;
-- Product Experience / UX Constraints for the promised journey;
-- Safety Invariants, including applicable correctness and data-integrity boundaries;
-- Explicitly Deferred;
-- Slice Acceptance Criteria;
-- Final Validation Expectations;
-- Closure Packet and A Final Review sections.
+Base is the checkpoint immediately before Slice implementation, not the latest planning commit.
+A factual clarification preserves acceptance meaning. A material change to outcomes, surfaces,
+invariants or Task boundaries must be checkpointed by A; B then explicitly continues, legally
+adjusts or replans the Task before implementation. B/Developer only update delegated factual fields.
 
-B and Developer may update factual progress fields explicitly delegated by the Contract, but must
-not add outcomes, weaken criteria, move deferrals into scope, change Base, or redefine boundaries.
-Material Contract change returns to A.
-
-A clarification is factual only when Required Outcome, Required Surface and Safety Invariant
-acceptance meanings remain unchanged: A may clarify without moving Base, then B rechecks Task
-legality. A Contract edit that changes these acceptance meanings, obligations or the current Task
-boundary is material even if the user goal stays the same. A checkpoints the revised Contract;
-B explicitly decides whether the current Task continues, is legally adjusted or is replanned
-before Developer proceeds.
-
-For `PARTIAL / RESCOPE`, A records the Contract problem, still-valid implementation facts,
-superseded scope/assumptions and replacement Contract. Keep the same Slice ACTIVE with its original
-Base when it still represents the true start. If the business boundary makes it invalid,
-create a new Slice ID with the current committed HEAD as Base and retain the old partial record;
-do not declare the old Slice PASS.
-
-Slice Base is the immutable checkpoint immediately before Slice implementation starts. Slice Final
-Review always covers Base..Implementation Head, not only the last Task or documentation commit.
+On PARTIAL / RESCOPE, record the problem, still-valid facts and replacement Contract. Keep the
+original Base when it remains the true start; otherwise create a new Slice ID from current HEAD
+and retain the partial record. Never declare partial delivery PASS.
 
 ## 4.1 Repository governance preflight
 
-Before B plans the first Task for a Slice, the Slice Contract must already be checkpointed in
-reachable Git history. B verifies `HEAD:SLICE.md`, not only the working-tree file, and requires the
-committed Slice ID to match the planned Task's Parent Slice and the committed Slice status to be
-`ACTIVE`. A working-tree Contract that is newer than HEAD is a draft, not an activated Slice; Task
-planning stops until the Contract is committed. The corresponding committed Roadmap row must also be
-`ACTIVE`.
+Before planning or implementation run `python3 scripts/check_governance.py`. It reads committed
+`HEAD:SLICE.md` and Roadmap, rejects an uncheckpointed working Contract, mismatched parent/status or
+invalid/non-ancestor Bases, and never changes files. Active Tasks require ACTIVE/FIX REQUIRED Slice
+and ACTIVE Roadmap. PLANNED Slice cannot authorize implementation.
 
-Before any Developer Task execution, the Developer records `git status --short`, classifies every
-pre-existing change, and preserves changes outside the Task ownership. In particular, pre-existing
-`SLICE.md`, `docs/roadmap.md`, A-owned requirement/architecture files, B-owned Task state and user
-files must not be reset, restored from HEAD, checked out over, cleaned, dropped from a stash, or
-silently included in the Task checkpoint. "The Developer does not modify this file" includes
-indirectly making its contents disappear through worktree cleanup.
-
-The read-only `scripts/check_governance.py` guard is the executable check for these rules. It uses
-committed `HEAD:SLICE.md` and the committed Roadmap as authority, fails fast on an uncheckpointed
-working-tree Contract, validates active Task parent/status/Roadmap alignment, and validates Base
-SHA commit existence and ancestry. It never edits, stages, resets, restores, checks out, cleans or
-stashes repository content. The existing quality workflow runs it before formatting, lint and tests.
-
-Base SHA validation is an ancestry check, not an equality check. A valid sequence is:
-
-```text
-Slice Base
-  ↓
-A Slice Contract / Activation commit
-  ↓
-B Task planning
-  ↓
-Developer implementation
-```
-
-The Base remains the immutable checkpoint immediately before the Slice implementation line. Contract
-and planning commits are allowed after Base and must not cause the Base to move.
+Record repository/branch/HEAD, status and workspace/Git writability. Preserve every pre-existing
+change, including A-owned files, B Task state, reference-image deletions and private files. Do not
+reset, restore, checkout over, clean, stash/drop or silently commit unrelated changes.
 
 ## 5. Task planning and sizing
 
-Task planning optimizes for coherent implementation units, not minimum diff size. A Task should
-normally deliver a complete reviewable behavior across every affected layer, for example Domain →
-Persistence → Application → API → Web → tests, rather than one field, assertion, test, UI label,
-evidence key or document sentence.
+B starts from the committed Contract and actual code/tests. Choose the largest reasonable coherent
+user behavior or architectural unit, across necessary layers. Reuse existing capabilities; do not
+split by field, assertion, internal module, UI label or optional proof.
 
-A normal Slice should usually fit roughly 3–7 major Implementation Tasks. This is a planning
-heuristic, not a quota. If B expects more than 8, B must stop and reassess whether Tasks are too
-small, the Slice boundary is wrong, or non-blocking work is being promoted. B returns to A for
-rescoping when necessary; letter ladders such as A/B/C/.../N/O and automatic F1/F2 chains are not a
-substitute for a coherent Slice.
+A normal Slice usually needs roughly 3–7 Tasks, not a quota. More than 8 requires reassessing
+fragmentation/boundaries with A. Fixes stay in the same Task unless the goal is genuinely independent.
 
-Every Task declares:
+Use [Task/TEMPLATE.md](../Task/TEMPLATE.md). Each plan identifies Goal/Required Outcome, immutable
+Task Base, Difficulty (Low/Medium/High), Test Level, complete journey, scope, concrete acceptance,
+simple ordered implementation steps, Developer affected tests, B acceptance tests and non-goals.
+Use exact commands and explain covered risks; reference shared gates instead of copying them.
 
-- **Difficulty**: `Low`, `Medium`, or `High`;
-- **Test Level**: `T0`, `T1`, `T2`, `T3`, or `T4`;
-- one Goal tied to a named Slice Required Outcome;
-- implementation scope and acceptance criteria;
-- required tests appropriate to risk;
-- explicit non-goals.
-
-For a user-facing Task, B starts from the operator goal and applicable stable UX requirements rather
-than the backend protocol. Acceptance must complete the promised journey, avoid unnecessary CLI
-fallback or exposure of tokens/internal identifiers, and add interaction friction only for
-meaningful human intent, while preserving all security, authority, data-integrity and architecture
-invariants.
+In the planning response, explain a real usage scenario and assess complexity/new states/races;
+keep those assessments outside Task. For FIX REQUIRED, explain cause, introducing commit/time and
+user trigger outside Task; put precise actionable corrections inside the same Task.
 
 ## 6. Test levels
 
-| Level | Use | Default validation |
-|---|---|---|
-| T0 — DOC | Pure factual documentation sync that does not change product requirements, architecture contracts, safety rules or Slice scope | Markdown/link and relevant textual checks; `git diff --check`; no Python full regression |
-| T1 — TEST ONLY | Adds automation for unchanged production behavior | New/changed test plus affected and necessary related test modules; full regression normally omitted |
-| T2 — LOCAL | Low-risk implementation within one module/boundary | Focused tests, directly affected module tests and relevant lint/static checks |
-| T3 — INTEGRATION | Behavior spanning Application/API/Web/Persistence or comparable layers | Focused, related integration, affected regression and normal quality gates |
-| T4 — FULL / HIGH RISK | OrganizerExecutor, Storage mutation, destructive behavior, permissions, Active configuration, migrations/schema, concurrency, core pipeline or safety boundaries | Focused, integration, full regression and complete quality/safety gates |
+Test Level describes acceptance coverage and risk, **not Developer's suite size**.
 
-Canonical requirement changes, architecture-contract changes, safety-rule changes and Slice-scope
-changes are not ordinary T0 work. B assigns the level from actual risk, not desired speed.
+| Level | Use | Acceptance coverage owned by B |
+|---|---|---|
+| T0 — DOC | Factual docs/process maintenance without product, architecture, safety or Slice-scope changes | Relevant text/links/doc consumers and `git diff --check`; no full regression |
+| T1 — TEST ONLY | Automation for unchanged production behavior | Changed and directly affected tests plus relevant static checks |
+| T2 — LOCAL | Low-risk behavior within one boundary | Focused/module regression and relevant static checks |
+| T3 — INTEGRATION | Application/API/Web/Persistence or comparable cross-layer behavior | Affected integration/native journeys and normal applicable quality gates; full suite only for a concrete shared-impact reason |
+| T4 — FULL / HIGH RISK | Mutation, Storage, destructive effects, permissions, Active config, schema/migrations, concurrency, core pipeline/safety | Focused/integration coverage, full regression and all applicable safety/packaging/native gates |
+
+Product/architecture/safety/scope changes are not ordinary T0. New risk returns to B for level
+reassessment. Slice/Task select applicable coverage; they do not transfer full-suite ownership
+back to Developer. Earlier unexecuted Developer-full-suite assignments are now B assignments.
 
 ### Test plans and execution stages
 
-Every Task's `Required Tests` separates development feedback, checkpoint gates and B's independent
-verification. Each command names the behavior or risk it covers. T0–T3 full-suite requirements need
-a concrete reason such as shared-shell reachability; copying every project gate into every Task is
-not a test plan. T4 checkpoint requirements remain focused/integration/full regression and complete
-applicable quality/safety gates. The current Slice's explicit validation requirements take precedence.
-
-| Stage | Required execution |
+| Stage | Responsible execution |
 |---|---|
-| Development and correction work | Run changed/new tests and directly affected regressions first; add a relevant integration/native journey when that boundary changes. Resolve known blockers before expensive gates. |
-| Final Task candidate | Run the assigned checkpoint gates on the candidate being submitted, with actual results and evidence. T4 requires complete assigned regression/safety gates; development-only runs do not satisfy them. |
-| B Review | Inspect the actual diff and verify checkpoint evidence; independently reproduce the critical behavior specified in the Task. Rerun gates with missing, incompatible or contradicted evidence. |
-| Slice Final | Run the current Contract's full regression and applicable safety/packaging/migration gates; record actual results in the Closure Packet. |
+| Development / fixes | **Developer:** new/modified tests, known failing cases, directly affected regressions/integration and relevant changed-file checks. No full Python/Web/E2E or release matrix. |
+| Developer handoff | Freeze a coherent candidate after affected tests; record actual commands/results and known failures. Submit READY FOR B REVIEW without waiting for full regression. |
+| B Review | **B:** inspect implementation against Task, reproduce critical behavior, and run the assigned acceptance gates on the submitted candidate. T4 includes full regression before PASS. |
+| Slice Final | **B:** ensure the current Slice candidate has complete Contract-level regression/safety/packaging/native validation and record it in the Closure Packet. |
+| A Final Review | Review entire Slice Base..Head and results; independently check material uncertainties, without mechanically repeating B's full suites. |
 
-Fast runs are feedback, not permission to submit an incomplete checkpoint. During a fix loop,
-Developer first runs the failing case and affected regressions, then satisfies the checkpoint plan
-on the corrected candidate. When a final full suite includes the focused cases under the required
-configuration, record that coverage instead of mechanically running the same cases a second time.
-Separate real-Python, Docker, migration or visual checks remain required when the Contract/Task
-specifies them; a mocked suite cannot replace them. Changes to executable source after validation
-invalidate final full-suite evidence for that candidate.
+Do not relabel whole-repository suites as “affected” and give them back to Developer. Developer
+need not prepare a full-suite evidence dossier. B owns full runs/logs; Developer's missing full
+results are not a product defect or reason to return implementation work.
 
-B defines the independent critical reproduction and checks why additional gates are necessary.
-B does not default to repeating every Developer gate solely because the reviewer changed. An early
-proven blocker permits a rejecting review before remaining expensive gates; report what was not
-run, and satisfy the full checkpoint plan before PASS. A retains independent final-review authority.
+A proven Task blocker permits early FIX REQUIRED before expensive gates. Developer fixes it and
+runs the failing/affected tests; B runs the required acceptance on the corrected candidate. Actual
+failures stay visible; never delete assertions, hide skips, add retries or weaken timeouts to pass.
+Unavailable required gates remain pending/disclosed, not PASS; environment/evidence work stays with
+B unless actual Task implementation must change. Only explicit authorized exceptions waive gates.
 
-Existing Task plans remain binding until B explicitly updates `Required Tests`. Such an update
-records its reason and preserves Task ID/Base/Goal/Scope/acceptance and the Slice Contract. Developer
-cannot silently omit assigned commands. Added risk at auth/Active/mutation/persistence/concurrency
-boundaries returns to B for level reassessment, rather than receiving a faster but weaker plan.
+### Shared full regression commands
+
+B uses these for applicable T4/SLICE FINAL coverage. A pure governance/document change runs only
+its affected checks. Task/Slice add risk-specific commands instead of duplicating this list.
+
+| Area | Commands / required behavior |
+|---|---|
+| Python quality | `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m unittest discover -s tests`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check` |
+| Examples / forbidden dependencies | `.venv/bin/mediaflow --config config/strategy.example.json config validate`; `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`; `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` must have no match (exit 1) |
+| Web (cwd `web/`) | `npm run typecheck`; `npm run lint`; `npm run format:check`; `npm run test -- run`; `npm run build`; `npm run test:e2e` |
+| Real application / visual | Slice-specific real Python/API/SQLite/Worker browser journeys against production assets; inspect actual desktop/narrow screenshots and interaction where required |
+| Packaging / production | `.venv/bin/python -m pip wheel . --no-deps -w dist`; `.venv/bin/python scripts/wheel_smoke_test.py <exact-wheel>`; installed consumers outside source; applicable Docker/restart proofs; `.venv/bin/python scripts/docker_release_security_smoke_test.py --image <candidate-image>` |
+| Persistence / safety | Applicable fresh/reopen/migration/failure-atomicity, RBAC, pins/fences, zero-mutation analysis, explicit authority, C→A identity and completed/uncertain non-replay checks; `git diff --check` |
 
 ### Verifiable evidence and reuse
 
-Keep one evidence index per candidate/run, with:
+Keep reports concise: candidate SHA/range, command/cwd, actual result/counts/skips, known failure and
+raw-log/CI reference. Add configuration/dependency/fixture/worker/artifact identity only where it
+matters to reproducibility. B retains full-run logs and required screenshots/artifact digests in
+CI or stable ignored storage such as `.git/validation-evidence/<sha>/<run>/`; never expose secrets
+or treat a /tmp-only path as durable handoff. Local artifacts are not claimed remotely reachable.
 
-- tested full source SHA, working-tree changes if any, and reviewed checkpoint SHA;
-- exact commands, working directories, relevant runtime versions, dependency/lockfile identity,
-  safe fixture/configuration identity, worker/selection/retry settings and built-artifact digests;
-- exit codes, pass/fail/skip/flaky/unavailable counts, duration, raw logs and applicable browser
-  traces/screenshots/measurements, including first failures and exact repeats;
-- the required gate/criterion each run covers and any explicit evidence reuse or validation gap.
-
-Record only secret-free environment facts. A dirty-source run must identify its exact tested
-content and prove that content matches the submitted checkpoint; a completion narrative alone is
-not proof. B checks the actual code, command coverage and readable original artifacts before reuse.
-Evidence produced by Developer or CI is usable when all these facts match; neither the producer's
-role nor a PASS label establishes validity. Missing logs, incomplete runs and unverifiable claims
-require the relevant gate to run again. Visual acceptance includes inspecting actual images and
-measurements; a generated "aligned" label or script exit alone is insufficient.
-
-Reuse across roles is allowed for the same executable candidate, tests/harnesses, dependencies,
-configuration and built artifacts. A report/document-only successor commit may reuse runtime
-evidence only after an explicit diff proves those inputs unchanged. Rerun checks that consume the
-changed documents, including governance/release-policy checks when applicable. Changes to source,
-tests, harnesses, dependencies, runtime configuration or served artifacts require fresh affected
-evidence; a T4 corrected executable candidate still requires its complete assigned final gates.
-Uncertain impact requires rerunning the relevant gate, not assuming it is unaffected. Slice Final
-still performs the Contract's final run; this rule does not substitute an old Task run for it.
-
-Retain the index and raw artifacts through A's final decision in CI artifacts or a stable ignored
-workspace location, for example `.git/validation-evidence/<source-sha>/<run-id>/`. `/tmp` alone is
-not a durable handoff. Keep evidence out of product configuration, user reference images and
-ordinary source commits; a local path is not claimed remotely reachable. Reuse and missing evidence
-are disclosed in the review/Closure Packet. Known pre-existing failures still need actual Base
-proof. No deleted tests, weaker assertions, hidden skips, retries or timeout changes may manufacture
-a green gate.
-
-### SLICE FINAL
-
-Before declaring `SLICE READY FOR A REVIEW`, B normally runs one Slice-level full regression plus
-the safety, packaging, migration or real-service gates material to that Slice. This concentrates
-expensive final evidence at Slice level instead of repeating it for every small Task. B records
-actual totals, skips, unavailable external gates and known non-blocking issues.
+B may use CI runs it triggers/checks, and reuse its own matching acceptance runs. Reuse requires the
+same source/tests/harness/dependencies/config and artifacts; report-only successors need an explicit
+diff proving execution inputs unchanged plus affected doc checks. Changed executable inputs require
+fresh assigned acceptance; T4 still needs its full coverage. Full runs containing focused cases do
+not require duplicate focused runs. Matching last-Task validation can also satisfy Slice-final gates
+when it covers every final requirement; otherwise B runs the missing coverage on the final candidate.
+Do not accept PASS labels without actual results or invent Base failures without reproducing them.
 
 ## 7. Task execution and review
 
-1. B confirms `SLICE.md` is `ACTIVE`, inspects actual state and writes one Task.
-2. Developer implements the Task, runs its Test Level, inspects scope/diff/private files, creates a
-   coherent checkpoint, updates the Developer Completion Report and returns `READY FOR B REVIEW`.
-3. B reviews the explicit checkpoint or Task Base..Head against Task criteria and the parent Slice.
-4. On `FIX REQUIRED`, B lists only Task blockers. Developer corrects the same Task and creates a new
-   checkpoint without amending accepted history.
-5. On `PASS`, B reevaluates every Slice Required Outcome and chooses only NEXT TASK or
-   SLICE READY FOR A REVIEW.
+1. B checks governance and plans one Task in committed scope.
+2. Developer implements, runs affected tests, checks scope/private files and hands off an immutable
+   checkpoint with a compact report: changes, behavior, commands/results, remaining work and risks.
+3. B reviews explicit SHA/Base..Head, verifies actual behavior and performs its acceptance plan.
+4. FIX REQUIRED lists only Task blockers with simple fix steps; correction remains in that Task.
+5. PASS reevaluates **all** Slice outcomes/surfaces. If incomplete, next coherent Task; if complete,
+   stop planning, finish Slice-final validation and submit SLICE READY FOR A REVIEW.
 
-A Task PASS does not update Roadmap or Progress, does not create a `docs(review)` checkpoint, and
-does not close any Slice. Detailed Task history lives in Git and the compact final Closure Packet.
-`TASK.md` may be replaced when the next Task begins and may travel with that Task's implementation
-checkpoint. There is no mandatory review-record → next-task-doc → implementation commit cycle.
-The B Review Result may exist in the review output without a standalone commit; if `TASK.md` is
-later replaced, the reviewed SHA plus the Slice Closure Packet are the durable compact index back
-to Git history.
+Task PASS does not close a Slice or update Roadmap/Progress. B results may be in review output;
+there is no mandatory standalone `docs(review)` commit. When no next Task is requested, root Task
+may become `# NO ACTIVE IMPLEMENTATION TASK` with a compact reviewed-SHA/decision pointer; the old
+Task stays in Git. A terminal PASS is not an active implementation Task for the governance guard.
 
 ## 8. Git and checkpoint strategy
 
-- One Implementation Task should normally produce one coherent implementation checkpoint; a
-  correction adds a new checkpoint in the same Task loop and never amends reviewed history.
-- B Review identifies an explicit SHA or Base..Head. It does not require a standalone review commit.
-- A Final Review identifies Slice Base and Implementation Head and audits the complete range.
-- Git history is the detailed Task/review history; `docs/progress.md` is not a duplicate log.
-- Never rewrite accepted or rejected history, fabricate a SHA, force push, use destructive reset, or
-  include unrelated/private files.
-- Ordinary local checkpoints follow repository authorization. `git push`, destructive Git and
-  history-changing operations require explicit user authorization.
-
-There is no universal per-Task push gate. A Slice Contract may require remote reachability before
-downstream integration; otherwise repository-local closure is truthful only as local closure and
-must not be reported as pushed. A does not broaden push authorization by declaring PASS.
-
-Before a checkpoint, inspect status, complete diff, name/status/stat, `git diff --check`, the exact
-manifest, secrets/private files and all frozen scopes named by the Task.
+One Task normally yields a coherent implementation checkpoint; fixes add checkpoints, never amend
+reviewed history. Inspect complete diff/manifest, status, whitespace, frozen scopes and private
+files before committing. Ordinary authorized local checkpoints need no separate approval; push,
+destructive Git and history changes require explicit user authorization. No force push or rewriting
+accepted/rejected history. Preserve reachability branches required by a Contract or user hold.
 
 ## 9. B stop rule and Closure Packet
 
-After Required Outcomes are satisfied, B outputs exactly one compact packet and stops Task planning:
+Stop creating Tasks once Required Outcomes/Surfaces are satisfied. Optional tests, labels, P2
+cleanup and out-of-scope ideas cannot block completion or create another Task. P0 means credible
+data loss/destruction/security/secret/authority or whole-journey outage; P1 means an unmet required
+outcome/surface/recovery or architecture/safety invariant; P2 means non-blocking quality/improvement.
+Do not downgrade safety or required outcomes.
+
+Submit one compact packet:
 
 ```text
-Slice:
-Base SHA:
-Head SHA:
-
-Required Outcomes:
-- complete / incomplete
-
-Implemented:
-- ...
-
-Tasks completed:
-- compact list only
-
-Final Tests:
-- ...
-
-Safety Evidence:
-- ...
-
-Known Non-blocking Issues:
-- ...
-
-Explicitly Deferred:
-- ...
-
+Slice / Base SHA / Implementation Head:
+Required Outcomes and Surfaces: complete / incomplete
+Implemented / Tasks completed:
+Final Tests and Safety Evidence: actual results, reuse, skips/unavailable
+Known Non-blocking Issues / Explicitly Deferred:
 Documentation Reconciliation Needed:
-- ...
-
-Reusable Lesson Candidates (optional; 1–3 per role when warranted):
-- ...
-
-Decision:
-SLICE READY FOR A REVIEW
+Reusable Lesson Candidates: optional, 1–3 per role
+Decision: SLICE READY FOR A REVIEW
 ```
 
-Non-blocking test enhancement, copy polish, extra proof, P2 cleanup or an idea unrelated to the
-Contract is recorded in the packet or deferred; it is not a reason to generate another Task.
-
-For stop-rule decisions, P0 means a credible data-loss, destructive-operation, security, secret,
-authority or whole-journey availability defect. P1 means an unmet Required Outcome, broken required
-surface/recovery path, architecture/safety invariant regression or material user-journey break. P2
-means a non-blocking quality, wording, maintainability or optional-proof improvement. The Slice may
-specialize severity in its Contract but may not downgrade safety or Required Outcomes.
+A genuine P0/P1 discovered during final preparation receives one focused correction Task in the
+same Slice. Legacy names never create an additional fix lifecycle.
 
 ## 10. A Final Review and closure
 
-A reviews Slice Base..Implementation Head and focuses on Required Outcomes, applicable product/UX
-constraints, the user journey, integration completeness, failure/recovery, architecture, safety,
-final regression, P0/P1 defects and documentation truthfulness. A does not block closure for
-optional proof strength, non-blocking wording, P2 cleanup or future deferred capability.
+A reviews entire Base..Implementation Head for outcomes/journey, integration, safety, failure and
+recovery, actual validation and document truth. Decide PASS, FIX REQUIRED (only in-Slice P0/P1 or
+unmet outcomes), or PARTIAL / RESCOPE (Contract problem). Record reviewed range and blockers in
+SLICE; FIX REQUIRED does not fill closure reconciliation or erase prior facts.
 
-A returns one of:
+After PASS, reconcile CURRENT docs, Slice/Roadmap/Progress, requirements, journey/architecture and
+operator guidance in one coherent closure checkpoint. Record already-reviewed Implementation Head,
+`PASS / CLOSED`, and `TASK.md` as NO ACTIVE IMPLEMENTATION TASK with next action A SELECTS THE NEXT
+LARGE SLICE. Do not hide new product/scope changes in factual reconciliation. A selects the next
+large Slice only after closure; selecting it is a separate action.
 
-- `PASS`
-- `FIX REQUIRED` — only current-Slice P0/P1 or unmet Required Outcomes; B creates one focused Task.
-- `PARTIAL / RESCOPE` — the Contract or business boundary must return to A before more work.
-
-Record Reviewed Range, Decision and P0/P1 Blockers in `SLICE.md`'s A Final Review. On
-`FIX REQUIRED`, set the top-level status to `FIX REQUIRED`, retain Base and hand Task planning to
-B; do not fill Closure Reconciliation because no closure occurred.
-
-After PASS, A performs one factual closure reconciliation as needed across `SLICE.md`, Roadmap,
-Progress, requirements, Product Experience, Architecture, README/configuration guidance, and then
-records `PASS / CLOSED`. Those closure changes should form one coherent Slice-closure checkpoint,
-not separate review-record, next-task and status commits. A chooses the next large Slice only after
-that closure; B does not pre-plan its Implementation Tasks. The closure checkpoint records the
-already-reviewed Implementation Head and does not silently extend the Base..Head product range.
-If reconciliation would change product scope, architecture contracts or safety rather than record
-facts, A must not hide that change in closure; the decision returns to `PARTIAL / RESCOPE`.
-
-The PASS checkpoint also records Closure Reconciliation and sets `TASK.md` to
-`NO ACTIVE IMPLEMENTATION TASK`, with `Next Action: A SELECTS THE NEXT LARGE SLICE`.
-Stop after closure; selecting the next Slice is a separate action.
-
-Each Slice closure includes a brief review of the experience documents for
-[A](agent-experience/slice-owner-architect-final-reviewer.md),
+At closure, review [A](agent-experience/slice-owner-architect-final-reviewer.md),
 [B](agent-experience/task-planner-reviewer.md) and
-[Developer](agent-experience/developer-implementation-role.md) in the same closure checkpoint.
-Keep only reusable lessons: add 1–3 new points per role when warranted, each as problem → approach →
-applicability, and merge duplicates rather than append Slice history. No new lesson means no forced
-entry; the Developer document stays blank until concrete implementation lessons exist.
+[Developer](agent-experience/developer-implementation-role.md) experiences: keep short reusable
+problem→approach→applicability lessons, merge duplicates, add at most 1–3 only when useful.
 
 ## 11. Document responsibilities
 
-| Document | Responsibility |
+| Document | Keep |
 |---|---|
-| `AGENTS.md` | Permanent product/UX principles, architecture, safety, domain invariants, role principles and guidance hierarchy |
-| `docs/development-workflow.md` | All detailed Slice/Task lifecycle, planning, testing, review, Git and migration workflow |
-| `SLICE.md` | Current A-owned large-Slice Contract and final review packet |
-| `TASK.md` | Current B-owned Implementation Task only, or an explicit no-active-Task notice |
-| `Task/TEMPLATE.md` | B-owned Task template |
-| `docs/agent-experience/*.md` | Short reusable role lessons; read before work and reconcile once at Slice closure, never scope or status authority |
-| `docs/roadmap.md` | Large Slice goal, order, dependency and status only |
-| `docs/progress.md` | Large Slice closure ledger only |
-| `docs/requirements.md` | Complete canonical V1 product definition and stable engineering/UX requirement IDs; live work state remains in Slice/Task documents |
-| `docs/v2-requirements.md` | Stable V2 requirements extending the frozen V1 baseline; root Slice/Task documents own live work state |
-| `docs/product-experience.md` | User journeys, not workflow audit history |
-| `docs/architecture.md` | CURRENT/TARGET architecture, not Task workflow |
-| `CLAUDE.md` | Thin execution/autonomy and destructive-operation guidance by reference |
+| AGENTS | Permanent product/architecture/safety and scope principles |
+| This workflow | Lifecycle/testing/Git/review/closure rules, once |
+| SLICE / TASK | Current contract/unit and compact decisions; detailed revisions in Git |
+| Task/TEMPLATE / role experience / CLAUDE | Thin workflow-linked templates/guidance, no competing rules |
+| Roadmap / Progress | Large-Slice priority/status / accepted closure ledger; short current pointer |
+| Requirements / V2 Requirements | Complete stable product scope/IDs and explicit authorized amendments |
+| Product Experience / Architecture | Journeys / CURRENT vs TARGET contracts, not development diaries |
+
+Reference rules rather than copying them. Do not append each command/run/fix to scope documents.
+Superseded current prose may be removed after its checkpoint is reachable; retain stable IDs,
+accepted Base/Head/closure facts, current obligations and explicit deferrals. `docs/history/` stays
+LEGACY / READ ONLY; no rewrite, new Task archive or mechanical renumbering of old phases/fixes.
 
 ## 12. Workspace and private configuration
 
-At the start of a workspace/session, record repository root, branch, HEAD, status, worktree
-writability and Git/index writability. Do not bypass a read-only Git boundary. Inspect existing
-changes and preserve unrelated user work.
-
-`config/alist.json` must remain ignored, untracked and unstaged. Never expose or commit real tokens,
-private endpoints, credentials, cookies, authorization headers or user-private paths. Use only
-approved example configuration and fake/local services in tests unless an explicit isolated
-acceptance plan authorizes otherwise.
+Never read/change user runtime databases, production media or secrets for routine validation.
+Use approved example configs and isolated temporary/fake/local fixtures unless a dedicated plan
+explicitly authorizes an external test environment. `config/alist.json` stays ignored, untracked
+and unstaged. Do not expose tokens, private endpoints, authorization headers, cookies or private paths.
 
 ## 13. Legacy migration
 
-- Accepted and rejected implementation/review history is immutable: do not rewrite history, squash
-  away accepted or rejected checkpoints, filter historical files out of old commits, or force-push
-  rewritten history. Historical Task documents already committed remain recoverable through normal
-  Git history.
-- The current working tree is intentionally compact. Its Task-document authority is root `TASK.md`
-  (the active Task or explicit no-active notice) plus `Task/TEMPLATE.md`; it does not need to
-  permanently materialize every completed historical Task document.
-- Historical Task documents may be removed from current `HEAD` as ordinary repository cleanup only
-  when no active Task boundary is disturbed, their commits remain reachable, no current tooling or
-  documentation requires their paths, and accepted/rejected history is not rewritten. Do not create
-  a replacement archive directory merely to relocate the same per-Task files.
-- The dated pre-migration Roadmap/Progress snapshots under `docs/history/` are a separate, explicitly
-  retained category. They remain intact and marked `LEGACY / READ ONLY / NOT CURRENT WORKFLOW
-  AUTHORITY`; do not conflate them with per-Task documents recoverable from Git history.
-- The new Roadmap and Progress do not translate every historical Phase/Task/Fix into new objects or
-  backfill uncertain Base SHAs.
-- Historical A–O/F1 names are evidence inside their enclosing migrated Slice, not new lifecycle
-  states and not authorization for more lettered work.
-- Pre-migration checkpoint/review annotations already embedded in requirements, Product Experience
-  or Architecture are legacy factual annotations, not workflow authority. Do not extend them; A may
-  remove or normalize them during a later factual Slice reconciliation without creating a Task only
-  for wording cleanup.
-- A migrated active Slice may use `READY FOR B READINESS CHECK` once. B then either identifies a
-  genuine Required-Outcome blocker or submits the Slice Closure Packet; test-only completeness and
-  documentation wording alone do not justify another micro-Task.
+Historical accepted/rejected commits, original partial/hold/closure snapshots and preserved
+`docs/history/` remain immutable and reachable. Completed Task text may leave the working tree when
+no active boundary/tool/link depends on it; Git is the detailed history. Omission from compact
+current documents never weakens required product, architecture, safety or active Contract scope.

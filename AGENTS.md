@@ -1,775 +1,157 @@
 # AGENTS.md
 
-# Project
-
-This project is an automated media library organizer.
-
-Before making any changes, read:
-
-- AGENTS.md
-- docs/development-workflow.md
-- docs/requirements.md (canonical product requirements and stable requirement IDs)
-- docs/product-experience.md
-- docs/architecture.md if it exists
-- docs/roadmap.md if it exists
-- docs/progress.md
-- docs/v2-requirements.md
-- SLICE.md
-- TASK.md when it contains an active implementation Task
-- the experience document for your current role, linked under Development Roles
-
-Do not implement the whole project at once.
-
-The current `SLICE.md` is the A-owned business-capability contract. An active `TASK.md` is a
-B-owned implementation unit inside that contract. Developer work must satisfy both and may not
-expand either one.
-
----
-
-# Guidance Hierarchy
-
-Use this hierarchy when interpreting future work:
-
-1. `AGENTS.md` defines permanent safety, architecture, role, and scope-control rules.
-2. `docs/development-workflow.md` is the sole authority for implementation, commit, review,
-   closure, and next-slice sequencing.
-3. `docs/requirements.md` defines complete canonical V1 product scope and stable engineering/UX IDs.
-4. `docs/product-experience.md` defines canonical user journeys and product-completion semantics.
-5. `docs/v2-requirements.md` extends the frozen V1 baseline for V2, while
-   `docs/architecture.md` distinguishes CURRENT implementation from TARGET design.
-6. `docs/roadmap.md` records only large Slice priority and status.
-7. `SLICE.md` is the current A-owned Slice Contract: user goal, required outcomes, boundaries,
-   safety invariants, deferrals, acceptance criteria, Base, and review state.
-8. `TASK.md` is the current B-owned implementation Task inside `SLICE.md`, when a Task is active.
-
-A lower document may refine or narrow a higher one but must not silently weaken its safety or user
-outcome. A broad product requirement does not authorize implementation beyond `SLICE.md`; a Task
-cannot expand the Slice or declare the Slice complete.
-
----
-
-# Product and User Experience
-
-Every operator-facing feature must be designed and accepted as a vertical user journey, not as an
-isolated backend module. Before implementation, identify and document:
-
-- user goal
-- entry point
-- visible state
-- available action
-- success outcome
-- failure outcome
-- recovery path
-
-Domain models, repositories, application services, migrations, or internal tests alone never make
-an operator-facing requirement product-complete. Completion requires the user-visible entry point,
-state, action, outcome, error, and recovery promised by the applicable product requirement.
-
-Permanent product rules:
-
-1. User experience is the primary product-design and acceptance criterion. Start from the user goal
-   and choose the most natural, direct and lowest-friction journey that still satisfies every
-   correctness, security, data-integrity and architecture invariant.
-2. Retry is not equivalent to recovery. Recovery must explain what failed, what state is durable,
-   what is safe to repeat, and the explicit action that continues or resolves the item.
-3. Batch workflows preserve independent per-item state, outcome, and recovery. One item must not
-   hide, overwrite, or block the diagnosis and safe recovery of another item.
-4. Configuration displayed as Active must be the exact immutable configuration snapshot consumed
-   by runtime. A draft, database row, JSON file, or stale process snapshot must not be presented as
-   Active merely because it exists.
-5. Automated decisions affecting recognition, metadata identity, naming, classification,
-   destination, conflict handling, or execution must expose bounded, secret-free explanations.
-6. CLI-only completion does not satisfy an ordinary journey whose final management surface is Web.
-   CLI remains valuable for administration, debugging, migration, automation and support.
-7. Backend mechanisms do not dictate the operator journey. Do not require ordinary users to handle
-   raw execution tokens or implementation identifiers merely because the backend uses tokens,
-   grants, revisions, locks, claims, checkpoints or fences. Show such identifiers only when they are
-   useful for diagnosis or support.
-8. Safely automate constraints the system can reliably determine. Avoid redundant confirmation and
-   interrupt the operator only for meaningful human intent, authority escalation, ambiguity,
-   uncertain mutation or irreversible/destructive effects.
-9. User-visible failures provide an action-oriented explanation and a meaningful next action rather
-   than exposing raw protocol or exception details.
-10. API and Web capabilities for the same journey must use the same application behavior,
-    permissions, validation, state, and safety rules.
-11. RBAC, backend-authoritative permissions, explicit mutation intent, no silent overwrite/delete,
-    bounded scope, auditability, redaction, Storage confinement, immutable snapshot pinning,
-    concurrency fencing, zero-mutation analysis stages, no automatic uncertain-mutation replay,
-    explainable/recoverable destructive outcomes and OrganizerExecutor-only mutation are mandatory
-    system invariants. They do not justify unnecessary operator friction.
-
-Read `docs/product-experience.md` before implementing any user-facing feature. `SLICE.md` must define
-the user goal, journey outcome, failures/recovery and Slice acceptance. `TASK.md` must identify the
-coherent part of that journey it implements and its Task-level acceptance before coding.
-
----
-
-# Core Architecture
-
-The system must keep these modules decoupled:
-
-- Storage
-- ResourceLibrary
-- Scanner
-- Parser
-- Recognition
-- Metadata
-- Naming
-- Classification
-- Organizer
-- Task
-- Logging
-
-The main processing pipeline is:
-
-ResourceLibrary
--> Scan
--> Parse
--> RecognitionRule
--> RecognitionType
--> RecognitionTypePolicy
--> Metadata
--> Naming
--> Classification
--> OrganizePlan
--> OrganizerExecutor
--> Result
-
----
-
-# Critical Domain Rules
-
-## Recognition
-
-RecognitionRule only determines RecognitionType.
-
-Example:
-
-A file -> RecognitionType A
-B file -> RecognitionType B
-C file -> RecognitionType C
-
-Recognition MUST NOT:
-
-- rename files
-- move files
-- copy files
-- delete files
-- determine final media library path
-- directly execute Storage write operations
-
----
-
-## RecognitionTypePolicy
-
-RecognitionTypePolicy maps RecognitionType to:
-
-- MetadataPolicy
-- NamingPolicy
-- ClassificationPolicy
-- OrganizePolicy
-
-Example:
-
-A:
-- MetadataPolicy = A
-- NamingPolicy = A
-- ClassificationPolicy = A
-- OrganizePolicy = Move
-
-B:
-- MetadataPolicy = B
-- NamingPolicy = B
-- ClassificationPolicy = B
-- OrganizePolicy = Move
-
-C:
-- MetadataPolicy = C
-- NamingPolicy = A
-- ClassificationPolicy = A
-- OrganizePolicy = Move
-
-IMPORTANT:
-
-RecognitionType C MUST remain C.
-
-Using NamingPolicy A or ClassificationPolicy A must NEVER change
-RecognitionType C into RecognitionType A.
-
-Add automated regression tests for this behavior.
-
----
-
-# Metadata
-
-Metadata providers identify the actual movie or TV show.
-
-Initial provider:
-
-- TMDB
-
-Architecture must allow future providers.
-
-Business code must depend on MetadataProvider interfaces, not directly
-on TMDB HTTP APIs.
-
-The metadata layer should support concepts equivalent to:
-
-- SearchMovie
-- GetMovie
-- SearchTV
-- GetTV
-- GetSeason
-- GetEpisode
-- FindByExternalId
-
-Provider response DTOs must not leak into domain entities.
-
-Convert provider responses into internal types such as:
-
-- MediaCandidate
-- MediaIdentity
-
-Metadata requests must support:
-
-- timeout
-- retry
-- rate limit handling
-- HTTP 429 handling
-- caching
-- language configuration
-- region configuration
-- optional proxy
-
-Secrets must never appear in logs.
-
----
-
-# FFprobe
-
-DO NOT use FFprobe.
-
-DO NOT add FFmpeg/FFprobe dependencies.
-
-Media parsing is based on:
-
-- filename
-- path
-- directory structure
-- NFO when available
-- metadata providers
-
-Technical tags such as:
-
-- 2160p
-- 1080p
-- WEB-DL
-- BluRay
-- H265
-- HDR
-- DV
-
-are filename/path tags only.
-
-They are NOT verified against the internal video stream.
-
----
-
-# Storage
-
-All file operations must go through Storage interfaces.
-
-Business code must never directly call filesystem/network storage APIs.
-
-Initial storage providers:
-
-- Local
-- SMB
-- OpenList
-- S3 / Cloudflare R2
-
-Storage interface should cover concepts such as:
-
-- List
-- Stat
-- Exists
-- Read
-- Write
-- CreateDirectory
-- Move
-- Copy
-- Delete
-- HardLink
-- SoftLink
-
-Storage implementations must expose capabilities:
-
-- CanMove
-- CanCopy
-- CanDelete
-- CanHardLink
-- CanSoftLink
-
-Do not assume every provider supports every operation.
-
----
-
-# Resource Library
-
-ResourceLibrary defines where source media files are discovered.
-
-It references:
-
-- Storage
-- RootPath
-- scanning configuration
-- include rules
-- exclude rules
-- file stability policy
-- recognition rule set
-
-Scanning must not modify files.
-
----
-
-# Media Library
-
-MediaLibrary defines the destination root.
-
-It references:
-
-- Storage
-- RootPath
-
-ClassificationPolicy decides which MediaLibrary and relative path
-a media item belongs to.
-
----
-
-# Parser
-
-Parser works only with local information.
-
-Parser input:
-
-- file path
-- filename
-- parent directories
-- extension
-
-Parser output should include fields such as:
-
-- titleCandidate
-- year
-- season
-- episode
-- episodes
-- resolutionTag
-- sourceTag
-- videoCodecTag
-- audioTag
-- hdrTag
-- versionTag
-- releaseGroup
-
-Support common episode formats:
-
-- S01E01
-- S1E1
-- S01E01E02
-- S01E01-E03
-- 1x01
-- EP01
-- E01
-- 第01集
-- 第1集
-- 第01话
-- 第1话
-
-Parser MUST NOT:
-
-- access TMDB
-- modify files
-- classify media
-- execute organizing operations
-
----
-
-# Naming
-
-NamingPolicy only calculates:
-
-- target directory name
-- target filename
-
-NamingPolicy MUST NOT modify files.
-
-Naming template variables may include:
-
-- title
-- original_title
-- year
-- season
-- episode
-- episodes
-- episode_title
-- provider
-- provider_id
-- resolution
-- source
-- video_codec
-- audio
-- hdr
-- version
-- release_group
-- ext
-
----
-
-# Classification
-
-ClassificationPolicy determines:
-
-- MediaLibrary
-- relative target path
-
-Classification may use:
-
-- RecognitionType
-- MediaType
-- title
-- year
-- genre
-- country
-- language
-- filename tags
-- ResourceLibrary
-- Provider
-- ProviderID
-
-Classification MUST NOT modify files.
-
----
-
-# Organizer
-
-Planner calculates OrganizePlan.
-
-Planner MUST NEVER modify files.
-
-Only OrganizerExecutor may execute:
-
-- CreateDirectory
-- Move
-- Copy
-- HardLink
-- SoftLink
-- Delete
-
-DryRun must execute the complete planning pipeline but perform zero
-filesystem/storage mutations.
-
----
-
-# Final Target Path
-
-Target path is calculated from:
-
-MediaLibrary.RootPath
-+ ClassificationPolicy.RelativePath
-+ NamingPolicy.Directory
-+ NamingPolicy.Filename
-
-Example:
-
-MediaLibrary:
-/Media
-
-Classification:
-A
-
-Naming:
-The Matrix (1999)/The Matrix (1999).mkv
-
-Result:
-
-/Media/A/The Matrix (1999)/The Matrix (1999).mkv
-
----
-
-# Conflict Handling
-
-Supported strategies:
-
-- Skip
-- Overwrite
-- Rename
-- Manual
-
-Overwrite is high risk.
-
-Never silently overwrite user media.
-
-Never silently delete source media.
-
----
-
-# Organize Operations
-
-Supported:
-
-- Move
-- Copy
-- HardLink
-- SoftLink
-
-Do not silently fall back from HardLink to Copy or Move.
-
-Fallback must be explicitly configured.
-
----
-
-# Attachments
-
-Media organization should support related files such as:
-
-- subtitles
-- NFO
-- poster
-- fanart
-- trailer
-- matching sidecar files
-
-Subtitle examples:
-
-- srt
-- ass
-- ssa
-- vtt
-- sub
-- sup
-
-Preserve language suffixes where possible.
-
----
-
-# File Stability
-
-Do not organize actively downloading/writing files.
-
-Support concepts such as:
-
-- minimum file age
-- last modification threshold
-- stable size duration
-
-Temporary files should be ignored by configurable rules.
-
-Examples:
-
-- *.part
-- *.tmp
-- *.download
-- *.!qB
-
----
-
-# Task System
-
-Long operations must use Tasks.
-
-Suggested states:
-
-- Pending
-- Scanning
-- Parsing
-- Recognizing
-- FetchingMetadata
-- Planning
-- WaitingConfirm
-- Organizing
-- Completed
-- PartialSuccess
-- Failed
-- Cancelled
-
-Support:
-
-- pause
-- resume
-- cancel
-- retry
-- retry failed items
-
----
-
-# Logging
-
-Supported levels:
-
-- TRACE
-- DEBUG
-- INFO
-- WARN
-- ERROR
-
-Normal mode:
-
-INFO
-
-Debug mode should show useful processing details.
-
-Never log:
-
-- passwords
-- API keys
-- tokens
-- secrets
-- authorization headers
-- cookies
-
----
-
-# Result Records
-
-Every organize task must persist results.
-
-At minimum store:
-
-- source
-- recognitionType
-- provider
-- providerId
-- namingPolicy
-- classificationPolicy
-- organizePolicy
-- target
-- status
-- error if any
-
-JSON export should be supported.
-
----
-
-# Safety Rules
-
-This project manages user media files.
-
-The following correctness, security, and data-integrity rules are mandatory regardless of how the
-operator experience is designed. They should be enforced transparently wherever technically safe,
-without turning internal mechanisms into unnecessary user steps.
-
-Rules:
-
-1. Scanning never modifies files.
-2. Parsing never modifies files.
-3. Recognition never modifies files.
-4. Metadata lookup never modifies files.
-5. Naming never modifies files.
-6. Classification never modifies files.
-7. Planner never modifies files.
-8. DryRun never modifies files.
-9. Only OrganizerExecutor may mutate storage.
-10. Delete and Overwrite require explicit policy permission.
-
----
-
-# Testing Rules
-
-Every feature must include automated tests.
-
-Tests must cover:
-
-- success path
-- invalid input
-- conflicts
-- failures
-- important edge cases
-
-Use temporary files/directories for filesystem tests.
-
-Do not require production SMB/OpenList/S3/TMDB services for unit tests.
-
-Use:
-
-- mocks
-- fakes
-- local test servers
-
-Important regression test:
-
-RecognitionType C
--> NamingPolicy A
--> ClassificationPolicy A
-
-must still produce:
-
-RecognitionType == C
-
----
-
-
-# Development Roles
-
-MediaFlow has two formal management objects—Slice and Task—and three responsibilities. Detailed
-lifecycle, status, testing, Git and review rules live only in `docs/development-workflow.md`.
-
-Read the corresponding role experience before work. These are reusable guidance, not requirements,
-scope authority or a competing workflow; maintenance follows the workflow's Slice-closure rules.
-
-- [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md)
-- [B experience](docs/agent-experience/task-planner-reviewer.md)
-- [Developer experience](docs/agent-experience/developer-implementation-role.md)
-
-## A — Slice Owner / Architect / Final Reviewer
-
-A owns the large business-capability boundary in `SLICE.md`, its user outcome, product/UX
-constraints, required surfaces, safety/correctness invariants, explicit deferrals and final
-acceptance. Only A may materially change the Slice
-Contract, change Roadmap Slice boundaries, conduct the final Base..Head Slice review, or declare a
-Slice `PASS / CLOSED`. A does not turn individual assertions, fields, labels or non-blocking test
-ideas into new Slices.
-
-## B — Task Planner / Task Reviewer
-
-B reads `SLICE.md`, plans coherent implementation Tasks inside it, assigns Difficulty and Test
-Level, and reviews each Task's actual checkpoint. Fixes normally remain in the same Task review
-loop. After every Task PASS, B reevaluates all Slice Required Outcomes; once they are satisfied, B
-must stop creating Tasks and prepare the Slice Closure Packet for A.
-
-## Developer — Implementation Role
-
-Developer implements only the active `TASK.md` within `SLICE.md`, preserves architecture and safety,
-runs the assigned Test Level, creates a coherent checkpoint, and reports actual results and risks.
-Developer does not define the next Task, modify the Slice boundary or Roadmap, or close a Slice.
-
-
-
-
-# Development Workflow
-
-Follow `docs/development-workflow.md`. It is the sole authority for Slice/Task lifecycle, planning,
-review, testing levels, checkpoints, fixes, closure packets, final review, and legacy migration.
-This file defines permanent principles only and does not define a competing state machine.
-
----
-
-# Scope Control
-
-Before Task planning or implementation, run `scripts/check_governance.py`. It uses committed
-`HEAD:SLICE.md` as Slice authority and fails when the working-tree Contract is not checkpointed or
-the active Task/Roadmap relationship is invalid. Preserve all pre-existing dirty files; never use
-reset, restore, checkout, clean, or stash/drop to make unrelated work disappear. Detailed lifecycle
-semantics remain solely in `docs/development-workflow.md`.
-
-Do NOT implement work outside the active `SLICE.md` and `TASK.md`.
-
-Do NOT perform large unrelated refactors.
-
-Prefer small coherent changes.
-
-If an architecture adjustment is necessary:
-
-- keep backward compatibility where practical
-- document the reason
-- update architecture documentation
+MediaFlow is an automated media library organizer. Implement only the current Task inside the
+committed Slice; do not implement the whole project or make unrelated refactors.
+
+## Read before work
+
+Read this file, [Development Workflow](docs/development-workflow.md), committed `HEAD:SLICE.md`,
+the active `TASK.md` if any, and the experience for your role. Check the current pointers in
+[Roadmap](docs/roadmap.md) and [Progress](docs/progress.md).
+
+Read the applicable sections and referenced requirement IDs in [Requirements](docs/requirements.md),
+[V2 Requirements](docs/v2-requirements.md), [Product Experience](docs/product-experience.md) and
+[Architecture](docs/architecture.md). User-facing work must read its complete applicable journey;
+architecture changes must read the affected CURRENT/TARGET contract. Follow references needed to
+understand the work; unrelated historical sections need not be reread on every turn.
+
+## Authority
+
+1. This file: permanent safety, architecture, roles and scope control.
+2. `docs/development-workflow.md`: sole lifecycle, testing, Git, review and closure authority.
+3. Requirements: complete canonical V1 scope and stable engineering/UX IDs.
+4. Product Experience: user journeys and completion semantics.
+5. V2 Requirements and Architecture: V2 extensions and CURRENT/TARGET design.
+6. Roadmap: large-Slice priority/status; Progress: accepted closure ledger.
+7. `SLICE.md`: A-owned user outcome, surfaces, boundaries, invariants, deferrals and acceptance.
+8. `TASK.md`: B-owned coherent implementation unit within that Slice, or no-active-Task notice.
+
+Lower documents may narrow work but cannot weaken higher safety or user outcomes. Broad product
+scope does not authorize work outside the Slice; a Task cannot expand or close its parent Slice.
+Current documents retain current rules and decisions; detailed development history belongs in Git.
+
+## Product and experience invariants
+
+- Every operator-facing feature must complete goal → entry → visible state → action → success →
+  failure → recovery. Domain/repository/API/CLI alone cannot complete an ordinary Web journey.
+- User experience is the primary design criterion. Choose the most direct journey that preserves
+  correctness, security, authority and data integrity. API/Web share application behavior and rules.
+- Explain failure stage, durable state, known effects, safe repeatability and the explicit next
+  action. Raw exceptions and a generic Retry button do not constitute recovery.
+- Batch items keep independent state, results and recovery; successful siblings are not replayed.
+- Active means the exact immutable snapshot consumed by runtime. Draft/database/file/stale process
+  state cannot be presented as Active. Admitted work retains its legitimate pinned context.
+- Recognition, identity, naming, classification, destination, conflict and execution decisions expose
+  bounded, secret-free explanations.
+- Automate determinable constraints. Interrupt only for meaningful intent, authority escalation,
+  ambiguity, uncertain mutation or irreversible/destructive effects. Internal tokens, revisions,
+  grants, claims, checkpoints and fences are not ordinary user chores; show them only for diagnosis.
+- Preserve RBAC, backend-authoritative permissions, explicit mutation intent, bounded scope, audit,
+  redaction, Storage confinement, immutable pins, concurrency fencing and uncertain-effect non-replay.
+  These invariants do not justify avoidable operator friction.
+
+## Architecture and domain contracts
+
+Keep Storage, ResourceLibrary, Scanner, Parser, Recognition, Metadata, Naming, Classification,
+Organizer, Task and Logging decoupled. The processing pipeline is:
+
+```text
+ResourceLibrary → Scan/Discovery → Parse → RecognitionRule → RecognitionType
+→ RecognitionTypePolicy → Metadata → Naming → Classification → OrganizePlan
+→ OrganizerExecutor → Result
+```
+
+### Recognition and policy identity
+
+RecognitionRule determines only RecognitionType. It never renames/moves/copies/deletes, determines
+final library paths or writes Storage. RecognitionTypePolicy maps the unchanged RecognitionType to
+MetadataPolicy, NamingPolicy, ClassificationPolicy and OrganizePolicy.
+
+**Regression invariant:** RecognitionType C using NamingPolicy A and ClassificationPolicy A must
+still produce RecognitionType C. Cover this in automated tests.
+
+### Metadata and parsing
+
+- Business code depends on MetadataProvider interfaces; TMDB is the initial provider and future
+  providers remain possible. Convert provider DTOs to internal MediaCandidate/MediaIdentity types.
+- Provider concepts include SearchMovie/GetMovie, SearchTV/GetTV, GetSeason/GetEpisode and
+  FindByExternalId. Support timeout, retry, rate limits/429, caching, language, region and optional
+  proxy. Never log secrets.
+- **Do not use FFprobe or add FFmpeg/FFprobe dependencies.** Parse filename/path/directory/NFO and
+  provider evidence. Resolution/source/codec/audio/HDR/DV tags are filename/path tags, not verified
+  internal stream facts.
+- Parser uses local path, filename, directories and extension only; it never queries TMDB, mutates
+  files, classifies or organizes. Output includes titleCandidate, year, season/episode/episodes,
+  resolutionTag, sourceTag, videoCodecTag, audioTag, hdrTag, versionTag and releaseGroup.
+- Support S01E01, S1E1, S01E01E02, S01E01-E03, 1x01, EP01, E01, 第01集/第1集 and 第01话/第1话.
+
+### Storage and libraries
+
+- All media file operations go through Storage interfaces; business code never directly calls
+  filesystem/network storage APIs. Initial providers: Local, SMB, OpenList, S3/Cloudflare R2.
+- Storage covers List, Stat, Exists, Read, Write, CreateDirectory, Move, Copy, Delete, HardLink and
+  SoftLink. Advertise CanMove/CanCopy/CanDelete/CanHardLink/CanSoftLink; never assume capabilities.
+- ResourceLibrary binds Storage/root, scan configuration, include/exclude rules, stability policy
+  and recognition rules. Discovery is read-only. MediaLibrary binds destination Storage/root.
+- Exclude actively downloading/writing files through minimum age, modification threshold and stable
+  size duration. Configurable temporary exclusions include *.part, *.tmp, *.download and *.!qB.
+
+### Naming, classification and organizing
+
+- NamingPolicy calculates directory and filename only. Variables may include title, original_title,
+  year, season, episode, episodes, episode_title, provider, provider_id, resolution, source,
+  video_codec, audio, hdr, version, release_group and ext.
+- ClassificationPolicy selects MediaLibrary and relative path using RecognitionType, MediaType,
+  title/year/genre/country/language, filename tags, ResourceLibrary and Provider/ProviderID.
+- Target = MediaLibrary.RootPath + Classification.RelativePath + Naming.Directory + Naming.Filename.
+  For example `/Media` + `A` + `The Matrix (1999)/The Matrix (1999).mkv`.
+- Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner never mutate Storage.
+  DryRun runs the complete planning pipeline with zero mutations.
+- **Only OrganizerExecutor may mutate Storage**, including CreateDirectory, Move, Copy, HardLink,
+  SoftLink and Delete. Delete/Overwrite require explicit policy permission and authority. Never
+  silently overwrite or delete source media. Conflict strategies: Skip, Overwrite, Rename, Manual.
+- Organize operations: Move, Copy, HardLink, SoftLink. No silent link→copy/move fallback; any fallback
+  must be explicitly configured.
+- Include related subtitles, NFO, poster, fanart, trailer and matching sidecars. Preserve subtitle
+  language suffixes where possible; support srt/ass/ssa/vtt/sub/sup.
+
+### Tasks, logs and results
+
+- Long operations use durable Tasks with observable stages: Pending, Scanning, Parsing, Recognizing,
+  FetchingMetadata, Planning, WaitingConfirm, Organizing, Completed, PartialSuccess, Failed, Cancelled.
+  Support pause/resume/cancel/retry/failed-item retry with independent outcomes and safe recovery.
+- Persist each organize result: source, recognitionType, provider/providerId, namingPolicy,
+  classificationPolicy, organizePolicy, target, status and error. Support JSON export.
+- Log levels: TRACE/DEBUG/INFO/WARN/ERROR; normal mode INFO, debug mode useful processing details.
+  Never log passwords, API keys, tokens, secrets, authorization headers or cookies.
+
+## Testing and roles
+
+Every feature includes automated success, invalid-input, conflict, failure and important-edge-case
+coverage. Filesystem tests use temporary roots; unit tests use mocks/fakes/local servers rather
+than production SMB/OpenList/S3/TMDB or user media. Test ownership and levels live only in the
+[workflow](docs/development-workflow.md#6-test-levels): Developer runs new/changed and directly
+affected tests; B owns full regression and acceptance gates.
+
+- **A — Slice Owner / Architect / Final Reviewer:** owns Slice outcomes/boundaries, Roadmap
+  boundaries and final Base..Head acceptance; only A declares `PASS / CLOSED`.
+  Read [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md).
+- **B — Task Planner / Task Reviewer:** plans coherent Tasks, Difficulty/Test Level and detailed
+  actionable steps; reviews actual checkpoints; keeps fixes in the same Task. After PASS, reevaluate
+  all Slice outcomes and stop planning when they are satisfied.
+  Read [B experience](docs/agent-experience/task-planner-reviewer.md).
+- **Developer — Implementation Role:** implements only the active Task, preserves safety, runs its
+  affected-test plan and hands off a coherent checkpoint with actual results/risks. Does not plan
+  the next Task, change Slice/Roadmap boundaries, self-approve or close a Slice.
+  Read [Developer experience](docs/agent-experience/developer-implementation-role.md).
+
+## Scope and workspace control
+
+Before Task planning or implementation run `python3 scripts/check_governance.py`. Committed
+`HEAD:SLICE.md` is the scope authority; an uncheckpointed Contract is a draft. Record branch/HEAD and
+pre-existing dirty files, and preserve them. Never reset/restore/checkout/clean/stash-drop unrelated
+work or silently include it in a checkpoint. Keep private configuration ignored/untracked/unstaged.
+
+No work outside the active Slice/Task, no large unrelated refactors, no history rewriting or
+unauthorized push. Necessary architecture changes preserve compatibility where practical and
+explain/update the architecture contract. Lifecycle and checkpoint details belong to the workflow.

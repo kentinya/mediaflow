@@ -249,11 +249,11 @@ work. [SLICE.md](SLICE.md) owns the current capability contract; [TASK.md](TASK.
 implementation unit, planned from [the Task template](Task/TEMPLATE.md).
 
 - **A:** owns Slice scope, architecture and final review; read [A experience](docs/agent-experience/slice-owner-architect-final-reviewer.md).
-- **B:** plans and reviews Tasks; read [B experience](docs/agent-experience/task-planner-reviewer.md).
-- **Developer:** implements the active Task; read [Developer experience](docs/agent-experience/developer-implementation-role.md).
+- **B:** plans/reviews Tasks and runs full regression and acceptance; read [B experience](docs/agent-experience/task-planner-reviewer.md).
+- **Developer:** implements the active Task and runs new/changed/directly affected tests; read [Developer experience](docs/agent-experience/developer-implementation-role.md).
 
 At each Slice closure, merge only new reusable lessons into these short lists in the same closure
-checkpoint. No new lesson requires no entry; the Developer document stays blank until lessons exist.
+checkpoint. Add nothing when there is no new reusable lesson; detailed Task history stays in Git.
 
 ## Configuration and architecture
 

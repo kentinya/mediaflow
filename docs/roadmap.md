@@ -34,52 +34,23 @@ only in [the development workflow](development-workflow.md).
 
 ## Current boundary
 
-Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — is **ACTIVE**. The user-confirmed
-[final page specification](task-center-page-spec.md) and root Contract define nine sibling task/recovery
-lists, same-interface plan summary then explicit confirmation, and first-deployment absence of Scan.
-Nine named references reside under `docs/pics/任务中心-标签名.png`; their example data is illustrative.
-Slice45 retains immutable accepted Slice44 Base `a72252091d5d46edf3e2114b994036ae21b08e2e`.
-The user authorized merging main and `slice/45-scope-pending` on 2026-10-18, retaining Slice45 conflict
-changes and both sides' nonconflicting work. Development now continues on main, incorporating its
-existing Task43.1/43.2 implementation but not starting later Slice43 work. Task43.2's historical B PASS
-is preserved as history. The user's subsequent 2026-10-18 scope decision makes that implementation
-no preservation, compatibility or acceptance prerequisite for Slice45. Necessary Scan/FileIndex
-cleanup may adjust or remove Slice43-specific coupling; the Automation page may be redesigned and
-implemented after Slice45, against a newly confirmed Contract rather than automatically resuming 43.3.
-Shared supported-work safety and durable results remain required. The merge itself is not a new
-acceptance or reuse of old-candidate validation. Implementation is in
-progress; ACTIVE does not mean A acceptance or closure. The final user-approved 2026-10-18 Scan revision
-removes standalone products, definition-bound scan-only/scan-and-plan modes and retirement compatibility
-layers. Old inputs use ordinary not-found/argument/unsupported-type errors before work or authority, not
-retirement pages/410/guidance/guards. No old Scan/V1 parity, migration or dedicated history is required.
-Mode removal alone is the narrow exception to frozen Slice43; its other business features stay frozen.
-The subsequent user-approved amendment adds complete FileIndex retirement to this same Slice as
-RO-7, including shared live Storage lists for `mediaflow files list`, Files and MediaLibrary without
-catalog recording. [The retirement specification](file-index-retirement-spec.md) defines removal of
-all index consumers and fresh-install schema, preservation of Task/Result/source-safety facts, and
-the prelaunch boundary without old production-data migration or compatibility. Shared internal
-discovery/stability/planning and supported-work restart/recovery remain; no existing media/data is cleared.
-Task45.4 must be rechecked and legally adjusted against the checkpointed revision; after its PASS, B plans
-the coherent FileIndex retirement unit before considering Slice completion. Necessary shared Automation
-dependency removal and the explicit Scan-mode exception do not resume the other frozen Slice43 features.
+Slice45 — **V2 Task Center, Recovery and FileIndex Retirement** — is **ACTIVE** on main,
+with immutable accepted Slice44 Base `a72252091d5d46edf3e2114b994036ae21b08e2e`.
+The committed [Contract](../SLICE.md), [task-center design](task-center-page-spec.md) and
+[FileIndex retirement design](file-index-retirement-spec.md) own its selected scope. Nine task/recovery
+lists, same-page exact summary/confirmation and first-deployment Scan removal are in the current
+implementation; complete FileIndex retirement/live-list parity and final acceptance remain pending.
+ACTIVE is not A acceptance. Necessary shared safety, exact pins/results and non-replay remain required.
 
-Slice43 is **PLANNED — Development Hold: FROZEN BY USER (2026-10-15)**. Its original
-preserved Contract remains unaccepted; only Scan-mode removal has subsequently moved to Slice45.
-The user authorized A to reserve an unspecified
-Slice45 before Slice43 closure. Preserve the exact Contract, Task43.3 plan and Task43.2 B decision
-at `c539429c2c3aaeaab4842b87d3c858e77106fed1` on `frozen/slice-43-2026-10-15`; the frozen Contract is `ed974e0df8b263f631bfe48b524da461013d8780` on that branch.
-No B Task planning or implementation of the remaining Slice43 work is authorized while frozen.
-The earlier no-import branch-isolation rule is superseded only by the explicit main integration above;
-it does not authorize Task43.3, complete engine-settings adoption or Slice43 closure.
+Slice43 remains **PLANNED — Development Hold: FROZEN BY USER** on `frozen/slice-43-2026-10-15`.
+Only Scan-mode removal was selected into45. User-authorized main integration does not resume its
+other work, require preserving its old UI, or close43. Future Automation redesign needs a new
+confirmed Contract. Exact preservation checkpoints are in the current Slice; accepted closures,
+including44 and retired34–36 boundaries, retain their historical facts in Git/Progress.
 
-Slice 44 remains PASS / CLOSED, with its accepted six-outcome boundary and exceptional-discovery
-recovery deferrals retained. Its complete Contract/reviews remain reachable at its closure checkpoint.
-The preservation branch `frozen/slice-43-2026-10-07` remains unchanged. Retired Slice 34–36 boundaries
-remain historical only.
-
-[Release](release.md) owns release-line facts, [Progress](progress.md) owns closure Base/Head,
-dates, delivered outcomes and deferrals, and [Architecture](architecture.md) and
-[Product Experience](product-experience.md) own CURRENT behavior. This file does not repeat them.
+[Release](release.md) owns release-line facts, [Progress](progress.md) the closure ledger,
+[Architecture](architecture.md)/[Product Experience](product-experience.md) CURRENT behavior,
+and [Development Workflow](development-workflow.md) testing/review allocation. This page keeps priority/status.
 
 ## Roadmap rules
 

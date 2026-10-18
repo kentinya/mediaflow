@@ -2,42 +2,14 @@
 
 @AGENTS.md
 
-`AGENTS.md` is the authoritative permanent repository policy. Detailed Slice/Task workflow is owned
-only by `docs/development-workflow.md`; current scope is `SLICE.md` plus an active `TASK.md`.
+Follow [AGENTS.md](AGENTS.md) and the sole [Development Workflow](docs/development-workflow.md).
+Committed `SLICE.md` plus the active `TASK.md` define implementation scope.
 
-## Execution Behavior
+Proceed autonomously through authorized in-scope work, affected tests, necessary fixes and handoff.
+Developer runs new/changed/directly affected tests; B runs full regression and acceptance. Do not
+ask whether to continue an obvious authorized step or run the assigned tests.
 
-For an already approved Task inside the current Slice, proceed autonomously through all clearly
-required in-scope steps.
-
-Do not stop to ask whether to:
-- continue with the next obvious implementation step;
-- run tests;
-- fix issues required to satisfy the current task;
-- complete remaining acceptance criteria.
-
-If the next step is clearly required by the current task, continue automatically.
-
-Only ask when:
-- a material requirement is genuinely ambiguous;
-- the operation is destructive or difficult to reverse;
-- credentials or external authorization are required;
-- continuing may overwrite or discard unrelated user work.
-
-## Git
-
-Ordinary local commits may be created without asking.
-
-Do not perform:
-- git push
-- force push
-- git reset --hard
-- destructive git clean
-- history rewriting
-
-unless explicitly authorized.
-
-Before Task planning or implementation, run `scripts/check_governance.py`. Preserve every
-pre-existing dirty file and do not indirectly discard it with reset, restore, checkout, clean or
-stash/drop. The committed `HEAD:SLICE.md` is the authority for Slice activation; detailed lifecycle
-rules remain in `docs/development-workflow.md`.
+Ask only for material ambiguity, missing external authority/credentials, destructive effects or
+risk of overwriting unrelated work. Before planning/implementation run `scripts/check_governance.py`
+and preserve all pre-existing dirty/private files. Ordinary local checkpoints are allowed;
+push, destructive Git and history rewriting require explicit authorization.
