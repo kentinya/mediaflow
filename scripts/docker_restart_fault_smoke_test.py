@@ -198,15 +198,6 @@ def wait_job_linked_task(base: str, token: str, job_id: str) -> dict:
     return document
 
 
-def wait_file_index(base: str, token: str, *, minimum: int = 1) -> list[dict]:
-    def reached() -> bool:
-        items = collection_ids(base, token, "/api/v1/file-index?limit=20")
-        return len(items) >= minimum
-
-    wait_until(reached, timeout=180.0, description="persistent FileIndex records")
-    return collection_ids(base, token, "/api/v1/file-index?limit=20")
-
-
 def wait_worker_ready(base: str, token: str) -> dict:
     def reached() -> bool:
         _, readiness = json_request(base, "/api/v1/workers/readiness", token)
@@ -641,13 +632,20 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ]:
                 raise RuntimeError("Scheduler restart changed the scheduled Job identity")
 
-            print("Starting the Worker and waiting for FileIndex/Task evidence...")
+            print("Starting the Worker and waiting for scheduled Preview Task evidence...")
             run([*command, "start", "worker"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
             wait_worker_ready(base, token)
-            file_items = wait_file_index(base, token)
-            if not file_items:
-                raise RuntimeError("Worker scan produced no FileIndex records")
+            scheduled_job = wait_job_linked_task(
+                base,
+                token,
+                first_occurrence[0]["job_id"],
+            )
+            scheduled_task_id = scheduled_job.get("task_id")
+            if scheduled_job.get("status") != "completed" or not scheduled_task_id:
+                raise RuntimeError(
+                    f"scheduled Preview did not produce durable Task evidence: {scheduled_job}"
+                )
 
             print("Stopping Worker and Notification Worker before fault fixtures...")
             run([*command, "stop", "worker", "notification-worker"], environment=environment)
@@ -680,10 +678,10 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
 
             baseline = {
                 "active": identity,
-                "files": [item.get("file_id") or item.get("fileId") for item in file_items],
                 "jobs": collection_ids(base, token, "/api/v1/jobs?limit=100"),
                 "tasks": collection_ids(base, token, "/api/v1/tasks?limit=100"),
                 "scheduledJobs": second_occurrence,
+                "scheduledTaskId": scheduled_task_id,
                 "notifications": collection_ids(base, token, "/api/v1/notifications?limit=100"),
                 "logs": collection_ids(base, token, "/api/v1/logs?limit=100"),
                 "audits": collection_ids(base, token, "/api/v1/security-audit?limit=100"),
@@ -691,6 +689,8 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             baseline_task_ids = {item.get("task_id") for item in baseline["tasks"]}
             if UNCERTAIN_TASK_ID not in baseline_task_ids:
                 raise RuntimeError("uncertain fault Task is missing from the API projection")
+            if scheduled_task_id not in baseline_task_ids:
+                raise RuntimeError("scheduled Preview Task is missing from the API projection")
             baseline_delivery_ids = {item["deliveryId"] for item in baseline["notifications"]}
             if set(NOTIFICATION_IDS.values()) - baseline_delivery_ids:
                 raise RuntimeError("seeded notification identities are not visible before restart")
@@ -725,6 +725,14 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 item["job_id"] for item in baseline["scheduledJobs"]
             ]:
                 raise RuntimeError("Scheduler restart changed the scheduled Job identity")
+            if final_occurrence[0].get("task_id") != scheduled_task_id:
+                raise RuntimeError("Scheduler restart changed the scheduled Preview Task link")
+            final_task_ids = {
+                item.get("task_id")
+                for item in collection_ids(base, token, "/api/v1/tasks?limit=100")
+            }
+            if scheduled_task_id not in final_task_ids:
+                raise RuntimeError("scheduled Preview Task disappeared after service restarts")
 
             print("Restarting Notification Worker and preserving targetless durable evidence...")
             run([*command, "start", "notification-worker"], environment=environment)
