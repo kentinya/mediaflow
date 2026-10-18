@@ -39,9 +39,10 @@ Slice45 — **V2 Task Center Redesign and Recovery Pages** — is **ACTIVE**. Th
 lists, same-interface plan summary then explicit confirmation, and standalone Scan retirement.
 Nine named references reside under `docs/pics/任务中心-标签名.png`; their example data is illustrative.
 The isolated `slice/45-scope-pending` branch retains immutable accepted Slice44 Base
-`a72252091d5d46edf3e2114b994036ae21b08e2e` without frozen Automation code. No implementation Task
-exists yet; next is B planning inside the checkpointed Contract. ACTIVE is scope authorization,
-not delivered behavior or closure.
+`a72252091d5d46edf3e2114b994036ae21b08e2e` without frozen Automation code. Implementation is in
+progress; ACTIVE does not mean A acceptance or closure. The user-approved prelaunch Scan revision
+removes old standalone-Scan settlement/migration and dedicated history compatibility obligations.
+Shared discovery/stability remain; full FileIndex retirement is for a later Slice.
 
 Slice43 is **PLANNED — Development Hold: FROZEN BY USER (2026-10-15)**. Its original
 business boundary remains unchanged and unaccepted. The user authorized A to reserve an unspecified

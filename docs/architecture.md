@@ -622,8 +622,10 @@ labels, paths or timestamps. Preserve pre-Task admissions, historical pinned dis
 Keep runtime lifecycle, per-item disposition, current problem and effect certainty separate.
 Recovery classification/action decisions belong to Python application behavior; persistence supplies
 bounded queries and indexes as needed without creating another lifecycle/queue/authority. Additive
-schema changes, if necessary, retain original Scan/DryRun outcomes, immutable pins, Results and audit
+schema changes, if necessary, retain supported-work outcomes, immutable pins, Results and audit
 meaning. Original and continuation attempts remain explicitly traceable rather than overwritten.
+The prelaunch Scan amendment below removes a dedicated old standalone-Scan compatibility obligation;
+it does not authorize deleting runtime/history data or weakening shared persistence safety.
 
 Manual creation composes live ResourceLibrary source selection, existing confined discovery and
 exact source identities with the production recognition/metadata/policy/planning/attachment chain.
@@ -650,12 +652,16 @@ internal mechanism. General DryRun and Rules tests remain outside retirement. Ex
 bounded batch analysis keeps per-item acceptance/refusal; no new cross-Task mutation engine.
 
 Retire standalone Scan admissions and executable standalone command/retry/continuation branches
-across Web/API/CLI, then remove exclusively used orchestration. Keep only genuinely shared Scanner,
-scan_filters, Storage discovery/stability behavior and historical readers. Old unsupported
-standalone work stops safely and remains auditable, with no compatible scanner executor or automatic
-conversion into Organize. Organization/Automation dependencies that instruct operators to run Scan
-must perform bounded observations within their own workflow, retaining real elapsed stability checks.
-Definition-bound Automation modes and the broader workspace remain the frozen Slice43 boundary.
+across Web/API/CLI, then remove exclusive code. Keep genuinely shared Scanner, scan_filters and
+Storage discovery/stability behavior. Under the user-approved 2026-10-18 prelaunch revision, there is
+no production old-Scan population to migrate: do not retain/build a Scan-only historical service,
+detail/cancel/export surface, startup cleanup, owner takeover or old-work migration mechanism.
+A thin retirement refusal closes unsupported entry/dispatch paths before discovery without converting
+them into Organize. Organization/Automation dependencies that instruct operators to run Scan must
+perform bounded observations within their own workflow, retaining real elapsed stability checks.
+Other supported Task/Result/pin/audit/claim safety and history remain unchanged; no media/runtime data
+is cleared. Full FileIndex retirement belongs to a later Slice, and definition-bound Automation modes
+and the broader workspace remain the frozen Slice43 boundary.
 
 Frontend pages share the Shell, table/filter/paging/return-context components with view-specific
 columns and dedicated correction forms. Backend-advertised controls stay cooperative; snapshots,

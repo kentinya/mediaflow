@@ -13,9 +13,11 @@ Slice45 — **V2 Task Center Redesign and Recovery Pages** — is **ACTIVE** on
 `a72252091d5d46edf3e2114b994036ae21b08e2e`. The user-confirmed final Contract selects nine task/recovery
 lists, in-context exact plan-summary confirmation and complete standalone Scan retirement with shared
 internal discovery/stability preserved. [The final page specification](task-center-page-spec.md)
-indexes nine named references under `docs/pics/`. This is TARGET planning authorization only:
-Implementation Head is NOT SET, no implementation Task or delivery/closure is claimed, and B plans next.
-Stable product amendments and TARGET documentation carry no unaccepted frozen Automation code.
+indexes nine named references under `docs/pics/`. Implementation is in progress; Implementation Head
+for A final review is NOT SET and no Slice delivery/closure is claimed. The user-approved prelaunch
+revision removes assumed old standalone-Scan settlement/migration/history compatibility; shared
+discovery/stability remain and full FileIndex retirement belongs to a later Slice. Stable product
+amendments and TARGET documentation carry no unaccepted frozen Automation code.
 
 Slice43 — **V2 Automation Workspace and Engine Settings** — is **PLANNED**, with
 **Development Hold: FROZEN BY USER — 2026-10-15**. It is not accepted or closed. The exact pre-hold
@@ -23,7 +25,7 @@ Contract, Task43.3 plan and Task43.2 B decision are retained at `c539429c2c3aaea
 `frozen/slice-43-2026-10-15`; the suspended Contract is checkpointed at `ed974e0df8b263f631bfe48b524da461013d8780`. Original Slice Base
 and all unfinished commitments remain intact. The user originally authorized A to reserve Slice45
 from accepted Slice44; its now-defined task-center Contract remains separate from suspended Automation.
-There is no active implementation Task.
+There is no active implementation Task for the frozen Slice43.
 This scheduling exception changes no accepted closure entry below.
 
 Slice 44 remains **PASS / CLOSED** with all six Required Outcomes and nine Required Surfaces accepted.

@@ -8,10 +8,10 @@ Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: NOT SET
 Working Branch: slice/45-scope-pending
-Development Authorization: CONTRACT REVISED BY A; B RECHECKS TASK45.3 BEFORE CONTINUING
+Development Authorization: CONTRACT REVISED BY A; B RECHECKS TASK45.4 BEFORE CONTINUING
 Risk: High
 Final Test Level: T4
-Next Action: B RECHECKS TASK45.3 AGAINST THE CLARIFIED CONTRACT
+Next Action: B RECHECKS TASK45.4 AGAINST THE PRELAUNCH SCAN RETIREMENT CONTRACT
 ```
 
 ## Authority and baseline
@@ -52,6 +52,26 @@ B 仍须先定义合法 Task；本次不创建 Developer Task、不导入冻结�
 许可；它只告诉用户修正冲突后应按既有策略处理该附件。其他主文件策略必须显示其实际动作标签，
 不能统一写成“手动移动”。
 
+### A Contract revision — 2026-10-18，未上线的 Scan 退役范围
+
+用户确认服务尚未上线，不存在需要兼容的生产旧 Scan 任务，并明确授权当前代理使用 A 权限，
+同步调整已开始开发的 Task45.4。本次是材料性范围收窄，不是仅修改文案：取消 RO-5 / S-7
+原有的旧独立 Scan 在途停止、接管、升级迁移与专用历史读取/取消/导出兼容义务。
+
+独立 Scan 的 Web/API/CLI 准入、执行、重试、继续和专用编排仍必须完整移除；必要的薄退役
+拒绝只说明功能已移除并指向新建整理，不能启动发现、自动转换成 Organize 或保留可运行后门。
+不要求为开发测试记录保留独立 Scan 历史服务、页面、路由、数据模型或启动清退机制；
+无其他消费者的专用代码应删除。遇到不支持的独立 Scan 命令仍须在执行前拒绝，这不要求迁移
+或重建旧任务状态。
+
+本次不执行媒体/运行数据库/历史数据清空，不削弱其他受支持任务的结果、pin、权限、审计和
+未知效果非重放规则。整理内部发现、过滤、真实稳定性观察和既有限制保留；FileIndex 完全退出
+由后续 Slice 另行规划，当前依赖不借此次删除。冻结 Slice43 的定义绑定模式范围不变。
+
+Slice ID、ACTIVE 状态和不可变 Base 保持。A 先提交本 Contract 修订；B 随后核对实际未提交
+改动，判断 Task45.4 在相同 ID/Base 下合法调整后继续。当前代理此前执行过 B 审查；本次用户
+仅授权 A 的范围调整，不进行对自身 B 结论的 A Final Review，也不宣布 Task/Slice 验收完成。
+
 ## Suspended work preservation
 
 - Slice43 original Base: `853973dbbf8289fa2ad40657033e94e870a690e4`.
@@ -89,7 +109,8 @@ CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢�
 - UX-001–010，REQ-GEN-*，REQ-ORG-*，REQ-RECOVERY-*，REQ-TASK-*，
   REQ-SAFE-*，REQ-RESULT-* 与适用的 Storage/Library/Recognition/Metadata 要求。
 - REQ-SCAN-001 的独立手动扫描产品入口被当前 V2 修订取代；内部扫描、过滤、稳定性、
-  SourceIdentity 及已有历史语义保留。通用 DryRun 和 Rules 测试不整体退役。
+  SourceIdentity 保留。独立 Scan 存量兼容按上方未上线修订取消，其他受支持任务历史语义
+  保留。通用 DryRun 和 Rules 测试不整体退役。
 - Slice42 的“全局 Review 列表延期”不限制本次明确选择的跨任务分类列表；跨任务批量
   mutation 仍不在本 Slice。闭合 Slice 的交付事实和原有接受证据不重写。
 
@@ -104,7 +125,8 @@ CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢�
 后端基于完整授权总体与一致读口径决定列表、计数和当前问题；不能只过滤浏览器当前页。
 任务数和文件数分开，重叠视角说明清楚，普通排队不自动算作需要人工处理。
 历史名称/范围、进度、主文件/附件及未知数据真实可解释。Job/Task 仅按持久关联去重，
-排队及 pre-Task 失败可见，旧诊断和普通文件维护/传输历史不丢失或改写为整理。
+排队及 pre-Task 失败可见，仍受支持的诊断和普通文件维护/传输历史不丢失或改写为整理。
+退役独立 Scan 不要求专用历史兼容，不得因此删除或改写其他工作记录。
 
 ### RO-2 — 新建整理与同页计划摘要确认
 
@@ -165,7 +187,7 @@ CLI 回退或内部授权材料。统一创建、分析、执行、结果与恢�
 ### RO-4 — 详情、协作控制、结果与异常连续性
 
 原生详情提供阶段、逐文件与附件结果、源/目标、策略/失败解释、附件按策略处理指引、持久执行步骤、相关日志/审计、
-恢复链及有界脱敏 JSON 导出，现有 Task/Job 深链仍可到达真实记录。
+恢复链及有界脱敏 JSON 导出，受支持工作的现有 Task/Job 深链仍可到达真实记录。
 普通工作不依赖两套 Task/Job 管理入口或内部 UUID。
 
 后端决定各工作类型的暂停/取消/继续可用性，区分请求和确认生效；不声称在途效果回滚。
@@ -177,11 +199,13 @@ Worker 不可用、固定上下文缺失、权限不足、过期输入、未知�
 
 移除独立 Scan 的 Web 页面/按钮、API/CLI 准入与创建/执行/重试/继续分支，以及仅供该产品
 使用的运行编排和死代码；隐藏、改名或保留兼容执行器不满足要求。退役请求明确拒绝并给出
-原生整理/历史查看指引，不能自动转成真实整理或通过其他入口绕过。
+原生新建整理指引，不能自动转成真实整理或通过其他入口绕过。
 
-保留整理/组织共用的 Scanner、Storage 发现、过滤、临时文件排除、稳定性与历史读取。
+保留整理/组织共用的 Scanner、Storage 发现、过滤、临时文件排除和稳定性。
 当前依赖“先手动 Scan”的稳定性/恢复指引必须转为原工作流内部有界观察，不降低检测要求。
-旧未完成独立扫描安全停止/取消且保留历史，不删除媒体、记录或旧固定快照。
+服务尚未上线，不建设旧独立 Scan 的停止/接管、升级迁移、历史页面/API/取消/导出兼容，
+也不为这些目标保留专用服务和死代码。必要拒绝仅关闭不支持命令的可达执行路径；
+本次不执行媒体/数据库/历史数据清空，其他受支持任务及共享 pin/结果/审计不受影响。
 定义绑定的 Automation 模式退役归冻结 Slice43；不借本 Outcome 实现其完整工作区。
 
 ### RO-6 — 统一架构、验证与文档真实性
@@ -190,7 +214,8 @@ Web/API/Worker 使用同一应用行为、权限、固定来源/计划和恢复�
 队列、配置或恢复引擎。必要持久化变更保留原版本、结果、历史模式和来源身份。
 任务运行状态、文件处置、待处理问题与效果确定性分开表达。
 
-九页面、创建→摘要→确认→执行、各类恢复及退役/历史路径通过自动化和原生浏览器验证。
+九页面、创建→摘要→确认→执行、各类恢复、独立 Scan 退役及其他受支持任务的历史路径
+通过自动化和原生浏览器验证。
 CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，不宣称实现。
 
 ## Required Surfaces
@@ -203,7 +228,7 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
 | S-4 冲突/失败恢复 | 独立影响、许可与安全范围；附件异常给出人工处理指引；效果未知只核查 |
 | S-5 详情/记录/导出/控制 | 真实结果、历史链与后端允许的协作动作 |
 | S-6 API/Worker/Persistence | 与 Web 同权威，耐久准入、固定上下文、去重和非重放 |
-| S-7 Scan 退役及历史兼容 | Web/API/CLI 不再独立创建或运行，旧证据可读 |
+| S-7 Scan 退役及内部依赖收敛 | Web/API/CLI 不再独立创建或运行，整理内部发现/稳定性可用；不建设旧 Scan 存量兼容 |
 
 ## Product Experience / UX Constraints
 
@@ -231,6 +256,7 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
 ## Explicitly Deferred
 
 - 冻结 Slice43 的页面、定义绑定模式退役、Run once、指标与实际全局设置消费；不得导入其未接受实现。
+- FileIndex 完全退出，由后续 Slice 另行规划；本次独立 Scan 退役不删除其仍被消费的能力。
 - 整体 DryRun 退役、Rules 测试删除、其他诊断命令或 Provider/身份/配置体系重设计。
 - 跨任务批量 mutation、批量覆盖、历史删除/保留策略、任意旧结果 Reprocess、通用回滚、
   不确定 mutation 自动重放、V1 UI 全面退役。
@@ -254,8 +280,10 @@ CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，�
   指引（人工移动仅是策略允许时的示例），不新增附件-only 自动恢复或把附件警告显示为无警告成功。
 - AC-4：详情、记录、导出、可用控制、Worker 等待与重连/重启恢复真实；
   原 Task/Job 深链可诊断，主旅程不回退 CLI/V1 或独立 Preview。
-- AC-5：独立 Scan 在 Web/API/CLI/非定义绑定执行路径完整退役，旧入口不暗中执行；
-  内部整理发现/稳定性和旧历史可用，不再提示先跑已删除功能。
+- AC-5：独立 Scan 在 Web/API/CLI/非定义绑定执行路径完整退役，旧入口只给退役及新建整理指引，
+  不暗中执行；内部整理发现/过滤/真实稳定性可用，不再提示先跑已删除功能。
+  不要求旧独立 Scan 的停止/接管、迁移或专用历史兼容；不删除媒体/运行数据，其他受支持工作
+  的结果、pin、权限和历史不回归。FileIndex 完全退出不计入本 Slice。
 - AC-6：架构与全部安全不变量通过验证，C→A 策略身份回归通过；
   文档/视觉状态、CURRENT/TARGET、受测候选与证据真实一致，未完成项不冒充交付。
 
@@ -285,7 +313,7 @@ B 在满足全部 Required Outcomes 后提交一个 Closure Packet，停止继�
 
 ## Closure Packet
 
-Not submitted. No implementation Task or final executable validation exists.
+Not submitted. Task45.4 is in development; this scope revision is not Slice-final validation or closure.
 
 ## A Final Review
 

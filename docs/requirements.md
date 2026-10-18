@@ -47,7 +47,8 @@ safety invariants remain unchanged.
 task-center lists, including cross-Task Recognition/Metadata/Classification/conflict/failure recovery,
 and complete retirement of the standalone Scan product across its Web/API/CLI admission and executable
 paths. This supersedes the standalone manual Scan-entry meaning of `REQ-SCAN-001` for the current V2
-program; shared internal discovery, filtering, stability and historical evidence remain required.
+program; shared internal discovery, filtering, stability and supported-work historical evidence remain
+required, subject to the prelaunch standalone-Scan compatibility amendment below.
 Organization creation and recovery first show an exact plan summary in the current interface and
 then require explicit execution confirmation; no independent Preview page/action is a mandatory or
 alternative organization step. `UX-006`, `REQ-ORG-003/004/008/011`, per-item recovery and all safety
@@ -56,6 +57,19 @@ General diagnostic DryRun/Preview and Rules tests are not retired. Cross-Task re
 selected; cross-Task bulk mutation remains deferred. Prior V1/closed-Slice evidence stays historical.
 Stable acceptance is `V2-OPS-009`–`V2-OPS-012`; [the final page specification](task-center-page-spec.md)
 and root Contract define the selected journey. These are TARGET requirements, not delivered behavior.
+
+**Explicit product amendment — 2026-10-18, prelaunch standalone Scan retirement (TARGET):**
+the user confirmed that the service has not launched and authorized A to remove the assumed production
+upgrade scenario. `V2-OPS-011` no longer requires settling, taking over or migrating old standalone Scan
+work, or maintaining its dedicated history/detail/cancel/export surfaces and services. Remove the
+standalone product and exclusive code; a bounded retirement refusal may direct users to new organization,
+but must not discover files, grant authority or convert a Scan request into organization. Unsupported
+standalone commands fail before execution without requiring an old-work migration mechanism.
+This amendment does not authorize clearing media or runtime/history databases, weakening supported
+Task/Result/pin/audit/non-replay safety, or removing shared discovery/filtering/stability. Complete
+FileIndex retirement belongs to a later Slice; frozen definition-bound Automation scope is unchanged.
+Frozen V1 meanings, accepted closure facts and Git history remain historical, not a new Scan
+compatibility delivery obligation. No current implementation or acceptance is claimed here.
 
 `REQ-GEN-004` remains a frozen V1 correctness baseline: failure must not create unknown data loss,
 and uncertain or destructive outcomes must stop safely. In V2, its phrase “safety takes precedence
@@ -702,8 +716,10 @@ Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确�
 执行阻塞待办，不把未知效果或未执行项算成功，不自动重放成功/忽略/不确定项。
 
 独立 Scan 的页面、API/CLI 创建及专属执行/重试路径退役，必要共享扫描/发现/稳定性保留，
-原流程自行完成稳定性观察，不再要求先运行已退役的扫描功能。历史意图、结果和审计可读；
-整体 DryRun、Rules 测试与冻结 Slice43 的自动化工作区不在此次退役范围。
+原流程自行完成稳定性观察，不再要求先运行已退役的扫描功能。按 2026-10-18 未上线范围修订，
+不建设旧独立 Scan 的停止/接管、升级迁移或专用历史读取/取消/导出兼容；其他受支持工作的
+历史意图、结果和审计保持。此修订不授权清空媒体或运行数据；FileIndex 完全退出由后续 Slice
+另行规划。整体 DryRun、Rules 测试与冻结 Slice43 的自动化工作区不在此次退役范围。
 这些是明确的 TARGET 产品修订；上方 CURRENT Slice42 和下方冻结 V1 事实不因此改写为已交付。
 
 #### **安全预览与直接文件命令**
