@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 8
+Next Action: B RECHECKS TASK45.3 AGAINST THE CLARIFIED CONTRACT
 ```
 
 ## Goal
@@ -247,7 +247,9 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
 - **完成标准：** 两个就绪项只选一个执行，未选项继续可处理；成功/忽略/未知/过期项分别拒绝。
   主文件执行并验证完成即可形成主项成功；附件步骤独立持久化。附件失败、未执行或冲突必须
   展示具体原因、来源/目标和按已绑定策略决定的处理指引（人工移动只是策略允许时的示例），
-  不新增附件-only 自动恢复、不重放主文件，也不把附件警告显示为无警告的完整成功。
+  不新增附件-only 自动恢复、不重放主文件，也不把附件警告显示为无警告的完整成功。主文件策略为
+  `MOVE` 且附件目标冲突时，提示应包含具体冲突名，并说明“请修正后再进行‘移动’操作”；其他
+  策略使用其实际动作标签，不统一提示手动移动。
 
 ### 17 — 接暂停整理的继续与重新授权
 
@@ -388,7 +390,8 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
   修复后出现新阻塞可转对应处理，原失败与成功兄弟项保留；受理/分析不冒充解决，列表/计数
   根据真实当前状态变化。原 pin 不可用不静默 repin。主文件验证成功即可保留主项完成；附件
   失败/未执行/冲突需显示原因、来源/目标和按策略处理指引（人工移动仅是策略允许时的示例），
-  不提供附件-only 自动恢复。
+  不提供附件-only 自动恢复；策略为 `MOVE` 的附件冲突需显示具体冲突名和“请修正后再进行‘移动’操作”
+  这类下一步，且不得让该提示暗示主文件会被重放。
 - [ ] **AC-4：** 精确就绪子集经“确认继续整理 N 项”原子准入，只有明确允许的剩余效果经
   Worker/OrganizerExecutor 执行；成功、忽略、已受理、未知效果和未选项不重放/互相覆盖。
   有界任务内批量分析保留各项独立接受/拒绝，不新增跨任务批量 mutation。
@@ -595,6 +598,23 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
 可复用经验：无新增，留待A在Slice收尾统一整理。
 
 ## B Review Result
+
+### B Review 9 — 2026-10-18 (Contract recheck)
+
+```text
+Contract Clarification Checkpoint: cbeb6948cb21ad3154a7dd117e386996f2d4efeb
+Decision: TASK45.3 CONTINUES WITH STRATEGY-ACTION CLARIFICATION; PRIOR FIX REQUIRED REMAINS
+Next: DEVELOPER CORRECTS THE SAME TASK 45.3 AGAINST THE CHECKPOINTED CONTRACT
+```
+
+本次澄清把附件异常的用户提示具体化：主文件固定策略为 `MOVE`、主文件已成功并验证完成、
+附件目标冲突时，提示必须包含具体冲突名，并指导“请修正后再进行‘移动’操作”；这里的“移动”
+来自主文件策略动作标签，不是统一的手动移动恢复动作。其他策略必须使用其自身动作标签或策略
+允许的核查/补正路径。该提示不能创建附件-only 自动恢复、补偿执行器或主文件重放许可。
+
+Review 7/8 的执行顺序、逐附件耐久原因/来源/目标、warning 不冒充完整成功、未知效果只核查等
+要求保持不变。Developer 必须为该示例以及其他策略写回归测试，并确保 Result/detail/export/audit
+显示相同的具体冲突名、策略动作和不越权的下一步。
 
 ### B Review 8 — 2026-10-18 (Contract recheck)
 
