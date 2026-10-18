@@ -2714,6 +2714,76 @@ class MediaFlowApi:
                 start_response, 200, self._discovery_document(value, principal, binding)
             )
         if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "automation", "task-definitions"]
+            and parts[6] == "run-once"
+            and method in {"GET", "POST"}
+        ):
+            # Definition-bound Run once on the V2 operator surface.  The POST
+            # admits (or reconciles) one durable discovery derived from the
+            # *published definition's own* ResourceLibrary/sub-scope; the GET
+            # reads it back.  Neither the browser nor the URL supplies the
+            # manifest, so no file picker and no hand-selected subset is
+            # involved, and no execution authority is created here.
+            return self._automation_run_once_projection(
+                parts[5], method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 5
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "GET"
+        ):
+            # The bounded list of this principal's own definition-bound Run
+            # once admissions, so a reload or reconnect restores every durable
+            # run without re-walking sources.
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "automation Run once list")
+            service = getattr(self, "_automation_run_once", None)
+            if service is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "definition Run once is unavailable",
+                )
+            values = service.list(actor=principal.principal_id, limit=50)
+            items = []
+            for value in values:
+                if value.definition_origin is None:
+                    continue
+                items.append(service.document(value))
+            return self._response(
+                start_response,
+                200,
+                {
+                    "journey": "automation-run-once",
+                    "items": items,
+                    "total": len(items),
+                    "limit": 50,
+                    "sideEffects": "none",
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "GET"
+        ):
+            return self._automation_run_once_detail_projection(
+                parts[5], None, method, environ, start_response, principal
+            )
+        if (
+            len(parts) == 7
+            and parts[:4] == ["api", "v1", "operations", "automation"]
+            and parts[4] == "run-once"
+            and method == "POST"
+            and parts[6] in {"pause", "cancel", "resume", "finalize"}
+        ):
+            return self._automation_run_once_detail_projection(
+                parts[5], parts[6], method, environ, start_response, principal
+            )
+        if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "operations"]
             and parts[3] == "automation"

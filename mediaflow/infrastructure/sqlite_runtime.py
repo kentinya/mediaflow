@@ -10930,7 +10930,7 @@ class SQLiteTaskRepository:
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "pause_requested, cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
-        "auto_prepare, preview_id"
+        "auto_prepare, preview_id, definition_origin_json"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -11020,7 +11020,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -12594,6 +12594,15 @@ class SQLiteTaskRepository:
             discovery.admission_request_id,
             1 if discovery.auto_prepare else 0,
             discovery.preview_id,
+            (
+                json.dumps(
+                    discovery.definition_origin.document(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                if discovery.definition_origin is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -12662,6 +12671,11 @@ class SQLiteTaskRepository:
                     "admissionRequestId": row["admission_request_id"],
                     "autoPrepare": bool(row["auto_prepare"]),
                     "previewId": row["preview_id"],
+                    "definitionOrigin": (
+                        json.loads(row["definition_origin_json"])
+                        if row["definition_origin_json"]
+                        else None
+                    ),
                 }
             )
         except Exception as error:
@@ -15706,6 +15720,15 @@ class SQLiteTaskRepository:
                 # guessed navigation.
                 self._connection.execute(
                     "ALTER TABLE media_discoveries ADD COLUMN admission_request_id TEXT"
+                )
+            if "definition_origin_json" not in discovery_columns:
+                # Additive: a prior-schema (Files-originated) discovery simply has
+                # no definition origin, so it stays exactly the manual
+                # folder/mixed selection it was.  Nothing is backfilled and no
+                # definition identity is guessed; a definition-bound Run once is
+                # always a new admission.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN definition_origin_json TEXT"
                 )
             if "auto_prepare" not in discovery_columns:
                 # Additive: a prior-schema discovery keeps the original explicit

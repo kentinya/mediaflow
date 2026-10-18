@@ -859,6 +859,8 @@ class ManualOrganizeExecutionService:
             plans=plan_by_item,
             runtime=runtime,
         )
+        # Preserve the exact Run once definition origin alongside Slice45 admission links.
+        display = self._with_definition_origin(display, intent=intent)
         admitted = admit(
             authority,
             execution,
