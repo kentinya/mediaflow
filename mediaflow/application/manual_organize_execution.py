@@ -3482,6 +3482,8 @@ class ManualOrganizeExecutionService:
             if operation.startswith("ATTACHMENT:"):
                 parts = operation.split(":", 2)
                 attachment = attachment_by_source.get(parts[2]) if len(parts) == 3 else None
+                if attachment is None and len(parts) == 3:
+                    attachment = attachment_by_source.get(parts[2].rsplit(":", 1)[0])
                 if attachment is not None:
                     source_path = attachment.source.path
                     destination_path = attachment.destination.path

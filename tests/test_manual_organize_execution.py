@@ -1533,6 +1533,39 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
             finally:
                 fixture.cleanup()
 
+    def test_verified_attachment_copy_with_refused_delete_keeps_exact_effect_identity(self):
+        fixture = self._fixture(attachments=AttachmentPolicy(enabled=True))
+        try:
+            Path(fixture.source_root, "One.2001.en.srt").write_bytes(b"subtitle")
+            with SQLiteTaskRepository(fixture.database) as repository:
+                _, intents, previews, execution, storages = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                plan = execution._recovery_plan(preview.items[0])
+
+                def authority(_plan, boundary):
+                    if boundary == "ATTACHMENT:CROSS_STORAGE_DELETE_SOURCE":
+                        raise RuntimeError("permission revoked")
+
+                result = OrganizerExecutor().execute(
+                    plan, storages, execute=True, mutation_authority=authority
+                )
+                self.assertTrue(result.primary_completed)
+                self.assertEqual(
+                    result.attachment_results[0]["completed_operations"],
+                    ["ATTACHMENT:subtitle:One.2001.en.srt:COPY"],
+                )
+                effects = execution._effects(
+                    SimpleNamespace(execution_item_id="effect-item"), plan, result
+                )
+                copied = next(value for value in effects if value.action.startswith("ATTACHMENT:"))
+                self.assertEqual(copied.source_path, "One.2001.en.srt")
+                self.assertEqual(copied.destination_path, plan.attachment_plans[0].destination.path)
+                self.assertTrue(copied.verified)
+                self.assertTrue(Path(fixture.source_root, "One.2001.en.srt").is_file())
+                self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+        finally:
+            fixture.cleanup()
+
     def test_source_cleanup_still_requires_explicit_authority(self):
 
         cleanup_policy = DirectoryCleanupPolicy(DirectoryCleanupMode.EMPTY, 1, (), 100)
