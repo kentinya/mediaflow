@@ -12,7 +12,7 @@ Task Base: 8f5cf4e284766bcc8894817d7640231e85050fb2
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 7
+Next Action: DEVELOPER CORRECTS THE SAME TASK 45.3 PER B REVIEW 8
 ```
 
 ## Goal
@@ -246,8 +246,8 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
   保留每项原 pin/来源/版本/影响；上下文不兼容时明确分组或拒绝，不拼成一个伪共同快照。
 - **完成标准：** 两个就绪项只选一个执行，未选项继续可处理；成功/忽略/未知/过期项分别拒绝。
   主文件执行并验证完成即可形成主项成功；附件步骤独立持久化。附件失败、未执行或冲突必须
-  展示具体原因、来源/目标和人工移动指引，不新增附件-only 自动恢复、不重放主文件，也不把
-  附件警告显示为无警告的完整成功。
+  展示具体原因、来源/目标和按已绑定策略决定的处理指引（人工移动只是策略允许时的示例），
+  不新增附件-only 自动恢复、不重放主文件，也不把附件警告显示为无警告的完整成功。
 
 ### 17 — 接暂停整理的继续与重新授权
 
@@ -387,7 +387,8 @@ Task ID/Base/Goal、High/T4、下方 Scope/AC/Required Tests 全部不变。
 - [ ] **AC-3：** 同页摘要精确展示本次可继续范围/剩余步骤/附件/目标/影响及未就绪原因。
   修复后出现新阻塞可转对应处理，原失败与成功兄弟项保留；受理/分析不冒充解决，列表/计数
   根据真实当前状态变化。原 pin 不可用不静默 repin。主文件验证成功即可保留主项完成；附件
-  失败/未执行/冲突需显示原因、来源/目标和人工移动指引，不提供附件-only 自动恢复。
+  失败/未执行/冲突需显示原因、来源/目标和按策略处理指引（人工移动仅是策略允许时的示例），
+  不提供附件-only 自动恢复。
 - [ ] **AC-4：** 精确就绪子集经“确认继续整理 N 项”原子准入，只有明确允许的剩余效果经
   Worker/OrganizerExecutor 执行；成功、忽略、已受理、未知效果和未选项不重放/互相覆盖。
   有界任务内批量分析保留各项独立接受/拒绝，不新增跨任务批量 mutation。
@@ -594,6 +595,26 @@ Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不
 可复用经验：无新增，留待A在Slice收尾统一整理。
 
 ## B Review Result
+
+### B Review 8 — 2026-10-18 (Contract recheck)
+
+```text
+Contract Clarification Checkpoint: a346f144981770b915558b2839b8282d0322e20f
+Decision: TASK45.3 CONTINUES WITH LEGAL WORDING ADJUSTMENT; PRIOR FIX REQUIRED REMAINS
+Next: DEVELOPER CORRECTS THE SAME TASK 45.3 AGAINST THE CHECKPOINTED CLARIFICATION
+```
+
+用户补充说明“用户手动移动”只是举例，实际附件处理必须由固定的 OrganizePolicy/策略能力决定。
+因此 Review 7 中把手动移动写成统一 next action 的表述被本次 Contract clarification supersede；
+Review 7 的执行顺序、主文件不被附件阻塞、逐附件耐久结果、未知效果不可重放和 warning 不得冒充
+完整成功等结论全部保留。
+
+Developer correction must expose the strategy-derived bounded next action for each known attachment
+outcome. It may say manual move only when that exact policy permits or requires it; otherwise it must
+show the policy-allowed skip, rename, explicit conflict decision, re-analysis, inspection or other
+existing action. When no safe action is permitted, show the reason and investigation/correction path.
+Unknown or attempted-unverified effects remain investigation-only and must never be rendered as a
+known manual move or replay instruction.
 
 ### B Review 7 — 2026-10-18
 
