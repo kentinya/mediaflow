@@ -7,12 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
+Next Action: B REVIEWS TASK 45.5 AT IMPLEMENTATION HEAD 72682d1e3277343b674d62e5ceda99a824036c00
 ```
 
 ## Goal
@@ -201,8 +202,67 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 ## Developer Completion Report
 
-Pending implementation. 交接完整checkpoint SHA、READY FOR B REVIEW、行为/关键决策、
-实际受影响命令/结果/已知失败/风险及剩余Slice工作；全量验收pending B。
+READY FOR B REVIEW at implementation HEAD `72682d1e3277343b674d62e5ceda99a824036c00`
+(Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`).
+
+### 行为与关键决策
+
+- FileIndex 产品端到端移除：删除 `domain/file_index.py`、`domain/file_catalog.py`、
+  `domain/file_lifecycle.py`、`application/file_catalog.py`、
+  `application/file_index_lifecycle.py`、`infrastructure/sqlite_file_index.py`、
+  `infrastructure/memory_file_index.py`、`infrastructure/file_index_schema.py`；
+  相关测试模块一并删除。fresh 运行库不再创建任何索引表。
+- 来源证据保留为有界值对象：新增 `domain/source_evidence.py`
+  (`OccurrenceState`/`SourceFingerprint`/`source_fingerprint`/`occurrence_id_for`)、
+  `domain/source_reviews.py`，以及 `infrastructure/task_source_schema.py`。它们只服务显式
+  Task/Result/Intent/Preview 工作，不构成长期每文件目录、无 New/Modified/Missing 对账。
+- `mediaflow files list` 复用 `RuntimeFilesBrowserService`：互斥 `--resource-library ID` /
+  `--media-library ID` 加 `--path/--limit/--cursor`；新增
+  `infrastructure/read_only_active_configuration.py` 用 `mode=ro` 读取 Active，因此列举
+  不创建、不升级、不加写锁运行库。
+- `StorageScanner` 改为无状态只读遍历器（无 catalog 参数，接受 `previous` 观察映射）；
+  `FileScanStatus`/`FileChange` 移除 `MISSING`；`stable_since` 表示真实稳定区间。
+- CLI/API/V1/V2：移除 FileIndex list/detail/stats/reprocess、`/files`、`/file-index`
+  路由与 V1 页面、Dashboard 索引指标、Result 索引同步与
+  `file-index-reconciliation` 动作；单文件整理入口改为
+  `POST /api/v1/resource-libraries/{id}/files/organize`，metadata-correction continuation
+  改以 `(task, item, review)` 定位。
+- 所有支持消费者（manual organize/preview/execution、continuations、Automation 基础、
+  direct files、dashboard）改由工作内精确来源 + live Storage 校验，缺索引不再拒绝运行。
+
+### 实际受影响命令/结果
+
+- `python3 scripts/check_governance.py` → PASS。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → 33 tests OK。
+- `... test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation` → 154 tests OK。
+- `... test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 152 tests OK。
+- 条件消费者组（task_persistence/sqlite_backup/sqlite_restore、direct_file_operations/
+  manual_operations_contract/operations_task_center、automation_task_definition_preview/
+  automation_definition_execution/automation_authorized_execution_matrix/configuration_organize、
+  metadata_correction_continuation/recovery_batch）全部 OK。
+- 全量 Python 快照：`unittest discover -s tests -t .` → 2642 tests OK (skipped=7)。
+- `.venv/bin/ruff check scripts/ tests/ mediaflow/` → All checks passed；
+  `ruff format --check` → 350 files already formatted；`git diff --check` 干净。
+- Web：`npm run typecheck` 干净；`npm run test -- run` → 81 files / 1173 tests passed；
+  `npx eslint` 相关文件干净；`npx prettier --check` 干净；`npm run build` 成功。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts`
+  → 5 passed；`operations-inventory.python.spec.ts` → 38 passed；
+  Node fake suite `npm run test:e2e` → 240 passed。
+
+### 已知失败/风险
+
+- `tests/e2e/direct-files.python.spec.ts` 的 “MediaLibrary Files renames a file and
+  directory” 在 Task Base 的干净 worktree 上同样 3/3 失败（既有 flaky，非本 Task 引入）；
+  其兄弟用例通过。B 独立复核时可确认。
+- 依赖真实 SMB/OpenList/S3/TMDB、wheel/隔离安装、生产 Docker 镜像与 1536×1024/380×720
+  截图等 T4 门禁仍 pending B（Developer 不跑全量/发布矩阵）。
+- RO-8 独立 Preview 完整退出未交付；本 Task 只清理其必要索引耦合。
+- 剩余 Slice 工作：B 复核全部 RO/Surfaces；满足则交 Closure Packet。
+
+预存修改保留且不纳入 Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
+`web/test-results-real-python-final/` 及开发 `.log` 文件。私有ignored配置不读取、不暂存。
 
 ## B Review Result
 
