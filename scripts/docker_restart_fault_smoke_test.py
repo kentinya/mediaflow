@@ -3,8 +3,8 @@
 
 The script builds the exact image, starts an isolated four-service stack on
 temporary ``/data`` and media mounts, activates a managed runtime containing one
-enabled scan-only Automation Task Definition, proves the Scheduler emits one
-durable occurrence across restart, lets the Worker produce FileIndex/Task
+enabled Preview schedule, proves the Scheduler emits one durable Job across
+restart, lets the Worker produce FileIndex/Task
 evidence, and then injects bounded durable fault fixtures through the installed
 package repository inside the container.  It restarts API, Worker, Scheduler and
 Notification Worker and verifies durable identities, Worker fencing,
@@ -49,7 +49,7 @@ from docker_smoke_test import (
 ROOT = Path(__file__).resolve().parents[1]
 RESTART_PROJECT_PREFIX = f"{PROJECT_PREFIX}-restart"
 IMAGE_TAG = "mediaflow:task29.4-local"
-DEFINITION_ID = "fault-scan"
+SCHEDULE_ID = "fault-preview"
 UNCERTAIN_TASK_ID = "fault-uncertain-task"
 UNCERTAIN_ITEM_ID = "fault-uncertain-item"
 NOTIFICATION_IDS = {
@@ -85,8 +85,8 @@ def wait_services_healthy(
     )
 
 
-def add_fault_definition(config_file: Path, source_root: Path) -> None:
-    """Add one enabled scan-only definition and one stable media file."""
+def add_fault_schedule(config_file: Path, source_root: Path) -> None:
+    """Add one enabled Preview schedule and one stable media file."""
 
     media_dir = source_root / "电影"
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -99,13 +99,12 @@ def add_fault_definition(config_file: Path, source_root: Path) -> None:
     media.chmod(0o644)
 
     document = json.loads(config_file.read_text(encoding="utf-8"))
-    document["automationTaskDefinitions"] = [
+    automation = document.setdefault("automation", {})
+    automation["schedules"] = [
         {
-            "id": DEFINITION_ID,
-            "name": "Restart fault scan",
+            "id": SCHEDULE_ID,
+            "command": "preview",
             "enabled": True,
-            "resourceLibraryId": "source",
-            "mode": "scan-only",
             "intervalSeconds": 3600,
             "itemLimit": 10,
         }
@@ -153,15 +152,11 @@ def active_identity(base: str, token: str) -> dict[str, str]:
     return {"revisionId": revision_id, "digest": digest}
 
 
-def occurrences(base: str, token: str, definition_id: str) -> list[dict]:
-    path = (
-        "/api/v1/automation/task-definitions/"
-        f"{urllib.parse.quote(definition_id)}/occurrences?limit=10"
-    )
-    status, document = json_request(base, path, token)
+def scheduled_jobs(base: str, token: str) -> list[dict]:
+    status, document = json_request(base, "/api/v1/jobs?limit=100", token)
     if status != 200:
-        raise RuntimeError(f"occurrence list returned HTTP {status}: {document}")
-    return list(document.get("items") or [])
+        raise RuntimeError(f"Job list returned HTTP {status}: {document}")
+    return [item for item in document.get("items", []) if item.get("schedule_id") == SCHEDULE_ID]
 
 
 def collection_ids(base: str, token: str, path: str) -> list[dict]:
@@ -171,7 +166,7 @@ def collection_ids(base: str, token: str, path: str) -> list[dict]:
     return list(document.get("items") or [])
 
 
-def wait_occurrences(
+def wait_scheduled_jobs(
     base: str,
     token: str,
     *,
@@ -179,10 +174,10 @@ def wait_occurrences(
     timeout: float = 120.0,
 ) -> list[dict]:
     def reached() -> bool:
-        return len(occurrences(base, token, DEFINITION_ID)) == expected
+        return len(scheduled_jobs(base, token)) == expected
 
-    wait_until(reached, timeout=timeout, description=f"{expected} scheduler occurrences")
-    return occurrences(base, token, DEFINITION_ID)
+    wait_until(reached, timeout=timeout, description=f"{expected} scheduled Preview Jobs")
+    return scheduled_jobs(base, token)
 
 
 def wait_job_linked_task(base: str, token: str, job_id: str) -> dict:
@@ -485,7 +480,7 @@ with (
         "fault-worker-a",
         "fault worker a",
         5.0,
-        ("scan", "preview"),
+        ("preview",),
         snapshot_id,
         snapshot_digest,
         SCHEMA_VERSION,
@@ -512,7 +507,7 @@ with (
         "fault-worker-b",
         "fault worker b",
         5.0,
-        ("scan", "preview"),
+        ("preview",),
         snapshot_id,
         snapshot_digest,
         SCHEMA_VERSION,
@@ -576,7 +571,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
         root = Path(directory)
         os.chmod(root, 0o755)
         config_file, environment_file, source_root, target_root = prepare_files(root, token)
-        add_fault_definition(config_file, source_root)
+        add_fault_schedule(config_file, source_root)
         environment = compose_environment(
             root,
             image,
@@ -626,28 +621,25 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "stop", "worker", "scheduler"], environment=environment)
             wait_for_api(base, token)
 
-            print("Activating the managed runtime with one scan-only definition...")
+            print("Activating the managed runtime with one Preview schedule...")
+            add_fault_schedule(config_file, source_root)
             activate_runtime(base, token, config_file)
             identity = active_identity(base, token)
 
-            print("Starting the Scheduler and waiting for one occurrence...")
+            print("Starting the Scheduler and waiting for one Job...")
             run([*command, "start", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler"})
-            first_occurrence = wait_occurrences(base, token, expected=1)
+            first_occurrence = wait_scheduled_jobs(base, token, expected=1)
 
             print("Restarting the Scheduler around the same due slot...")
             run([*command, "restart", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler"})
-            wait_occurrences(base, token, expected=1)
-            second_occurrence = occurrences(base, token, DEFINITION_ID)
-            if [item["occurrenceId"] for item in second_occurrence] != [
-                item["occurrenceId"] for item in first_occurrence
+            wait_scheduled_jobs(base, token, expected=1)
+            second_occurrence = scheduled_jobs(base, token)
+            if [item["job_id"] for item in second_occurrence] != [
+                item["job_id"] for item in first_occurrence
             ]:
-                raise RuntimeError("Scheduler restart changed a durable occurrence identity")
-            if [item["jobId"] for item in second_occurrence] != [
-                item["jobId"] for item in first_occurrence
-            ]:
-                raise RuntimeError("Scheduler restart changed the linked Job identity")
+                raise RuntimeError("Scheduler restart changed the scheduled Job identity")
 
             print("Starting the Worker and waiting for FileIndex/Task evidence...")
             run([*command, "start", "worker"], environment=environment)
@@ -666,7 +658,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 "/api/v1/jobs",
                 token,
                 method="POST",
-                body={"command": "scan", "limit": 1},
+                body={"command": "preview", "limit": 1},
             )
             if status != 202:
                 raise RuntimeError(f"fault Job submission returned HTTP {status}: {submitted}")
@@ -691,7 +683,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 "files": [item.get("file_id") or item.get("fileId") for item in file_items],
                 "jobs": collection_ids(base, token, "/api/v1/jobs?limit=100"),
                 "tasks": collection_ids(base, token, "/api/v1/tasks?limit=100"),
-                "occurrences": second_occurrence,
+                "scheduledJobs": second_occurrence,
                 "notifications": collection_ids(base, token, "/api/v1/notifications?limit=100"),
                 "logs": collection_ids(base, token, "/api/v1/logs?limit=100"),
                 "audits": collection_ids(base, token, "/api/v1/security-audit?limit=100"),
@@ -727,12 +719,12 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             print("Restarting the Scheduler service...")
             run([*command, "restart", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
-            wait_occurrences(base, token, expected=1)
-            final_occurrence = occurrences(base, token, DEFINITION_ID)
-            if [item["jobId"] for item in final_occurrence] != [
-                item["jobId"] for item in baseline["occurrences"]
+            wait_scheduled_jobs(base, token, expected=1)
+            final_occurrence = scheduled_jobs(base, token)
+            if [item["job_id"] for item in final_occurrence] != [
+                item["job_id"] for item in baseline["scheduledJobs"]
             ]:
-                raise RuntimeError("Scheduler restart changed the linked Job identity")
+                raise RuntimeError("Scheduler restart changed the scheduled Job identity")
 
             print("Restarting Notification Worker and preserving targetless durable evidence...")
             run([*command, "start", "notification-worker"], environment=environment)

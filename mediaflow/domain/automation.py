@@ -17,7 +17,6 @@ from mediaflow.domain.cron import CronExpression
 
 
 class AutomationCommand(StrEnum):
-    SCAN = "scan"
     PREVIEW = "preview"
     ORGANIZE = "organize"
     FILE_METADATA_CORRECTION = "file-metadata-correction"
@@ -30,24 +29,9 @@ class AutomationCommand(StrEnum):
 
 
 class AutomationTaskRunMode(StrEnum):
-    """The bounded work intent owned by a managed Automation Task Definition.
-
-    The user's V2 amendment retains exactly one mode.  These values intentionally
-    describe the amount of work the definition may request; they do not select a
-    Provider, policy, destination, or transfer operation, because those decisions
-    remain in the normal media pipeline.
-
-    ``RECORDED_SCAN_ONLY`` and ``RECORDED_SCAN_AND_PLAN`` are **not** modes.  They
-    exist only so a persisted pre-amendment Job, occurrence, Preview or grant row
-    stays readable as recorded historical data.  They are absent from
-    :meth:`runnable_modes`, rejected by :meth:`parse`, refused by every validation,
-    publication, import and admission boundary, and can never acquire execution
-    authority or a definition-bound executor.
-    """
+    """Supported managed definition intent; not execution authority."""
 
     AUTOMATIC_ORGANIZATION = "automatic-organization"
-    RECORDED_SCAN_ONLY = "scan-only"
-    RECORDED_SCAN_AND_PLAN = "scan-and-plan"
 
     @classmethod
     def runnable_modes(cls) -> tuple[AutomationTaskRunMode, ...]:
@@ -61,14 +45,6 @@ class AutomationTaskRunMode(StrEnum):
 
     @classmethod
     def parse(cls, value: object) -> AutomationTaskRunMode:
-        """Validate one *submitted* mode.
-
-        Removed modes and their aliases are refused here, so no validation,
-        publication, import or admission path can accept them.  Reading an
-        already-persisted historical value is a different, explicit operation:
-        :meth:`decode_recorded`.
-        """
-
         if not isinstance(value, str) or not value.strip() or len(value) > 64:
             raise ValueError("Automation Task Definition mode must be bounded text")
         aliases = {
@@ -82,42 +58,8 @@ class AutomationTaskRunMode(StrEnum):
             return aliases[value.strip().lower()]
         except KeyError as error:
             raise ValueError(
-                "Automation Task Definition mode must be automatic-organization; "
-                "scan-only and scan-and-plan are no longer supported and cannot be "
-                "converted, defaulted or executed"
+                "unsupported Automation Task Definition mode; expected automatic-organization"
             ) from error
-
-    @classmethod
-    def decode_recorded(cls, value: object) -> AutomationTaskRunMode:
-        """Decode one *already persisted* value so history stays readable.
-
-        This is deliberately separate from :meth:`parse`: it is the only place a
-        removed spelling is understood, it is used by persistence read-back
-        alone, and the returned member reports ``is_runnable is False``.  No
-        command, validation or execution path may call it to obtain a mode to
-        run.
-        """
-
-        if not isinstance(value, str):
-            raise ValueError("recorded Automation Task Definition mode must be text")
-        recorded = value.strip().lower()
-        if recorded in {
-            "scan",
-            "scan_only",
-            "scanonly",
-            "scanonly".lower(),
-            "scan-only",
-        }:
-            return cls.RECORDED_SCAN_ONLY
-        if recorded in {
-            "preview",
-            "scan_and_plan",
-            "scanandplan",
-            "scanandplan".lower(),
-            "scan-and-plan",
-        }:
-            return cls.RECORDED_SCAN_AND_PLAN
-        return cls.parse(value)
 
 
 # Short aliases make the domain contract discoverable to application adapters
@@ -131,7 +73,7 @@ class AutomationTaskDefinition:
     """A reusable, managed source/schedule/run-intent definition.
 
     This object remains independent from :class:`ScheduleDefinition`: legacy
-    schedules stay scan/preview-only while the managed Scheduler consumes this
+    schedules stay Preview-only while the managed Scheduler consumes this
     definition through its separate due-occurrence admission boundary.
     """
 
@@ -179,9 +121,7 @@ class AutomationTaskDefinition:
             object.__setattr__(self, "mode", AutomationTaskRunMode.parse(self.mode))
         if not self.mode.is_runnable:
             raise ValueError(
-                "Automation Task Definition mode must be automatic-organization; "
-                "scan-only and scan-and-plan are no longer supported and cannot be "
-                "converted or executed"
+                "unsupported Automation Task Definition mode; expected automatic-organization"
             )
         normalized_scope = self.normalize_scope(self.source_scope)
         object.__setattr__(self, "source_scope", normalized_scope)
@@ -718,9 +658,7 @@ class AutomationDefinitionOccurrence:
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"automation occurrence {label} must be positive")
         if not isinstance(self.run_mode, AutomationTaskRunMode):
-            object.__setattr__(
-                self, "run_mode", AutomationTaskRunMode.decode_recorded(self.run_mode)
-            )
+            object.__setattr__(self, "run_mode", AutomationTaskRunMode.parse(self.run_mode))
         normalized_scope = AutomationTaskDefinition.normalize_scope(self.source_scope)
         object.__setattr__(self, "source_scope", normalized_scope)
         if (
@@ -868,8 +806,8 @@ class IntervalSchedule:
             raise ValueError("schedule ID must be non-empty")
         if not isinstance(self.command, AutomationCommand):
             object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
-            raise ValueError("schedule command must be scan or preview")
+        if self.command not in {AutomationCommand.PREVIEW}:
+            raise ValueError("schedule command must be preview")
         if self.interval_seconds <= 0:
             raise ValueError("schedule interval must be positive")
         if self.limit is not None and self.limit < 1:
@@ -895,8 +833,8 @@ class CronSchedule:
             raise ValueError("schedule ID must be non-empty")
         if not isinstance(self.command, AutomationCommand):
             object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
-            raise ValueError("schedule command must be scan or preview")
+        if self.command not in {AutomationCommand.PREVIEW}:
+            raise ValueError("schedule command must be preview")
         expression = CronExpression.parse(self.expression)
         try:
             timezone = ZoneInfo(self.timezone)

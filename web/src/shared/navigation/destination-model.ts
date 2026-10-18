@@ -147,23 +147,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/jobs/" as const,
   },
   {
-    id: "operations-scan-new",
-    label: "扫描已退役",
-    path: "/operations/scan/new",
-    title: "扫描已退役 | MediaFlow",
-    availability: "implemented" as const,
-    description: "独立扫描已退役，请新建整理。",
-  },
-  {
-    id: "operations-scan-detail",
-    label: "扫描已退役",
-    path: "/operations/scan/$taskId",
-    title: "扫描已退役 | MediaFlow",
-    availability: "implemented" as const,
-    description: "独立扫描已退役，请新建整理。",
-    dynamicPrefix: "/operations/scan/" as const,
-  },
-  {
     id: "operations-preview-new",
     label: "Start Preview",
     path: "/operations/preview/new",
@@ -959,7 +942,6 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/scan/new") return null;
   if (path === "/operations/preview/new") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
@@ -1002,7 +984,6 @@ export function allowlistedDestinationSearch(
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (
-    path === "/operations/scan/$taskId" ||
     path === "/operations/preview/$previewId" ||
     path === "/operations/automation/new" ||
     path === "/operations/automation/lifecycle" ||

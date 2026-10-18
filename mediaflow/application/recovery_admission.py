@@ -20,6 +20,7 @@ from mediaflow.domain.recovery import (
     RecoveryAdmissionReason,
     RecoveryRequest,
 )
+from mediaflow.domain.task_persistence import require_retryable_task_command
 
 _SENSITIVE_NOTE = re.compile(
     r"(?ix)"
@@ -82,11 +83,14 @@ class RecoveryAdmissionService:
         note = self._redact_note(note)
 
         task = self._repository.get_task(task_id)
-        if action_id == "retry" and task is not None and task.command == "scan":
-            raise RecoveryAdmissionError(
-                RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
-                "standalone_scan_retired: prepare a new organize summary",
-            )
+        if action_id == "retry" and task is not None:
+            try:
+                require_retryable_task_command(task.command)
+            except ValueError as error:
+                raise RecoveryAdmissionError(
+                    RecoveryAdmissionReason.ACTION_NOT_PERMITTED,
+                    str(error),
+                ) from error
         checkpoint = self._checkpoint_service.get(item_id)
         if checkpoint.task_id != task_id:
             # Preserve the existing transport convention (the API maps this to not-found)

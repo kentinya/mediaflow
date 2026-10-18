@@ -4488,7 +4488,7 @@ test("verified primary completes with durable policy-specific attachment collisi
   expect((await again.json()).reason).toBe("no admitted manual execution");
 });
 
-test("retired links and fresh organization retain real elapsed stability and exact confirmation", async ({
+test("unknown routes and fresh organization retain real elapsed stability and exact confirmation", async ({
   page,
   request,
 }) => {
@@ -4498,11 +4498,13 @@ test("retired links and fresh organization retain real elapsed stability and exa
     await page.setViewportSize({ width, height: width === 380 ? 720 : 1024 });
     for (const old of ["new?scopeKind=bucket&fileId=old", "old-task"]) {
       await page.goto("/ui-v2/operations/scan/" + old);
-      await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
       await expect(
-        page.getByRole("heading", { name: "独立扫描已退役" }),
+        page.getByRole("heading", { name: "Route not found" }),
       ).toBeVisible();
-      const next = page.getByRole("link", { name: "新建整理", exact: true });
+      const next = page.getByRole("link", {
+        name: "Return to Overview",
+        exact: true,
+      });
       await next.focus();
       await expect(next).toBeFocused();
       await expect(next).toBeInViewport();
@@ -4514,13 +4516,18 @@ test("retired links and fresh organization retain real elapsed stability and exa
       await page.screenshot({
         path:
           TASK45_RECOVERY_EVIDENCE +
-          "/retired-" +
+          "/not-found-" +
           width +
           "-" +
           (old.startsWith("new") ? "new" : "detail") +
           ".png",
         fullPage: true,
       });
+      await page.getByRole("link", { name: "Connect API token" }).click();
+      await expect(page.getByLabel("API token")).toBeVisible();
+      await page.getByLabel("API token").fill(ADMIN_TOKEN);
+      await page.getByRole("button", { name: "Connect" }).click();
+      await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
     }
   }
   expect(

@@ -58,9 +58,9 @@ describe("operations read URLs", () => {
     ).toBe(
       "/api/v1/operations/tasks?status=failed&command=preview&limit=20&cursor=c1",
     );
-    expect(jobListUrl({ status: "pending", command: "scan", limit: 10 })).toBe(
-      "/api/v1/operations/jobs?status=pending&command=scan&limit=10",
-    );
+    expect(
+      jobListUrl({ status: "pending", command: "preview", limit: 10 }),
+    ).toBe("/api/v1/operations/jobs?status=pending&command=preview&limit=10");
     expect(taskListUrl({})).toBe("/api/v1/operations/tasks");
     expect(
       taskDetailUrl({ taskId: "task-1", itemLimit: 20, resultLimit: 20 }),
@@ -404,7 +404,7 @@ describe("unified run inventory reads", () => {
     return {
       run_kind: "task",
       run_id: "task-1",
-      command: "scan",
+      command: "preview",
       command_label: "扫描",
       recognized_command: true,
       status: "completed",
@@ -456,14 +456,14 @@ describe("unified run inventory reads", () => {
     expect(
       runInventoryUrl({
         status: "failed",
-        command: "scan",
+        command: "preview",
         q: "电影",
         from: "2026-08-01T00:00:00Z",
         limit: 20,
         cursor: "c1",
       }),
     ).toBe(
-      "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1",
+      "/api/v1/operations/runs?status=failed&command=preview&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1",
     );
     expect(runInventoryUrl({})).toBe("/api/v1/operations/runs");
     expect(runInventoryUrl({ source: "Movies/beta" })).toBe(
@@ -475,7 +475,7 @@ describe("unified run inventory reads", () => {
     expect(
       runInventoryUrl({
         status: "failed",
-        command: "scan",
+        command: "preview",
         q: "电影",
         from: "2026-08-01T00:00:00Z",
         limit: 20,
@@ -483,7 +483,7 @@ describe("unified run inventory reads", () => {
         attention: true,
       }),
     ).toBe(
-      "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1&attention=true",
+      "/api/v1/operations/runs?status=failed&command=preview&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1&attention=true",
     );
     expect(runInventoryUrl({ attention: false })).toBe(
       "/api/v1/operations/runs",

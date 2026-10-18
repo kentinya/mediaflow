@@ -397,9 +397,6 @@ describe("Operations manual Scan/Preview journeys", () => {
   it("shows the backend reason instead of an unadvertised ResourceLibrary action", async () => {
     const unavailable = document("actionMatrix");
     const actions = unavailable["actions"] as Json;
-    (actions["scan"] as Json)["available"] = false;
-    (actions["scan"] as Json)["reason"] =
-      "the FileIndex source is not a verified ready current occurrence";
     (actions["preview"] as Json)["available"] = false;
     (actions["preview"] as Json)["reason"] =
       "the FileIndex source is not a verified ready current occurrence";
@@ -463,7 +460,7 @@ describe("Operations manual Scan/Preview journeys", () => {
 
   it("does not request manual actions before a principal is connected", async () => {
     const { calls } = recordingFetch(() => undefined);
-    renderApp("/ui-v2/operations/scan/new?scopeKind=file&fileId=file-1");
+    renderApp("/ui-v2/operations/preview/new?scopeKind=file&fileId=file-1");
 
     await screen.findByRole("button", { name: "Connect" });
     expect(

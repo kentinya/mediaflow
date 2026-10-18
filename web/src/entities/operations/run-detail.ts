@@ -283,7 +283,6 @@ export function normalizeRunProgress(payload: unknown): RunProgress {
   const unit = text(source, "unit");
   if (
     ![
-      "scan",
       "analysis",
       "organize",
       "direct",

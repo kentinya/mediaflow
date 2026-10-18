@@ -482,13 +482,13 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             self.assertTrue((sibling / "not-selected.mkv").exists())
             self.assertTrue((source / "above-root.mkv").exists())
 
-    def test_recorded_scan_only_mode_is_rejected_without_any_task_or_mutation(self) -> None:
-        """A pinned pre-amendment ``scan-only`` Job stops safely at this boundary.
+    def test_unknown_definition_mode_is_rejected_without_any_task_or_mutation(self) -> None:
+        """An unsupported definition mode stops safely at this boundary.
 
-        The former scan-only handoff no longer exists: the service refuses the
-        recorded mode with the bounded ``unsupported_definition_mode`` failure
+        The removed handoff no longer exists: the service refuses the
+        unsupported value with a bounded failure
         before any Storage, Provider, strategy, history or Task construction, so
-        an old queued Job can never be converted into a compatible scan executor.
+        an unsupported definition cannot construct a Worker pipeline.
         """
 
         definition = _definition(limit=1)
@@ -509,25 +509,23 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
             def guarded_storage_factory(*, storage_ids=None, external=None):
                 counts["storage"] += 1
-                raise AssertionError("a recorded removed mode constructed Storage")
+                raise AssertionError("a unsupported mode constructed Storage")
 
             def guarded_provider_factory(_provider_ids):
                 counts["provider"] += 1
-                raise AssertionError("a recorded removed mode constructed a Provider")
+                raise AssertionError("a unsupported mode constructed a Provider")
 
             def guarded_strategy_factory(*_args, **_kwargs):
                 counts["strategy"] += 1
-                raise AssertionError("a recorded removed mode constructed a strategy")
+                raise AssertionError("a unsupported mode constructed a strategy")
 
             def guarded_history_factory(_path):
                 counts["history"] += 1
-                raise AssertionError("a recorded removed mode constructed history")
+                raise AssertionError("a unsupported mode constructed history")
 
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 job = self._emit(repository, definition)
-                recorded = _RecordedModePinnedDefinition(
-                    definition, AutomationTaskRunMode.RECORDED_SCAN_ONLY
-                )
+                recorded = _RecordedModePinnedDefinition(definition, "unknown-mode")
                 drifted = replace(configuration, automation_task_definitions=(recorded,))
                 service = DefinitionScopedExecutionService(
                     repository,
@@ -540,12 +538,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 )
                 with patch(
                     "mediaflow.application.automation_definition_execution.OrganizerExecutor",
-                    side_effect=AssertionError("a recorded removed mode constructed an executor"),
+                    side_effect=AssertionError("a unsupported mode constructed an executor"),
                 ):
                     finished = self._run(repository, service)
                 self.assertIsNotNone(finished)
                 self.assertEqual(finished.status, AutomationJobStatus.FAILED)
-                self.assertEqual(finished.failure_category, "unsupported_definition_mode")
+                self.assertEqual(finished.failure_category, "definition_invalid")
                 self.assertEqual(finished.failure_side_effects, "none")
                 self.assertFalse(finished.failure_retry_safe)
                 self.assertTrue(finished.failure_next_action)
@@ -561,7 +559,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 # the definition is unsupported, not the runtime broken, and no
                 # Task or Storage effect ever existed.
                 self.assertEqual(occurrence.outcome, "blocked")
-                self.assertEqual(occurrence.failure_category, "unsupported_definition_mode")
+                self.assertEqual(occurrence.failure_category, "definition_invalid")
                 self.assertIsNone(occurrence.task_id)
             with SQLiteTaskRepository(configuration.database_path) as reopened:
                 self.assertEqual(reopened.list_tasks(), ())

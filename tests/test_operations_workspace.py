@@ -248,8 +248,8 @@ class OperationsWorkspaceTests(unittest.TestCase):
         )
         for rank, (command, status) in enumerate(
             (
-                (AutomationCommand.SCAN, AutomationJobStatus.PENDING),
-                (AutomationCommand.PREVIEW, AutomationJobStatus.COMPLETED),
+                (AutomationCommand.PREVIEW, AutomationJobStatus.PENDING),
+                (AutomationCommand.ORGANIZE, AutomationJobStatus.COMPLETED),
             )
         ):
             self.repository.create_job(
@@ -266,13 +266,13 @@ class OperationsWorkspaceTests(unittest.TestCase):
         # A derived continuation belongs to its command family.
         self.assertEqual([item["task_id"] for item in page["items"]], ["task-c"])
 
-        status, page, _ = request(self.api, "GET", "/api/v1/jobs", query="command=scan")
+        status, page, _ = request(self.api, "GET", "/api/v1/jobs", query="command=preview")
         self.assertEqual(status, 200)
         self.assertEqual([item["job_id"] for item in page["items"]], ["job-0"])
-        self.assertEqual(page["command"], "scan")
+        self.assertEqual(page["command"], "preview")
 
         status, page, _ = request(
-            self.api, "GET", "/api/v1/jobs", query="status=completed&command=preview"
+            self.api, "GET", "/api/v1/jobs", query="status=completed&command=organize"
         )
         self.assertEqual(status, 200)
         self.assertEqual([item["job_id"] for item in page["items"]], ["job-1"])
@@ -1160,7 +1160,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.assertNotIn(task.task_id, json.dumps(routes))
 
     def test_worker_reports_a_web_cancelled_task_as_a_cancelled_job(self) -> None:
-        task = self.running_task("task-worker", command="scan")
+        task = self.running_task("task-worker", command="preview")
         version = self.repository.get_task(task.task_id).updated_at.isoformat()
         status, _, _ = request(
             self.api,

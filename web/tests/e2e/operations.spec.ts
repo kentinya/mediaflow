@@ -72,7 +72,7 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   ).toBeVisible();
   // Real data renders with Chinese business labels.
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(page.getByText("扫描").first()).toBeVisible();
+  await expect(page.getByText("预览").first()).toBeVisible();
   // Worker readiness and the manual scope journey stay discoverable.
   await expect(
     page.getByRole("heading", { name: "Worker 就绪" }),
@@ -172,7 +172,7 @@ test("Job list filters by status and work kind", async ({ page }) => {
 
   await page.getByLabel("Filter by work kind").selectOption("preview");
   await expect(page.getByRole("link", { name: "job-003" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "job-001" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "job-001" })).toHaveCount(1);
 
   await page.getByLabel("Filter by status").selectOption("failed");
   await expect(page.getByRole("link", { name: "job-005" })).toBeVisible();
@@ -514,14 +514,14 @@ test("inventory count card applies its server filter and the run overview opens 
   });
   await expect(pressed).toHaveAttribute("aria-current", "page");
   await expect(
-    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+    page.getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ }),
   ).toHaveCount(0);
 
   // Switching back to 全部任务 restores the full population.
   await views.getByRole("button", { name: "全部任务", exact: true }).click();
   await expect(page).not.toHaveURL(/view=/);
   await expect(
-    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+    page.getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ }),
   ).toBeVisible();
 
   // The status filter applies to the same server-side population.
@@ -531,7 +531,7 @@ test("inventory count card applies its server filter and the run overview opens 
     page.getByRole("row", { name: /预览.*失败.*2026-08-22 12:22:00/ }),
   ).toBeVisible();
   await expect(
-    page.getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ }),
+    page.getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ }),
   ).toHaveCount(0);
 
   // Selecting a run opens the bounded overview with durable facts only.
@@ -650,7 +650,7 @@ test("the selected run detail shows truthful progress and its accounting basis",
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -687,7 +687,7 @@ test("item and record filters page on the server and survive a reload", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -750,7 +750,7 @@ test("one item's evidence opens through exact links and closes again", async ({
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -791,7 +791,7 @@ test("the native action downloads the eligible linked Task's result package", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /扫描.*已完成.*2026-08-22 12:00:00/ })
+    .getByRole("row", { name: /预览.*已完成.*2026-08-22 12:00:00/ })
     .getByRole("button")
     .first()
     .click();
@@ -826,7 +826,7 @@ test("a pre-Task admission states queue truth and refuses an empty download", as
   await openOperations(page);
   const inventoryTable = page.getByRole("table", { name: "运行清单" });
   await inventoryTable
-    .getByRole("row", { name: /扫描.*自动化.*2026-08-22 12:15:00/ })
+    .getByRole("row", { name: /预览.*自动化.*2026-08-22 12:15:00/ })
     .getByRole("button")
     .first()
     .click();

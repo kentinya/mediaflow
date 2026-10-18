@@ -1281,12 +1281,11 @@ describe("V2 Automation journey", () => {
     });
   });
 
-  it("keeps a Draft that records a removed mode unsupported until the operator confirms the correction", async () => {
+  it("refuses an unsupported Draft mode without conversion or mutation", async () => {
     // A historical Draft may still carry a removed mode. It stays visible as
     // unsupported history, is never silently rewritten, and no Save is offered
     // until the operator explicitly confirms the correction to the retained
     // mode. There is no mode selector to choose from.
-    const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (
         call.url.endsWith(
@@ -1324,26 +1323,16 @@ describe("V2 Automation journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/automation/editor/auto-task");
 
-    await screen.findByRole("heading", { name: "Edit Automation definition" });
-    expect(screen.getByText(/Unsupported historical run mode/)).toBeVisible();
-    expect(screen.queryByLabelText("Run mode")).toBeNull();
-    expect(document.querySelector("#automation-edit-mode")).toBeNull();
+    await screen.findByRole("heading", {
+      name: "Automation Draft unavailable",
+    });
     expect(
-      screen.getByRole("button", { name: "Save into Draft" }),
-    ).toBeDisabled();
-    // The explicit correction is the only way to publish; nothing is rewritten
-    // automatically.
-    await user.click(
-      screen.getByRole("checkbox", {
-        name: /Publish this Draft as automatic-organization/,
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Save into Draft" }),
-      ).toBeEnabled(),
-    );
-    expect(calls.some((item) => item.method === "PUT")).toBe(false);
+      screen.queryByRole("button", { name: "Save into Draft" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: /Publish this Draft/ }),
+    ).toBeNull();
+    expect(calls.some((item) => item.method !== "GET")).toBe(false);
   });
 
   it("reports a stale Draft save without replaying the mutation", async () => {

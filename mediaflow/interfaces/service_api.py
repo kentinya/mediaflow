@@ -51,7 +51,6 @@ from mediaflow.application.manual_organize_preview import ManualOrganizePreviewS
 from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
-from mediaflow.application.manual_scan import ManualScanError
 from mediaflow.application.media_discovery import MediaDiscoveryService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
@@ -1382,31 +1381,6 @@ class MediaFlowApi:
             return self._error(
                 start_response, error.status, error.code, str(error), details=details
             )
-        except ManualScanError as error:
-            self._safe_audit(
-                environ,
-                request_id,
-                locals().get("principal"),
-                method,
-                path,
-                "manual-scan",
-                "conflict" if error.status == 409 else "denied" if error.status < 500 else "error",
-                error.status,
-            )
-            details = {
-                "durableState": error.durable_state,
-                "sideEffects": "none",
-                "retrySafe": error.retry_safe,
-                "nextAction": error.next_action,
-                **error.details,
-            }
-            return self._error(
-                start_response,
-                error.status,
-                error.code,
-                str(error),
-                details=details,
-            )
         except StorageBrowserError as error:
             self._safe_audit(
                 environ,
@@ -1594,55 +1568,78 @@ class MediaFlowApi:
         if (
             len(parts) >= 3
             and parts[:2] == ["api", "v1"]
-            and parts[2] in {"manual-scans", "manual-scan"}
-        ):
-            # The versioned ``scans`` route is canonical; these aliases keep older operator
-            # links on the same bounded application behavior.
-            parts[2] = "scans"
-        if (
-            len(parts) >= 3
-            and parts[:2] == ["api", "v1"]
             and parts[2] in {"previews", "current-source-previews"}
         ):
             # Current-source Preview is the same persisted manual Preview
             # projection.  Keep concise API aliases on one application path.
             parts[2] = "manual-previews"
-        scan_route = parts[:3] == ["api", "v1", "scans"] or parts[:4] == [
-            "api",
-            "v1",
+        # Unknown namespaces never resolve Active configuration or adapters.
+        supported_roots = {
+            "auth",
+            "automation",
+            "classification-reviews",
+            "configuration",
+            "confirmations",
+            "dashboard",
+            "file-index",
+            "files",
+            "jobs",
+            "logs",
+            "management",
+            "manual-execution-authorizations",
+            "manual-executions",
+            "manual-intents",
+            "manual-previews",
+            "manual-recovery-links",
+            "manual-recovery-preparations",
+            "media-libraries",
+            "metadata-corrections",
+            "metadata-reviews",
+            "notifications",
             "operations",
-            "scans",
-        ]
-        if scan_route:
-            permission = (
-                ApiPermission.READ
-                if method == "GET"
-                else ApiPermission.CANCEL_JOB
-                if parts[-1] == "cancel"
-                else ApiPermission.SUBMIT_DRY_RUN
+            "recognition-reviews",
+            "recovery",
+            "recovery-batches",
+            "resource-libraries",
+            "schedules",
+            "security-audit",
+            "storage",
+            "storages",
+            "system",
+            "tasks",
+            "workers",
+        }
+        supported_operations = {
+            "automation",
+            "manual-actions",
+            "notifications",
+            "organize",
+            "previews",
+            "rules",
+            "runs",
+            "storage-management",
+        }
+        if (
+            len(parts) < 3
+            or parts[2] not in supported_roots
+            or (
+                parts[2] == "operations"
+                and (len(parts) < 4 or parts[3] not in supported_operations)
             )
-            self._require(principal, permission)
-            raise ManualScanError(
-                "standalone_scan_retired",
-                "独立扫描已退役；未创建工作，也未执行发现。",
-                status=410,
-                durable_state="no_task_created",
-                retry_safe=False,
-                next_action="在任务中心新建整理并生成摘要。",
-            )
+        ):
+            return self._error(start_response, 404, "not_found", "route was not found")
         job_submission = None
         if parts == ["api", "v1", "jobs"] and method == "POST":
             job_submission = self._document(environ)
-            if job_submission.get("command") == "scan":
-                self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-                raise ManualScanError(
-                    "standalone_scan_retired",
-                    "独立扫描已退役；未创建工作，也未执行发现。",
-                    status=410,
-                    durable_state="no_task_created",
-                    retry_safe=False,
-                    next_action="在任务中心新建整理并生成摘要。",
-                )
+            command = job_submission.get("command")
+            self._require(
+                principal,
+                ApiPermission.REMOTE_EXECUTE
+                if command == "organize"
+                else ApiPermission.SUBMIT_DRY_RUN,
+            )
+            if command not in {AutomationCommand.PREVIEW.value, AutomationCommand.ORGANIZE.value}:
+                raise ValueError("unsupported job command")
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
             "api",
@@ -1709,7 +1706,7 @@ class MediaFlowApi:
                     binding = self._refresh_configuration_binding()
                 except Exception:
                     binding = self._runtime_binding
-        # --- V2 Manual Scan/Preview operations routes (bounded, server-bound) ---
+        # --- V2 Preview operations routes (bounded, server-bound) ---
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             return self._manual_action_matrix(start_response, environ, principal, binding)
@@ -9004,7 +9001,6 @@ class MediaFlowApi:
             "storageAccess": frozenset({ApiPermission.READ}),
             "libraryBrowse": frozenset({ApiPermission.READ}),
             "directTransfer": frozenset({ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
-            "scan": frozenset({ApiPermission.SUBMIT_DRY_RUN}),
             "preview": frozenset({ApiPermission.MANAGE_MANUAL_ORGANIZE}),
             "organize": frozenset(
                 {ApiPermission.MANAGE_MANUAL_ORGANIZE, ApiPermission.EXECUTE_MANUAL_ORGANIZE}
@@ -9018,15 +9014,6 @@ class MediaFlowApi:
 
         def unavailable_for(key: str, destination: str, reason: str, next_action: str):
             authorized = authorized_for(key)
-            if key == "scan":
-                return self._readiness_entry(
-                    ready=False,
-                    condition="standalone_scan_retired" if authorized else "unauthorized",
-                    durable_state="standalone Scan is retired; no work was created",
-                    next_action="prepare a new organize summary in the task center",
-                    recovery_destination="/ui-v2/operations/organize/new",
-                    authorized=authorized,
-                )
             return self._readiness_entry(
                 ready=False,
                 condition="unauthorized" if not authorized else reason,
@@ -9063,7 +9050,6 @@ class MediaFlowApi:
                     "storageAccess",
                     "libraryBrowse",
                     "directTransfer",
-                    "scan",
                     "preview",
                     "organize",
                     "scheduling",
@@ -9089,7 +9075,6 @@ class MediaFlowApi:
                     "storageAccess",
                     "libraryBrowse",
                     "directTransfer",
-                    "scan",
                     "preview",
                     "organize",
                     "scheduling",
@@ -9253,12 +9238,6 @@ class MediaFlowApi:
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
-        scan = unavailable_for(
-            "scan",
-            "/ui-v2/operations/organize/new",
-            "standalone_scan_retired",
-            "prepare a new organize summary in the task center",
-        )
         preview_permission = permission(preview, "/ui-v2/operations/preview/new", "Preview")
         preview_entry = preview_permission or self._readiness_entry(
             ready=bool(enabled_resources and processing),
@@ -9363,7 +9342,6 @@ class MediaFlowApi:
             "storageAccess": storage_access,
             "libraryBrowse": browse,
             "directTransfer": transfer,
-            "scan": scan,
             "preview": preview_entry,
             "organize": organize,
             "scheduling": scheduling,
@@ -9815,7 +9793,6 @@ class MediaFlowApi:
         if tuple(parts[:3]) in {
             ("api", "v1", "jobs"),
             ("api", "v1", "tasks"),
-            ("api", "v1", "scans"),
             ("api", "v1", "manual-intents"),
             ("api", "v1", "manual-previews"),
             ("api", "v1", "manual-executions"),
@@ -10130,7 +10107,6 @@ class MediaFlowApi:
             return "/api/v1/<unmatched>"
         exact = {
             ("api", "v1", "tasks"),
-            ("api", "v1", "scans"),
             ("api", "v1", "confirmations"),
             ("api", "v1", "schedules"),
             ("api", "v1", "notifications"),
@@ -10162,7 +10138,6 @@ class MediaFlowApi:
         if len(parts) == 4 and parts[:3] in (
             ["api", "v1", "tasks"],
             ["api", "v1", "jobs"],
-            ["api", "v1", "scans"],
         ):
             return f"/api/v1/{parts[2]}/{{id}}"
         if len(parts) == 5 and parts[:4] == ["api", "v1", "automation", "task-definitions"]:
@@ -10329,8 +10304,6 @@ class MediaFlowApi:
             and parts[4] in {"cancel", "pause", "resume"}
         ):
             return f"/api/v1/tasks/{{id}}/{parts[4]}"
-        if len(parts) == 5 and parts[:3] == ["api", "v1", "scans"] and parts[4] == "cancel":
-            return "/api/v1/scans/{id}/cancel"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "schedules"] and parts[4] == "audit":
             return "/api/v1/schedules/{id}/audit"
         if (
@@ -11095,7 +11068,6 @@ class MediaFlowApi:
             {
                 "resourceLibraryId": rl["id"],
                 "storageId": rl.get("storage_id"),
-                "scanMode": rl.get("scan_mode"),
                 "enabled": bool(rl.get("enabled", False)),
                 "reason": (
                     None
@@ -11225,14 +11197,6 @@ class MediaFlowApi:
                         ),
                     },
                     "actions": {
-                        "scan": {
-                            "available": False,
-                            "reason": "独立扫描已退役；请新建整理。",
-                            "method": "POST",
-                            "path": "/api/v1/operations/scans",
-                            "nextAction": "在任务中心新建整理并生成摘要。",
-                            "modes": [],
-                        },
                         "preview": {
                             "available": preview_available,
                             "reason": preview_reason,
@@ -11996,8 +11960,6 @@ class MediaFlowApi:
         }:
             return True
         if parts[:3] == ["api", "v1", "tasks"]:
-            return True
-        if parts[:3] == ["api", "v1", "scans"]:
             return True
         if parts[:4] == ["api", "v1", "automation", "task-definitions"] and (
             len(parts) in {4, 5}

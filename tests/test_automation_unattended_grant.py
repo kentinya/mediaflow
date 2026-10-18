@@ -264,7 +264,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 replace(_job(definition), source_scope="incoming"),
                 replace(
                     _job(definition),
-                    run_mode=AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
+                    run_mode="unknown-mode",
                 ),
                 replace(_job(definition), limit=5),
             )

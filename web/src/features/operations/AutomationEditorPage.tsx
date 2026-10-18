@@ -28,7 +28,6 @@ import {
 } from "./automation-query";
 import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  isRecordedAutomationRunMode,
   type AutomationDocumentRunMode,
 } from "../../entities/operations/automation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -59,7 +58,6 @@ export function AutomationEditorPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<DefinitionFormState | null>(null);
   const [confirmActivate, setConfirmActivate] = useState(false);
-  const [confirmModeCorrection, setConfirmModeCorrection] = useState(false);
   const [validationErrors, setValidationErrors] = useState<readonly string[]>(
     [],
   );
@@ -299,21 +297,12 @@ export function AutomationEditorPage() {
         const formEnabled = currentForm?.enabled ?? false;
         const formScope = currentForm?.sourceScope ?? "";
         const formLibrary = currentForm?.resourceLibraryId ?? "";
-        // The intent is fixed. A Draft that recorded a removed mode is shown as
-        // read-only history; publishing it as automatic organization is the
-        // existing correction journey and needs the operator's explicit
-        // confirmation, so nothing is rewritten silently.
-        const recordedMode = currentForm?.mode ?? draft.definition.mode;
-        const recordedModeIsRemoved = isRecordedAutomationRunMode(recordedMode);
         const formMode = AUTOMATION_AUTOMATIC_ORGANIZATION_MODE;
         const formScheduleType = currentForm?.scheduleType ?? "interval";
         const formInterval = currentForm?.intervalSeconds ?? "";
         const formCron = currentForm?.cron ?? "";
         const formTimezone = currentForm?.timezone ?? "";
-        const formModeIsSupported =
-          !recordedModeIsRemoved || confirmModeCorrection;
         const formValid =
-          formModeIsSupported &&
           formName.trim().length > 0 &&
           formLibrary.length > 0 &&
           /^\d+$/.test(formItemLimit) &&
@@ -441,33 +430,8 @@ export function AutomationEditorPage() {
                 data-testid="automation-edit-mode-intent"
               >
                 {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}（自动整理）是固定意图，
-                这里没有模式选择器。已移除的历史模式不会被提供或兼容执行。
+                这里没有模式选择器。
               </p>
-              {recordedModeIsRemoved && (
-                <StatusBanner
-                  variant="info"
-                  title="Unsupported historical run mode"
-                >
-                  <p>
-                    This Draft records the removed mode{" "}
-                    <strong>{recordedMode}</strong>. It stays visible as history
-                    and is never silently rewritten. Saving will publish{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} as the explicit
-                    correction.
-                  </p>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={confirmModeCorrection}
-                      onChange={(event) =>
-                        setConfirmModeCorrection(event.target.checked)
-                      }
-                    />{" "}
-                    Publish this Draft as{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}
-                  </label>
-                </StatusBanner>
-              )}
               <p className="mf-label">
                 <label htmlFor="automation-edit-schedule-type">
                   Schedule type
@@ -550,11 +514,7 @@ export function AutomationEditorPage() {
               </Button>
               <Button
                 type="button"
-                disabled={
-                  !validate.available ||
-                  !formModeIsSupported ||
-                  validateMutation.isPending
-                }
+                disabled={!validate.available || validateMutation.isPending}
                 onClick={() => validateMutation.mutate(draft.revisionId)}
               >
                 {validateMutation.isPending
@@ -603,7 +563,6 @@ export function AutomationEditorPage() {
                     type="button"
                     disabled={
                       !confirmActivate ||
-                      !formModeIsSupported ||
                       activateMutation.isPending ||
                       draft.revisionStatus !== "validated"
                     }

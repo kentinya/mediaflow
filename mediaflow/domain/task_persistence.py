@@ -54,6 +54,32 @@ FILES_TRANSFER_TASK_COMMAND = "files_transfer"
 MEDIA_LIBRARY_TASK_COMMAND_PREFIX = "media_"
 
 
+RETRYABLE_TASK_COMMANDS = frozenset(
+    {
+        "preview",
+        "organize",
+        "retry",
+        "retry-failed",
+        "manual_organize",
+        "metadata-correction-continuation",
+        "recovery-continuation",
+        "file-metadata-correction",
+        FILES_DIRECT_COMMAND_TASK,
+        FILES_DELETE_TASK_COMMAND,
+        FILES_TRANSFER_TASK_COMMAND,
+        "media_files_direct_command",
+        "media_files_delete",
+        "media_files_transfer",
+    }
+)
+
+
+def require_retryable_task_command(command: str) -> None:
+    """Unknown Task kinds cannot obtain generic retry admission."""
+    if command.split(":", 1)[0] not in RETRYABLE_TASK_COMMANDS:
+        raise ValueError("unsupported Task command for retry")
+
+
 def direct_command_task_command(operation: str, *, media_library: bool) -> str:
     """The durable Task command of one bounded direct file command.
 

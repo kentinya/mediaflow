@@ -25,8 +25,7 @@ describe("normalizeManualActionMatrix", () => {
     const model = normalizeManualActionMatrix(actionMatrixPayload());
     expect(model.scopeKind).toBe("file");
     expect(model.fileId).not.toBeNull();
-    expect(model.actions.scan.available).toBe(false);
-    expect(model.actions.scan.modes).toEqual([]);
+    expect(model.actions).not.toHaveProperty("scan");
     expect(model.actions.preview.available).toBe(true);
     expect(model.runtime.ready).toBe(true);
     expect(model.limits.previewMaxItems).toBeGreaterThan(0);
@@ -43,7 +42,6 @@ describe("normalizeManualActionMatrix", () => {
     expect(model.scopeId).toBeNull();
     expect(model.selectionRequired).toBe(true);
     expect(model.source).toBeNull();
-    expect(model.actions.scan.available).toBe(false);
     expect(model.actions.preview.available).toBe(false);
   });
 
@@ -70,7 +68,12 @@ describe("normalizeManualActionMatrix", () => {
       normalizeManualActionMatrix(
         actionMatrixPayload({
           actions: {
-            scan: { available: 1, reason: null, method: "POST", path: "/x" },
+            organize: {
+              available: 1,
+              reason: null,
+              method: "POST",
+              path: "/x",
+            },
             preview: {
               available: true,
               reason: null,
@@ -83,18 +86,18 @@ describe("normalizeManualActionMatrix", () => {
     ).toThrow();
   });
 
-  it("rejects an unsupported Scan mode advertisement", () => {
+  it("rejects an invalid supported action advertisement", () => {
     expect(() =>
       normalizeManualActionMatrix(
         actionMatrixPayload({
           actions: {
-            scan: {
-              available: true,
+            organize: {
+              available: "true",
               reason: null,
               method: "POST",
-              path: "/api/v1/operations/scans",
+              path: "/api/v1/operations/organize/intents",
               nextAction: "submit a bounded Scan",
-              modes: ["scan-only"],
+              modes: [],
             },
             preview: {
               available: true,
@@ -116,9 +119,9 @@ describe("normalizeManualActionMatrix", () => {
         actions: {
           scan: {
             available: false,
-            reason: "the Active runtime is unavailable for Scan",
+            reason: "the Active runtime is unavailable for Organize",
             method: "POST",
-            path: "/api/v1/operations/scans",
+            path: "/api/v1/operations/previews",
             nextAction: "restore or activate a valid Active runtime",
             modes: ["full", "incremental"],
           },
@@ -135,8 +138,6 @@ describe("normalizeManualActionMatrix", () => {
         },
       }),
     );
-    expect(model.actions.scan.available).toBe(false);
-    expect(model.actions.scan.reason).toContain("Active runtime");
     expect(model.actions.preview.available).toBe(false);
     expect(model.actions.preview.reason).toContain("manage_manual_organize");
   });

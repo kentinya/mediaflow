@@ -1,4 +1,4 @@
-"""Standalone Scan retirement must happen before runtime or Storage construction."""
+"""Removed Scan inputs fail as ordinary unsupported inputs before runtime work."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from unittest.mock import Mock, patch
 from mediaflow.application.automation import AutomationJobService, AutomationWorker
 from mediaflow.application.scope_continuation import ScopeContinuationService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.domain.automation import AutomationJob, AutomationJobStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import PersistentTaskStatus
 from mediaflow.final_cli import _run_queued_workflow, final_main
@@ -46,12 +47,12 @@ class StandaloneScanRetirementTests(unittest.TestCase):
     def test_legacy_job_refused_without_creating_work(self):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
                     AutomationJobService(repository).submit("scan")
                 self.assertEqual((), repository.list_jobs())
                 self.assertEqual((), repository.list_tasks())
 
-    def test_api_aliases_refuse_before_configuration_and_preserve_rbac(self):
+    def test_removed_scan_routes_are_ordinary_not_found(self):
         operator = ResolvedApiPrincipal(
             "operator",
             "operator-token",
@@ -76,19 +77,11 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                         status, value = request(
                             api, path, token="viewer-token", method="POST", body={}
                         )
-                        self.assertEqual(403, status)
-                        status, value = request(
-                            api, path, token="operator-token", method="POST", body={}
-                        )
-                        self.assertEqual(410, status, value)
-                        self.assertEqual("standalone_scan_retired", value["error"]["code"])
-                        self.assertEqual(
-                            "no_task_created", value["error"]["details"]["durableState"]
-                        )
+                        self.assertEqual(404, status, value)
                 self.assertEqual((), repository.list_jobs())
                 self.assertEqual((), repository.list_tasks())
 
-    def test_retired_history_and_cancel_aliases_never_load_runtime(self):
+    def test_removed_scan_history_and_cancel_routes_are_ordinary_not_found(self):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(repository, "operator-token")
@@ -103,7 +96,7 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                                 token="operator-token",
                                 method=method,
                             )
-                            self.assertEqual(410, status, value)
+                            self.assertEqual(404, status, value)
                 self.assertEqual((), repository.list_tasks())
                 self.assertEqual((), repository.list_jobs())
 
@@ -117,7 +110,7 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                     now = datetime.now(UTC)
                     job = AutomationJob(
                         "retired",
-                        AutomationCommand.SCAN,
+                        "scan",
                         AutomationJobStatus.PENDING,
                         now,
                         now,
@@ -127,12 +120,12 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                     handler = Mock(side_effect=AssertionError("discovery called"))
                     finished = AutomationWorker(repository, handler).run_next()
                     self.assertEqual(AutomationJobStatus.FAILED, finished.status)
-                    self.assertEqual("standalone_scan_retired", finished.failure_category)
+                    self.assertEqual("unsupported_workflow", finished.failure_category)
                     self.assertIsNone(finished.task_id)
                     handler.assert_not_called()
                     self.assertEqual((), repository.list_tasks())
                     with patch("mediaflow.final_cli._configuration", side_effect=AssertionError):
-                        with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                        with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
                             _run_queued_workflow(job, None, lambda: False, repository=repository)
 
     def test_unsupported_dispatch_refuses_before_configuration(self):
@@ -173,29 +166,74 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                 original = coordinator.create("scan", execute_authorized=False)
                 paused = replace(original, status=PersistentTaskStatus.PAUSED)
                 repository.update_task(paused)
-                with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                with self.assertRaisesRegex(ValueError, "no supported"):
                     ScopeContinuationService(repository).submit(
                         paused.task_id,
                         expected_version=None,
                         actor="operator",
                         maximum_active_jobs=10,
                     )
-                with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
                     coordinator.retryable_items(paused.task_id, failed_only=False)
                 self.assertEqual((), repository.list_jobs())
                 self.assertEqual(paused, repository.get_task(paused.task_id))
 
-    def test_cli_scan_refuses_before_configuration_provider_and_storage(self):
-        for arguments in (["scan"], ["scan", "--limit", "3", "--path", "/unused"]):
-            with self.subTest(arguments=arguments):
-                output, errors = io.StringIO(), io.StringIO()
-                with patch(
-                    "mediaflow.final_cli._configuration",
-                    side_effect=AssertionError("runtime built"),
+    def test_cli_removed_scan_inputs_are_argparse_errors_before_any_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid = root / "invalid.json"
+            invalid.write_text("{broken")
+            bootstrap = root / "bootstrap.json"
+            bootstrap.write_text(
+                json.dumps({"persistence": {"databasePath": str(root / "runtime.sqlite3")}})
+            )
+            for config in (None, root / "missing.json", invalid, bootstrap):
+                for command in (
+                    ["scan"],
+                    ["scan", "--limit", "3", "--path", "/unused"],
+                    ["scan", "--help"],
+                    ["jobs", "submit", "scan"],
+                    ["jobs", "submit", "scan", "--limit", "3"],
                 ):
-                    code = final_main(arguments, stdout=output, stderr=errors)
-                self.assertNotEqual(0, code)
-                self.assertIn("standalone_scan_retired", errors.getvalue())
+                    args = (["--config", str(config)] if config else []) + command
+                    with self.subTest(args=args), ExitStack() as stack:
+                        guards = [
+                            stack.enter_context(
+                                patch(
+                                    "mediaflow.final_cli." + name,
+                                    side_effect=AssertionError(name + " called"),
+                                )
+                            )
+                            for name in (
+                                "_configuration",
+                                "SQLiteTaskRepository",
+                                "SQLiteFileIndexRepository",
+                                "SQLiteConfigurationRepository",
+                                "RuntimeDatabaseLease",
+                                "metadata_provider_registry_from_environment",
+                                "strategy_runner_from_configuration",
+                            )
+                        ]
+                        errors = io.StringIO()
+                        stack.enter_context(redirect_stderr(errors))
+                        with self.assertRaises(SystemExit) as raised:
+                            final_main(args, stdout=io.StringIO(), stderr=io.StringIO())
+                        self.assertEqual(2, raised.exception.code)
+                        self.assertIn("invalid choice", errors.getvalue())
+                        self.assertNotIn("retired", errors.getvalue())
+                        self.assertNotIn("新建整理", errors.getvalue())
+                        for guard in guards:
+                            guard.assert_not_called()
+            self.assertEqual({"invalid.json", "bootstrap.json"}, {p.name for p in root.iterdir()})
+
+    def test_cli_help_only_advertises_supported_commands(self):
+        for args in (["--help"], ["jobs", "submit", "--help"]):
+            out = io.StringIO()
+            with redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+                final_main(args, stdout=io.StringIO(), stderr=io.StringIO())
+            self.assertEqual(0, raised.exception.code)
+            self.assertNotIn("scan", out.getvalue().lower())
+            self.assertIn("preview", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -21,7 +21,6 @@ import { TaskListPage } from "../features/operations/TaskListPage";
 import { TaskDetailPage } from "../features/operations/TaskDetailPage";
 import { JobListPage } from "../features/operations/JobListPage";
 import { JobDetailPage } from "../features/operations/JobDetailPage";
-import { ScanRetiredPage } from "../features/operations/ScanRetiredPage";
 import { PreviewNewPage } from "../features/operations/PreviewNewPage";
 import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
 import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
@@ -159,18 +158,6 @@ const jobDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/jobs/$jobId",
   component: JobDetailPage,
-});
-
-const scanNewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/scan/new",
-  component: ScanRetiredPage,
-});
-
-const scanDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/scan/$taskId",
-  component: ScanRetiredPage,
 });
 
 const previewNewRoute = createRoute({
@@ -353,8 +340,6 @@ const routeTree = rootRoute.addChildren([
   taskDetailRoute,
   jobListRoute,
   jobDetailRoute,
-  scanNewRoute,
-  scanDetailRoute,
   previewNewRoute,
   previewDetailRoute,
   organizeNewRoute,

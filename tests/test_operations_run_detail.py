@@ -507,7 +507,6 @@ class RunProgressAccountingTests(_RunDetailApiTestCase):
         from mediaflow.application.operations_lifecycle import run_accounting_basis
 
         expectations = {
-            "scan": "scan",
             "preview": "analysis",
             "organize": "organize",
             "manual_organize": "organize",
@@ -523,13 +522,13 @@ class RunProgressAccountingTests(_RunDetailApiTestCase):
         for command, kind in expectations.items():
             with self.subTest(command=command):
                 derived, _unit, basis, success_means = run_accounting_basis(
-                    command, execute_authorized=True, scan=False
+                    command, execute_authorized=True
                 )
                 self.assertEqual(derived, kind)
                 self.assertTrue(basis)
                 self.assertTrue(success_means)
         # A dry-run task (no execution authority) reports analysis success.
-        derived, *_ = run_accounting_basis("organize", execute_authorized=False, scan=False)
+        derived, *_ = run_accounting_basis("organize", execute_authorized=False)
         self.assertEqual(derived, "analysis")
 
     def test_legacy_unknown_status_still_reconciles(self) -> None:

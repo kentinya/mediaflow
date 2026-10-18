@@ -88,7 +88,6 @@ const COMMAND_LABELS: Readonly<Record<string, string>> = {
   storageAccess: "存储访问",
   libraryBrowse: "文件浏览",
   directTransfer: "直接传输",
-  scan: "扫描",
   preview: "预览",
   organize: "整理",
   scheduling: "自动化调度",

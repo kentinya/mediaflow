@@ -483,9 +483,8 @@ class ModeRemovalTests(_RunOnceFixture):
     def test_recorded_modes_stay_readable_but_are_not_runnable(self) -> None:
         for value in ("scan-only", "scan-and-plan"):
             with self.subTest(value=value):
-                recorded = AutomationTaskRunMode.decode_recorded(value)
-                self.assertFalse(recorded.is_runnable)
-                self.assertEqual(value, recorded.value)
+                with self.assertRaises(ValueError):
+                    AutomationTaskRunMode(value)
 
     def test_form_authority_offers_only_the_retained_mode(self) -> None:
         with self.journey() as value:
@@ -1220,30 +1219,28 @@ class HistoricalModeTests(_RunOnceFixture):
     def test_removed_mode_row_stays_readable_and_never_executes(self) -> None:
         from mediaflow.domain.automation import AutomationDefinitionOccurrence
 
-        occurrence = AutomationDefinitionOccurrence(
-            "occurrence-legacy",
-            "nightly",
-            datetime(2026, 1, 1, tzinfo=UTC),
-            datetime(2026, 1, 1, tzinfo=UTC),
-            "job-legacy",
-            "a" * 64,
-            1,
-            "revision-legacy",
-            1,
-            "b" * 64,
-            AutomationTaskRunMode.RECORDED_SCAN_ONLY,
-            "library",
-            None,
-            10,
-            "emitted",
-            "scheduled",
-            "no operator action is required",
-            "task-legacy",
-            None,
-        )
-        # The recorded value is preserved exactly as historical data.
-        self.assertEqual("scan-only", occurrence.document()["runMode"])
-        self.assertFalse(occurrence.run_mode.is_runnable)
+        with self.assertRaises(ValueError):
+            AutomationDefinitionOccurrence(
+                "occurrence-legacy",
+                "nightly",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 1, tzinfo=UTC),
+                "job-legacy",
+                "a" * 64,
+                1,
+                "revision-legacy",
+                1,
+                "b" * 64,
+                "scan-only",
+                "library",
+                None,
+                10,
+                "emitted",
+                "scheduled",
+                "no operator action is required",
+                "task-legacy",
+                None,
+            )
 
     def test_unsupported_mode_definition_records_an_unsupported_outcome(self) -> None:
         from mediaflow.application.automation import IntervalScheduler

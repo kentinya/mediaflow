@@ -47,9 +47,6 @@ describe("real API action matrix documents", () => {
     expect(model.selectionRequired).toBe(false);
     expect(model.runtime.ready).toBe(true);
     expect(model.runtime.condition).toBe("configuration_active");
-    expect(model.actions.scan.available).toBe(false);
-    expect(model.actions.scan.path).toBe("/api/v1/operations/scans");
-    expect(model.actions.scan.modes).toEqual([]);
     expect(model.actions.preview.available).toBe(true);
     expect(model.actions.preview.path).toBe("/api/v1/operations/previews");
     expect(model.source?.filename).toBe("One.2001.mkv");
@@ -70,9 +67,7 @@ describe("real API action matrix documents", () => {
     expect(model.resourceLibraryId).toBeNull();
     expect(model.selectionRequired).toBe(true);
     expect(model.source).toBeNull();
-    expect(model.actions.scan.available).toBe(false);
     expect(model.actions.preview.available).toBe(false);
-    expect(model.actions.scan.reason).toContain("已退役");
     expect(model.resourceLibraries).toHaveLength(1);
   });
 });

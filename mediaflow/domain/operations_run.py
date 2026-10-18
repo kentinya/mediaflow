@@ -7,7 +7,7 @@ relationships only:
 - an Automation Job (the admission record) and, when it has one, its linked
   Task through ``automation_jobs.task_id``;
 - a standalone Task (created by a producer that admits its own Task, e.g. a
-  manual Scan or an exact manual organize execution);
+  an exact manual organize execution);
 - a Files transfer Task whose separate ``files_transfers`` row is the Worker
   claim authority.
 
@@ -242,7 +242,7 @@ def derive_run_trigger(job: AutomationJob | None) -> OperationsRunTrigger:
     A managed definition occurrence is scheduled work; a legacy schedule
     reference is scheduled as well; any other Job came from the Automation
     submission surface; a run with no Job at all was admitted manually (a
-    standalone Task producer such as a manual Scan, an exact manual organize
+    standalone Task producer such as an exact manual organize
     execution or a bounded Files command/transfer).  No guesswork beyond the
     persisted record.
     """
@@ -277,7 +277,6 @@ def known_command_label(command: str | None) -> str | None:
 
 
 _COMMAND_LABELS = {
-    "scan": "扫描",
     "preview": "预览",
     "organize": "整理",
     "manual_organize": "手动整理",

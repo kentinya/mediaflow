@@ -39,7 +39,6 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
-from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
@@ -170,7 +169,6 @@ def final_main(
     analyze = commands.add_parser("analyze", help="analyze one file without planning execution")
     analyze.add_argument("path")
     analyze.add_argument("--offline", action="store_true")
-    commands.add_parser("scan", help="retired: create an organize summary")
     preview = commands.add_parser("preview", help="run the complete workflow as DryRun")
     preview.add_argument("path", nargs="?")
     preview.add_argument("--limit", type=int)
@@ -264,7 +262,7 @@ def final_main(
     job_show = job_commands.add_parser("show")
     job_show.add_argument("job_id")
     job_submit = job_commands.add_parser("submit")
-    job_submit.add_argument("workflow", choices=("scan", "preview"))
+    job_submit.add_argument("workflow", choices=("preview",))
     job_submit.add_argument("--limit", type=int)
     job_cancel = job_commands.add_parser("cancel")
     job_cancel.add_argument("job_id")
@@ -463,12 +461,6 @@ def final_main(
     api_production.add_argument("--port", type=int, default=8080)
     api_production.add_argument("--threads", type=int, default=4)
     arguments, unsupported_arguments = parser.parse_known_args(argv)
-    if arguments.command == "scan":
-        stderr.write(
-            "standalone_scan_retired: 独立扫描已退役；未创建工作，未执行发现。"
-            "请在任务中心新建整理并生成摘要。\n"
-        )
-        return 2
     if unsupported_arguments:
         parser.error("unrecognized arguments: " + " ".join(unsupported_arguments))
     if arguments.command == "batch":
@@ -1263,8 +1255,8 @@ def final_main(
             original_items: tuple[PersistentTaskItem, ...] = ()
             if arguments.command == "tasks":
                 original = coordinator.require(arguments.task_id)
-                if original.command == "scan":
-                    raise ValueError("standalone_scan_retired: 在任务中心新建整理并生成摘要。")
+                if original.command not in {"preview", "organize"}:
+                    raise ValueError("unsupported workflow Task command")
                 paused_resume = (
                     arguments.task_command == "resume"
                     and original.status is PersistentTaskStatus.PAUSED
@@ -1527,8 +1519,6 @@ def _continue_paused_scope(
 ) -> MediaOrganizerBatchResult:
     if limit == 0:
         return MediaOrganizerBatchResult(())
-    if original.command == "scan":
-        raise ValueError("standalone_scan_retired: prepare a new organize summary")
     if original.command not in {"preview", "organize"}:
         raise ValueError("paused task command cannot be continued")
     if original.scope_path is None:
@@ -1603,25 +1593,6 @@ def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:
             "",
         )
     )
-    return "\n".join(lines)
-
-
-def render_scan(results, discovered) -> str:
-    lines = ["", "SCAN", ""]
-    by_library = {result.resource_library_id: result for result in results}
-    for library_id, result in by_library.items():
-        lines.extend(
-            (
-                f"ResourceLibrary: {library_id}",
-                f"Status: {result.status.value}",
-                f"Found: {sum(1 for item in discovered if item[0] == library_id)}",
-                f"Errors: {len(result.errors)}",
-                "",
-            )
-        )
-    lines.append(f"Total: {len(discovered)}")
-    lines.extend(f"{storage_id}:{path}" for _, storage_id, path in discovered)
-    lines.append("")
     return "\n".join(lines)
 
 
@@ -2438,13 +2409,6 @@ def _run_queued_workflow(
 ) -> str | None:
     if job.command not in set(AutomationCommand):
         raise ValueError("unsupported workflow; no discovery or work was started")
-    if job.command is AutomationCommand.SCAN:
-        from mediaflow.application.automation import persisted_definition_origin
-
-        if not job.definition_pinned or (
-            repository is not None and not persisted_definition_origin(repository, job)
-        ):
-            raise ValueError("standalone_scan_retired: 在任务中心新建整理并生成摘要。")
     definition_pinned = bool(
         getattr(job, "definition_id", None) or getattr(job, "automation_definition_id", None)
     )
@@ -3201,10 +3165,7 @@ def _run_scope_continuation(
                     reason="authority_unavailable",
                 )
             storages = configuration.create_storages()
-            resumed_scan = original.command == "scan"
-            providers = (
-                None if resumed_scan else metadata_provider_registry_from_environment(("tmdb",))
-            )
+            providers = metadata_provider_registry_from_environment(("tmdb",))
             strategy = strategy_runner_from_configuration(
                 configuration.strategy, providers, storages=storages
             )
@@ -3421,40 +3382,6 @@ def _continue_scope_from_admission(
     if limit == 0:
         return MediaOrganizerBatchResult(())
 
-    def on_discovered(library, file) -> None:
-        coordinator.record_discovered(
-            task_id,
-            file.storage_id,
-            library.library_id,
-            file.path,
-            f"{file.storage_id}:{file.path}",
-        )
-
-    if original.command == "scan":
-        from mediaflow.application.scope_continuation import require_supported_scan_origin
-
-        require_supported_scan_origin(coordinator.repository, original)
-        if original.scope_path is not None:
-            library, storage_path, display_path = _continuation_scope(
-                configuration, original, original_job, definition_origin
-            )
-            entry = storages[library.storage_id].stat(storage_path)
-            if entry.entry_type is not StorageEntryType.DIRECTORY:
-                raise ValueError("paused scan scope is no longer a directory")
-            scoped = replace(library, root_path=storage_path, scan_mode=ScanMode.INCREMENTAL)
-            batch = ResourceLibraryScanner(
-                StorageScanner(storages, file_index), (scoped,), storages
-            ).scan_all(
-                limit=limit,
-                on_discovered=on_discovered,
-                include_discovered=lambda source_library, file: (
-                    (source_library.storage_id, file.path) not in skip_sources
-                ),
-                cancellation_check=cancellation_check,
-            )
-            errors = tuple(error for result in batch.results for error in result.errors)
-            return MediaOrganizerBatchResult((), errors)
-        raise ValueError("definition Scan continuation requires its exact bounded scope")
     if original.command not in {"preview", "organize"}:
         raise ValueError("paused task command cannot be continued")
     if original.scope_path is None:
@@ -5001,10 +4928,6 @@ def _task_snapshot_identity(path: str | None, task_id: str) -> tuple[str, str] |
         database_path = _bootstrap_database_path(document)
         with SQLiteTaskRepository(database_path) as repository:
             task = repository.get_task(task_id)
-        if task is not None and task.command == "scan":
-            raise RuntimeSnapshotUnavailable(
-                "standalone_scan_retired: prepare a new organize summary in the task center"
-            )
         if task is not None and not task.configuration_snapshot_id:
             with SQLiteConfigurationRepository(database_path) as configuration_repository:
                 if configuration_repository.has_managed_activation():

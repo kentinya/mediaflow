@@ -123,7 +123,7 @@ class AutomationDefinitionOccurrenceDomainTests(unittest.TestCase):
                 "revision-1",
                 1,
                 "short",
-                AutomationTaskRunMode.RECORDED_SCAN_ONLY,
+                AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
                 "resource",
                 "safe",
                 7,
@@ -448,7 +448,7 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 )
                 job = AutomationJob(
                     "job-failed",
-                    AutomationCommand.SCAN,
+                    AutomationCommand.PREVIEW,
                     AutomationJobStatus.PENDING,
                     NOW,
                     NOW,
@@ -786,7 +786,7 @@ class AutomationDefinitionOccurrenceMigrationAndReadModelTests(unittest.TestCase
                     "resource",
                     "storage",
                     None,
-                    "scan-only",
+                    "automatic-organization",
                     7,
                     '{"discovered": 0, "selected": 0, "permitted": 0, '
                     '"excludedIgnored": 0, "unstable": 0, "truncatedByLimit": 0}',

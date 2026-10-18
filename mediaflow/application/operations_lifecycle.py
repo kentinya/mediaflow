@@ -116,8 +116,6 @@ TASK_CANCELLABLE_STATUSES = frozenset(
         PersistentTaskStatus.PAUSED,
     }
 )
-# The manual Scan document is a bounded string projection, so its
-# cancellation eligibility is derived from the same durable status set.
 
 # The only execution states this Task's backend can truthfully mean.  A
 # persisted Preview record written by another version cannot promote itself
@@ -244,8 +242,6 @@ class TaskExecutionPath(StrEnum):
     #: of them polls the durable pause request and the durable cancellation at
     #: its item boundary.
     OPERATOR_WORKFLOW = "operator_workflow"
-    #: The manual Scan service.  It observes its own durable cancellation
-    #: request and never observes a Task pause request.
     #: Web-native manual Organize admitted inside one synchronous API request.
     #: It observes neither control, so neither is advertised.
     SYNCHRONOUS_MANUAL_ORGANIZE = "synchronous_manual_organize"
@@ -256,7 +252,7 @@ class TaskExecutionContext:
     """Durable execution context for one Task, resolved from existing records."""
 
     path: TaskExecutionPath
-    #: Whether the manual Scan service already stores a cancellation request.
+    #: Whether the owning workflow stores a cancellation request.
     cancellation_requested: bool = False
     #: Whether this Task kind has a durable queued continuation authority, so
     #: a paused Task may be re-queued for the resident Worker (the bounded Files
@@ -1006,7 +1002,7 @@ def manual_action_matrix_operator_document(document: dict[str, object]) -> dict[
 
     ``MediaFlowApi`` constructs this document from the exact principal,
     runtime binding and current source.  Keep the transport projection behind
-    the same recursive key/value guard used by Scan and Preview so a malformed
+    the same recursive key/value guard used by analysis and Preview so a malformed
     FileIndex label, ResourceLibrary identifier or status value cannot bypass
     the redaction boundary.
     """
@@ -2225,7 +2221,6 @@ def job_lifecycle_document(
         next_action="refresh the Job to read the durable cancellation state",
     )
     command_kind = {
-        AutomationCommand.SCAN: "source discovery",
         AutomationCommand.PREVIEW: "zero-mutation analysis",
         AutomationCommand.ORGANIZE: "media organization",
     }.get(job.command, "bounded continuation")
@@ -2477,7 +2472,6 @@ def bounded_manual_source_path(value: object | None) -> str | None:
 
 # -- Selected-run detail: progress, records and item evidence (RO-3) --------
 
-_RUN_ACCOUNTING_SCAN = "scan"
 _RUN_ACCOUNTING_ANALYSIS = "analysis"
 _RUN_ACCOUNTING_ORGANIZE = "organize"
 _RUN_ACCOUNTING_DIRECT = "direct"
@@ -2514,25 +2508,15 @@ def _command_family(command: object) -> str | None:
     return command.split(":", 1)[0]
 
 
-def run_accounting_basis(
-    command: object, *, execute_authorized: bool, scan: bool
-) -> tuple[str, str, str, str]:
+def run_accounting_basis(command: object, *, execute_authorized: bool) -> tuple[str, str, str, str]:
     """Classify one run's durable accounting basis as bounded Chinese copy.
 
     Returns ``(kind, unit, basis, success_means)``.  The basis states what
     "success" means for this exact task kind, so an analysis completion is
-    never presented as organize or Storage success and a scan's live
-    discovery total never pretends to be a fixed denominator.
+    never presented as organize or Storage success.
     """
 
     family = _command_family(command)
-    if scan or family == "scan":
-        return (
-            _RUN_ACCOUNTING_SCAN,
-            "发现文件",
-            "扫描发现计数:发现仍在进行时总数不可知(标记为不确定);扫描级错误与附件步骤单独计数,不计入主条目。",
-            "发现完成(发现完成不等于整理成功)",
-        )
     if family in _ANALYSIS_COMMAND_FAMILIES or not execute_authorized:
         return (
             _RUN_ACCOUNTING_ANALYSIS,
@@ -2630,7 +2614,6 @@ def run_progress_document(progress, *, command: object) -> dict[str, object]:
     kind, unit, basis, success_means = run_accounting_basis(
         command,
         execute_authorized=progress.execute_authorized,
-        scan=progress.primary_unit == "discovered_files",
     )
     dispositions = {key: int(progress.dispositions.get(key, 0)) for key in RUN_DISPOSITIONS}
     uncertain = int(progress.uncertain_success)

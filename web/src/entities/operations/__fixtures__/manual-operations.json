@@ -16,14 +16,6 @@
         "nextAction": "run a zero-mutation Preview",
         "path": "/api/v1/operations/previews",
         "reason": null
-      },
-      "scan": {
-        "available": false,
-        "method": "POST",
-        "modes": [],
-        "nextAction": "\u5728\u4efb\u52a1\u4e2d\u5fc3\u65b0\u5efa\u6574\u7406\u5e76\u751f\u6210\u6458\u8981\u3002",
-        "path": "/api/v1/operations/scans",
-        "reason": "\u72ec\u7acb\u626b\u63cf\u5df2\u9000\u5f79\uff1b\u8bf7\u65b0\u5efa\u6574\u7406\u3002"
       }
     },
     "fileId": "<hex-id>",
@@ -35,7 +27,6 @@
         "enabled": true,
         "reason": null,
         "resourceLibraryId": "library",
-        "scanMode": "full",
         "storageId": "source"
       }
     ],
@@ -2019,14 +2010,6 @@
         "nextAction": "select an exact ResourceLibrary scope before running a Preview",
         "path": "/api/v1/operations/previews",
         "reason": "select an exact ResourceLibrary scope before running a Preview"
-      },
-      "scan": {
-        "available": false,
-        "method": "POST",
-        "modes": [],
-        "nextAction": "\u5728\u4efb\u52a1\u4e2d\u5fc3\u65b0\u5efa\u6574\u7406\u5e76\u751f\u6210\u6458\u8981\u3002",
-        "path": "/api/v1/operations/scans",
-        "reason": "\u72ec\u7acb\u626b\u63cf\u5df2\u9000\u5f79\uff1b\u8bf7\u65b0\u5efa\u6574\u7406\u3002"
       }
     },
     "fileId": null,
@@ -2038,7 +2021,6 @@
         "enabled": true,
         "reason": null,
         "resourceLibraryId": "library",
-        "scanMode": "full",
         "storageId": "source"
       }
     ],

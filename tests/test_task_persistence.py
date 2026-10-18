@@ -6,6 +6,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -223,20 +224,19 @@ class PersistentTaskTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not running"):
                 coordinator.begin_item(task.task_id, "s", "r", "later.mkv", "later.mkv")
 
-    def test_retired_scan_creates_no_persistent_task_or_file_index(self) -> None:
+    def test_unknown_scan_command_creates_no_persistent_task_or_file_index(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "absent.json"
             errors = io.StringIO()
-            self.assertNotEqual(
-                0,
+            with redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
                 final_main(
                     ["--config", str(config), "scan"],
                     stdout=io.StringIO(),
                     stderr=errors,
-                ),
-            )
-            self.assertIn("standalone_scan_retired", errors.getvalue())
+                )
+            self.assertEqual(2, raised.exception.code)
+            self.assertIn("invalid choice", errors.getvalue())
             self.assertEqual([], list(root.iterdir()))
 
 

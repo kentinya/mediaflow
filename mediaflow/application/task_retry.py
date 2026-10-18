@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
-from mediaflow.domain.task_persistence import TaskItemStatus
+from mediaflow.domain.task_persistence import TaskItemStatus, require_retryable_task_command
 from mediaflow.domain.task_retry import (
     TaskRetryBatchRequest,
     TaskRetryRepository,
@@ -50,8 +50,8 @@ class TaskRetryRequestService:
         items = self._repository.list_failed_items(limit=limit, task_id=task_id)
         for item in items:
             task = self._repository.get_task(item.task_id)
-            if task is not None and task.command == "scan":
-                raise ValueError("standalone_scan_retired: prepare a new organize summary")
+            if task is not None:
+                require_retryable_task_command(task.command)
         if not items:
             raise ValueError("no failed task items were selected")
         if self._recovery_admission is not None:
@@ -158,8 +158,8 @@ class TaskRetryRequestService:
         if item is None:
             raise LookupError(f"TaskItem {item_id!r} was not found")
         task = self._repository.get_task(item.task_id)
-        if task is not None and task.command == "scan":
-            raise ValueError("standalone_scan_retired: prepare a new organize summary")
+        if task is not None:
+            require_retryable_task_command(task.command)
         if item.status is not TaskItemStatus.FAILED:
             raise ValueError("TaskItem is not failed")
         now = datetime.now(UTC)

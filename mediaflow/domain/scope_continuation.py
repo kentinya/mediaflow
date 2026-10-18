@@ -40,7 +40,7 @@ from mediaflow.domain.automation import AutomationJob
 #: asynchronous work, and the analysis/recovery continuation families have no
 #: remaining-scope contract of their own.  Those paths keep their Pause
 #: capability and explain their real reason instead.
-CONTINUABLE_TASK_COMMANDS = frozenset({"scan", "preview", "organize"})
+CONTINUABLE_TASK_COMMANDS = frozenset({"preview", "organize"})
 
 #: The single supported continuation boundary.  It names the exact durable
 #: evidence the Worker revalidates before any adapter is constructed.

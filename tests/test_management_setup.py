@@ -117,10 +117,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertFalse(readiness["runtimeConfigured"])
         self.assertFalse(readiness["workflowAvailable"])
         self.assertIsNone(readiness["active"])
-        self.assertEqual(
-            readiness["commandReadiness"]["scan"]["condition"],
-            "standalone_scan_retired",
-        )
+        self.assertNotIn("scan", readiness["commandReadiness"])
         self.assertEqual(
             readiness["commandReadiness"]["directTransfer"]["recoveryDestination"],
             "/ui-v2/configuration",

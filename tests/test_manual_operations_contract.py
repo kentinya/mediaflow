@@ -1,8 +1,8 @@
-"""Golden contract proof for the V2 bounded manual Scan/Preview API.
+"""Golden contract proof for the V2 bounded Preview API.
 
 This module drives the *real* ``MediaFlowApi`` over a real runtime
 configuration, a real ``LocalStorage`` source, a real scanner-produced
-FileIndex record and the real manual Scan/Preview services, and captures the
+FileIndex record and the real Preview services, and captures the
 exact bounded documents the V2 Operations workspace consumes:
 
 ``GET  /api/v1/operations/manual-actions``
@@ -479,14 +479,14 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertTrue(matrix["selectionRequired"])
         self.assertIsNone(matrix["scopeId"])
-        self.assertFalse(matrix["actions"]["scan"]["available"])
+        self.assertNotIn("scan", matrix["actions"])
         self.assertFalse(matrix["actions"]["preview"]["available"])
         self.assertEqual(
             ["library"],
             [item["resourceLibraryId"] for item in matrix["resourceLibraries"]],
         )
         self.assertTrue(matrix["resourceLibraries"][0]["enabled"])
-        self.assertEqual([], matrix["actions"]["scan"]["modes"])
+        self.assertNotIn("scan", matrix["actions"])
 
     def test_unknown_scope_kind_fails_closed(self) -> None:
         with self.fixture() as value:

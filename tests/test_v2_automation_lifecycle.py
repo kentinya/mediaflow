@@ -1200,10 +1200,10 @@ class AutomationLifecycleApiTests(unittest.TestCase):
             ({**_definition("a"), "sourceScope": "../escape"}, 400),
             ({**_definition("b"), "itemLimit": 10_001}, 400),
             # The legacy ``runMode`` alias is not a typed-form field.
-            ({**_definition("c"), "runMode": "scan-only"}, 400),
+            ({**_definition("c"), "runMode": "unsupported-mode"}, 400),
             # Each removed mode spelling is refused as a submitted value.
-            ({**_definition("c1"), "mode": "scan-only"}, 400),
-            ({**_definition("c2"), "mode": "scan-and-plan"}, 400),
+            ({**_definition("c1"), "mode": "unsupported-mode"}, 400),
+            ({**_definition("c2"), "mode": "unsupported-mode"}, 400),
             ({**_definition("c3"), "mode": "scan"}, 400),
             ({**_definition("c4"), "mode": "preview"}, 400),
             ({**_definition("d", enabled=True)}, 409),

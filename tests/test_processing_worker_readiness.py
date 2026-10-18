@@ -62,7 +62,7 @@ def _job(
 ) -> AutomationJob:
     return AutomationJob(
         job_id=job_id,
-        command=AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.SCAN,
+        command=AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.PREVIEW,
         status=status,
         created_at=updated_at - timedelta(minutes=1),
         updated_at=updated_at,

@@ -101,9 +101,7 @@ class UnattendedExecutionGrant:
         normalized_scope = AutomationTaskDefinition.normalize_scope(self.source_scope)
         object.__setattr__(self, "source_scope", normalized_scope)
         if not isinstance(self.run_mode, AutomationTaskRunMode):
-            object.__setattr__(
-                self, "run_mode", AutomationTaskRunMode.decode_recorded(self.run_mode)
-            )
+            object.__setattr__(self, "run_mode", AutomationTaskRunMode.parse(self.run_mode))
         if self.run_mode is not AutomationTaskRunMode.AUTOMATIC_ORGANIZATION:
             raise ValueError("unattended execution grants require automatic-organization mode")
         if (

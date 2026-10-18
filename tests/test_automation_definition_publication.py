@@ -147,7 +147,7 @@ def _occurrence(
         revision_id,
         version,
         digest,
-        AutomationTaskRunMode.RECORDED_SCAN_ONLY,
+        AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,
         "source",
         None,
         10,

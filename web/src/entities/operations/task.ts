@@ -66,7 +66,6 @@ export type TaskItemStatus = (typeof TASK_ITEM_STATUSES)[number];
 
 /** Bounded backend Task command families offered as an operator filter. */
 export const TASK_COMMAND_FILTERS = [
-  "scan",
   "preview",
   "organize",
   "retry",

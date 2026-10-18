@@ -25,6 +25,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskStatus,
     RunDisplayContext,
     TaskItemStatus,
+    require_retryable_task_command,
 )
 
 
@@ -896,8 +897,7 @@ class PersistentTaskCoordinator:
 
     def retryable_items(self, task_id: str, *, failed_only: bool) -> tuple[PersistentTaskItem, ...]:
         original = self.require(task_id)
-        if original.command == "scan":
-            raise ValueError("standalone_scan_retired: prepare a new organize summary")
+        require_retryable_task_command(original.command)
         statuses = (
             {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
             if failed_only

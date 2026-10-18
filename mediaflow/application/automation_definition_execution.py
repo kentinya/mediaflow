@@ -25,6 +25,7 @@ from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationFailureEvidence,
     AutomationTaskDefinition,
+    AutomationTaskRunMode,
 )
 from mediaflow.domain.library import ResourceLibrary, ScanMode
 from mediaflow.domain.storage import StorageError, StorageErrorCode
@@ -39,10 +40,7 @@ HistoryFactory = Callable[[str], object]
 class DefinitionScopedExecutionService:
     """Run one Scheduler-emitted definition through existing authorities.
 
-    Only the single retained ``automatic-organization`` intent is runnable.  A
-    pre-amendment Job that recorded ``scan-only`` or ``scan-and-plan`` stops at
-    this boundary with an unsupported-mode explanation instead of being
-    converted or handed to a compatible scan/plan executor.
+    Only a supported definition intent with explicit live authority can run.
     """
 
     def __init__(
@@ -77,28 +75,14 @@ class DefinitionScopedExecutionService:
         can never acquire mutation authority or a compatible executor.
         """
 
-        from mediaflow.application.automation import persisted_definition_origin
-
-        if job.command is AutomationCommand.SCAN and not persisted_definition_origin(
-            self._repository, job
-        ):
+        if job.command not in set(AutomationCommand):
             raise self._failure(
-                "standalone_scan_retired",
-                "no Task created; no discovery performed",
+                "unsupported_workflow",
+                "unsupported workflow; no Task or discovery started",
                 False,
-                "在任务中心新建整理并生成摘要。",
+                "submit a supported workflow",
             )
         definition = self._resolve_definition(job)
-        if not definition.mode.is_runnable:
-            raise self._failure(
-                "unsupported_definition_mode",
-                "the pinned Automation Task Definition records a removed mode "
-                f"{definition.mode.value!r}; it cannot be converted or executed and no Task "
-                "was created",
-                False,
-                "remove or correct the unsupported definition configuration; recorded history "
-                "and completed outcomes are preserved",
-            )
         resource = self._resolve_resource_library(definition)
         scope_root = self._resolve_scope_root(resource, definition, job)
 
@@ -213,6 +197,15 @@ class DefinitionScopedExecutionService:
                     False,
                     "validate and activate a corrected definition, then emit a new occurrence",
                 ) from error
+        try:
+            AutomationTaskRunMode.parse(definition.mode)
+        except ValueError as error:
+            raise self._failure(
+                "definition_invalid",
+                "unsupported definition mode; no Task was created",
+                False,
+                "validate the definition configuration before submitting work",
+            ) from error
         self._verify_definition_pins(job, definition)
         if not definition.enabled:
             raise self._failure(
@@ -272,16 +265,6 @@ class DefinitionScopedExecutionService:
                 "activate the intended definition content and emit a new occurrence",
             )
         expected_mode = definition.mode
-        if not expected_mode.is_runnable:
-            # A recorded pre-amendment mode has no definition-bound command, so
-            # there is nothing this Job could legally execute.
-            raise self._failure(
-                "unsupported_definition_mode",
-                "definition-pinned Job records a removed Automation mode",
-                False,
-                "remove or correct the unsupported definition configuration; recorded history "
-                "is preserved",
-            )
         expected_command = AutomationCommand.ORGANIZE
         if (
             job.run_mode != expected_mode

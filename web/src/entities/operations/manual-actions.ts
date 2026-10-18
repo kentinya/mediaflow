@@ -16,12 +16,9 @@ import {
   normalizeBoolean,
   normalizeBoundedCount,
   normalizeEnum,
-  normalizeEnumArray,
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
-const SCAN_MODES = ["full", "incremental"] as const;
-type ScanMode = (typeof SCAN_MODES)[number];
 
 export const MANUAL_ACTION_SCOPES = ["file", "resourceLibrary"] as const;
 export type ManualActionScope = (typeof MANUAL_ACTION_SCOPES)[number];
@@ -32,7 +29,6 @@ export interface ManualAction {
   readonly method: string | null;
   readonly path: string | null;
   readonly nextAction: string | null;
-  readonly modes: readonly ScanMode[];
 }
 
 export interface ManualActionSource {
@@ -51,7 +47,6 @@ export interface ManualActionSource {
 export interface ManualResourceLibraryChoice {
   readonly resourceLibraryId: string;
   readonly storageId: string | null;
-  readonly scanMode: string | null;
   readonly enabled: boolean;
   readonly reason: string | null;
 }
@@ -70,7 +65,6 @@ export interface ManualActionMatrixModel {
     readonly nextAction: string | null;
   };
   readonly actions: {
-    readonly scan: ManualAction;
     readonly preview: ManualAction;
     readonly organize: ManualAction;
   };
@@ -149,10 +143,6 @@ function optionalCount(
 
 function normalizeAction(value: unknown, field: string): ManualAction {
   const source = readRecord(value, field);
-  const rawModes = source["modes"] ?? [];
-  if (!Array.isArray(rawModes)) {
-    fail();
-  }
   try {
     return {
       available: flag(source, "available"),
@@ -160,7 +150,6 @@ function normalizeAction(value: unknown, field: string): ManualAction {
       method: optionalText(source, "method"),
       path: optionalText(source, "path"),
       nextAction: optionalText(source, "nextAction"),
-      modes: normalizeEnumArray(rawModes, `${field}.modes`, SCAN_MODES),
     };
   } catch {
     return fail();
@@ -195,7 +184,6 @@ function normalizeResourceLibraryChoice(
       resourceLibraryId:
         safeIdentityText(source, "resourceLibraryId") ?? fail(),
       storageId: safeIdentityText(source, "storageId"),
-      scanMode: optionalText(source, "scanMode"),
       enabled: flag(source, "enabled"),
       reason: optionalText(source, "reason"),
     };
@@ -247,7 +235,6 @@ export function normalizeManualActionMatrix(
         };
       })(),
       actions: {
-        scan: normalizeAction(actionsRaw["scan"], "actions.scan"),
         preview: normalizeAction(actionsRaw["preview"], "actions.preview"),
         organize: normalizeAction(
           actionsRaw["organize"] ?? {

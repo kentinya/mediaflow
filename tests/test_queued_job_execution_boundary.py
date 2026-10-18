@@ -493,14 +493,14 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
 
     def test_shared_worker_bridge_marks_only_plain_preview_jobs_analysis_only(self) -> None:
         """The shared queued Job Preview bridge (Jobs and Configuration first
-        Preview) routes command=preview as analysis-only, while scan and authorized
-        organize jobs keep their existing handoff."""
+        Preview) routes command=preview as analysis-only. Unsupported commands never
+        reach runtime resolution, while authorized organize keeps its own handoff."""
 
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
                 preview = service.submit("preview", limit=1)
-                with self.assertRaisesRegex(ValueError, "standalone_scan_retired"):
+                with self.assertRaisesRegex(ValueError, "automation command must be preview"):
                     service.submit("scan", limit=1)
                 calls = []
 

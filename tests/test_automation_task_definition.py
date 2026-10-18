@@ -174,32 +174,9 @@ class AutomationTaskDefinitionDomainTests(unittest.TestCase):
             (AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,),
         )
         self.assertTrue(AutomationTaskRunMode.AUTOMATIC_ORGANIZATION.is_runnable)
-        self.assertFalse(AutomationTaskRunMode.RECORDED_SCAN_ONLY.is_runnable)
-        self.assertFalse(AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN.is_runnable)
-        # A recorded historical value stays readable, but only through the
-        # explicit read-back decoder and never as a runnable definition.
-        self.assertIs(
-            AutomationTaskRunMode.decode_recorded("scan-only"),
-            AutomationTaskRunMode.RECORDED_SCAN_ONLY,
+        self.assertEqual(
+            tuple(AutomationTaskRunMode), (AutomationTaskRunMode.AUTOMATIC_ORGANIZATION,)
         )
-        self.assertIs(
-            AutomationTaskRunMode.decode_recorded("scan-and-plan"),
-            AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
-        )
-        for recorded in (
-            AutomationTaskRunMode.RECORDED_SCAN_ONLY,
-            AutomationTaskRunMode.RECORDED_SCAN_AND_PLAN,
-        ):
-            with self.subTest(recorded=recorded):
-                with self.assertRaises(ValueError):
-                    AutomationTaskDefinition(
-                        "task",
-                        "Task",
-                        "source",
-                        None,
-                        recorded,
-                        interval_seconds=60,
-                    )
 
     def test_resource_reference_must_exist_and_be_enabled(self) -> None:
         value = {

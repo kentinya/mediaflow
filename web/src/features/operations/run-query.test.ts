@@ -40,7 +40,7 @@ function runDocument(overrides: Record<string, unknown> = {}) {
   return {
     run_kind: "task",
     run_id: "task-1",
-    command: "scan",
+    command: "preview",
     command_label: "扫描",
     recognized_command: true,
     status: "running",

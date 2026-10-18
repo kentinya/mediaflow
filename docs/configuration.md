@@ -337,7 +337,7 @@ semantics. They include:
 - bounded manual Preview and reviewed one-shot manual execution;
 - processing checkpoint recovery and bounded batch recovery;
 - real configured Storage Files, separate FileIndex/current-source lifecycle and disposition,
-  bounded manual Scan and explicit Reprocess admission;
+  bounded Preview and explicit Reprocess admission;
 - conflict/review/recovery continuation with independent per-item outcomes;
 - Processing Worker registration/readiness, heartbeat, ownership and claim-fencing evidence;
 - Automation Task Definition validation/Preview, persistent scoped grant/revoke, occurrences and
@@ -370,14 +370,13 @@ The production CLI workflow remains explicit and DryRun-first:
 
 ```bash
 mediaflow config validate
-mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
 ```
 
-`scan`, parsing, recognition, metadata lookup, naming, classification, planning and Preview do not
-mutate media. Only an explicit execute boundary can reach `OrganizerExecutor`, and conflict,
+Parsing, recognition, metadata lookup, naming, classification, planning and Preview do not mutate
+media. Only an explicit execute boundary can reach `OrganizerExecutor`, and conflict,
 capability, overwrite and deletion rules remain in force.
 
 Configuration edits, validation, test evidence and activation do not start a scan or execute media

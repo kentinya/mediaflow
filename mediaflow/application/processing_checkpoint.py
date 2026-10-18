@@ -23,7 +23,7 @@ from mediaflow.domain.processing_checkpoint import (
     ProcessingCheckpointContext,
     RetrySafety,
 )
-from mediaflow.domain.task_persistence import TaskItemStatus
+from mediaflow.domain.task_persistence import TaskItemStatus, require_retryable_task_command
 
 _RAW_STAGE_MAP: dict[str, CheckpointStage] = {
     "pipeline": CheckpointStage.SCANNING,
@@ -398,6 +398,10 @@ class ProcessingCheckpointService:
             recovery_continuation=current_continuation,
             failure=failure,
         )
+        try:
+            require_retryable_task_command(task.command)
+        except ValueError:
+            retry_safety, actions, refusal = RetrySafety.UNSAFE, (), "unsupported Task command"
         if context.verified_recovery_follow_up:
             retry_safety = RetrySafety.UNSAFE
             actions = (

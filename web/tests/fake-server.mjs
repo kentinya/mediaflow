@@ -525,7 +525,7 @@ const FAKE_TASKS = [
       "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
     source_display: "/srv/media/private.mkv",
     source_fingerprint: "fingerprint-value",
-    command: "scan",
+    command: "preview",
     status: "completed",
     execute_authorized: false,
     created_at: "2026-08-22T12:00:00+00:00",
@@ -542,7 +542,7 @@ const FAKE_TASKS = [
   },
   {
     task_id: "task-002",
-    command: "scan",
+    command: "preview",
     status: "running",
     execute_authorized: false,
     created_at: "2026-08-22T12:10:00+00:00",
@@ -594,7 +594,7 @@ const FAKE_TASKS = [
   },
   {
     task_id: "task-004",
-    command: "scan",
+    command: "preview",
     status: "failed",
     execute_authorized: false,
     created_at: "2026-08-22T11:50:00+00:00",
@@ -675,7 +675,7 @@ const FAKE_TASKS = [
 const FAKE_JOBS = [
   {
     job_id: "job-001",
-    command: "scan",
+    command: "preview",
     status: "completed",
     created_at: "2026-08-22T12:00:00+00:00",
     updated_at: "2026-08-22T12:06:00+00:00",
@@ -693,7 +693,7 @@ const FAKE_JOBS = [
   },
   {
     job_id: "job-002",
-    command: "scan",
+    command: "preview",
     status: "pending",
     created_at: "2026-08-22T12:15:00+00:00",
     updated_at: "2026-08-22T12:15:00+00:00",

@@ -76,9 +76,9 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             load_runtime_configuration(literal)
 
     def test_schedules_cannot_gain_execute_authority(self) -> None:
-        with self.assertRaisesRegex(ValueError, "scan or preview"):
+        with self.assertRaisesRegex(ValueError, "schedule command must be preview"):
             IntervalSchedule("unsafe", "organize", 60)
-        with self.assertRaisesRegex(ValueError, "scan or preview"):
+        with self.assertRaisesRegex(ValueError, "schedule command must be preview"):
             CronSchedule("unsafe", "organize", "* * * * *", "UTC")
 
     def test_issue_persists_digest_only_and_audit(self) -> None:

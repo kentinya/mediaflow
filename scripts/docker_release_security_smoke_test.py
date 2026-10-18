@@ -844,8 +844,8 @@ def assert_v2_manual_organize(
         method="POST",
         body={"scopeKind": "resourceLibrary", "resourceLibraryId": "source", "mode": "full"},
     )
-    if status != 410 or refused.get("error", {}).get("code") != "standalone_scan_retired":
-        raise RuntimeError("standalone Scan did not refuse before creating work")
+    if status != 404 or refused.get("error", {}).get("code") != "not_found":
+        raise RuntimeError("unknown Scan route did not return ordinary not-found")
     discovery_code = r"""
 import os
 from mediaflow.application.scanner import StorageScanner

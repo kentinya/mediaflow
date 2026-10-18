@@ -317,8 +317,8 @@ class AutomationJobFencingTests(unittest.TestCase):
                 # Use distinct created_at timestamps so the claim order is stable.
                 for offset, command in enumerate(
                     (
-                        AutomationCommand.SCAN,
                         AutomationCommand.PREVIEW,
+                        AutomationCommand.ORGANIZE,
                         AutomationCommand.RECOVERY_CONTINUATION,
                     )
                 ):
@@ -340,8 +340,8 @@ class AutomationJobFencingTests(unittest.TestCase):
                     label="worker-other-snapshot",
                     heartbeat_interval_seconds=5.0,
                     supported_commands=(
-                        AutomationCommand.SCAN.value,
                         AutomationCommand.PREVIEW.value,
+                        AutomationCommand.ORGANIZE.value,
                         AutomationCommand.RECOVERY_CONTINUATION.value,
                     ),
                     configuration_snapshot_id="cfg-b",
@@ -359,8 +359,8 @@ class AutomationJobFencingTests(unittest.TestCase):
                     label="worker-matching",
                     heartbeat_interval_seconds=5.0,
                     supported_commands=(
-                        AutomationCommand.SCAN.value,
                         AutomationCommand.PREVIEW.value,
+                        AutomationCommand.ORGANIZE.value,
                         AutomationCommand.RECOVERY_CONTINUATION.value,
                     ),
                     configuration_snapshot_id="cfg-a",
@@ -369,8 +369,8 @@ class AutomationJobFencingTests(unittest.TestCase):
                     now=NOW,
                 )
                 for expected_command in (
-                    AutomationCommand.SCAN,
                     AutomationCommand.PREVIEW,
+                    AutomationCommand.ORGANIZE,
                     AutomationCommand.RECOVERY_CONTINUATION,
                 ):
                     claimed = repository.claim_next_job(NOW, worker_id="worker-matching")

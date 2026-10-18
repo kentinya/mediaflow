@@ -770,7 +770,7 @@ def seed(
     now = datetime.now(UTC)
     scheduled = AutomationJob(
         "harness-scheduled-job",
-        AutomationCommand.SCAN,
+        AutomationCommand.PREVIEW,
         AutomationJobStatus.PENDING,
         now + timedelta(seconds=1),
         now + timedelta(seconds=1),
@@ -783,7 +783,7 @@ def seed(
     # 3. Standalone durable Tasks through the production coordinator.
     coordinator = PersistentTaskCoordinator(repository, repository)
     coordinator.create(
-        "scan",
+        "preview",
         execute_authorized=False,
         scope_path="Movies/Harness",
     )

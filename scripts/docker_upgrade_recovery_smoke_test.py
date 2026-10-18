@@ -433,7 +433,7 @@ with (
         repository.create_job(
             AutomationJob(
                 "upgrade-completed-job",
-                AutomationCommand.SCAN,
+                AutomationCommand.PREVIEW,
                 AutomationJobStatus.COMPLETED,
                 NOW,
                 NOW,
@@ -447,7 +447,7 @@ with (
     if repository.get_schedule_state("hourly-scan") is None:
         scheduled = AutomationJob(
             "upgrade-scheduled-job",
-            AutomationCommand.SCAN,
+            AutomationCommand.PREVIEW,
             AutomationJobStatus.COMPLETED,
             NOW,
             NOW,

@@ -878,43 +878,29 @@ describe("automation run-mode vocabulary", () => {
     );
   });
 
-  it("reads a recorded historical mode without making the document malformed", () => {
-    // Persisted records created before the amendment still carry the removed
-    // spellings. They must stay readable as historical text — never converted,
-    // defaulted or offered — while a genuinely unknown value stays malformed.
-    for (const recorded of ["scan-only", "scan-and-plan"]) {
-      const page = normalizeAutomationDefinitionsPage(
-        definitionsPagePayload([
-          listDefinitionPayload("task-1", { mode: recorded }),
-        ]),
-      );
-      expect(page.items[0]?.document.mode).toBe(recorded);
-      expect(describeAutomationRunMode(recorded)).toBe(
-        `${recorded} (unsupported historical mode)`,
-      );
+  it("rejects unsupported definition and Preview modes without conversion", () => {
+    for (const mode of [
+      "scan-only",
+      "scan-and-plan",
+      "scan",
+      "preview",
+      "unknown",
+    ]) {
+      expect(() =>
+        normalizeAutomationDefinitionsPage(
+          definitionsPagePayload([listDefinitionPayload("task-1", { mode })]),
+        ),
+      ).toThrow(AutomationNormalizationError);
+      expect(() =>
+        normalizeAutomationPreview(
+          previewDocument((value) => {
+            value["runMode"] = mode;
+          }),
+        ),
+      ).toThrow(AutomationNormalizationError);
     }
-    expect(() =>
-      normalizeAutomationDefinitionsPage(
-        definitionsPagePayload([
-          listDefinitionPayload("task-1", { mode: "scan-and-hope" }),
-        ]),
-      ),
-    ).toThrow(AutomationNormalizationError);
-  });
-
-  it("reads a recorded historical Preview run mode without converting it", () => {
-    const preview = normalizeAutomationPreview(
-      previewDocument((value) => {
-        value["runMode"] = "scan-and-plan";
-      }),
-    );
-    expect(preview.runMode).toBe("scan-and-plan");
-    expect(() =>
-      normalizeAutomationPreview(
-        previewDocument((value) => {
-          value["runMode"] = "hacked";
-        }),
-      ),
-    ).toThrow(AutomationNormalizationError);
+    expect(
+      describeAutomationRunMode(AUTOMATION_AUTOMATIC_ORGANIZATION_MODE),
+    ).toBe(AUTOMATION_AUTOMATIC_ORGANIZATION_MODE);
   });
 });

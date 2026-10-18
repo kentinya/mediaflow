@@ -13,10 +13,8 @@
  * Progress honesty is task-kind aware rather than one blanket sum rule: an
  * exact-partition command (`manual_organize`, the bounded Files commands)
  * partitions one item list, so `completed + failed` may never exceed the
- * total, while a scan/preview/organize/retry or unknown legacy run may carry
- * independent scan errors beyond its known items (for example
- * `total=0, completed=0, failed=1`). One such honest production run must
- * render as a row instead of rejecting the whole page — the contradiction
+ * total, while a Preview/organize/retry or unknown legacy run may carry
+ * independent discovery errors beyond its known items. The contradiction
  * checks above the sum rule (required total, non-negative counts and
  * `completed <= total`) still fail closed for every command.
  *
@@ -438,9 +436,8 @@ const MEDIA_LIBRARY_COMMAND_PREFIX = "media_";
 /**
  * Commands whose items form one exact partition of `total_items`: a completed
  * or failed item is one of the listed items, so `completed + failed` may never
- * exceed the total. Every other family (scan, preview, organize, retry,
- * continuations, unknown legacy) may legally carry independent errors — a
- * production Scan reports scan errors next to a zero item list.
+ * exceed the total. Other pipeline and unknown legacy families may legally
+ * carry independent discovery errors beyond the admitted item list.
  */
 const EXACT_PARTITION_COMMAND_FAMILIES: ReadonlySet<string> = new Set([
   "manual_organize",
@@ -588,8 +585,8 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   ) {
     fail();
   }
-  // R4: only an exact-partition command must fit inside its total. Scan and
-  // pipeline runs may carry independent scan errors beyond the known items,
+  // R4: only an exact-partition command must fit inside its total. Pipeline
+  // runs may carry independent discovery errors beyond the known items,
   // so their sum is display evidence, never a malformedness claim.
   const family = commandFamily(command);
   if (

@@ -33,7 +33,6 @@ export const JOB_STATUSES = [
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export const JOB_COMMANDS = [
-  "scan",
   "preview",
   "organize",
   "file-metadata-correction",
@@ -41,11 +40,7 @@ export const JOB_COMMANDS = [
 ] as const;
 export type JobCommand = (typeof JOB_COMMANDS)[number];
 
-export const JOB_RUN_MODES = [
-  "scan-only",
-  "scan-and-plan",
-  "automatic-organization",
-] as const;
+export const JOB_RUN_MODES = ["automatic-organization"] as const;
 export type JobRunMode = (typeof JOB_RUN_MODES)[number];
 
 export const JOB_OWNER_STATUSES = ["live", "stale", "stopped"] as const;

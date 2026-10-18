@@ -348,7 +348,7 @@ class AuthorizedOperationMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("automatic-organization", execute_authorized=True)
+                task = coordinator.create("organize", execute_authorized=True)
                 item = PersistentTaskItem(
                     "partial-item",
                     task.task_id,

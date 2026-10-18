@@ -24,7 +24,6 @@
     "workerPollSeconds": 2,
     "schedulerPollSeconds": 5,
     "schedules": [
-      {"id": "hourly-scan", "command": "scan", "intervalSeconds": 3600, "limit": 20, "enabled": false},
       {"id": "daily-preview", "command": "preview", "intervalSeconds": 86400, "limit": 20, "enabled": false},
       {"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *", "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
     ]
@@ -312,7 +311,7 @@
     },
     "persistence": {
       "databasePath": ".mediaflow/mediaflow.sqlite3",
-      "notice": "Config validation does not create it; runtime scan/preview/organize/tasks do"
+      "notice": "Config validation does not create it; runtime preview/organize/tasks do"
     },
     "pathSemantics": {
       "storageRootPath": "Adapter-owned root; Local may be absolute and OpenList is an API path",
@@ -642,7 +641,6 @@
     },
     "commands": [
       "mediaflow config validate",
-      "mediaflow scan --limit 20",
       "mediaflow preview --limit 20",
       "mediaflow organize --limit 20",
       "mediaflow organize --execute --limit 20",

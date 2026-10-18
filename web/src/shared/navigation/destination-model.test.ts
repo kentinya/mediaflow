@@ -30,8 +30,6 @@ describe("destination model", () => {
       "Task detail",
       "Job list",
       "Job detail",
-      "扫描已退役",
-      "扫描已退役",
       "Start Preview",
       "Preview detail",
       "Manual organize",

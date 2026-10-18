@@ -40,8 +40,8 @@ function runDocument(overrides: Record<string, unknown> = {}) {
   return {
     run_kind: "task",
     run_id: "task-001",
-    command: "scan",
-    command_label: "扫描",
+    command: "preview",
+    command_label: "预览",
     recognized_command: true,
     status: "running",
     trigger: "manual",
@@ -177,7 +177,6 @@ function manualActionsPayload() {
     ],
     runtime: { ready: true, condition: "ready", nextAction: null },
     actions: {
-      scan: { available: true, reason: null },
       preview: { available: true, reason: null },
       organize: { available: false, reason: "not advertised" },
     },
@@ -278,7 +277,7 @@ describe("Operations run inventory landing", () => {
 
     await screen.findByRole("heading", { name: "任务中心" });
     // Chinese business labels describe operation and state.
-    expect((await screen.findAllByText("扫描")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("预览")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("失败").length).toBeGreaterThan(0);
     // The unknown legacy command stays honest.
@@ -501,7 +500,7 @@ describe("Operations run inventory landing", () => {
     renderApp("/ui-v2/operations");
 
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByRole("button", { name: /扫描/ }));
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
     await waitFor(() => expect(overviewRead).toBe(true));
     const detail = await screen.findByRole("region", { name: "运行详情" });
     expect(await within(detail).findByText("手动")).toBeVisible();
@@ -1361,7 +1360,7 @@ describe("Operations run inventory landing", () => {
     renderApp("/ui-v2/operations");
 
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByRole("button", { name: /扫描/ }));
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
     await screen.findByRole("region", { name: "运行详情" });
     const overviewReads = () =>
       requested.filter((url) => url.startsWith("/api/v1/operations/runs/"))
@@ -1410,7 +1409,7 @@ describe("Operations run inventory landing", () => {
     const { router } = renderApp("/ui-v2/operations");
 
     const table = await screen.findByRole("table");
-    await user.click(within(table).getByRole("button", { name: /扫描/ }));
+    await user.click(within(table).getByRole("button", { name: /预览/ }));
     const detail = await screen.findByRole("region", { name: "运行详情" });
     await waitFor(() =>
       expect(router.history.location.search).toContain("run=task-001"),
@@ -1620,7 +1619,7 @@ describe("selected run lifecycle controls", () => {
           taskId: "task-001",
           task: {
             task_id: "task-001",
-            command: "scan",
+            command: "preview",
             status: "running",
             execute_authorized: false,
             created_at: "2026-08-22T12:00:00+00:00",
@@ -1788,7 +1787,7 @@ describe("selected run lifecycle controls", () => {
         continuation: {
           continuationId: "continuation-1",
           status: "queued",
-          command: "scan",
+          command: "preview",
           jobId: "job-1",
           newTaskId: "task-linked",
           itemLimit: 2,

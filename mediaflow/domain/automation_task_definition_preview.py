@@ -535,12 +535,8 @@ class AutomationTaskDefinitionPreview:
                 or "\x00" in self.source_scope
             ):
                 raise ValueError("automation Preview source scope is invalid")
-        if (
-            not isinstance(self.run_mode, str)
-            or not self.run_mode.strip()
-            or len(self.run_mode) > 64
-        ):
-            raise ValueError("automation Preview run mode is invalid")
+        if self.run_mode != "automatic-organization":
+            raise ValueError("automation Preview mode must be automatic-organization")
         if (
             isinstance(self.effective_item_limit, bool)
             or not isinstance(self.effective_item_limit, int)

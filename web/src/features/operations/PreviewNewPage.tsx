@@ -331,18 +331,6 @@ export function PreviewNewPage() {
                     </p>
                   )}
                 </section>
-                <section className="mf-count-section">
-                  <h3>Scan action</h3>
-                  <p className="mf-dashboard-meta">
-                    Scan discovers and indexes source files without mutation.
-                  </p>
-                  <ActionAvailability
-                    label="Scan"
-                    available={matrix.actions.scan.available}
-                    reason={matrix.actions.scan.reason}
-                    nextAction={matrix.actions.scan.nextAction}
-                  />
-                </section>
                 <div className="mf-actions">
                   <Button
                     type="button"

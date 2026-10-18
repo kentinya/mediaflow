@@ -46,7 +46,6 @@ import {
 import { automationListQueryKey } from "./automation-query";
 import {
   AUTOMATION_AUTOMATIC_ORGANIZATION_MODE,
-  isRecordedAutomationRunMode,
   type AutomationDocumentRunMode,
 } from "../../entities/operations/automation";
 import type { AutomationEditProjectionModel } from "../../entities/operations/automation-lifecycle";
@@ -156,19 +155,11 @@ function buildCandidate(form: FormState): Record<string, unknown> {
 /** A supported interval value: any finite positive decimal number. */
 const INTERVAL_PATTERN = /^\d+(\.\d+)?$/;
 
-function formIsValid(
-  form: FormState,
-  editing: boolean,
-  modeCorrectionConfirmed: boolean,
-): boolean {
+function formIsValid(form: FormState, editing: boolean): boolean {
   const itemLimit = Number(form.itemLimit);
   const intervalValue = Number(form.intervalSeconds);
   return (
     (editing || form.id.trim().length > 0) &&
-    // A definition that still records a removed mode stays readable as
-    // history, but publishing it as the retained intent is an explicit
-    // correction: the operator must confirm it. Nothing is rewritten silently.
-    (!isRecordedAutomationRunMode(form.mode) || modeCorrectionConfirmed) &&
     form.name.trim().length > 0 &&
     form.resourceLibraryId.length > 0 &&
     /^\d+$/.test(form.itemLimit) &&
@@ -410,7 +401,6 @@ export function AutomationLifecyclePage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const [confirmModeCorrection, setConfirmModeCorrection] = useState(false);
   // One submitted-but-unconfirmed Copy command: while its outcome is unknown,
   // no second Copy is offered until it is reconciled from durable evidence.
   // The intent survives a real page reload (identity + observed authority
@@ -982,7 +972,7 @@ export function AutomationLifecyclePage() {
             </StatusBanner>
           );
         }
-        const valid = formIsValid(currentForm, editing, confirmModeCorrection);
+        const valid = formIsValid(currentForm, editing);
         const update = (patch: Partial<FormState>) =>
           setFormEntry({
             key: formContextKey,
@@ -1196,33 +1186,8 @@ export function AutomationLifecyclePage() {
                 data-testid="lifecycle-mode-intent"
               >
                 {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}（自动整理）是固定意图，
-                这里没有模式选择器。已移除的历史模式不会被提供、转换或兼容执行。
+                这里没有模式选择器。
               </p>
-              {isRecordedAutomationRunMode(currentForm.mode) && (
-                <StatusBanner
-                  variant="info"
-                  title="Unsupported historical run mode"
-                >
-                  <p>
-                    This definition records the removed mode{" "}
-                    <strong>{currentForm.mode}</strong>. It is displayed as
-                    history only and is never selectable. Saving publishes{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE} as the explicit
-                    correction; nothing is rewritten automatically.
-                  </p>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={confirmModeCorrection}
-                      onChange={(event) =>
-                        setConfirmModeCorrection(event.target.checked)
-                      }
-                    />{" "}
-                    Publish this definition as{" "}
-                    {AUTOMATION_AUTOMATIC_ORGANIZATION_MODE}
-                  </label>
-                </StatusBanner>
-              )}
               <p className="mf-label">
                 <label htmlFor="lifecycle-limit">Item limit</label>
               </p>

@@ -201,7 +201,7 @@ test("Zero-mutation Preview admission submits one exact request and lands on the
   }
 });
 
-test("Unauthenticated deep entry stays behind the connection boundary", async ({
+test("removed Scan deep links render the ordinary not-found route", async ({
   page,
 }) => {
   const apiRequests: string[] = [];
@@ -211,11 +211,13 @@ test("Unauthenticated deep entry stays behind the connection boundary", async ({
     }
   });
 
-  await page.goto(
-    "/ui-v2/operations/scan/new?scopeKind=file&fileId=file-index-example&resourceLibraryId=resources",
-  );
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Connect" })).toBeVisible();
+  await page.goto("/ui-v2/operations/scan/new");
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Connect API token" }),
+  ).toBeVisible();
   expect(
     apiRequests.filter((url) => url.includes("/api/v1/manual-actions")),
   ).toHaveLength(0);
@@ -223,15 +225,10 @@ test("Unauthenticated deep entry stays behind the connection boundary", async ({
     apiRequests.filter((url) => url.includes("/api/v1/scans")),
   ).toHaveLength(0);
 
-  // Connecting continues to the same deep entry with memory-only authority.
-  await connect(page, VIEWER_TOKEN);
-  await expect(
-    page.getByRole("heading", { name: "独立扫描已退役" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Submit bounded Scan" }),
-  ).toHaveCount(0);
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await page.getByRole("link", { name: "Connect API token" }).click();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/dashboard$/);
   expect(
     apiRequests.filter((url) => url.includes("/api/v1/manual-actions")).length,
   ).toBe(0);

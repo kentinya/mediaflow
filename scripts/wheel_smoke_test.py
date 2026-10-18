@@ -16,6 +16,19 @@ def run(command: list[str], *, cwd: Path, environment: dict[str, str] | None = N
     subprocess.run(command, cwd=cwd, env=environment, check=True)  # noqa: S603
 
 
+def capture(
+    command: list[str], *, cwd: Path, environment: dict[str, str]
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )  # noqa: S603
+
+
 def inspect_wheel(wheel: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
@@ -68,6 +81,34 @@ def smoke(wheel: Path, project: Path) -> None:
             environment=environment,
         )
         run([str(mediaflow), "--help"], cwd=root, environment=environment)
+        help_result = capture([str(mediaflow), "--help"], cwd=root, environment=environment)
+        if help_result.returncode or "scan" in help_result.stdout.lower():
+            raise RuntimeError("installed-wheel CLI help exposes Scan or failed")
+        for command in (["scan"], ["jobs", "submit", "scan"]):
+            rejected = capture([str(mediaflow), *command], cwd=root, environment=environment)
+            if rejected.returncode != 2 or "invalid choice" not in rejected.stderr:
+                raise RuntimeError(
+                    f"installed-wheel CLI did not use the ordinary argparse boundary: {command}"
+                )
+        mode_check = capture(
+            [
+                str(python),
+                "-c",
+                "from mediaflow.domain.automation import AutomationCommand, "
+                "AutomationTaskRunMode; "
+                "assert 'scan' not in [item.value for item in AutomationCommand]; "
+                "assert 'scan-only' not in [item.value for item in AutomationTaskRunMode]; "
+                "assert 'scan-and-plan' not in [item.value for item in AutomationTaskRunMode]; "
+                "import mediaflow.domain.automation as automation; "
+                "assert not hasattr(automation, 'ManualScanTask')",
+            ],
+            cwd=root,
+            environment=environment,
+        )
+        if mode_check.returncode:
+            raise RuntimeError(
+                "installed wheel contains a removed Scan mode/model: " + mode_check.stderr
+            )
         database = root / "runtime.sqlite3"
         run(
             [

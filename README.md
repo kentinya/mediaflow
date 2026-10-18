@@ -110,22 +110,19 @@ mediaflow files list --media-library media --path "Movies" --limit 100
 ```
 
 Choose exactly one library; omit `--path` to list its root and use the returned `--cursor` for the
-next page. Global catalog filters, file-ID detail/statistics and standalone Scan are retiring.
+next page. Global catalog filters and file-ID detail/statistics remain outside this live-list target.
 The service has not launched, so this work does not provide old FileIndex production-data migration
 or history compatibility. See [the FileIndex retirement target](docs/file-index-retirement-spec.md).
 Task/Result/audit and source-safety persistence for explicit work remain required.
 
-The 2026-10-18 Scan TARGET treats the service as a first deployment: remove standalone Scan and
-scan-only/scan-and-plan definition modes, including routes/aliases, CLI registration/help and dedicated
-retirement pages/errors/guards. Old inputs use ordinary not-found/argument/unsupported-type errors;
-no old Scan/V1 compatibility is provided. Shared discovery/filtering/real stability/planning, supported
-diagnostic Preview/DryRun and supported-work restart/recovery remain. This is pending implementation,
-not permission to clear existing databases/media or a claim that the baseline below has changed.
+The active Slice45 Contract treats the service as a first deployment: there is no standalone Scan
+workflow or scan-only/scan-and-plan Automation mode. Shared discovery/filtering/real stability and
+planning remain part of supported Preview and organization workflows. Unknown old routes and commands
+use ordinary not-found/argument errors; no old Scan/V1 compatibility is provided.
 
 ### Baseline command reference
 
-The examples below describe the implementation baseline. FileIndex and standalone Scan examples
-are scheduled for removal under Slice45; they do not define the new target behavior.
+The examples below describe currently supported command-line workflows.
 
 ```bash
 mediaflow analyze "/path/to/movie.mkv"
@@ -137,7 +134,6 @@ mediaflow config draft-validate REVISION_ID
 mediaflow config activate REVISION_ID --expected-version VERSION
 mediaflow dashboard --recent-limit 10
 mediaflow files list --limit 100
-mediaflow files list --resource-library source --scan-status ready --query movie
 mediaflow files list --after 2026-08-23T12:00:00+00:00 --cursor-file-id FILE_ID --limit 100
 mediaflow files list --recognition-type C --provider-id 101 --title Matrix --year 1999 --limit 100
 mediaflow files show FILE_ID
@@ -160,7 +156,6 @@ mediaflow tasks ignore-pending --task-id TASK_ID --actor operator --limit 20
 mediaflow classification-reviews list --limit 100
 mediaflow classification-reviews show REVIEW_ID
 mediaflow classification-reviews resolve REVIEW_ID --choice-rank 1
-mediaflow scan --limit 20
 mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
@@ -175,7 +170,6 @@ mediaflow tasks show TASK_ID
 mediaflow tasks pause TASK_ID
 mediaflow tasks resume TASK_ID
 mediaflow tasks retry-failed TASK_ID --execute
-mediaflow jobs submit scan --limit 20
 mediaflow jobs submit preview --limit 20
 mediaflow jobs list
 mediaflow worker run-next
@@ -231,8 +225,7 @@ explicit basename patterns such as `.DS_Store`; unknown files, links, subdirecto
 boundary changes, COPY/LINK, DryRun, failed/partial execution and rollback all prevent cleanup.
 The configured ResourceLibrary `storagePath` is an exclusive boundary and is never deleted.
 
-With no path argument, `scan`, `preview`, and `organize` iterate every enabled configured
-ResourceLibrary. The former path-taking preview/organize forms remain available for compatibility.
+With no path argument, `preview` and `organize` iterate every enabled configured ResourceLibrary.
 
 The portable plan retains both Storage identities, for example source
 `source-storage:Media/电影/Movie.mkv` and destination
@@ -314,9 +307,9 @@ environment; JSON contains only their environment-variable names and least-privi
 `GET /health` is public. Every `/api/v1` request requires
 `Authorization: Bearer $MEDIAFLOW_API_TOKEN`. Roles are `viewer`, `operator`, `executor`,
 `auditor`, and `admin`; executor permission is necessary but not sufficient for real organization.
-The API can query tasks, jobs, and pending confirmations, and it accepts bounded `scan`, `preview`
-and `organize` Job submissions. Run one queued item with `mediaflow worker run-next`; scan and
-preview are always DryRun/zero-mutation. Organize is accepted only through the separate
+The API can query tasks, jobs, and pending confirmations, and it accepts bounded `preview` and
+`organize` Job submissions. Run one queued item with `mediaflow worker run-next`; Preview is
+always DryRun/zero-mutation. Organize is accepted only through the separate
 disabled-by-default one-time authorization boundary documented below. Remote overwrite, delete, and
 conflict resolution remain rejected. This standard-library server is for trusted loopback
 development use, not direct Internet exposure.
@@ -394,7 +387,7 @@ mediaflow worker run-next
 ```
 
 The raw authorization token is displayed once and only its SHA-256 digest is persisted. Consumption
-and Job creation are atomic. Scheduler configurations remain scan/preview-only, and all existing
+and Job creation are atomic. Scheduler configurations remain Preview-only, and all existing
 conflict/no-overwrite/OrganizerExecutor checks still apply.
 
 For V2 interactive operation, the routine Web flow reviews an exact durable Preview and submits one
@@ -551,7 +544,7 @@ remain deployment responsibilities rather than hidden MediaFlow behavior.
 
 ## Persistent runtime state
 
-Production scan/preview/organize use the configured SQLite database:
+Production preview/organize use the configured SQLite database:
 
 ```json
 "persistence": {"databasePath": ".mediaflow/mediaflow.sqlite3"}

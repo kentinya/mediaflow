@@ -11,7 +11,7 @@ function runDocument(overrides: Record<string, unknown> = {}) {
   return {
     run_kind: "task",
     run_id: "task-1",
-    command: "scan",
+    command: "preview",
     command_label: "扫描",
     recognized_command: true,
     status: "completed",
@@ -170,7 +170,7 @@ describe("run summary normalization", () => {
     expect(() =>
       normalizeRunSummary(
         runDocument({
-          command: "scan",
+          command: "preview",
           total_items: 1,
           completed_items: 2,
           failed_items: 0,
@@ -206,7 +206,7 @@ describe("run summary normalization", () => {
     // render as a row instead of rejecting the whole page.
     const scanError = normalizeRunSummary(
       runDocument({
-        command: "scan",
+        command: "preview",
         total_items: 0,
         completed_items: 0,
         failed_items: 1,

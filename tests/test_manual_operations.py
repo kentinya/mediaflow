@@ -1,10 +1,10 @@
-"""Tests for the V2 bounded manual Scan/Preview API surface.
+"""Tests for the V2 bounded Preview API surface.
 
 Covers:
-- Server-bound scan admission (no fingerprint echo)
+- Server-bound Preview admission (no fingerprint echo)
 - Server-bound preview admission (no fingerprint echo)
 - Bounded action matrix projection
-- Bounded scan and preview operator documents
+- Bounded Preview operator documents
 - Preview zero-mutation invariant
 - Error/failure states are truthfully projected
 """
@@ -501,7 +501,7 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("file", body["scopeKind"])
         self.assertIsNotNone(body["source"])
-        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertNotIn("scan", body["actions"])
         self.assertTrue(body["actions"]["preview"]["available"])
 
     def test_action_matrix_with_unavailable_scan_service_offers_no_submission(self) -> None:
@@ -525,8 +525,8 @@ class ActionMatrixTests(unittest.TestCase):
             "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
-        self.assertFalse(body["actions"]["scan"]["available"])
-        self.assertIn("已退役", body["actions"]["scan"]["reason"])
+        self.assertNotIn("scan", body["actions"])
+        self.assertNotIn("scan", body["actions"])
         post_status, post_body = _post(
             api,
             "/api/v1/operations/scans",
@@ -536,8 +536,8 @@ class ActionMatrixTests(unittest.TestCase):
                 "mode": "full",
             },
         )
-        self.assertEqual(410, post_status)
-        self.assertEqual("standalone_scan_retired", post_body["error"]["code"])
+        self.assertEqual(404, post_status)
+        self.assertEqual("not_found", post_body["error"]["code"])
 
     def test_action_matrix_with_unavailable_preview_service_offers_no_submission(self) -> None:
         """Preview availability also requires its bound application service."""
@@ -583,8 +583,8 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual("resourceLibrary", body["scopeKind"])
         self.assertEqual("library", body["scopeId"])
         self.assertFalse(body["selectionRequired"])
-        self.assertFalse(body["actions"]["scan"]["available"])
-        self.assertEqual([], body["actions"]["scan"]["modes"])
+        self.assertNotIn("scan", body["actions"])
+        self.assertNotIn("scan", body["actions"])
 
     def test_library_discovery_matrix_offers_no_action_without_a_selection(self) -> None:
         api = self._make_api()
@@ -597,9 +597,9 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertIsNone(body["scopeId"])
         self.assertTrue(body["selectionRequired"])
         self.assertIsNone(body["source"])
-        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertNotIn("scan", body["actions"])
         self.assertFalse(body["actions"]["preview"]["available"])
-        self.assertIn("已退役", body["actions"]["scan"]["reason"])
+        self.assertNotIn("scan", body["actions"])
         self.assertEqual(
             ["library"], [item["resourceLibraryId"] for item in body["resourceLibraries"]]
         )
@@ -613,7 +613,7 @@ class ActionMatrixTests(unittest.TestCase):
             f"/api/v1/operations/manual-actions?scopeKind=file&fileId={record.file_id}&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
-        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertNotIn("scan", body["actions"])
 
     def test_file_not_found_returns_unavailable(self) -> None:
         api = self._make_api()
@@ -622,7 +622,7 @@ class ActionMatrixTests(unittest.TestCase):
             "/api/v1/operations/manual-actions?scopeKind=file&fileId=nonexistent&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
-        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertNotIn("scan", body["actions"])
         self.assertFalse(body["actions"]["preview"]["available"])
 
     def test_unknown_scope_kind_fails_closed(self) -> None:
@@ -657,7 +657,7 @@ class ActionMatrixTests(unittest.TestCase):
             "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=disabled",
         )
         self.assertEqual(200, status)
-        self.assertFalse(body["actions"]["scan"]["available"])
+        self.assertNotIn("scan", body["actions"])
 
     def test_action_matrix_redacts_credential_shaped_file_labels(self) -> None:
         """A FileIndex filename cannot bypass the Operations redaction boundary."""

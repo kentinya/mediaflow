@@ -5648,7 +5648,7 @@ class SQLiteTaskRepository:
                    (SELECT CASE
                        WHEN COUNT(DISTINCT CASE
                            WHEN current_items.stage IN (
-                               'scanning', 'manual_scan_discovery', 'discovery'
+                               'scanning', 'discovery'
                            ) THEN 'scanning'
                            WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
                                THEN 'organizing'
@@ -5656,7 +5656,7 @@ class SQLiteTaskRepository:
                            ELSE 'unknown'
                        END) = 1 THEN MAX(CASE
                            WHEN current_items.stage IN (
-                               'scanning', 'manual_scan_discovery', 'discovery'
+                               'scanning', 'discovery'
                            ) THEN 'scanning'
                            WHEN current_items.stage IN ('organizing', 'storage', 'strategy')
                                THEN 'organizing'
@@ -8050,7 +8050,9 @@ class SQLiteTaskRepository:
                         occurrence_at.isoformat(),
                         now.isoformat(),
                         job.job_id,
-                        job.command.value,
+                        job.command.value
+                        if isinstance(job.command, AutomationCommand)
+                        else str(job.command),
                         next_run_at.isoformat(),
                     ),
                 )
@@ -8113,7 +8115,7 @@ class SQLiteTaskRepository:
                 datetime.fromisoformat(row["occurrence_at"]),
                 datetime.fromisoformat(row["emitted_at"]),
                 row["job_id"],
-                AutomationCommand(row["command"]),
+                next((c for c in AutomationCommand if c.value == row["command"]), row["command"]),
                 datetime.fromisoformat(row["next_run_at"]),
             )
             for row in rows
@@ -17442,7 +17444,7 @@ class SQLiteTaskRepository:
     def _job_values(job: AutomationJob) -> tuple[object, ...]:
         return (
             job.job_id,
-            job.command.value,
+            job.command.value if isinstance(job.command, AutomationCommand) else str(job.command),
             job.status.value,
             job.created_at.isoformat(),
             job.updated_at.isoformat(),
@@ -17502,7 +17504,7 @@ class SQLiteTaskRepository:
     def _job(row: sqlite3.Row) -> AutomationJob:
         return AutomationJob(
             row["job_id"],
-            AutomationCommand(row["command"]),
+            next((c for c in AutomationCommand if c.value == row["command"]), row["command"]),
             AutomationJobStatus(row["status"]),
             datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]),
@@ -17527,7 +17529,7 @@ class SQLiteTaskRepository:
             row["definition_fingerprint"],
             row["definition_version"],
             datetime.fromisoformat(row["occurrence_at"]) if row["occurrence_at"] else None,
-            (AutomationTaskRunMode.decode_recorded(row["run_mode"]) if row["run_mode"] else None),
+            (AutomationTaskRunMode.parse(row["run_mode"]) if row["run_mode"] else None),
             row["resource_library_id"],
             row["source_scope"],
             row["configuration_snapshot_version"],
@@ -17567,7 +17569,7 @@ class SQLiteTaskRepository:
             row["configuration_revision_id"],
             int(row["configuration_revision_version"]),
             row["configuration_revision_digest"],
-            AutomationTaskRunMode.decode_recorded(row["run_mode"]),
+            AutomationTaskRunMode.parse(row["run_mode"]),
             row["resource_library_id"],
             row["source_scope"],
             int(row["item_limit"]),

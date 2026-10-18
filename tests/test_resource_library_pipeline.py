@@ -4,6 +4,7 @@ import io
 import posixpath
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -123,11 +124,13 @@ class MemoryStorage:
 
 
 class ResourceLibraryPipelineTests(unittest.TestCase):
-    def test_scan_cli_is_retired_before_configuration_or_metadata(self) -> None:
+    def test_scan_cli_is_an_unknown_command_before_configuration_or_metadata(self) -> None:
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch("mediaflow.final_cli._configuration", side_effect=AssertionError):
-            self.assertNotEqual(0, final_main(["scan"], stdout=stdout, stderr=stderr))
-        self.assertIn("standalone_scan_retired", stderr.getvalue())
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                final_main(["scan"], stdout=stdout, stderr=stderr)
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("invalid choice", stderr.getvalue())
 
     def test_scans_local_and_mock_openlist_without_mutation(self) -> None:
         local = MemoryStorage("local", {"Movies/Local.2024.mkv": b"local"})

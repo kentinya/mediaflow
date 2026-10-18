@@ -64,38 +64,6 @@ class AutomationWorkflowFailed(RuntimeError):
         self.evidence = evidence
 
 
-def persisted_definition_origin(repository, job: AutomationJob) -> bool:
-    """Only the Scheduler's exact durable occurrence proves a definition origin."""
-    if not job.definition_pinned:
-        return False
-    reader = getattr(repository, "list_automation_definition_occurrences", None)
-    stored = repository.get_job(job.job_id)
-    if (
-        not callable(reader)
-        or stored is None
-        or stored.definition_id != job.definition_id
-        or stored.occurrence_at != job.occurrence_at
-    ):
-        return False
-    # The repository's bounded keyset pages keep old occurrences reachable.
-    after = None
-    while True:
-        page = reader(job.definition_id, limit=100, after=after)
-        for occurrence in page:
-            if occurrence.job_id != job.job_id:
-                continue
-            # Full definition/pin/scope validation remains the existing
-            # DefinitionScopedExecutionService's authority before discovery.
-            return (
-                occurrence.definition_id == job.definition_id
-                and occurrence.occurrence_at == job.occurrence_at
-            )
-        if len(page) < 100:
-            return False
-        last = page[-1]
-        after = (last.emitted_at, last.occurrence_id)
-
-
 class AutomationJobService:
     """Queues only the mutation-free workflows admitted by the service boundary."""
 
@@ -143,14 +111,9 @@ class AutomationJobService:
         try:
             parsed = AutomationCommand(command)
         except ValueError as error:
-            raise ValueError("automation command must be scan or preview") from error
-        if parsed is AutomationCommand.SCAN:
-            raise ValueError(
-                "standalone_scan_retired: independent Scan is retired; no work was created. "
-                "Create an organize summary in the task center."
-            )
-        if parsed not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
-            raise ValueError("automation command must be scan or preview")
+            raise ValueError("automation command must be preview") from error
+        if parsed is not AutomationCommand.PREVIEW:
+            raise ValueError("automation command must be preview")
         if limit is not None and (
             isinstance(limit, bool)
             or not isinstance(limit, int)
@@ -785,16 +748,14 @@ class AutomationWorker:
 
             if cancelled():
                 raise AutomationCancelled()
-            if job.command is AutomationCommand.SCAN and not persisted_definition_origin(
-                self._repository, job
-            ):
+            if job.command not in set(AutomationCommand):
                 raise AutomationConfigurationUnavailable(
                     AutomationFailureEvidence(
-                        "standalone_scan_retired",
-                        "no Task created; no discovery performed",
+                        "unsupported_workflow",
+                        "unsupported workflow; no Task or discovery started",
                         "none",
                         False,
-                        "在任务中心新建整理并生成摘要。",
+                        "submit a supported workflow",
                     )
                 )
             task_id = self._handler(job, cancelled)
@@ -1154,8 +1115,6 @@ class IntervalScheduler:
             raise ValueError("scheduler tick time must include a timezone")
         queued = []
         for schedule in schedules:
-            if schedule.command is AutomationCommand.SCAN:
-                continue  # Independent Scan is retired; no Job or occurrence is emitted.
             if not schedule.enabled:
                 continue
             state = self._repository.get_schedule_state(schedule.schedule_id)
@@ -1653,10 +1612,7 @@ def _command_for_definition_mode(mode: AutomationTaskRunMode) -> AutomationComma
     """
 
     if not isinstance(mode, AutomationTaskRunMode) or not mode.is_runnable:
-        raise ValueError(
-            "only automatic-organization definitions have a runnable command; "
-            "scan-only and scan-and-plan are unsupported"
-        )
+        raise ValueError("unsupported definition mode; expected automatic-organization")
     return AutomationCommand.ORGANIZE
 
 

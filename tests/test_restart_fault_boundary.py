@@ -163,7 +163,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                 first_process.create_job(
                     AutomationJob(
                         job_id,
-                        AutomationCommand.SCAN,
+                        AutomationCommand.PREVIEW,
                         AutomationJobStatus.PENDING,
                         old,
                         old,

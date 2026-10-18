@@ -354,7 +354,7 @@ class ScopeContinuationTests(unittest.TestCase):
                 for value in ("scan", "preview", "organize")
                 if is_continuable_task_command(value)
             },
-            {"scan", "preview", "organize"},
+            {"preview", "organize"},
         )
         for command in (
             "manual_organize",

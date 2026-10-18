@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production Scan refusal and fresh stable-size organization, using isolated Local media."""
+"""First-deployment Scan absence and fresh stable-size organization proof."""
 
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ const connect = async (url) => {
 };
 try {
   await connect('/ui-v2/operations/scan/old');
-  await expect(page.getByRole('heading',{name:'独立扫描已退役'})).toBeVisible();
-  await page.screenshot({path:output+'/retired-380.png',fullPage:true});
+  await expect(page.getByRole('heading',{name:'Route not found'})).toBeVisible();
+  await page.screenshot({path:output+'/not-found-380.png',fullPage:true});
   await connect('/ui-v2/resourcelib/files?resourceLibraryId=source');
   await page.getByRole('checkbox',{name:'选择 Incoming'}).check();
   await page.getByRole('button',{name:'批量整理'}).click();
@@ -88,17 +88,6 @@ with SQLiteTaskRepository('/data/mediaflow.sqlite3', read_only=True) as repo:
     print(json.dumps({'counts':counts,'observations':[dict(row) for row in rows],
                      'jobs':[{'id':j.job_id,'status':j.status.value,'taskId':j.task_id,
                               'failure':j.failure_category} for j in repo.list_jobs()]}))
-"""
-
-SEED_RETIRED = r"""
-from datetime import UTC,datetime
-from mediaflow.domain.automation import AutomationJob,AutomationCommand,AutomationJobStatus
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
-now=datetime.now(UTC)
-with SQLiteTaskRepository('/data/mediaflow.sqlite3') as repo:
-    for id,definition in (('retired-scan',None),('forged-scan','untrusted-definition')):
-        repo.create_job(AutomationJob(id,AutomationCommand.SCAN,AutomationJobStatus.PENDING,
-                                     now,now,definition_id=definition))
 """
 
 
@@ -173,27 +162,21 @@ def main() -> int:
                 ).stdout.strip()
 
             baseline = json.loads(container_python(READ_STATE))
-            container_python(SEED_RETIRED)
-            deadline = time.monotonic() + 20
-            while True:
-                dispatch = json.loads(container_python(READ_STATE))
-                if len(dispatch["jobs"]) == 2 and all(
-                    j["status"] == "failed"
-                    and j["taskId"] is None
-                    and j["failure"] == "standalone_scan_retired"
-                    for j in dispatch["jobs"]
-                ):
-                    break
-                if time.monotonic() > deadline:
-                    raise RuntimeError("resident Worker did not reject independent Scan")
-                time.sleep(0.2)
-            if dispatch["counts"] != baseline["counts"] or dispatch["observations"]:
-                raise RuntimeError("retired dispatch created work or observation")
-            (output / "retired-dispatch.json").write_text(json.dumps(dispatch, indent=2))
+            refusals = []
             for path in ("/api/v1/scans", "/api/v1/operations/scans", "/api/v1/jobs"):
                 status, value = api(base, token, "POST", path, {"command": "scan"})
-                if status != 410:
-                    raise RuntimeError(f"Scan admission not retired: {path} {status}")
+                expected = 400 if path == "/api/v1/jobs" else 404
+                if status != expected:
+                    raise RuntimeError(
+                        f"unsupported input did not use its ordinary boundary: {path} {status}"
+                    )
+                refusals.append({"path": path, "status": status})
+            rejected = json.loads(container_python(READ_STATE))
+            if rejected["counts"] != baseline["counts"] or rejected["observations"]:
+                raise RuntimeError("unsupported inputs created work, observation or authority")
+            (output / "unsupported-inputs.json").write_text(
+                json.dumps({"responses": refusals, "state": rejected}, indent=2)
+            )
             process = subprocess.Popen(
                 ["node", "--input-type=module", "-e", BROWSER],
                 cwd=ROOT / "web",
@@ -306,7 +289,7 @@ def main() -> int:
                     indent=2,
                 )
             )
-            print("production retirement/internal stability/confirmation/Worker/restart: PASS")
+            print("first-deployment absence/internal stability/confirmation/Worker/restart: PASS")
         finally:
             if process is not None and process.poll() is None:
                 process.terminate()

@@ -1101,9 +1101,9 @@ def _schedule(value: dict) -> IntervalSchedule | CronSchedule:
     try:
         command = AutomationCommand(command_value)
     except ValueError as error:
-        raise ValueError("automation schedule command must be scan or preview") from error
-    if command not in {AutomationCommand.SCAN, AutomationCommand.PREVIEW}:
-        raise ValueError("automation schedule command must be scan or preview")
+        raise ValueError("automation schedule command must be preview") from error
+    if command not in {AutomationCommand.PREVIEW}:
+        raise ValueError("automation schedule command must be preview")
     limit = value.get("limit")
     if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
         raise ValueError("automation schedule limit must be a positive integer")

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -208,7 +209,7 @@ class IntervalSchedulerTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
                 for command in ("organize", "execute", "delete"):
-                    with self.assertRaisesRegex(ValueError, "scan or preview"):
+                    with self.assertRaisesRegex(ValueError, "must be preview"):
                         service.submit(command)
                 for limit in (0, -1, 10_001, True, "2"):
                     with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
@@ -355,19 +356,20 @@ class AutomationCliTests(unittest.TestCase):
         config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
         return config
 
-    def test_cli_queue_scan_is_retired_without_media_mutation(self) -> None:
+    def test_cli_queue_scan_is_unknown_without_media_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = self._configuration(directory)
             media = Path(directory, "source", "Movie.2025.mkv")
             media.write_bytes(b"unchanged")
             output, error = io.StringIO(), io.StringIO()
-            code = final_main(
-                ["--config", str(config), "jobs", "submit", "scan", "--limit", "1"],
-                stdout=output,
-                stderr=error,
-            )
-            self.assertNotEqual(0, code)
-            self.assertIn("standalone_scan_retired", error.getvalue())
+            with redirect_stderr(error), self.assertRaises(SystemExit) as raised:
+                final_main(
+                    ["--config", str(config), "jobs", "submit", "scan", "--limit", "1"],
+                    stdout=output,
+                    stderr=error,
+                )
+            self.assertEqual(2, raised.exception.code)
+            self.assertIn("invalid choice", error.getvalue())
             self.assertEqual(b"unchanged", media.read_bytes())
             self.assertEqual([], list(Path(directory, "target").iterdir()))
 
@@ -375,11 +377,11 @@ class AutomationCliTests(unittest.TestCase):
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
         document["automation"] = {
-            "schedules": [{"id": "periodic-scan", "command": "scan", "intervalSeconds": 3600}]
+            "schedules": [{"id": "periodic-preview", "command": "preview", "intervalSeconds": 3600}]
         }
         loaded = load_runtime_configuration(copy.deepcopy(document))
         self.assertEqual(loaded.api_token_env, "MEDIAFLOW_API_TOKEN")
-        self.assertEqual(loaded.automation_schedules[0].schedule_id, "periodic-scan")
+        self.assertEqual(loaded.automation_schedules[0].schedule_id, "periodic-preview")
         document["api"] = {"tokenEnv": "invalid-name"}
         with self.assertRaisesRegex(ValueError, "API tokenEnv"):
             load_runtime_configuration(document)
@@ -387,10 +389,10 @@ class AutomationCliTests(unittest.TestCase):
     def test_invalid_automation_configuration_rejects_execute_and_duplicates(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         for schedules, message in (
-            ([{"id": "x", "command": "organize", "intervalSeconds": 1}], "scan or preview"),
+            ([{"id": "x", "command": "organize", "intervalSeconds": 1}], "must be preview"),
             (
                 [
-                    {"id": "x", "command": "scan", "intervalSeconds": 1},
+                    {"id": "x", "command": "preview", "intervalSeconds": 1},
                     {"id": "x", "command": "preview", "intervalSeconds": 2},
                 ],
                 "IDs must be unique",
@@ -401,18 +403,18 @@ class AutomationCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, message):
                 load_runtime_configuration(candidate)
 
-    def test_production_scan_cooperatively_cancels_without_mutation(self) -> None:
+    def test_removed_scan_command_fails_before_runtime_or_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = self._configuration(directory)
             media = Path(directory, "source", "Movie.2025.mkv")
             media.write_bytes(b"unchanged")
-            code = final_main(
-                ["--config", str(config), "scan"],
-                stdout=io.StringIO(),
-                stderr=io.StringIO(),
-                cancellation_check=lambda: True,
-            )
-            self.assertNotEqual(code, 0)
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                final_main(
+                    ["--config", str(config), "scan"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                    cancellation_check=lambda: True,
+                )
             self.assertEqual(media.read_bytes(), b"unchanged")
             self.assertEqual(list(Path(directory, "target").iterdir()), [])
 

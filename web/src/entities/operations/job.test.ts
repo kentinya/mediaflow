@@ -41,7 +41,7 @@ function jobLifecycle(overrides: Record<string, unknown> = {}) {
 function job(overrides: Record<string, unknown> = {}) {
   return {
     job_id: "job-1",
-    command: "scan",
+    command: "preview",
     status: "pending",
     created_at: NOW,
     updated_at: NOW,
@@ -235,13 +235,13 @@ describe("normalizeJobListPage", () => {
       items: [job()],
       limit: 20,
       status: "pending",
-      command: "scan",
+      command: "preview",
       truncated: false,
       previous_cursor: null,
       next_cursor: null,
     });
     expect(page.status).toBe("pending");
-    expect(page.command).toBe("scan");
+    expect(page.command).toBe("preview");
   });
 
   it("rejects an unknown echoed command", () => {
