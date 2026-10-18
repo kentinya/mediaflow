@@ -536,25 +536,60 @@ assertion、隐藏 skip 或删除测试造绿。纯环境失败需 Base 证明�
 
 无；留待 Slice 收尾统一整理。
 
-### Developer correction — Review 5 / 2026-10-18（候选门禁进行中）
+### Developer correction — Review 5 / 2026-10-18（本轮最终报告）
 
-本轮继续同一 Task45.3：修正 R6 多段 lineage 的当前问题/attention/checkpoint 动作投影，
-R7 将关联新问题表单嵌在原 Task/type/item 上下文，R8 fake Provider 按请求标题隔离候选；
-保留生产候选上限。增加合法覆盖的独立决定与精确摘要影响确认、成功与再次失败的真实链测试。
-不修改 Slice/Roadmap/稳定需求，不改变 partial/unknown 的调查-only 安全边界。
+**Executable checkpoint:** a6ed23b030bd1a685562ad4028786caa70b197c1。
+本轮连贯修正提交：722b4854bc91c54236754bf5e0a1516e851c3320（R6–R8/测试）及
+上述最终视觉遮挡修正。不 amend 任何既有审查历史，不推送。
+Task Base 保持 8f5cf4e284766bcc8894817d7640231e85050fb2，High/T4/Goal/Scope/AC 不变。
 
-开发反馈：真实 SQLite/API/Worker 聚焦 141 tests PASS；真实 production 浏览器完整 spec
-36 PASS（随后增加识别类型行入口及逐类截图，最终候选须重跑）；首次红测/修复期失败保存在
-.git/validation-evidence/task45.3-review5-work/（仅本地）。此前 ff34 的完整 Python
-原始日志实际为2507/7 skipped/OK，真实浏览器32 PASS/2 FAIL；不沿用之前不准确的仅schema48描述。
+交付：
+- R6：以真实 preparation→execution→selected item→verified Result 及最多16段、同来源/库/pin
+  的持久分析 lineage 统一当前 failure/attention/文件分页计数和 checkpoint 动作；
+  排队/再次失败/未知/未选项不冒充解决，不改原失败历史。
+- R7：五类列表行内进入原 Task/type/item 上下文，新阻塞直接嵌入共享合法表单；
+  保存/继续提交真实关联项，原页面更新摘要，不需要操作内部分析 Task 后手工返回。
+  关闭详情保留文件列表筛选/分页；视觉复核发现双面板遮挡后修复为只显示一个处理面板。
+- R8：fake Provider 按查询标题隔离候选，完整spec不再被前序fixture累积候选污染；
+  未扩大生产max_candidates、未skip或弱化业务断言。新增成功/再次失败、重开、来源/pin不符、
+  覆盖策略拒绝及独立影响确认；安装wheel真实成功恢复测试不再只验证missing-item拒绝。
 
-附件能力差异（待 B 核对并交 A）：现有 OrganizerExecutor.execute 先逐个处理并验证所有附件，
-再执行主文件；manual execution 持久主项/附件步骤，但没有独立附件-only admission/consumer。
-ProcessingCheckpoint 对一般 partial / verified known effects 不提供 retry，仅 investigate；
-manual recovery 只接受 task_retry_requested + 完成的单项 DryRun，并重新校验原 source。
-因此未找到“主文件已完成、仅续附件”的既有合法入口；本轮不会发明补偿引擎、放开 partial、
-伪造失败状态或重放主文件。该条件验收未完成，不以所有附件拒绝冒充交付，交 B/A 判断能力边界。
-其他确定修正和完整 T4 继续。最终结果将在门禁后更新；此段不声明 PASS 或已可完整验收。
+最终候选在干净隔离checkout /private/tmp/mediaflow-task45-a6ed23b 完整验证：
+- Python full：2512 tests，7 skipped，236.434s，PASS；包含本轮聚焦回归。
+- Governance、ruff format（374 files）/check、compileall、pip check、两份示例配置验证、
+  FFmpeg/FFprobe禁止依赖扫描 PASS。
+- Web typecheck/lint/format PASS；Vitest76 files/1130 PASS；production build PASS；fake E2E246 PASS。
+- 真实Python/API/SQLite/Worker完整spec36 PASS；Unicode1 PASS；production视觉spec2 PASS。
+  五类标签→文件处理、技术失败→新Metadata→同页摘要→再次失败/成功、批次少选与unknown、
+  暂停重新授权/重开均有实际用例。实际查看桌面/380×720及键盘确认区域，修复遮挡；
+  部分自动截图锚点只显示表头而非整个表单，不将capture exit扩大为全面视觉PASS。
+- 真实Task Base schema45→46迁移/合法pin/许可消费/结果保留/重开/ALTER故障回滚 PASS。
+- wheel build/smoke PASS；安装site-packages版本执行5项真实恢复/确认/Worker/MOVE回归 PASS。
+  wheel SHA256：359d14f7f42a3324754c1c78dcaa1183772dd5a0f9222cf99092a044ba3820c4。
+- Docker release-security和recovery proof PASS；真实常驻Worker消费，同页准备零权限、确认后MOVE。
+  完整image ID：sha256:ac21aa396fc6cd768842b7818cfc63090595c8cec5e08e4a6a02a6dcb24f0463。
+  提取镜像/安装包：163个Python源码、4个Web served assets与本候选逐字节一致。
+- 证据、命令/cwd/依赖/构建摘要/exit/duration、AC映射、原始logs/trace/截图及299件产物hash：
+  .git/validation-evidence/a6ed23b030bd1a685562ad4028786caa70b197c1/developer-review5-final-20261018/INDEX.md。
+  仅本地可达，未推送。最终报告为document-only successor；须以实际diff证明后复用此证据。
+
+真实失败与限制：
+- 开发期红测、fixture污染、测试选择/URL顺序/disabled焦点错误以及视觉遮挡均保留原日志；
+  首次Docker在/private/tmp挂载失败，定位daemon命名空间后改为项目内可挂载临时目录。
+  最终候选Docker recovery首次因build尚未完成记UNAVAILABLE，依赖完成后实际重跑PASS。
+- 前ff34报告曾错误写成只有schema48失败；其原始full实际2507/7skipped/OK，真实浏览器
+  32PASS/2FAIL。此前证据不代替当前候选完整门禁。Vite大chunk及既有ResourceWarnings保留。
+- **未完成的条件验收，交B/A判定而非豁免：附件-only剩余步骤。** 现有OrganizerExecutor
+  先处理并验证附件再执行主文件；manual execution持久步骤但无独立附件-only admission/consumer。
+  checkpoint对一般partial/known effects仅investigate，未知明确拒绝；manual recovery要求
+  task_retry_requested + 完成单项DryRun并重验原source。未找到“主文件已完成、仅续附件”的
+  现有合法路径。没有发明补偿引擎、放开partial/unknown、伪造失败状态或重放主文件。
+  具体代码/边界记录于INDEX，B核对后按Review5交A处理Contract差异；不以所有附件拒绝冒充完成。
+
+**READY FOR B REVIEW（带上述未解决条件验收项）。** 保持FIX REQUIRED供B决定；本报告不自判
+Task PASS，不改变B Review5结论、Slice/Roadmap/Progress/稳定需求，不规划下一Task、不关闭Slice。
+预存图片删除意图、未跟踪图片/.DS_Store/zip/旧测试产物保持，私有配置ignored/untracked/unstaged。
+可复用经验：无新增，留待A在Slice收尾统一整理。
 
 ## B Review Result
 
