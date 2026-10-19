@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER FIXED DIRECT-FILE STABILITY AND DURABLE WAITING; B RE-REVIEWS AND FINISHES ORIGINAL BASE..CORRECTED HEAD REVIEW / ASSIGNED T4
+Next Action: DEVELOPER PERSISTS SOURCE REFUSALS AND TRUTHFUL TASK OUTCOMES IN THE SAME TASK; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -280,103 +280,115 @@ state/`source_observed_at` 并 `_complete` 写入逐文件 Result（`unstable_so
 ## B Review Result
 
 ```text
-Reviewed candidate: 77dcb8e23003f729ea5b32785a329e0aade2f79a
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..77dcb8e23003f729ea5b32785a329e0aade2f79a
-Handoff: 333ff57ed6da34da66a6369bde6d2f940cad5fbd (TASK.md only; execution inputs identical)
-Decision: FIX REQUIRED — direct-file organizing cannot complete configured stability
-Previous CLI pagination blocker: independently fixed
+Reviewed candidate: 204441f70c0678e9b6526a54f6af8aac75b126f4
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..204441f70c0678e9b6526a54f6af8aac75b126f4
+Handoff: 3e1bbdaef87e9ca559d8be9ac72e9721eee79c56 (TASK.md only; execution inputs identical)
+Decision: FIX REQUIRED — refused sources are persisted as Completed / 0 items / 0 failures
+Previous direct-file stability blocker: independently fixed, including real elapsed execution
 Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX LOOP; B FINISHES ORIGINAL BASE..CORRECTED HEAD REVIEW / ASSIGNED T4
 ```
 
-本轮 main 固定上述候选；治理检查 PASS，workspace/Git 可写，预存图片删除、未跟踪截图、
-日志、ZIP、浏览器结果和私有配置均保持。读毕角色/workflow、已提交 Contract/当前指针并
-核对适用需求、完整列表/整理/恢复旅程及 CURRENT/TARGET；未修改 A-owned 边界。
-继续原 Task Base..Head 审查，按 workflow §6 对已证实 P1 提前 FIX REQUIRED；不宣称
-全部 diff 审完或完整 T4 通过。详细旧轮次保留 Git，不重开 Task45.4 的历史接受/例外。
+本轮 main 固定上述候选，治理 PASS，workspace/Git 可写；预存图片删除、未跟踪截图、
+日志、ZIP、浏览器结果和私有配置均保持。读毕 AGENTS/workflow/B experience、已提交
+Contract/Task/当前指针，并核对适用需求、列表/整理/恢复完整旅程及 CURRENT/TARGET。
+本次继续原 Base..Head 的浏览、源证据、恢复、扫描/批量、Automation、API、持久化与前端
+审查；发现确定 P1 后按 workflow §6 提前拒绝，不宣称全部 diff 或完整 T4 已完成。
 
-### 已确认修正
+### 上轮修正已独立通过
 
-真实独立 CLI 进程的首页游标能取得第二页，实际返回条目且数据库字节不变。新增跨进程
-回归 5 cases 通过；本轮检查了持久 key 创建/只读注入和 E2E 第二页断言，原分页阻塞解除。
-初始化发生在正常可写配置仓库初始化（例如服务启动/配置管理），并非 files list；CLI
-读取仍以 mode=ro 打开。此处只确认相应修正，不代替尚未执行的完整初始化/备份/产物门禁。
+真实 CLI / Active / LocalStorage / SQLite / functioning fake Provider：单文件稳定期0立即
+分析成功；1秒真实等待后分析成功；61秒立即保存1个可信等待 TaskItem 和1个 Result，
+Provider0；目录1秒成功；单文件1秒 --execute 真实等待后实际 Move 成功。未再出现
+helper 参数错误。B 脚本断言实际结果/时间/持久状态与临时媒体效果，不复用旧失败期待。
 
-### 当前阻塞：直接文件入口的稳定性 helper 参数不匹配
+### 当前 P1：安全拒绝没有落入逐文件结果，任务反而显示完成
 
-在真实 Managed Active / LocalStorage / SQLite / CLI 和可工作的 fake Metadata Provider 下，
-使用实际存在的本地文件；displayRootPath 与库根精确对应，Storage path 为
-`Media/C/Correct.2024.mkv`。对照结果：
+四组独立真实入口反例均 exit1、Provider0、零媒体变更，但数据库重开后的 Task 均为
+`completed / total_items=0 / failed_items=0 / error=None`，无 TaskItem / Result。
+`tasks show <new-task>` 也明确打印 `Status: completed`、`Total: 0`。
 
-| 入口 / 策略 | 实际结果 |
-|---|---|
-| 单文件 organize，stable-size=0 | exit0，Provider 1次，1 TaskItem / 1 dry_run Result |
-| 单文件 organize，stable-size=1 | 约0.04秒 exit1，Provider 0次，0 TaskItem / 0 Result |
-| 单文件 organize，stable-size=61 | 约0.04秒 exit1，Provider 0次，0 TaskItem / 0 Result |
-| 目录 organize，stable-size=1 | 实际约1.12秒后 exit0，Provider 1次，1 dry_run Result |
-| 单文件 organize --execute，stable-size=1 | 立即 exit1，Provider 0次，0 TaskItem / 0 Result，零媒体变更 |
+| 真实触发 | CLI 当次输出 | 持久结果缺口 |
+|---|---|---|
+| 单文件61秒等待落库后，替换该文件，再 retry-failed --execute | reviewed source changed/replaced | 新尝试 Completed0，无拒绝原因 |
+| 同样等待后删除源文件，再重试 | reviewed source no longer present | 同上 |
+| 同样等待后模拟原证据信任状态丢失，再重试 | cannot prove original occurrence | 同上；未把 live stat 冒充旧证据 |
+| 新目录 organize --execute；真实 list 返回观察后、处理前替换源文件 | reviewed source changed/replaced | 原始整理任务直接 Completed0 |
 
-失败输出均为 `'FileStabilityPolicy' object has no attribute 'stability_policy'`。
-这不是正常等待：没有保存逐文件观察/结果，不能按该项重试或跨进程继续等待。
-61秒立即拒绝本身不构成正确性证明，必须同时核对原因、TaskItem/Result 和观察证据。
+最后一组只在临时 fixture 对真实 LocalStorage.list 返回与消费者处理之间注入外部写入，
+不 mock 校验结果或 Provider。证明同一缺陷也影响普通首次整理，不只是历史重试。
+安全拒绝本身正确，禁止恢复成“继续执行”；要修的是已受理尝试的逐文件失败证据和真实
+汇总状态。CLI 一次输出、普通访问/操作日志不能替代重连/重开后可查看的正式结果。
 
-### Developer 必需修正与顺序
+### Developer 必需修正与执行顺序
 
-1. **先按上述矩阵复现真实单文件入口。** 使用隔离 Active、现存文件和 functioning fake
-   Provider；设置 displayRootPath 对应 ResourceLibrary root，核对最终 Storage path，
-   不用重复拼接 root 的不存在路径。必须检查输出、逐文件持久记录及 Provider/媒体副作用，
-   不能仅断言 exit1 或 Provider0。保留 stable-size=0 和目录入口作为成功对照。
-2. **修正现有共享 helper 调用，勿新增稳定性引擎。**
-   `MediaOrganizerService._observe_direct_source` 调用
-   `stability_wait_seconds(policy, entry, ...)`，但该 helper 的第一个参数是
-   `ResourceLibrary`，内部读取 `.stability_policy`。此处传入 `resource_library`，并审查
-   同一 helper 的全部生产调用；`stability_decision` 才接收 policy，不要把两者混为一谈。
-   保持真实等待、原 pin 下的 minimum-age / modified-threshold / stable-size 组合和变化重置。
-3. **保证有界等待和可恢复持久结果。** 短区间真实等待后二次 stat，未变才进入 Provider/
-   计划；超过同步上限时按既有 waiting 路径保存该精确来源的 occurrence/fingerprint/
-   verified state/source_observed_at 与逐项结果、明确下一步。重开后立即重试仍等待，真实
-   区间满足且来源未变后才继续；旧pin、源替换/丢证据/未知效果不得放宽或重绑定。
-   检查 `_direct_waiting_item` 与 `_continuation_waiting_item` 实际落库结果，不让预观察错误
-   只出现在 SUMMARY 且原 Task 无项。此项修正保留原任务/结果机制，不另建等待目录或队列。
-4. **补直接入口的正向和恢复回归。** 在直接受影响测试中覆盖单文件 0 / 短非零 / 超过60秒
-   的策略、minimum-age 或 modified-threshold 未满足、等待中来源改变、记录重开及 retry。
-   至少一个短区间用真实 elapsed time 到成功，不 mock sleep 后谎称已证明稳定；长区间
-   立即等待反例不需要同步等待61秒。补充可控时钟单测可以验证长区间截止逻辑，但与真实
-   入口证据分开。断言恰当原因/持久观察/项/结果、Provider 调用时机、分析零 mutation、
-   实际执行仍需既有权限，且成功/未知效果不重放。保留目录路径与本轮分页修正。
-5. **受影响验证后提交固定候选。** 不修改 Slice/Roadmap/Progress，不展开 RO-8 或冻结43。
-   修正继续 Task45.5，Base / Goal / Difficulty / T4 不变；交接简述真实结果与剩余风险。
+1. **先复现并断言数据库重开后的结果。** 使用上表隔离 fixture；保留原等待 Task 的
+   精确 evidence/pin，分别替换/删除/丢失信任后重试，并覆盖发现与处理之间变化的首次
+   目录整理。必须同时看 exit / 输出、Task status / counts / error、TaskItem、Result、
+   检查点及已知效果，不只断言 exit1、Provider0、源未变或原指纹没被覆盖。
+2. **让早期拒绝沿现有持久完成路径发布。** 定位
+   `MediaOrganizerService.process_file` 的 `resolve_source_evidence=False` 分支：
+   `_persisted_source_refusal` 拒绝后调用 `_failed(..., tracked_item=None, stage="storage")`，
+   此时尚未 `begin_item`，故 `_complete` 不会发布 TaskItem/Result。
+   在既有 Task/coordinator 职责内记录该新尝试的精确受理项和拒绝结果，复用现有
+   `_complete` / `complete_item` / checkpoint / evidence 机制；不要另建结果库或索引。
+   若需调整开始记录的时机，保持 pin、库/路径范围、锁/claim/fence、去重及已终结项保护；
+   不把其他 owner 的进行中项当作本次失败覆盖。
+3. **持久保留原证据与可执行的补正说明。** 拒绝记录沿用原受理的来源、occurrence /
+   fingerprint / trust state / observation time 与 pin；不以当前文件重建旧可信证据，
+   不覆盖原任务/成功兄弟/未知效果，也不因为保存失败而重放媒体。分别解释来源已变化、
+   已缺失、不可验证和真实 Storage 连接故障，记录未执行/已知零效果。
+   变化/不可验证应引导回当前 Files 重新选择并准备新摘要；缺失说明恢复原来源或重新选择；
+   连接故障按现有修复/安全重验流程。不要把上述全部归成泛化 storage_failure + Retry，
+   不授予自动分析/执行或放松来源比较。使用既有 bounded failure 投影/共享语义。
+4. **修正汇总的假成功，并保留真实零项语义。**
+   `PersistentTaskCoordinator.finish` 当前只从持久 items / scan_errors 决定状态，遗漏
+   SUMMARY 中已拒绝却未持久化的 item。修复主路径后，核对拒绝项和 failed counts 一致；
+   审查同类 `_failed` 提前返回，避免再制造没有正式记录的失败。
+   只把 aggregate 改成 FAILED、仍不保存逐文件原因不满足本 Task；也不能把所有正常空目录/
+   合法零结果都改失败，或伪造 scan error 掩盖来源校验阶段。
+5. **直接消费者与交接。** 覆盖单文件 retry/resume、目录/批量新发现到处理、实际调用同一
+   分支的 Worker/定义基础消费者。按必要范围修改，不展开 RO-8 或冻结43。
+   提交固定候选，保留 Task45.5 / Base / Goal / High / T4，不新造修正 Task。
 
-### 本次 Developer 受影响验证
+### Developer 本次受影响验证
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_final_integration test_workflow_retry test_resource_library_pipeline test_scanner test_scan_retirement_stability
-PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_task_persistence test_scope_continuation
-# 新增直接文件稳定性回归及实际修改模块的直接消费者；按改动追加，不扩大为全仓
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_task_persistence test_scope_continuation test_final_integration test_workflow_retry test_resource_library_pipeline
+# 若修改共享失败说明/投影或 coordinator，追加其直接消费者
+PYTHONPATH=tests .venv/bin/python -m unittest test_processing_checkpoint test_operations_run_detail test_operations_task_center test_task_center_recovery_lineage
+# 若生产修改实际影响定义执行/Worker，追加对应组；不扩成全仓
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_definition_execution test_automation_authorized_execution_matrix
 .venv/bin/ruff check <changed-python-files>
 .venv/bin/ruff format --check <changed-python-files>
 git diff --check
 ```
 
-B 对新固定候选独立复现上述关键正反例，完成原 Task Base..Head 审查，并承担 Required
-Tests 中已指定的完整 Python/Web/E2E、真实浏览器/视觉、wheel/安装消费者/Docker、安全与
-初始化/重开/备份/失败原子性门禁。不得把本轮未执行门禁交回 Developer；匹配证据按
-workflow 复用，执行输入改变刷新所分配验收，不机械重跑 Slice Final。
+新增/加强回归须核对持久失败和下一步（包括 reopen / tasks show / 对应任务详情的实际投影），
+保留未变正常成功、真正空目录零项、立即等待与区间满足、混合成功/失败及未知效果非重放。
+没有 Web 产品修改时不要求 Developer 跑全仓 Web；有实际投影变更则只追加直接受影响测试。
+B 对修正候选重做关键正反例、原 Base..Head 审查，继续承担 Required Tests 原分配的完整
+T4 / Python / Web / E2E / 真实浏览器与视觉 / wheel / 安装消费者 / Docker / 安全与持久化
+门禁；未跑或中断不算 PASS，不把全量交回 Developer。按 workflow 复用匹配证据，不机械
+重跑 Slice Final，也不拿旧执行输入的结果充当本候选全量通过。
 
 ### 本轮实际验证与证据
 
 本机稳定 ignored storage（非远程 CI）：
-`.git/validation-evidence/77dcb8e23003f729ea5b32785a329e0aade2f79a/task45.5/b-review/`。
+`.git/validation-evidence/204441f70c0678e9b6526a54f6af8aac75b126f4/task45.5/b-review/`。
 
-- `verify_cli_cursor.py` / `cli-cursor.json`：独立真实 CLI 两进程实际续页及只读通过。
-- `cross-process-tests.log`：新增跨进程 5 tests OK，实际2.159秒（外层2.40秒）。
-- `reproduce_direct_stability.py` / `direct-stability.json`：上述5组真实入口正反例，脚本断言
-  确认当前缺陷和成功对照；不会因预期缺陷而把产品标为 PASS。
-- 新 key reader 和 organizer 的 ruff check 通过；治理与 git diff --check 通过。
-- 已证实 P1 后未启动完整 T4 / E2E / wheel / Docker；这些仍由 B 待修正候选完成。
-  之前52候选的完整Web/部分Python结果只保留历史，不冒充当前执行输入的验收通过。
-- 测试及质量命令累计保守上限15秒，远低于本轮复核时间的50%；精确起止与保守计算见
-  同目录 `review-timing.json`。不靠空等拉长分母。
+- `verify_direct_stability.py` / `direct-stability.json`：上轮修正的5组真实成功/等待/执行对照。
+- `reproduce_refusal_completion.py` / `refusal-completion.json`：源替换、缺失、unverified 的
+  真实 CLI 重试 + 重开数据库 + tasks show；脚本成功表示已重现缺陷，非产品 PASS。
+- `reproduce_discovery_refusal.py` / `discovery-refusal.json`：首次目录整理的来源竞态反例。
+- 全仓 ruff format / check 通过；compileall、pip check、两份示例 config validate 通过；
+  禁止依赖检索无匹配（exit1）。原始日志/实际命令见同目录 README。
+- 全 Python unittest discover 已启动；发现确定 P1 后 SIGINT 终止已核实的该子进程，
+  外层181.93秒、exit130，原始输出/ResourceWarning/中断栈保留。无完整测试数/PASS声明。
+  未启动 Web/E2E/wheel/Docker/视觉门禁，仍 pending B；Docker daemon29.5.2可用。
+- 测试/质量命令累计保守上限195秒，起止和比例见同目录 review-timing.json；本轮收尾
+  必须低于用户50%上限，不靠空等增加分母。
 
-RO-7 未通过、RO-8 仍未实现，因此本轮不造新 Task、不提交 Closure Packet、不关闭 Slice。
+本轮只提交 Task 审查/执行指导，不含预存用户文件变化；Slice/Roadmap/Progress、45.4
+历史 PASS/例外均不变。RO-7 尚未通过、RO-8 未实现，不规划下个 Task 或提交 Closure Packet。
