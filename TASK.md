@@ -307,6 +307,53 @@ Next: SAME TASK FIX LOOP; B COMPLETES REMAINING DIFF REVIEW / ASSIGNED T4 ON COR
    stable-size 非0的 CLI 用真实经过时间验证从等待到分析、来源变化重置与重开，不把0项完成
    当作“稳定性安全”通过；保留原安全断言和独立结果，不扩大重试/超时以掩盖问题。
 
+### Developer 执行顺序与代码定位
+
+以下是上述两个阻塞的落地指引，不改变 Task Base/Goal/Scope；先完成证据链，再接稳定观察，
+最后验证完整入口，不再按字段拆 Task。
+
+| 位置 | 必须完成的改动 |
+|---|---|
+| `application/media_organizer.py` 的 `process_file` | 在首次 Provider/策略分析前取得并持久保存本次真实来源身份。调用方已带原证据时先比较，不能用当前stat覆盖原证据。 |
+| 同文件的 `process_library` / `process_all_libraries` | 将 discovery 的真实来源证据传给处理边界；不能像当前只传 `file.path`，丢掉已观察到的 occurrence/fingerprint。 |
+| `application/task_runtime.py` 的 `begin_item`，SQLite TaskItem/Result 保存 | 首次失败也保留来源证据；重开后仍可读；既有工作证据不能被重试悄悄改绑为当前来源。现有列足够时不另建schema。 |
+| `application/manual_source_validation.py` 的 `validate_persisted_source` | 去掉“完整证据为空则信任当前stat”的分支；缺失/半缺失/不可信状态明确 `source_unverified`，来源不符为 `source_stale`，不在恢复时补成 verified。 |
+| `final_cli.py` 的普通整理/重试/续跑，`automation_definition_execution.py` 的共用管线 | 接到同一来源与稳定性行为；不能只修手动执行 fixture，漏掉真实新建 CLI/Worker/仍支持的 Automation 消费者。 |
+| `scanner.py` / `library_pipeline.py` 与现有 discovery/观察仓储 | 串起同一显式工作内的首观察→持久等待→到期重观察→就绪。`previous` 参数必须由真实工作证据提供，不能只增加可选参数却没有生产调用方。 |
+
+1. **先明确 fingerprint 的含义。** 复用 `domain/source_evidence.py` 的 `source_fingerprint`
+   与 `occurrence_id_for`：库/Storage/精确路径、大小、mtime足够时可自动生成来源证据。
+   Provider 自带的 fingerprint/ETag/version 等是可选增强；缺少它们不能拒绝普通 Local/远程
+   文件，也不要求用户填写 fingerprint、不新增全影片 Hash/FFprobe。这里的身份只证明
+   Storage 可观察证据一致，不宣称字节级相同；原已观察到的有效 validator 仍须参与比较。
+2. **区分“首次选择”与“继续旧工作”。** 首次明确选择可从 live stat 建立原证据，在
+   Provider 失败前也保存到该任务；恢复/重试只能验证已保存的原证据。不能在通用
+   `begin_item` 或恢复 validator 中加“为空就补当前值”，否则替换来源仍会被接纳。
+   核对 TaskItem→Result→恢复请求/Job→Worker→续作结果的字段逐段一致；配置始终用该工作
+   原 pin。无法证明原来源时保留记录，提示从 Files/当前支持入口重新选择并准备新方案，
+   不自动重新准入，不要求用户修数据库或手动提供指纹。
+3. **稳定期只消费已配置的策略。** 缺 `stability` 或 stable-size=0 保持现有无需稳定间隔
+   的行为，不新加默认等待或修改用户配置。配置非0时，首观察记录该工作的范围/来源和时间，
+   显示或持久保留等待状态；到期实际再stat，未变才进入分析，变化重置间隔。复用已有
+   `MediaDiscoveryService`/观察仓储、`ObservedSource`、`stability_decision`/
+   `stability_wait_seconds`，不写另一套稳定算法或独立队列。若受支持的CLI需要转交现有
+   Worker，返回真实持久工作身份与当前等待/下一步，不能将等待伪装为 completed/0。
+   观察按工作、配置pin、库/Storage/root/路径隔离，同名跨库不共用；真实空目录/全部合法
+   排除仍可正常0项结束。重开恢复已有合法观察，观察丢失重新开始区间，不用mtime回填。
+4. **用真实入口验证，再交接。** 下表各行写入相应现有测试模块；优先扩展真实 CLI/Worker
+   fixture，不用全部手工灌入原指纹的测试替代首处理。B目录中的复现脚本用于理解操作步骤，
+   其旧结果是审查证据，不修改/覆盖；Developer在仓库tests内写目标断言，B自行更新独立复现。
+
+| 输入/操作 | 必须观察到的结果 |
+|---|---|
+| fresh库，Storage无自带fingerprint/ETag，普通有效size/mtime，CLI整理遇Provider故障 | 原TaskItem/Result已有真实来源证据；该证据来自首次处理，不来自后续恢复。 |
+| 上述失败项排队恢复后，同路径替换文件 | Worker拒绝旧工作；0 Provider请求、无误标完成/错误来源关联或媒体变更；原历史及原因保留。 |
+| 原证据缺失、只有一半，或状态为unverified/legacy | 明确拒绝并提示重新选择/准备；不读取当前文件后自动补成原身份。 |
+| 原证据完整且来源未变，期间发布新Active | 在合法原pin下完成分析；原身份、原结果和其他成功项不被改写或重放。 |
+| stable-size默认0 | 不增加固定等待；有效来源继续现有完整分析。 |
+| stable-size=1秒，来源未变 | 首观察后保持真实等待；超过1秒实际重观察后进入分析，不能两次CLI都 completed/0。 |
+| 等待期间大小/mtime/有效validator变化，或同一工作重开 | 变化重新计时；合法持久观察可恢复，丢失证据重新观察；未满足前零执行权/媒体mutation。 |
+
 Developer 本次先跑下列新增/修改和直接受影响组；其他实际改动按本 Task 原分配追加对应组
 及 changed-file ruff 检查。不得把 B 全量/发布矩阵交给 Developer：
 
