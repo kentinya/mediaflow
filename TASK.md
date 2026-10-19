@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER FIXED CROSS-PROCESS CLI PAGINATION AND ITS FALSE-POSITIVE PROOF; READY FOR B RE-REVIEW
+Next Action: DEVELOPER FIXES DIRECT-FILE STABILITY AND DURABLE WAITING IN THE SAME TASK; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -273,99 +273,103 @@ READY FOR B REVIEW at implementation HEAD `77dcb8e23003f729ea5b32785a329e0aade2f
 ## B Review Result
 
 ```text
-Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..52e13ce2c316aafa0bd1c2b424587572cee41d06
-Decision: FIX REQUIRED — CLI-issued cursor cannot open its second page
-Acceptance runs: previous two blockers independently fixed; Web 81 files / 1173 tests + quality/build OK
-Task blockers: RO-7 CLI paging; live-files pagination proof must assert actual rows
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-7 / RO-8 pending
+Reviewed candidate: 77dcb8e23003f729ea5b32785a329e0aade2f79a
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..77dcb8e23003f729ea5b32785a329e0aade2f79a
+Handoff: 333ff57ed6da34da66a6369bde6d2f940cad5fbd (TASK.md only; execution inputs identical)
+Decision: FIX REQUIRED — direct-file organizing cannot complete configured stability
+Previous CLI pagination blocker: independently fixed
+Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX LOOP; B FINISHES ORIGINAL BASE..CORRECTED HEAD REVIEW / ASSIGNED T4
 ```
 
-固定实现候选为上述Head，交接 `bf5155340cc270cefb347a80a7009b1787541cee` 相对候选仅改
-`TASK.md`，执行输入一致。已读需求/完整旅程/架构及父Contract无变更；本轮核对真实指针、
-修正diff，并继续原Task Base..Head的CLI/API/Worker/持久化/浏览及前端审查。已证实P1后
-按workflow §6提前拒绝；不宣称全部diff或完整T4已经完成，不将环境/证据缺口交回Developer。
+本轮 main 固定上述候选；治理检查 PASS，workspace/Git 可写，预存图片删除、未跟踪截图、
+日志、ZIP、浏览器结果和私有配置均保持。读毕角色/workflow、已提交 Contract/当前指针并
+核对适用需求、完整列表/整理/恢复旅程及 CURRENT/TARGET；未修改 A-owned 边界。
+继续原 Task Base..Head 审查，按 workflow §6 对已证实 P1 提前 FIX REQUIRED；不宣称
+全部 diff 审完或完整 T4 通过。详细旧轮次保留 Git，不重开 Task45.4 的历史接受/例外。
 
-上轮两个阻塞本轮独立通过：61秒策略立即执行重试仍拒绝（0 Provider/零mutation），
-真实Worker对unverified/legacy原证据也拒绝（无续作项/结果）。保留这些已证实修正；
-本轮缺口是原RO-7实时文件列表的正常分页，继续同一Task，不重做已修好的处理管线。
+### 已确认修正
 
-### 当前必需修正与执行顺序
+真实独立 CLI 进程的首页游标能取得第二页，实际返回条目且数据库字节不变。新增跨进程
+回归 5 cases 通过；本轮检查了持久 key 创建/只读注入和 E2E 第二页断言，原分页阻塞解除。
+初始化发生在正常可写配置仓库初始化（例如服务启动/配置管理），并非 files list；CLI
+读取仍以 mode=ro 打开。此处只确认相应修正，不代替尚未执行的完整初始化/备份/产物门禁。
 
-1. **先复现真实CLI分页。** 在新建隔离Managed Active/临时Local根准备多于limit的混合条目，
-   用独立进程调用 `.venv/bin/mediaflow --config CONFIG files list --resource-library ID
-   --path DIR --limit 1`，取真实Next cursor，再启动第二进程带 `--cursor CURSOR`。
-   本轮实际第一页返回1项/hasNext，第二页却 `storage_browser_cursor_invalid`；数据库字节
-   不变，故问题是续页不能完成，并非创建/升级/写库失败。不要只在同一对象里调用codec。
-2. **修复生产密钥生命周期。** 定位 `final_cli._live_library_directory_document` 每次新建
-   `RuntimeFilesBrowserService`，没有传入 `cursor_secret`；其下
-   `StorageBrowserCursorCodec.__init__` 每次 `secrets.token_bytes(32)`。不同CLI调用的
-   codec无法校验前一次签发的游标。复用现有codec/库级浏览及 `cursor_secret` 注入点，
-   使同一正常配置/未过期作用域的游标在后续CLI进程可验证；不能只在测试harness里固定key。
-3. **推荐落地路径：自动管理内部key，列表只读。** 优先复用项目已有的等义稳定内部key机制；
-   如确无机制，在现有管理配置/正常服务初始化路径中原子create-if-absent生成内部随机key，
-   存于受保护的内部配置元数据（不属于业务配置文档/Active内容），CLI通过只读helper读取并
-   注入现有browser，API装配沿用同一机制。并发初始化不能覆盖key，正常重开/新CLI进程稳定；
-   缺失/损坏明确拒绝并由正常受支持初始化/恢复处理，不在读取中偷偷生成一个一次性key。
-   不引入密钥管理页面、普通用户手工配置/复制key、第二套配置权威/游标算法或外部服务。
-   如有等义更小方案，用同样验收证明并解释，不降低现有边界。
-4. **保持只读、安全与原精确作用域。** CLI helper继续 `mode=ro`，不为list构造可写配置/
-   任务仓库，不创建/升级数据库、key文件、Task/观察/结果/许可。不用公开的revision digest、
-   固定硬编码key或不验证签名来让分页“通过”；内部key不输出、不进入日志/便携配置导出。
-   保留库种类/ID/root/目录/Active、TTL、篡改/跨作用域拒绝和Storage路径约束。不是改成
-   一次列完整库、忽略cursor、每页重复首页或通过shell/API绕行生产列表。
-5. **修正假阳性的原生证明。** `web/tests/e2e/live-files.python.spec.ts` 的分页测试当前
-   仅断言 `second.code == 0`；CLI错误也返回0，故没有证明第二页存在。必须断言无游标错误、
-   实际非空第二页、与首页条目不重叠，继续到尾页后与静态fixture全体条目逐项一致。
-   在 `tests/test_file_index_retirement.py` 增加真正跨CLI进程的成功/失败回归；对两种库、
-   同ID/同root、目录/配置变化、篡改/过期cursor、Unicode/空白/长名、空目录与末页覆盖。
-   读取前后核对数据库schema/内容、Task/观察/许可/媒体不变；新增内部key的初始化检查与
-   列表只读检查分开，不能把浏览写入key当作无副作用。harness继续走真实生产入口。
-6. **先受影响验证再交接固定SHA。** 若增加内部元数据/初始化，更新必要TARGET架构事实及
-   对应初始化/重开/备份/失败原子性测试，不改Slice边界、不宣称已验收CURRENT。
-   原有稳定性/可信来源修正不回退；不改冻结43业务或展开RO-8。细节历史保留Git，当前Task
-   只保留最新Developer交接与B结论。
+### 当前阻塞：直接文件入口的稳定性 helper 参数不匹配
 
-### Developer 本次受影响验证
+在真实 Managed Active / LocalStorage / SQLite / CLI 和可工作的 fake Metadata Provider 下，
+使用实际存在的本地文件；displayRootPath 与库根精确对应，Storage path 为
+`Media/C/Correct.2024.mkv`。对照结果：
+
+| 入口 / 策略 | 实际结果 |
+|---|---|
+| 单文件 organize，stable-size=0 | exit0，Provider 1次，1 TaskItem / 1 dry_run Result |
+| 单文件 organize，stable-size=1 | 约0.04秒 exit1，Provider 0次，0 TaskItem / 0 Result |
+| 单文件 organize，stable-size=61 | 约0.04秒 exit1，Provider 0次，0 TaskItem / 0 Result |
+| 目录 organize，stable-size=1 | 实际约1.12秒后 exit0，Provider 1次，1 dry_run Result |
+| 单文件 organize --execute，stable-size=1 | 立即 exit1，Provider 0次，0 TaskItem / 0 Result，零媒体变更 |
+
+失败输出均为 `'FileStabilityPolicy' object has no attribute 'stability_policy'`。
+这不是正常等待：没有保存逐文件观察/结果，不能按该项重试或跨进程继续等待。
+61秒立即拒绝本身不构成正确性证明，必须同时核对原因、TaskItem/Result 和观察证据。
+
+### Developer 必需修正与顺序
+
+1. **先按上述矩阵复现真实单文件入口。** 使用隔离 Active、现存文件和 functioning fake
+   Provider；设置 displayRootPath 对应 ResourceLibrary root，核对最终 Storage path，
+   不用重复拼接 root 的不存在路径。必须检查输出、逐文件持久记录及 Provider/媒体副作用，
+   不能仅断言 exit1 或 Provider0。保留 stable-size=0 和目录入口作为成功对照。
+2. **修正现有共享 helper 调用，勿新增稳定性引擎。**
+   `MediaOrganizerService._observe_direct_source` 调用
+   `stability_wait_seconds(policy, entry, ...)`，但该 helper 的第一个参数是
+   `ResourceLibrary`，内部读取 `.stability_policy`。此处传入 `resource_library`，并审查
+   同一 helper 的全部生产调用；`stability_decision` 才接收 policy，不要把两者混为一谈。
+   保持真实等待、原 pin 下的 minimum-age / modified-threshold / stable-size 组合和变化重置。
+3. **保证有界等待和可恢复持久结果。** 短区间真实等待后二次 stat，未变才进入 Provider/
+   计划；超过同步上限时按既有 waiting 路径保存该精确来源的 occurrence/fingerprint/
+   verified state/source_observed_at 与逐项结果、明确下一步。重开后立即重试仍等待，真实
+   区间满足且来源未变后才继续；旧pin、源替换/丢证据/未知效果不得放宽或重绑定。
+   检查 `_direct_waiting_item` 与 `_continuation_waiting_item` 实际落库结果，不让预观察错误
+   只出现在 SUMMARY 且原 Task 无项。此项修正保留原任务/结果机制，不另建等待目录或队列。
+4. **补直接入口的正向和恢复回归。** 在直接受影响测试中覆盖单文件 0 / 短非零 / 超过60秒
+   的策略、minimum-age 或 modified-threshold 未满足、等待中来源改变、记录重开及 retry。
+   至少一个短区间用真实 elapsed time 到成功，不 mock sleep 后谎称已证明稳定；长区间
+   立即等待反例不需要同步等待61秒。补充可控时钟单测可以验证长区间截止逻辑，但与真实
+   入口证据分开。断言恰当原因/持久观察/项/结果、Provider 调用时机、分析零 mutation、
+   实际执行仍需既有权限，且成功/未知效果不重放。保留目录路径与本轮分页修正。
+5. **受影响验证后提交固定候选。** 不修改 Slice/Roadmap/Progress，不展开 RO-8 或冻结43。
+   修正继续 Task45.5，Base / Goal / Difficulty / T4 不变；交接简述真实结果与剩余风险。
+
+### 本次 Developer 受影响验证
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser
-# 实际修改配置初始化/内部元数据时追加
-PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_management test_configuration_snapshot test_sqlite_backup test_sqlite_restore
-# cwd web/；此页是新增/修改的直接受影响真实入口
-npm run typecheck
-npm run build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts
-# 实际改动文件的ruff/eslint/prettier检查，及
+PYTHONPATH=tests .venv/bin/python -m unittest test_final_integration test_workflow_retry test_resource_library_pipeline test_scanner test_scan_retirement_stability
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_task_persistence test_scope_continuation
+# 新增直接文件稳定性回归及实际修改模块的直接消费者；按改动追加，不扩大为全仓
+.venv/bin/ruff check <changed-python-files>
+.venv/bin/ruff format --check <changed-python-files>
 git diff --check
 ```
 
-Developer不跑全仓Python/Web/E2E或发布矩阵。B在新固定候选独立重做跨进程CLI多页、
-作用域/过期/篡改拒绝及只读反例，审完原Base..新Head，并执行Required Tests原分配的
-全部T4/真实入口/安装消费者/wheel/Docker/视觉门禁。匹配证据依workflow复用；执行输入
-改变刷新分配验收，不机械重跑Final。
+B 对新固定候选独立复现上述关键正反例，完成原 Task Base..Head 审查，并承担 Required
+Tests 中已指定的完整 Python/Web/E2E、真实浏览器/视觉、wheel/安装消费者/Docker、安全与
+初始化/重开/备份/失败原子性门禁。不得把本轮未执行门禁交回 Developer；匹配证据按
+workflow 复用，执行输入改变刷新所分配验收，不机械重跑 Slice Final。
 
-### 本轮实际证据与待办
+### 本轮实际验证与证据
 
-本机ignored storage（非远程CI产物）：
-`.git/validation-evidence/52e13ce2c316aafa0bd1c2b424587572cee41d06/task45.5/b-review/`。
-`long-stability-retry.json` / `untrusted-worker-evidence.json` 为上轮修正通过的独立复现；
-`cli-cursor.json` 为新P1的真实跨CLI进程反例。完整脚本/日志/说明在同目录。
+本机稳定 ignored storage（非远程 CI）：
+`.git/validation-evidence/77dcb8e23003f729ea5b32785a329e0aade2f79a/task45.5/b-review/`。
 
-- 全仓ruff format/check通过（386 files）；compileall、pip check、两份示例config validate
-  通过，禁止依赖检索无匹配（exit1）。
-- Web typecheck/lint/format、81 files /1173 tests及build通过；整组83.15秒（Vitest62.01秒）。
-- 全Python unittest discover已启动；发现明确P1后主动SIGINT停止，exit130、250.90秒。
-  原始输出/ResourceWarning/中断栈保留，未完成、无PASS/完整测试数声明，不能作为全量通过证据。
-- 未启动完整E2E/real-Python浏览器、wheel/安装消费者/Docker/视觉验收；Docker daemon可用，
-  这些继续由B在修正候选完成。Developer的direct-files Base/flaky归因仍未独立确认，不豁免。
+- `verify_cli_cursor.py` / `cli-cursor.json`：独立真实 CLI 两进程实际续页及只读通过。
+- `cross-process-tests.log`：新增跨进程 5 tests OK，实际2.159秒（外层2.40秒）。
+- `reproduce_direct_stability.py` / `direct-stability.json`：上述5组真实入口正反例，脚本断言
+  确认当前缺陷和成功对照；不会因预期缺陷而把产品标为 PASS。
+- 新 key reader 和 organizer 的 ruff check 通过；治理与 git diff --check 通过。
+- 已证实 P1 后未启动完整 T4 / E2E / wheel / Docker；这些仍由 B 待修正候选完成。
+  之前52候选的完整Web/部分Python结果只保留历史，不冒充当前执行输入的验收通过。
+- 测试及质量命令累计保守上限15秒，远低于本轮复核时间的50%；精确起止与保守计算见
+  同目录 `review-timing.json`。不靠空等拉长分母。
 
-测试/质量命令保守累计少于340秒（并行命令仍相加），本轮复核已超过680秒，低于用户50%
-上限；实际起止与计算见同目录 `review-timing.json`。
-
-本轮治理/whitespace通过；仅Task文档checkpoint，不含预存图片删除、未跟踪截图/.DS_Store/
-ZIP/浏览器结果/开发日志；未读取私有配置、用户运行库或媒体。Slice/Roadmap/Progress、
-45.4历史PASS与验证例外均不变。RO-7/RO-8仍未全部满足，未规划新Task或提交Closure Packet。
-preflight main@bf5155340cc270cefb347a80a7009b1787541cee，workspace/Git可写。
-此前交接/复核详细记录保留于 `9d64914:TASK.md` 与历史Git。
+RO-7 未通过、RO-8 仍未实现，因此本轮不造新 Task、不提交 Closure Packet、不关闭 Slice。
