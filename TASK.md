@@ -546,3 +546,87 @@ READY FOR B REVIEW at implementation HEAD `a3fbb36c7f86ed08629e08247a08e5f154d4a
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
 `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
 `web/test-results-real-python-final/` 及开发 `.log` 文件。私有ignored配置不读取、不暂存。
+
+## Developer Fix Round Report (B stability bypass / untrusted Worker evidence)
+
+READY FOR B REVIEW at implementation HEAD `52e13ce2c316aafa0bd1c2b424587572cee41d06`
+(Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
+`a3fbb36c7f86ed08629e08247a08e5f154d4adbb`). Same Task, Base / Goal / T4 unchanged.
+
+### 行为与关键决策
+
+- **P1 稳定观察约束重试与执行。** `PersistentTaskItem`/`PersistentResultRecord` 新增
+  `source_observed_at`（runtime schema 48，additive 列，fresh 创建、旧库原地升级不回填）。
+  `MediaOrganizerService.process_file` 首次选择记录该工作自己的真实首观察时刻；retry/resume/
+  recovery/Worker/Automation 调用在 Provider/执行前用同一 `stability_decision` 策略、按工作原
+  pin 与 live `stat` 重新判定。`resolve_source_evidence=False` 只允许继续观察/等待，不再把
+  “指纹相同”当作“区间已满足”。稳定证据缺失时从当前时刻重新计时。
+- **P2 持久等待闭环。** 观察起点/来源证据落在该显式工作的 TaskItem/Result（`source_observed_at`），
+  重开/新进程可读；合法证据继续、丢失证据重新观察。到期后真实重观察，来源变化重置区间。
+  长区间（>60s）不阻塞同步命令，记录为等待项并由 retry 继续观察；0 秒不新增等待、真实空目录
+  仍 0 项结束。未建第二队列/全局目录。
+- **B-2/P1 Worker 校验原证据可信状态。** `PersistedSourceEvidence.has_exact_evidence` 现在同时
+  要求 `fingerprint_state == verified`。`ManualSourceValidator.validate_persisted_source` 与
+  `_persisted_source_refusal` 对缺失/半缺失/unverified/legacy 一律 `source_unverified` 拒绝，
+  保留记录并指向重新选择/准备；不再根据当前 stat 升级不可信原记录。真实 Worker 续作与直接
+  CLI 重试采用同义检查。
+- **fixture 反映生产。** 稳定性反例用 61 秒配置的立即重试快速验证“未到期零 Provider/零
+  mutation”，不必真等；到期允许与重开用受控持久观察（改 `source_observed_at`，非 mtime）
+  验证。可信状态反例保留真实且匹配的 occurrence/fingerprint，只把状态改为 unverified/legacy，
+  再驱动真实 `worker run-next`。
+
+### 实际受影响命令/结果
+
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 干净；
+  `python -m compileall -q mediaflow tests scripts` → OK。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_recovery_continuation test_metadata_correction_continuation test_task_persistence` → 98 tests OK。
+- `... test_scanner test_resource_library_pipeline test_final_integration test_scan_retirement_stability test_organize_preparation` → 47 tests OK。
+- `... test_automation_definition_execution test_automation_authorized_execution_matrix test_task_center_recovery_lineage` → 38 tests OK。
+- `... test_task_retry test_scope_continuation test_processing_recovery_admission test_task_pause_resume` → 85 tests OK。
+- `... test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 108 tests OK。
+- 条件消费者组（task_persistence/sqlite_backup/sqlite_restore、direct_file_operations/
+  manual_operations_contract/operations_task_center、automation_task_definition_preview/
+  automation_definition_execution/automation_authorized_execution_matrix/configuration_organize、
+  metadata_correction_continuation/recovery_batch）全部 OK。
+- 追加直接受影响组：`test_classification_review`/`test_file_media_detail`/`test_metadata_correction`/
+  `test_metadata_review`/`test_recognition_review`/`test_workflow_retry` → 45 OK；
+  `test_operations_run_detail_log_isolation`/`test_resource_library_activation`/
+  `test_media_library_activation`/`test_scan_retirement` → 58 OK；
+  `test_restart_fault_boundary`/`test_queued_job_execution_boundary`/`test_operations_run_detail`/
+  `test_operations_workspace`/`test_operations_run_inventory` → 105 OK；
+  `test_operator_observability`/`test_processing_checkpoint`/`test_direct_file_transfers` → 126 OK；
+  `test_media_discovery`/`test_scan_retirement_stability`/`test_automation_task_definition_preview` → 133 OK；
+  `test_processing_worker_readiness`/`test_configuration_status`/`test_api_security` → 39 OK；
+  `test_sqlite_backup`/`test_sqlite_restore`/`test_migration_rehearsal`/`test_upgrade_preflight` → 18 OK。
+- 新增 `FreshCliSourceEvidenceAndStabilityTests`（9 cases）覆盖：fresh CLI 失败项已有 verified
+  occurrence/fingerprint；替换来源恢复在 Provider 前拒绝；空/半缺失/legacy/unverified 拒绝；
+  61 秒配置立即重试仍等待（0 Provider/零 mutation，含 `--execute`）；记录的区间真正到期后
+  dry-run 继续分析；1 秒真实等待；默认 0 不等待；变化重置；真实 Worker 对 unverified/legacy
+  原证据拒绝（0 Provider/零 mutation、无新项/结果）。
+- `.venv/bin/ruff check mediaflow/ tests/` → All checks passed；
+  `.venv/bin/ruff format --check mediaflow/ tests/` → 322 files already formatted。
+- Web（cwd `web/`）：`npm run typecheck` 干净；`npm run test -- run` 指定 4 文件 → 93 passed。
+
+### B 独立复现对照（同一 ignored 脚本，行为已翻转）
+
+- `reproduce_long_stability_retry.py`：61 秒配置下首次 `organize --execute` 仍
+  failed/unstable_source（0 Provider/0 目标）；立即 `tasks retry-failed --execute` 现为
+  exit1、0 Provider、来源仍在、0 目标文件（旧结果 exit0/completed/success/实际 MOVE 已不再成立）。
+- `reproduce_untrusted_worker_evidence.py`：unverified/legacy 两种状态现均 `worker_exit=1`、
+  Provider 0、continuation failed、无新项/结果（旧结果 exit0/completed/verified 已不再成立）。
+- `verify_fresh_task_evidence.py` / `verify_cli_short_stability.py` 保持通过（fresh 证据链与
+  1 秒真实等待进入分析）。
+
+### 已知失败/风险
+
+- 仍待 B 独立确认 `tests/e2e/direct-files.python.spec.ts` 的既有 flaky（非本 Task 引入）。
+- 稳定等待上限 `_MAX_STABILITY_WAIT_SECONDS=60s`：更长的配置区间不阻塞同步 CLI，而是记录
+  等待项与 retry 下一步；B 可在真实入口确认该交互。
+- wheel/隔离安装、生产 Docker、真实 SMB/OpenList/S3/TMDB 与 1536×1024/380×720 截图等
+  T4 门禁仍 pending B；Developer 不跑全量/发布矩阵。
+- RO-8 独立 Preview 完整退出未交付；本 Task 只清理其必要索引耦合。
+
+预存修改保留且不纳入 Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
+`web/test-results-real-python-final/` 及开发 `.log` 文件。私有ignored配置不读取、不暂存。
