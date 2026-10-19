@@ -202,119 +202,130 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 ## Developer Completion Report
 
-READY FOR B REVIEW at implementation HEAD `6f79676a12147a671a1b466af885fff1e7ce1790`
-(Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previously reviewed candidate
-`86f8af953cf9c2501e107831a2da754bd68c0640`; this handoff differs only in TASK.md). Same Task,
-Base / Goal / High / T4 unchanged. B's review finding was **FIX REQUIRED — a fully recorded budget
-still hides/refuses undecided recovery**; this fix round commits only that correction and its
-tests.
+READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
+T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's finding
+was **FIX REQUIRED — a completed linked recovery can execute the same source again** (P1). This
+round fixes only that root cause, its boundaries and its tests.
 
 ### 先复现（修复前）
 
-Running B's own script (unchanged candidate, unchanged assertions) reproduced the P1 exactly:
-`item_limit=2`, `Kept` successful, `Left` recorded-but-`pending`, so `remaining_scope()` returned
-`Left` with `remaining_limit == 0`. The real API answered `POST
-/api/v1/tasks/{id}/remaining-scope-previews` with 409 `no_remaining_scope` ("every unit ... already
-recorded"), and `GET /api/v1/operations/runs/{id}` exposed a `resume` action with **no** `preview`
-recovery entry — the required journey was unreachable. Media unchanged, target files 0.
+B's own script, unchanged candidate and unchanged assertions, reproduced the P1 end to end:
 
-Root cause was exactly the three-layer one B described: `continuation_obstacle()` decided
-"nothing remaining" from the queued continuation's *budget*, the API passed that verdict straight
-into `admit_recovery_preparation()`, which refused before ever reaching the recovery scope, and the
-native projection published the recovery entry only for the `authority_required` code. Before
-touching application code, the new `test_a_fully_recorded_budget_still_recovers_its_undecided_item`
-was executed against the unmodified modules (stash of the five application files) and failed at
-`resume["preview"]` — the failing case is real, not retro-fitted.
+- `recovery_scope_plan()` still returned the ancestor `Left` item as `Pending` even though the
+  linked recovery execution had a real `SUCCESS`/`verified_complete` Result, so the exclusion set
+  held only `Kept`;
+- the surviving native overview still advertised the recovery summary action, and a second real
+  `POST .../remaining-scope-previews` + explicit confirm + `ManualOrganizeExecutionWorker` produced
+  a **second** destination file `Left (2005) (1).mkv`; both sources stayed intact (COPY).
 
-### 修正：区分"没有新的发现名额"与"没有任何可安全恢复项"
+Two independent defects were proven by that reproduction:
 
-1. **共享边界显式建模两种操作** (`domain/scope_continuation.py`, `application/scope_continuation.py`):
-   新增 `ScopeContinuationOperation{QUEUED_CONTINUATION, RECOVERY_PREPARATION}`，`continuation_obstacle()`
-   和 `ScopeContinuationService.obstacle()/recovery_obstacle()` 按操作给出结论。两者共享同一条链、
-   paused 状态、不可变 pin、continuation 所有权与 live authority 校验；只有两处按操作分叉：
-   - **预算**：queued continuation 把*未记录*发现名额交给 Worker 且跳过已记录来源，因此原准入
-     全部记录后确实没有可排队工作，仍给出 `no_remaining_scope`；recovery preparation 重新观察
-     已记录但**未决**的项，只有"既无未决项又无剩余名额"才拒绝。
-   - **授权**：queued continuation 若会修改媒体仍需 live 可复用授权；零变更 recovery
-     preparation 不要求也不授予执行权（执行仍需一次全新显式确认）。
-   其他拒绝（命令类型、paused、pin、chain owner/continuation 已存在、RBAC、claim/fence）对
-   两种操作完全一致，未被绕过。普通 Continue 的预算限制保留。
+1. **Domain-coding mismatch.** The manual-Organize executor persists the organizer's own
+   `ExecutionStatus` spelling (`SUCCESS`), while `remaining_scope()` compared only the lowercase
+   `TaskItemStatus` values, so a really successful recovery Result was invisible as a decision.
+2. **Identity mismatch.** `remaining_scope()` retired only the *same* `item_id`. A recovery attempt
+   records its own TaskItem/Result under its own item ID, so an ancestor `pending` item of the same
+   exact source stayed "undecided" forever, and `already_recorded - undecided` then removed that
+   source from the replay exclusion set.
 
-2. **精确恢复范围** (`RecoveryScopePlan`): `recovery_scope()` 保持原三元组返回，新增
-   `recovery_scope_plan()` 提供同一计算的 `unrecorded_budget`。原准入被完全记录时
-   (`unrecorded_budget == 0`)，preparation 观察**恰好那些未决来源**而不是重走目录，因此满额之后
-   才出现的新文件不能借用未决名额、静默替换或扩大范围；新来源准入身份由 scope signature 逐项
-   绑定，重复请求仍收敛同一 durable preparation。仍有未记录名额时继续走原有目录遍历与预算。
+### 修正：按显式来源把已完成效果归并回它承接的原工作来源
 
-3. **原生投影按恢复资格发布** (`application/operations_lifecycle.py`):
-   `TaskExecutionContext.recovery_available` 来自共享边界的 recovery 结论，`lifecycle.resume`
-   的 `preview` 入口据此发布（仍仅对有 `MANAGE_MANUAL_ORGANIZE` 的主体）。真正全已决的运行
-   不发布入口。API `_remaining_scope_obstacle()` 改为调用 `recovery_obstacle()`，真实 POST 与
-   投影不再可能不一致。
+1. **共享边界按操作/来源判定，不再只看 item 身份** (`application/scope_continuation.py`):
+   `remaining_scope()` 沿既有 `continuation_chain()`（queued continuation 链接 + 精确 Preview
+   恢复链接）收集整条链的 items/Results，然后用 *显式来源* 决定终态：
+   - 新增 `_result_is_decided()`：状态比较大小写不敏感（同时覆盖 `success`/`SUCCESS`），
+     `attempted_unverified` 与执行域 `unknown` 都视为已决（只核查），且 `primary_completed=True`
+     的裁决即使状态是 `PARTIAL` 也算主文件已完成（附件警告不重放主项）。
+   - 新增 `_decided_source_observations()`：只要 Result 已决，或 TaskItem 自己落在非未决状态，
+     它就成为该来源的一条已决观察（`item_id` 仍按身份消除）。
+   - 新增 `_SourceObservation.is_the_same_file_as()`：必须 Storage + 精确相对路径一致；当两侧都
+     有指纹时指纹也必须相等。因此**同路径被替换的新文件**保留自己的未决状态，不同 Storage/
+     路径的成功不会误伤本来源；无指纹的旧行按同一来源保守处理（拒绝重复 mutation 优于重放）。
+   结果：完成/忽略/未知效果会退休链上**所有**指向同一来源的 item，`replay_excluded` 因此包含
+   该来源，满额链给出 `unrecorded_budget == 0`、无未决项。
+2. **预算按去重来源计费**: `remaining_limit` 用 `{(storage_id, path)}` 的去重数量，而不是
+   item 行数；`recovery_scope_plan()` 的 `undecided_items` 也按来源去重（同一来源只提出一次）。
+   多一条恢复尝试既不重复扣减也不放宽原准入。
+3. **动作/摘要/准入消费同一结论**: `_remaining_scope_obstacle()` 与
+   `admit_recovery_preparation()` 都走同一个 `recovery_scope_plan()`，因此原生 lifecycle
+   `preview` 入口、真实 `POST` 与 Worker 观察不可能互相不一致：全已决的满额链不发布入口、
+   直接请求 409 `no_remaining_scope`、零 preparation/零 Job/零 Provider。
+4. **不受影响的行为保持**: 可证明零效果（`effect_certainty == "none"`）的失败仍是未决工作，
+   仍可再次摘要与确认，且同一来源只出现一次；"未知效果"只核查、绝不转为可重试。
 
-4. **一致性**: fake server 与 real-Python harness 同步表达同一规则（recovery 资格而非单一
-   refusal code），新增 harness fixture `seed-full-budget-recovery` 与专用 Provider 候选。
+### 新增/修改的真实旅程测试（`tests/test_scope_continuation.py`）
 
-### 实际受影响命令/结果（本轮，仓库根，`PYTHONPATH=tests`）
+固定 COPY+Rename（真实 managed Active）与真实 API/SQLite/LocalStorage/fake Provider/持久
+Worker，新增 8 个用例：
 
-- `test_scope_continuation` → **65 OK**（含 4 个新增用例）
-- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → **40 OK**
-- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize` → **257 OK**
-- `test_recovery_continuation test_task_center_recovery_lineage test_scope_continuation test_media_discovery_provider_manifest test_organize_preparation` → **152 OK**
+- `test_a_completed_recovery_never_offers_its_source_again`：原 Pending→恢复摘要→显式 execute
+  API→真实 Worker COPY 成功（断言真实 `SUCCESS`/`verified_complete` 与同指纹、不同 item ID）→
+  新连接重开仍为全已决→原生 overview 不再提供 preview→再次 POST 409 且不新增 Preview→
+  目标只有 1 份 `Left (2005).mkv`，两个来源字节不变。
+- `test_a_completed_move_recovery_is_terminal_for_the_original_pending`：MOVE 成功同样终态
+  （不因源文件消失而误判为可重放）。
+- `test_an_attachment_warning_keeps_the_verified_primary_terminal`：`PARTIAL` +
+  `primary_completed` + 附件原因不被重放。
+- `test_an_ignored_attempt_never_resurrects_the_pending_ancestor`：只有 TaskItem 变更、无 Result
+  的显式 ignore 也退休来源。
+- `test_an_uncertain_effect_never_resurrects_the_pending_ancestor`：执行域 `unknown` 只核查。
+- `test_a_zero_effect_failure_stays_safely_recoverable`：`none` 失败仍可恢复，且同一来源只提
+  交一次、预算不放宽。
+- `test_a_replaced_file_at_the_same_path_keeps_its_own_undecided_state`：同路径新指纹是新工作。
+- `test_a_new_independent_run_is_never_suppressed_by_an_old_success`：不同 Task 链不受旧成功压制
+  （无全局路径黑名单）。
+
+修复前先跑新用例（application 文件未改）失败于 `plan.undecided_items != ()`，证明用例真实捕获
+该 P1，而不是事后补写。
+
+### Harness / 原生浏览器旅程
+
+- `scripts/operations_inventory_harness.py`：新增真实 `copy-fixture` COPY+Rename 策略与
+  `copy-fixture-library` 识别规则（仅 `FullBudget` 目录）；`seed_full_budget_recovery` 追加一次
+  **可证明零效果** 的早期独立尝试（决定默认选择为 COPY，且仍不改变来源未决性）；
+  `authority_execution_state` 对该 scope 报告本 fixture 自己的目标副本。
+- `web/tests/e2e/operations-inventory.python.spec.ts` 的 full-budget 旅程现在真实完成
+  `摘要→确认→Worker COPY`，随后 `restart` 重开、断言原生 overview 不再提供 preview、
+  再次 POST 409 `no_remaining_scope`，且目标副本数量保持 1。
+
+### 实际受影响命令/结果（仓库根，`PYTHONPATH=tests`）
+
+- `test_scope_continuation` → **73 OK**（含 8 个新增用例）
+- `test_recovery_continuation test_task_center_recovery_lineage test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **199 OK**
+- `test_manual_organize_execution test_recovery_batch test_recovery_continuation test_task_center_recovery_lineage` → **178 OK**
+- `test_media_discovery test_media_discovery_provider_manifest test_organize_preparation test_v2_manual_organize test_manual_organize_preview test_manual_organize_intent` → **192 OK**
 - `test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **100 OK**
 - `test_task_persistence test_sqlite_backup test_sqlite_restore test_direct_file_operations test_manual_operations_contract` → **98 OK**
-- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → **140 OK**
+- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation` → **72 OK**
+- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser test_scanner test_scan_retirement_stability` → **65 OK**
+- Web (`cwd web/`): `npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx` → **35 passed**；
+  `npx prettier --check` / `npx eslint` 覆盖改动 spec → 干净；`npx tsc --noEmit` 无该文件错误。
+- 原生：`npx playwright test --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts -g "fully recorded budget still recovers"`
+  → **1 passed**（真实 production build + 真实 Python API/Worker + restart）；
+  同文件 `-g "mutation-authorized paused run|missing configuration pin"` → **2 passed**。
+- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
+  `python -m compileall -q mediaflow scripts tests` OK；
+  `ruff check` 与 `ruff format --check` 覆盖 4 个改动 Python 文件 → passed / formatted。
 
-新增/修改用例（真实 API/SQLite/LocalStorage/fake Provider/持久 Worker）：
-
-- `test_a_fully_recorded_budget_still_recovers_its_undecided_item`：`item_limit=2`、两名额全部
-  记录、`Left` Pending。断言 `remaining_scope` 的 `new_budget == 0`；原生 task 投影与
-  `/operations/runs/{id}` 都不提供 Continue 但**提供** `preview` 入口；真实 POST → 202；持久
-  Worker 摘要恰为 `Left`，`Kept` 不重放，媒体字节不变、目标 0。
-- `test_a_single_recorded_pending_item_is_recoverable_at_a_full_budget`：`item_limit=1` 且唯一
-  Pending 的最小满额边界。
-- `test_a_fully_decided_chain_at_a_full_budget_is_still_refused`：成功+Pending 之外的真正全已决
-  仍 409 `no_remaining_scope`，且不发布 `preview`、不创建任何 Preview。
-- `test_a_full_budget_never_lets_a_new_file_borrow_the_pending_unit`：满额后新增
-  `New.2020.mkv`，摘要仍恰为 `Left`，三个源文件都在、目标 0。
-- `test_a_fully_recorded_budget_keeps_the_queued_continue_refusal`：同一状态 `POST /resume`
-  仍 409 `no_remaining_scope`、零 Job、零 continuation 记录；只有零变更复核可用。
-- 修正原 `test_recovery_keeps_an_undecided_recorded_source_in_the_reviewed_scope` 的说明：它
-  实际是 budget=4 的对照（两名额未用），现明确写出并断言 `unrecorded_budget == 2`。
-
-Web（cwd `web/`）：`npm run test -- run src/entities/operations/lifecycle.test.ts
-src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx
-src/features/operations/OperationsInventory.test.tsx` → **65 passed**（新增"非 authority refusal
-仍保留 recovery 入口"与"满额仍有未决项时渲染摘要按钮"两个断言）；`npm run typecheck` 通过；
-`npm run build` 成功（production assets 供 E2E 使用）；
-`npm run test:e2e -- --config=playwright.python.config.ts
-tests/e2e/operations-inventory.python.spec.ts -g "fully recorded budget|mutation-authorized paused
-run|missing configuration pin"` → **3 passed**，其中新增的 full-budget 浏览器旅程在 production
-build + 真实 Python API/Worker 上完成：Continue 不可用但摘要按钮可见 → 摘要恰含
-`FullBudgetLeft.2005.mkv`、不含 `Kept`/新文件 → `确认继续整理剩余 1 项` → 无 mediaflow CLI 文案 →
-目标 0 → 重复 POST 202 收敛。
-
-静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
-`.venv/bin/python -m compileall -q mediaflow tests scripts` OK；`ruff check` 与
-`ruff format --check` 覆盖全部 7 个改动 Python 文件 → passed / formatted；
-`npx prettier --check`、`npx eslint` 覆盖 3 个改动 Web 文件。
-
-证据：`.git/validation-evidence/task45.5-developer-fix3/verify_full_budget_scope.py` 与
-`full-budget-scope.json`（exit 0；四案：budget4/budget2 均 202 且摘要恰为 Left；两种准入顺序的
-三份独立 admission 与真实 Worker 清单），以及 `README.md` 记录候选、命令与实际结果。
+证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix4/`
+包含本轮的复现/验证脚本与 JSON（修复前 `remaining_after_success` 含 `Left`、第二次 execute 202
+且生成两份目标；修复后 `remaining_after_success` 为空、第二次 409、目标 1 份）。
 
 ### 已知风险/边界
 
-- 恢复身份现在包含**观察形态**：原准入满额时 scope signature 是未决文件集合，仍有名额时是目录。
-  未决集合或排除集实质变化会产生新准入（既有 B 已确认的精确语义），不变则收敛同一记录。
-- 满额恢复只观察未决来源，因此对"原目录里后来出现的文件"是显式不扩大；这符合 B 第 4 条要求，
-  但也意味着新文件需要通过新的有界运行处理。
-- runtime schema 仍为 49（无新列/表）；B 仍需在真实 wheel/Docker 复核 fresh/reopen 与支持版本
-  迁移。
-- `tests/e2e/direct-files.python.spec.ts` 既有 flaky 仍待 B 独立确认（非本 Task 引入）。
-- wheel/隔离安装、生产 Docker、真实长区间 Worker、1536×1024/380×720 全套截图与 failover 仍是
-  B 的 T4 门禁，本轮未运行也未声称通过。
-- 本轮测试执行合计约 2 分钟，占本开发轮次总时长（约 48 分钟）约 3%，低于 30% 上限。
+- 已决来源的归并是**读时投影**：旧 Task/Result 行不被改写，链内历史保持可独立检查。归并只沿
+  既有 `scope_continuations` 与 `manual_previews.recovery_source_task_id` 显式链接，不按标题、
+  时间或路径跨任务猜测；无法证明承接关系时不归并（保守拒绝重复）。
+- 无指纹的旧行在同一 Storage+路径上视为同一来源（拒绝重复 mutation 优先）。真实执行产生的
+  Result 都带指纹，因此正常路径是精确指纹比较。
+- 恢复仍要求同来源在链内只被提出一次；因此**满额**恢复后新出现的文件需通过新的有界运行处理
+  （既有 B 已确认语义，未改变）。
+- runtime schema 仍为 49（无新列/表）；wheel/隔离安装、生产 Docker、fresh/reopen 与支持版本
+  迁移、完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
+- 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在本轮
+  基线上**同样失败**（已用 `git stash` 在未修改 HEAD 上复现），非本 Task 引入，留给 B 判定。
+- 本轮测试执行合计约 1.5 分钟，占本开发轮次总时长（约 55 分钟）约 2.7%，低于 30% 上限。
 
 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、

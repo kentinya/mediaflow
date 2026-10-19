@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
+from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.scope_continuation import (
     CONTINUABLE_TASK_COMMANDS,
     CONTINUATION_BOUNDARY,
@@ -37,6 +38,7 @@ from mediaflow.domain.scope_continuation import (
     ScopeContinuationStatus,
 )
 from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
@@ -96,6 +98,13 @@ _REMAINING_ITEM_STATUSES = frozenset(
 #: decided.  Even when a later transition rewrote the item status, an item with
 #: one of these Results is never replayed: a successful/dry-run/skipped sibling
 #: has a completed effect and an ignored item is an explicit operator decision.
+#:
+#: The comparison is case-folded because two real producers write the same
+#: disposition with different case: the workflow pipeline stores the
+#: ``TaskItemStatus`` value (``success``/``skipped``) while the manual-Organize
+#: executor stores the organizer's own ``ExecutionStatus`` value
+#: (``SUCCESS``/``SKIPPED``).  Reading only the lowercase form would silently
+#: treat a really successful recovery Result as undecided.
 _TERMINAL_RESULT_STATUSES = frozenset(
     {
         TaskItemStatus.SUCCESS.value,
@@ -105,10 +114,118 @@ _TERMINAL_RESULT_STATUSES = frozenset(
     }
 )
 
-#: An item whose executor recorded an unverified effect is never replayed
-#: automatically: MediaFlow cannot prove the interrupted mutation did not
-#: happen, so it stays investigation-only.
-_UNCERTAIN_EFFECT_CERTAINTY = "attempted_unverified"
+#: Any effect the executor never verified is never replayed automatically:
+#: MediaFlow cannot prove the interrupted mutation did not happen, so it stays
+#: investigation-only.  ``unknown`` is the executor's own value for an
+#: invocation that may have crossed the mutation boundary.
+_UNCERTAIN_EFFECT_CERTAINTIES = frozenset(
+    {"attempted_unverified", ExecutionEffectCertainty.UNKNOWN.value}
+)
+
+
+def _result_is_decided(result: PersistentResultRecord) -> bool:
+    """Whether one recorded Result already proves a decided outcome.
+
+    Both a terminal disposition and an unverified effect are decided: the first
+    has nothing left to do, the second may only ever be investigated.  A Result
+    whose primary operation was verified complete is decided even when its
+    status is ``PARTIAL``: the remaining warnings belong to independent
+    attachments, which are never resolved by replaying the primary.
+
+    The comparison is case-folded because two real producers write the same
+    disposition with different case — the workflow pipeline stores the
+    ``TaskItemStatus`` value (``success``/``skipped``) while the manual-Organize
+    executor stores the organizer's own ``ExecutionStatus`` value
+    (``SUCCESS``/``SKIPPED``).  Matching only the lowercase spelling would
+    silently treat a really successful recovery Result as undecided and allow
+    the same source to be executed again.
+    """
+
+    status = result.status.strip().lower() if isinstance(result.status, str) else ""
+    certainty = (
+        result.effect_certainty.strip().lower() if isinstance(result.effect_certainty, str) else ""
+    )
+    return (
+        status in _TERMINAL_RESULT_STATUSES
+        or certainty in _UNCERTAIN_EFFECT_CERTAINTIES
+        or bool(result.primary_completed)
+    )
+
+
+@dataclass(frozen=True)
+class _SourceObservation:
+    """One bounded source observation that already carries a decided outcome."""
+
+    storage_id: str
+    path: str
+    fingerprint: str | None
+
+    def is_the_same_file_as(self, item: PersistentTaskItem) -> bool:
+        """Whether this decided observation provably names this item's source.
+
+        Storage and the exact relative path always have to match.  When both
+        sides carry a verified fingerprint the two are additionally required to
+        be equal, so a file *replaced* at the same path keeps its own undecided
+        state instead of inheriting the previous file's outcome.  A legacy or
+        externally written row without any fingerprint evidence cannot be
+        compared, so it is conservatively treated as the same source: refusing a
+        duplicate mutation is always preferable to silently repeating one, and
+        the item keeps its own recorded history either way.
+        """
+
+        if self.storage_id != item.storage_id or self.path != item.source_path:
+            return False
+        if not self.fingerprint or not item.source_fingerprint:
+            return True
+        return self.fingerprint == item.source_fingerprint
+
+
+def _decided_source_observations(
+    items: tuple[PersistentTaskItem, ...],
+    results: tuple[PersistentResultRecord, ...],
+) -> tuple[set[str], tuple[_SourceObservation, ...]]:
+    """Every decided item identity and decided source of one recorded chain.
+
+    A decided outcome reaches the chain through either row shape, and both are
+    real:
+
+    * a Result is the authoritative record of an executed item, and its
+      ``item_id`` names the attempt that actually ran;
+    * an explicit operator decision (ignore) and a read-only completion rewrite
+      only the TaskItem, so no Result exists for them.
+
+    Reading both keeps an ignored or dry-run attempt from being forgotten while
+    still letting a Result retire an ancestor attempt of the same source.
+    """
+
+    decided_items: set[str] = set()
+    observations: list[_SourceObservation] = []
+    for result in results:
+        if not _result_is_decided(result):
+            continue
+        decided_items.add(result.item_id)
+        if isinstance(result.source_storage_id, str) and isinstance(result.source_path, str):
+            if result.source_storage_id and result.source_path:
+                observations.append(
+                    _SourceObservation(
+                        result.source_storage_id,
+                        result.source_path,
+                        result.source_fingerprint or None,
+                    )
+                )
+    for item in items:
+        if item.status in _REMAINING_ITEM_STATUSES or item.status.value.startswith("waiting"):
+            continue
+        decided_items.add(item.item_id)
+        observations.append(
+            _SourceObservation(
+                item.storage_id,
+                item.source_path,
+                item.source_fingerprint or None,
+            )
+        )
+    return decided_items, tuple(observations)
+
 
 #: The statuses that mean a Task of a continuation chain has stopped producing
 #: work: a terminal Task cannot own remaining scope, so the deepest Task of the
@@ -566,25 +683,45 @@ def remaining_scope(
     * ``remaining_limit`` is the **root** Task's originally admitted
       ``item_limit`` minus every item the chain already recorded, so discovery
       and continuation never broaden the admitted budget.
+
+    An outcome is resolved **per source**, not only per item identity: a later
+    attempt of the chain (an exact-Preview recovery execution, a queued
+    continuation Task) records its own item and Result under its own item ID,
+    so matching on ``item_id`` alone would leave the ancestor item undecided
+    after the same source was really completed.  A decided outcome therefore
+    retires every chain item that provably names the same source: the same
+    Storage, the same ResourceLibrary and the same exact relative path, and —
+    when both sides recorded verified occurrence evidence — the same
+    fingerprint.  A replaced file at the same path keeps its own undecided
+    state because its fingerprint differs, and a success recorded for a
+    different Storage/library/path never retires this source.  The recorded
+    history itself is never rewritten: this is a read-time projection over the
+    existing Task/Result rows.
     """
 
     chain = continuation_chain(repository, task)
     root = chain[0]
     items = tuple(item for value in chain for item in repository.list_items(value.task_id))
     results = tuple(result for value in chain for result in repository.list_results(value.task_id))
-    terminal = {
-        result.item_id
-        for result in results
-        if result.status in _TERMINAL_RESULT_STATUSES
-        or result.effect_certainty == _UNCERTAIN_EFFECT_CERTAINTY
-    }
+    decided_items, decided_observations = _decided_source_observations(items, results)
     remaining = tuple(
         item
         for item in items
-        if item.status in _REMAINING_ITEM_STATUSES and item.item_id not in terminal
+        if item.status in _REMAINING_ITEM_STATUSES
+        and item.item_id not in decided_items
+        and not any(observation.is_the_same_file_as(item) for observation in decided_observations)
     )
     already_recorded = frozenset((item.storage_id, item.source_path) for item in items)
-    remaining_limit = max(0, root.item_limit - len(items)) if root.item_limit is not None else None
+    if root.item_limit is None:
+        remaining_limit = None
+    else:
+        # A recorded item occupies a unit of the originally admitted budget.
+        # A re-observation of an *already admitted* source (a recovery
+        # execution, a continued attempt) is the same unit of work, not a new
+        # one, so the budget is counted over distinct sources: an extra attempt
+        # must neither shrink nor widen what the operator originally admitted.
+        recorded_units = len({(item.storage_id, item.source_path) for item in items})
+        remaining_limit = max(0, root.item_limit - recorded_units)
     return remaining, already_recorded, remaining_limit
 
 
@@ -636,16 +773,32 @@ def recovery_scope_plan(
     """
 
     remaining, already_recorded, remaining_limit = remaining_scope(repository, task)
-    undecided = frozenset((item.storage_id, item.source_path) for item in remaining)
+    # The undecided set is reduced to one entry per exact source.  A later
+    # attempt of the chain records its own item for the same source, so the
+    # reviewed/observed scope is the set of distinct undecided *sources*, not
+    # one observation row per attempt; otherwise the same file could be offered
+    # (and executed) once per earlier attempt.
+    undecided_items: list[PersistentTaskItem] = []
+    seen_sources: set[tuple[str, str]] = set()
+    for item in remaining:
+        source = (item.storage_id, item.source_path)
+        if source in seen_sources:
+            continue
+        seen_sources.add(source)
+        undecided_items.append(item)
+    undecided = frozenset(seen_sources)
     replay_excluded = already_recorded - undecided
     if remaining_limit is None:
         new_source_budget = None
     else:
         # The undecided sources are already inside the original admission, so
-        # they stay admissible on top of the still-unrecorded budget.
-        new_source_budget = remaining_limit + len(remaining)
+        # they stay admissible on top of the still-unrecorded budget.  The
+        # still-unrecorded part is measured over distinct sources as well, so an
+        # extra attempt of an already admitted source never enlarges the
+        # operator's original admission.
+        new_source_budget = remaining_limit + len(undecided_items)
     return RecoveryScopePlan(
-        remaining,
+        tuple(undecided_items),
         replay_excluded,
         new_source_budget,
         remaining_limit,

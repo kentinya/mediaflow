@@ -2406,16 +2406,76 @@ test("a fully recorded budget still recovers its one undecided item natively", a
   ).toMatchObject({ destinationFiles: [] });
   await expect(page.locator("body")).not.toContainText("mediaflow tasks");
 
-  // A second review request for the same paused run converges on the durable
-  // preparation instead of starting another walk.
-  const repeat = await request.post(
+  // The confirmed recovery really executes the one undecided item through the
+  // resident Worker under the fixture's COPY+Rename policy.
+  await summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }).click();
+  // The confirmation is an async POST that then navigates to the linked
+  // execution, so the admitted work is claimed by polling the real Worker until
+  // it can claim something.  Nothing here re-posts the confirmation.
+  let execution: { completed?: boolean; status?: string; itemCount?: number } =
+    {};
+  for (let step = 0; step < 20; step += 1) {
+    const workerRun = await request.post(
+      `${BASE}/__harness__/run-manual-worker`,
+    );
+    expect(workerRun.ok()).toBeTruthy();
+    const body = await workerRun.json();
+    if (body.completed === true || body.status !== undefined) {
+      execution = body;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(execution).toMatchObject({
+    completed: true,
+    status: "completed",
+    itemCount: 1,
+  });
+  const afterExecution = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  // COPY keeps every source file in place, so exactly one destination copy is
+  // the real proof that the source ran exactly once.
+  expect(afterExecution.sourceFiles).toEqual({
+    "FullBudgetKept.2006.mkv": true,
+    "FullBudgetLeft.2005.mkv": true,
+    "FullBudgetNew.2020.mkv": true,
+  });
+  expect(afterExecution.destinationFiles).toHaveLength(1);
+  const firstCopies = afterExecution.destinationFiles as readonly string[];
+
+  // The completed recovery is terminal for its source.  A reopened runtime must
+  // neither advertise nor admit that same source again: the later attempt
+  // recorded its own Task/Item/Result under its own item id, so without a
+  // source-exact decision this second request would prepare and execute the
+  // same file a second time and produce `FullBudgetLeft (2005) (1).mkv`.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  const reopenedProjection = await request.get(
+    `${BASE}/api/v1/tasks/${taskId}`,
+    {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
+    },
+  );
+  expect(reopenedProjection.ok()).toBeTruthy();
+  const reopenedBody = await reopenedProjection.json();
+  const reopenedResume = reopenedBody.lifecycle.actions.find(
+    (action: { action: string }) => action.action === "resume",
+  );
+  expect(reopenedResume.available).toBe(false);
+  expect(reopenedResume.preview).toBeUndefined();
+  const secondRecovery = await request.post(
     `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
     { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
-  expect(repeat.status()).toBe(202);
-  const repeatBody = await repeat.json();
-  expect(repeatBody.recoverySourceTaskId).toBe(taskId);
-  expect(repeatBody.sideEffects).toBe("none");
+  expect(secondRecovery.status()).toBe(409);
+  const secondRecoveryBody = await secondRecovery.json();
+  expect(secondRecoveryBody.error.code).toBe("no_remaining_scope");
+  expect(secondRecoveryBody.error.details.sideEffects).toBe("none");
+  const afterRefusal = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  expect(afterRefusal.destinationFiles).toEqual(firstCopies);
 });
 
 test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({

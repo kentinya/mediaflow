@@ -397,6 +397,49 @@ def build_managed_fixture(
         }
     )
     document["organizePolicies"][0]["attachments"] = {"enabled": True}
+    # A real COPY+Rename policy.  COPY is the exact shape in which a verified
+    # success leaves the source file in place, so a repeated execution of the
+    # same source is visible as a *second* destination file instead of hiding
+    # behind a vanished source.
+    copy_policy = dict(document["organizePolicies"][0])
+    copy_policy.update({"id": "copy-fixture", "operation": "COPY", "conflictStrategy": "rename"})
+    document["organizePolicies"].append(copy_policy)
+    document["recognitionTypes"].append({"id": "copy-fixture", "name": "Copy fixture"})
+    document["recognitionTypePolicies"].append(
+        {
+            "id": "type-copy-fixture",
+            "recognitionType": "copy-fixture",
+            "metadataPolicy": "C",
+            "namingPolicy": "A",
+            "classificationPolicy": "A",
+            "organizePolicy": "copy-fixture",
+        }
+    )
+    # The comparison scope of the full-budget recovery proof resolves to the COPY
+    # fixture type, so a confirmed recovery really copies: a repeated execution
+    # of the same source is then observable as a second destination file.
+    document["recognitionRules"].append(
+        {
+            "id": "copy-fixture-library",
+            "name": "Copy fixture resource library",
+            "priority": 150,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "source"},
+                    {"field": "path", "operator": "contains", "value": "/FullBudget/"},
+                    {
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4"],
+                    },
+                ],
+            },
+            "outputRecognitionType": "copy-fixture",
+        }
+    )
     overwrite_policy = dict(document["organizePolicies"][0])
     overwrite_policy.update(
         {"id": "overwrite-fixture", "conflictStrategy": "overwrite", "overwrite": True}
@@ -2734,6 +2777,12 @@ FULL_BUDGET_SCOPE = "FullBudget"
 FULL_BUDGET_KEPT_FILE = "FullBudgetKept.2006.mkv"
 FULL_BUDGET_LEFT_FILE = "FullBudgetLeft.2005.mkv"
 FULL_BUDGET_NEW_FILE = "FullBudgetNew.2020.mkv"
+#: The display scope of the earlier zero-effect attempt whose durable Result is
+#: what the operator's default recognition/organize choice is derived from.
+FULL_BUDGET_EARLIER_SCOPE = "EarlierBoundedAttempt"
+#: The stable destination-name stem of `FULL_BUDGET_LEFT_FILE`, used to report
+#: only this fixture's own destination copies.
+FULL_BUDGET_LEFT_STEM = "FullBudgetLeft"
 
 CONTINUATION_RECORDED_FILE = "C/Continuation/Six.2006.mkv"
 CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
@@ -2943,6 +2992,29 @@ def authority_execution_state(
     source_root = state.managed.root / "source" / scope
     destination_root = state.managed.root / "destination"
     destination_paths = AUTHORITY_TARGETS if scope == AUTHORITY_SCOPE else ()
+    # A COPY policy keeps the source file in place after a verified success, so
+    # the real destination file set is the only proof of whether the same source
+    # was executed once or replayed.  It is reported for every fixture scope.
+    if scope == FULL_BUDGET_SCOPE:
+        # Only this fixture's own copies: the harness destination also holds
+        # unrelated journeys' outputs, and this evidence is about whether *this*
+        # source was executed once.
+        copies = sorted(
+            path.relative_to(destination_root).as_posix()
+            for path in destination_root.rglob(f"*{FULL_BUDGET_LEFT_STEM}*.mkv")
+        )
+        return {
+            "available": task is not None,
+            "sourceTaskId": task.task_id if task else None,
+            "scope": scope,
+            "sourceTaskStatus": task.status.value if task else None,
+            "taskSnapshotId": task.configuration_snapshot_id if task else None,
+            "taskSnapshotDigest": task.configuration_snapshot_digest if task else None,
+            "activeSnapshotId": active.revision_id if active else None,
+            "activeSnapshotDigest": active.digest if active else None,
+            "sourceFiles": {filename: (source_root / filename).is_file() for filename in filenames},
+            "destinationFiles": copies,
+        }
     return {
         "available": task is not None,
         "sourceTaskId": task.task_id if task else None,
@@ -3107,6 +3179,68 @@ def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
             updated_at=now,
         )
     )
+    # An earlier bounded attempt on this exact source failed *before* the
+    # mutation boundary under the COPY fixture policy.  It changed nothing (so
+    # the source stays genuinely undecided work) but it is the durable record the
+    # operator's default choice is derived from, exactly as an earlier failed
+    # attempt does in production.  The recovery therefore plans COPY+Rename, and
+    # a repeated execution of the same source would be visible as a second
+    # destination file rather than hiding behind a removed source.
+    earlier = coordinator.create(
+        "organize",
+        execute_authorized=False,
+        # A distinct display scope keeps this earlier history its own inventory
+        # row; the Result below still names the real source path, which is what
+        # the operator's default choice is derived from.
+        scope_path=FULL_BUDGET_EARLIER_SCOPE,
+        item_limit=1,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+    )
+    earlier_item = coordinator.record_discovered(
+        earlier.task_id,
+        "source-storage",
+        "source",
+        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+    )
+    state.repository.append_result(
+        PersistentResultRecord(
+            result_id=f"{earlier_item.item_id}-full-budget-earlier-attempt",
+            task_id=earlier.task_id,
+            item_id=earlier_item.item_id,
+            source_storage_id=earlier_item.storage_id,
+            source_path=earlier_item.source_path,
+            destination_storage_id=None,
+            destination_path=None,
+            recognition_type="copy-fixture",
+            provider="tmdb",
+            provider_id="230",
+            metadata_policy_id="C",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="copy-fixture",
+            operation="COPY",
+            status="failed",
+            created_at=now,
+            title="Full budget left",
+            error="the earlier bounded attempt stopped before Storage mutation",
+            effect_certainty="none",
+            source_occurrence_id=left_item.source_occurrence_id,
+            source_fingerprint=fingerprint.value,
+        )
+    )
+    completed_earlier = dataclasses.replace(
+        earlier,
+        status=PersistentTaskStatus.COMPLETED,
+        failed_items=1,
+        total_items=1,
+        completed_at=now,
+        updated_at=now,
+        error="the earlier bounded attempt stopped before Storage mutation",
+    )
+    state.repository.update_task(completed_earlier)
     state.repository.request_task_pause(task.task_id, now)
     paused = coordinator.acknowledge_pause(task.task_id)
     if paused.status is not PersistentTaskStatus.PAUSED:

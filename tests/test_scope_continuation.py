@@ -30,6 +30,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -2927,6 +2928,554 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual(
             self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
         )
+
+    # -- a decided recovery source stays terminal across attempts ---------
+
+    def _copy_journey_active(self):
+        """One managed Active revision whose Organize policy really copies.
+
+        The real COPY+Rename policy is the exact shape B reproduced: the source
+        file stays in place after a verified success, so nothing about the source
+        Storage state can be mistaken for "not yet organised", and a second
+        attempt would produce a *second* destination file.
+        """
+
+        original = example_document
+
+        def copy_document():
+            # The real production journey uses this module-level fixture helper,
+            # so patching it here makes the managed Active revision itself carry
+            # the COPY+Rename policy instead of a test-only execution path.
+            value = original()
+            for policy in value["organizePolicies"]:
+                policy["operation"] = "COPY"
+                policy["conflictStrategy"] = "rename"
+            return value
+
+        patcher = mock.patch.dict(globals(), {"example_document": copy_document})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return self._activate(scope="Incoming")
+
+    def _recovery_attempt(self, api, task, *, executor=None):
+        """Drive one real recovery with an optional executor substitution.
+
+        ``executor`` only ever *replaces the single executor invocation*; the
+        whole admission, Preview, Worker, Result and Task persistence path stays
+        the production one, so an injected zero-effect or uncertain outcome is
+        recorded exactly as a real one would be.
+        """
+
+        from mediaflow.application.manual_organize_worker import (
+            ManualOrganizeExecutionWorker,
+        )
+
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        status, execution = request(
+            api,
+            f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": [value.item_id for value in preview.items],
+                "expectedIntentVersion": preview.intent_version,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, execution)
+        if executor is None:
+            result = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        else:
+            with mock.patch.object(api._manual_execution, "_executor", executor):
+                result = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.execution_id, execution["executionId"])
+        return result, execution["taskId"]
+
+    def _recovery_executed_once(self, api, task):
+        """Drive one real recovery: summary, explicit confirm, real Worker."""
+
+        return self._recovery_attempt(api, task)
+
+    def _recorded_budget_two(self, active):
+        """The full-budget fixture: `Kept` decided, `Left` recorded-but-pending."""
+
+        task = self._recorded_undecided_scope(active, item_limit=2, keep_success=True)
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        return task
+
+    def test_a_completed_recovery_never_offers_its_source_again(self):
+        """B P1: a really completed recovery source stays terminal forever.
+
+        The original Task is paused with `Left` recorded-but-`pending`; the native
+        recovery summary reviews exactly `Left`, the operator explicitly confirms
+        it and the resident Worker really COPYs it. The later attempt records its
+        own Task/Item/Result under its own item ID, and the manual-Organize
+        executor stores the organizer's `SUCCESS` spelling — so the ancestor
+        `pending` item must still be retired by exact source evidence instead of
+        being offered (and executed) a second time.
+
+        This is the exact defect B reproduced end to end: two confirms produced a
+        second `Left (2005) (1).mkv` destination file.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+
+        result, child_task_id = self._recovery_executed_once(api, task)
+        self.assertEqual(result.status.value, "completed")
+        child_results = self.repository.list_results(child_task_id)
+        self.assertEqual(len(child_results), 1)
+        # The real persisted encoding is the organizer's own uppercase value; a
+        # case-sensitive check on the TaskItem spelling would miss it.
+        self.assertEqual(child_results[0].status, "SUCCESS")
+        self.assertEqual(child_results[0].effect_certainty, "verified_complete")
+        self.assertEqual(child_results[0].source_fingerprint, original_item.source_fingerprint)
+        self.assertNotEqual(child_results[0].item_id, original_item.item_id)
+
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        self.assertIn(("source-storage", "Incoming/Sub/Left.2005.mkv"), plan.replay_excluded)
+        self.assertEqual(plan.new_source_budget, 0)
+        self.assertEqual(plan.unrecorded_budget, 0)
+        remaining, _recorded, remaining_limit = remaining_scope(
+            self.repository, self.repository.get_task(task.task_id)
+        )
+        self.assertEqual(remaining, ())
+        self.assertEqual(remaining_limit, 0)
+
+        # A reopened connection sees the same truth, so a restart cannot replay.
+        with SQLiteTaskRepository(self.database) as reopened:
+            reopened_plan = recovery_scope_plan(reopened, reopened.get_task(task.task_id))
+            self.assertEqual(reopened_plan.undecided_items, ())
+            self.assertEqual(reopened_plan.new_source_budget, 0)
+
+        # No native action and no second preparation: the direct POST is refused
+        # with the ordinary bounded code and creates no work at all.
+        status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
+        self.assertEqual(status, 200, detail)
+        resume = next(
+            value for value in detail["lifecycle"]["actions"] if value["action"] == "resume"
+        )
+        self.assertFalse(resume["available"])
+        self.assertNotIn("preview", resume)
+        previews_before = self.repository.list_manual_previews_by_scope(
+            "resource_library", "source"
+        )
+        second_status, second = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(second_status, 409, second)
+        self.assertEqual(second["error"]["code"], "no_remaining_scope")
+        self.assertEqual(second["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"),
+            previews_before,
+        )
+        # Exactly one destination file exists, and both sources are untouched:
+        # COPY is the normal behavior, so a replay is visible as a second file.
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Target").rglob("*.mkv")),
+            ["Left (2005).mkv"],
+        )
+        self.assertEqual((self.root / "Incoming" / "Sub" / "Left.2005.mkv").read_bytes(), b"left")
+        self.assertEqual((self.root / "Incoming" / "Sub" / "Kept.2006.mkv").read_bytes(), b"kept")
+
+    def test_a_completed_move_recovery_is_terminal_for_the_original_pending(self):
+        """A verified MOVE is equally terminal, so its source is never replayed.
+
+        MOVE removes the source, which would make a naive "is the file still
+        there?" check look like a safe no-op. The decision must come from the
+        recorded Result, not from the file's presence, so the ancestor `pending`
+        item is retired exactly like the COPY case.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+
+        result, child_task_id = self._recovery_executed_once(api, task)
+        self.assertEqual(result.status.value, "completed")
+        child_results = self.repository.list_results(child_task_id)
+        self.assertEqual(child_results[0].operation, "MOVE")
+        self.assertEqual(child_results[0].effect_certainty, "verified_complete")
+        self.assertFalse((self.root / "Incoming" / "Sub" / "Left.2005.mkv").exists())
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        self.assertIn(("source-storage", "Incoming/Sub/Left.2005.mkv"), plan.replay_excluded)
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Target").rglob("*.mkv")),
+            ["Left (2005).mkv"],
+        )
+
+    def test_an_attachment_warning_keeps_the_verified_primary_terminal(self):
+        """A verified primary with attachment warnings is never replayed.
+
+        The organizer records `PARTIAL` with `primary_completed=True` when the
+        primary was verified and only an independent attachment failed. RO-3 makes
+        that a primary success: the attachment reason is shown, and the primary is
+        not replayed to repair it.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                f"{original_item.item_id}:1",
+                task.task_id,
+                original_item.item_id,
+                "source-storage",
+                "Incoming/Sub/Left.2005.mkv",
+                "media-target",
+                "Movies/Left (2005).mkv",
+                "C",
+                "tmdb",
+                "100",
+                "C",
+                "A",
+                "A",
+                "A",
+                "COPY",
+                "PARTIAL",
+                NOW,
+                title="Left",
+                error="one attachment could not be copied",
+                completed_operations=("COPY",),
+                attachment_count=1,
+                effect_certainty="verified_complete",
+                primary_completed=True,
+                attachment_results=(
+                    {
+                        "source_path": "Incoming/Sub/Left.2005.srt",
+                        "status": "failed",
+                        "reason": "attachment_collision",
+                        "effect_certainty": "none",
+                    },
+                ),
+                source_occurrence_id=original_item.source_occurrence_id,
+                source_fingerprint=original_item.source_fingerprint,
+            )
+        )
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        self.assertEqual(plan.new_source_budget, 0)
+        status, second = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, second)
+        self.assertEqual(second["error"]["code"], "no_remaining_scope")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_an_ignored_attempt_never_resurrects_the_pending_ancestor(self):
+        """An explicit operator ignore retires the source without any Result.
+
+        Ignoring a *later* attempt of the same chain records only its own
+        TaskItem, so a check that reads Results alone would leave the ancestor
+        `pending` item recoverable and the operator could be offered work they
+        just decided to drop.
+        """
+
+        from mediaflow.application.scope_continuation import _SourceObservation
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        # A later attempt of the same exact source was explicitly ignored: that
+        # rewrite only touches the attempt's own TaskItem and writes no Result.
+        # The exact same TaskItem shape the storage enforces is used here.
+        later_attempt = replace(
+            original_item,
+            status=TaskItemStatus.IGNORED,
+            stage="ignored_by_operator",
+            source_fingerprint=None,
+            source_occurrence_id=None,
+            source_fingerprint_state="unverified",
+        )
+        self.repository.upsert_item(later_attempt)
+        observation = _SourceObservation("source-storage", "Incoming/Sub/Left.2005.mkv", None)
+        self.assertTrue(observation.is_the_same_file_as(later_attempt))
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        self.assertEqual(plan.unrecorded_budget, 0)
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "no_remaining_scope")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_an_uncertain_effect_never_resurrects_the_pending_ancestor(self):
+        """An unverified effect stays investigation-only across the chain.
+
+        The executor's own `unknown` value — not only `attempted_unverified` — is
+        an unverified effect, so a later uncertain attempt must retire the source
+        from recovery instead of turning it into a retryable item.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                f"{original_item.item_id}:1",
+                task.task_id,
+                original_item.item_id,
+                "source-storage",
+                "Incoming/Sub/Left.2005.mkv",
+                "media-target",
+                "Movies/Left (2005).mkv",
+                "C",
+                "tmdb",
+                "100",
+                "C",
+                "A",
+                "A",
+                "A",
+                "COPY",
+                "PARTIAL",
+                NOW,
+                title="Left",
+                effect_certainty="unknown",
+                uncertain_effects=("executor_invocation",),
+                source_occurrence_id=original_item.source_occurrence_id,
+                source_fingerprint=original_item.source_fingerprint,
+            )
+        )
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        self.assertEqual(plan.unrecorded_budget, 0)
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "no_remaining_scope")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_a_zero_effect_failure_stays_safely_recoverable(self):
+        """A failure that provably mutated nothing is still recoverable work.
+
+        Bounded recovery must not over-correct: a `none` effect means the
+        executor never crossed the mutation boundary, so the operator may review
+        that exact source again. The decided-source rule therefore keys on a
+        proven effect, not on the failure status. The same source is offered
+        exactly once even though two attempts recorded it.
+        """
+
+        from mediaflow.domain.organizer import (
+            ExecutionEffectCertainty,
+            ExecutionResult,
+            ExecutionStatus,
+        )
+
+        class _ZeroEffectExecutor:
+            """A real executor invocation that provably changed nothing."""
+
+            def execute(self, plan, _storages, **_kwargs):
+                return ExecutionResult(
+                    ExecutionStatus.FAILED,
+                    plan.operation,
+                    plan.source,
+                    plan.target,
+                    plan_id=plan.plan_id,
+                    resolved_destination=plan.target,
+                    errors=("injected pre-mutation failure",),
+                    effect_certainty=ExecutionEffectCertainty.NONE,
+                )
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        result, child_task_id = self._recovery_attempt(api, task, executor=_ZeroEffectExecutor())
+        self.assertEqual(result.status.value, "failed")
+        child_results = self.repository.list_results(child_task_id)
+        self.assertEqual(child_results[0].effect_certainty, "none")
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        # The exact source is still undecided *work*: it is offered once, not once
+        # per attempt, and the original admission is not widened.
+        self.assertEqual(
+            [value.source_path for value in plan.undecided_items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+        self.assertEqual(plan.new_source_budget, 1)
+        self.assertEqual(plan.unrecorded_budget, 0)
+        self.assertNotIn(("source-storage", "Incoming/Sub/Left.2005.mkv"), plan.replay_excluded)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [value.source.path for value in preview.items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+
+    def test_a_replaced_file_at_the_same_path_keeps_its_own_undecided_state(self):
+        """New bytes at the same path are new work, not a retired source.
+
+        Only a Result proving the *same* observed occurrence retires an item. A
+        genuinely replaced file therefore stays recoverable instead of being
+        suppressed forever by an earlier success at that path.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self._recovery_executed_once(api, task)
+        # The earlier success retires the recorded occurrence.
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(plan.undecided_items, ())
+        # A different file now occupies the same path.
+        (self.root / "Incoming" / "Sub" / "Left.2005.mkv").write_bytes(b"different bytes entirely")
+        entry = LocalStorage("source-storage", self.root).stat(original_item.source_path)
+        replaced = source_fingerprint("source-storage", "source", entry)
+        self.assertNotEqual(replaced.value, original_item.source_fingerprint)
+        self.repository.upsert_item(
+            replace(
+                original_item,
+                status=TaskItemStatus.PENDING,
+                stage="pending",
+                source_fingerprint=replaced.value,
+                source_fingerprint_state="verified",
+                source_occurrence_id=occurrence_id_for(
+                    "source-storage", "source", original_item.source_path, replaced.value
+                ),
+                source_observed_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(
+            [value.source_path for value in plan.undecided_items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+        self.assertEqual(plan.unrecorded_budget, 0)
+        self.assertNotIn(("source-storage", "Incoming/Sub/Left.2005.mkv"), plan.replay_excluded)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [value.source.path for value in preview.items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+
+    def test_a_new_independent_run_is_never_suppressed_by_an_old_success(self):
+        """A genuinely new bounded run over the same file is its own work.
+
+        The decided-source rule only spans one recorded continuation chain, so an
+        independent new run of the same directory is not permanently blocked by
+        an earlier successful attempt.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        self._recovery_executed_once(api, task)
+        self.assertEqual(
+            recovery_scope_plan(
+                self.repository, self.repository.get_task(task.task_id)
+            ).undecided_items,
+            (),
+        )
+        # A genuinely independent run has its own Task identity; the earlier
+        # chain's decided sources must not suppress it.
+        fresh = PersistentTask(
+            "task-independent-run",
+            "organize",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            scope_path="Incoming/Sub",
+            item_limit=2,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        self.repository.create_task(fresh)
+        fresh = self.coordinator.acknowledge_pause(
+            self.repository.request_task_pause(fresh.task_id, NOW).task_id
+        )
+        fresh_item = self.coordinator.record_discovered(
+            fresh.task_id,
+            "source-storage",
+            "source",
+            "Incoming/Sub/Left.2005.mkv",
+            "source-storage:Incoming/Sub/Left.2005.mkv",
+        )
+        self.repository.upsert_item(replace(fresh_item, status=TaskItemStatus.PENDING))
+        fresh_plan = recovery_scope_plan(self.repository, self.repository.get_task(fresh.task_id))
+        self.assertEqual(
+            [value.source_path for value in fresh_plan.undecided_items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+        self.assertEqual(fresh_plan.replay_excluded, frozenset())
 
     def test_recovery_identity_isolates_tasks_and_ordinary_files_preparations(self) -> None:
         """Two runs' recoveries and an ordinary Files preparation never alias.
