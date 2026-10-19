@@ -276,4 +276,29 @@ describe("native continuation recovery normalization", () => {
       ),
     ).toThrow();
   });
+
+  it("keeps the recovery entry of a refusal that is not the authority obstacle", () => {
+    // The native review is judged by the recovery preparation's own
+    // eligibility: a fully recorded budget still holding an undecided item is
+    // reviewable even though the queued continuation has nothing left to hand
+    // out, so the Web must not tie the entry to one refusal code.
+    const model = normalizeLifecycleProjection(
+      projection({
+        state: "paused",
+        actions: [
+          action(
+            "resume",
+            false,
+            "every unit of this Task's originally admitted item budget is already recorded",
+            RECOVERY,
+          ),
+        ],
+      }),
+      { ...OBJECT, state: "paused" },
+    );
+    expect(model.actions[0]?.available).toBe(false);
+    expect(model.actions[0]?.recovery?.path).toBe(
+      "/api/v1/tasks/task-1/remaining-scope-previews",
+    );
+  });
 });

@@ -2322,6 +2322,102 @@ test("a mutation-authorized paused run without live authority is refused nativel
   expect(noDuplicateOutcome.error.details.sideEffects).toBe("none");
 });
 
+test("a fully recorded budget still recovers its one undecided item natively", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  // A real paused organize run whose whole admitted budget (item_limit=2) is
+  // already recorded: `Kept` is successful and decided, `Left` is recorded but
+  // still `pending`.  A third eligible file was written afterwards, so it may
+  // never borrow the still-undecided unit.
+  const created = await (
+    await request.post(`${BASE}/__harness__/seed-full-budget-recovery`)
+  ).json();
+  const taskId = created.taskId as string;
+  expect(taskId).toBeTruthy();
+  expect(created.scope).toBe("FullBudget");
+  expect(created.itemLimit).toBe(2);
+  expect(created.undecidedSource).toBe("FullBudget/FullBudgetLeft.2005.mkv");
+  expect(created.newSource).toBe("FullBudget/FullBudgetNew.2020.mkv");
+
+  const before = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  expect(before.sourceTaskStatus).toBe("paused");
+
+  await connect(page, ADMIN_TOKEN);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openInventory(page);
+  const row = page.getByRole("row").filter({ hasText: "FullBudget" });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(controls).toBeVisible();
+
+  // Continue stays withheld with the real obstacle (no unrecorded discovery
+  // budget), and the native review of the still-undecided item is offered.
+  await expect(
+    controls.getByRole("button", { name: "继续剩余范围" }),
+  ).toHaveCount(0);
+  await expect(controls).toContainText("继续剩余范围");
+  await expect(controls).toContainText("继续不可用的下一步");
+  const summaryButton = controls.getByRole("button", {
+    name: "在当前界面生成剩余范围摘要",
+  });
+  await expect(summaryButton).toBeVisible();
+  await summaryButton.click();
+
+  // The recovery admission is durable: the resident Worker proves the
+  // configured stability interval, freezes the remaining source and links the
+  // exact zero-mutation Preview.  The browser only polls durable state.
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
+  const summary = detail.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible({ timeout: 30_000 });
+  // Exactly the recorded-but-undecided item is reviewed.  The decided sibling
+  // is never re-offered and the later newcomer never borrows its unit.
+  await expect(summary).toContainText("FullBudgetLeft.2005.mkv");
+  await expect(summary).not.toContainText("FullBudgetKept.2006.mkv");
+  await expect(summary).not.toContainText("FullBudgetNew.2020.mkv");
+  await expect(
+    summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }),
+  ).toBeVisible();
+  await summary.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/full-budget-undecided-summary-1536x1024.png`,
+    fullPage: false,
+  });
+  // Still zero media mutation: the review grants no execution authority.
+  expect(
+    await (
+      await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+    ).json(),
+  ).toMatchObject({ destinationFiles: [] });
+  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
+
+  // A second review request for the same paused run converges on the durable
+  // preparation instead of starting another walk.
+  const repeat = await request.post(
+    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(repeat.status()).toBe(202);
+  const repeatBody = await repeat.json();
+  expect(repeatBody.recoverySourceTaskId).toBe(taskId);
+  expect(repeatBody.sideEffects).toBe("none");
+});
+
 test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
   page,
   request,

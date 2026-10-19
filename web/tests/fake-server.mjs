@@ -12658,6 +12658,15 @@ const server = createServer(async (req, res) => {
       continuable &&
       task.execute_authorized === true &&
       task.live_authority !== true;
+    // The native recovery entry is judged by the recovery preparation's own
+    // eligibility, exactly as the real backend projects it: a withheld
+    // Continue advertises the zero-mutation review whenever the run's remaining
+    // scope can still be reviewed (a full recorded budget does not close it),
+    // and never when the run really has nothing left to recover.
+    const recoveryAvailable =
+      continuable &&
+      task.has_remaining_scope !== false &&
+      task.recovery_blocked_reason === undefined;
     const uncertain = results.some(
       (result) => result.effect_certainty === "attempted_unverified",
     );
@@ -12752,7 +12761,7 @@ const server = createServer(async (req, res) => {
                   nextAction: authorityRequired
                     ? "open the run's exact Preview, review the remaining scope, and authorize execution again from 操作与任务"
                     : "follow the linked continuation run for its independent per-item outcomes",
-                  ...(authorityRequired
+                  ...(recoveryAvailable && !(permitted && !authorityRequired)
                     ? {
                         preview: {
                           available: true,
@@ -14456,9 +14465,9 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    if (task.execute_authorized !== true || task.live_authority === true) {
-      // The recovery entry exists only for the authority refusal it recovers
-      // from; any other state is refused rather than silently re-scoped.
+    if (task.has_remaining_scope === false || task.recovery_blocked_reason) {
+      // A run whose remaining scope is really decided (or whose recovery is
+      // otherwise blocked) is refused rather than silently re-scoped.
       sendJson(res, 409, {
         error: {
           code: "no_remaining_scope",

@@ -42,6 +42,7 @@ from mediaflow.application.scope_continuation import (
     definition_occurrence_authority,
     is_continuable_task_command,
     recovery_scope,
+    recovery_scope_plan,
     remaining_scope,
 )
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
@@ -2589,9 +2590,13 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
 
         The recorded `Kept` sibling is successful and its result is decided.  The
         recorded `Left` item is still `pending` and has no result, so the run's
-        remaining scope really contains it even though the whole scope budget
-        was already recorded.  Recovery must therefore review `Left` instead of
-        reporting `no_remaining_scope`, while still never replaying `Kept`.
+        remaining scope really contains it.  Recovery must therefore review
+        `Left` instead of reporting `no_remaining_scope`, while still never
+        replaying `Kept`.
+
+        This is the budget-4 control: two of the four originally admitted units
+        are recorded, so three further sources stay discoverable and the ordinary
+        Continue guard's own budget check is not the case under test here.
         """
 
         config, active = self._activate(scope="Incoming")
@@ -2629,11 +2634,13 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         remaining, replay_excluded, source_budget = recovery_scope(
             self.repository, self.repository.get_task(task.task_id)
         )
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
         self.assertEqual([value.source_path for value in remaining], ["Incoming/Sub/Left.2005.mkv"])
         self.assertEqual(replay_excluded, {("source-storage", "Incoming/Sub/Kept.2006.mkv")})
         # The original budget was 4, two sources are recorded, so three further
         # sources stay discoverable *on top of* the one still-undecided item.
         self.assertEqual(source_budget, 3)
+        self.assertEqual(plan.unrecorded_budget, 2)
 
         api = self._api(config)
         status, admission = request(
@@ -2656,6 +2663,270 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual((sub / "Kept.2006.mkv").read_bytes(), b"kept")
         self.assertEqual((sub / "Left.2005.mkv").read_bytes(), b"left")
         self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def _recorded_undecided_scope(
+        self, active, *, item_limit: int, keep_success: bool, directory: str = "Sub"
+    ):
+        """A paused run whose whole admitted budget is already recorded.
+
+        `Kept` (when requested) is successful and decided; `Left` is recorded
+        with trustworthy source evidence but is still `pending`, so the whole
+        original `item_limit` is occupied by recorded items while one unit of
+        real work remains undecided.  Nothing else exists in the scope unless a
+        case adds it deliberately: an extra source at a full budget must never
+        borrow the pending unit and silently widen the reviewed scope.
+        """
+
+        sub = self.root / "Incoming" / directory
+        sub.mkdir(parents=True, exist_ok=True)
+        if keep_success:
+            (sub / "Kept.2006.mkv").write_bytes(b"kept")
+        (sub / "Left.2005.mkv").write_bytes(b"left")
+        task = self._paused_mutation_scan(
+            active,
+            discovered=(f"Incoming/{directory}/Kept.2006.mkv" if keep_success else None),
+            item_limit=item_limit,
+        )
+        return replace(task, command="organize", scope_path=f"Incoming/{directory}")
+
+    def _record_pending_source(self, task, path: str) -> None:
+        """Record one undecided source with the trustworthy evidence it had."""
+
+        item = self.coordinator.record_discovered(
+            task.task_id,
+            "source-storage",
+            "source",
+            path,
+            f"source-storage:{path}",
+        )
+        entry = LocalStorage("source-storage", self.root).stat(item.source_path)
+        fingerprint = source_fingerprint("source-storage", "source", entry)
+        self.repository.upsert_item(
+            replace(
+                item,
+                status=TaskItemStatus.PENDING,
+                stage="pending",
+                source_fingerprint=fingerprint.value,
+                source_fingerprint_state="verified",
+                source_occurrence_id=occurrence_id_for(
+                    "source-storage", "source", item.source_path, fingerprint.value
+                ),
+                source_observed_at=datetime.now(UTC),
+            )
+        )
+
+    def test_a_fully_recorded_budget_still_recovers_its_undecided_item(self) -> None:
+        """B P1: a recorded budget with one Pending item keeps a real recovery.
+
+        `remaining_scope` reports a zero *new* discovery budget because every
+        unit of `item_limit` is already recorded. That is not the same statement
+        as "nothing is recoverable": `Left` is still undecided, so the native
+        projection must advertise the recovery action, the direct preparation
+        must be admitted, and the resident Worker's summary must contain exactly
+        `Left` while `Kept` is never replayed.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        task = self._recorded_undecided_scope(active, item_limit=2, keep_success=True)
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+
+        # The whole admitted budget is recorded, and the recorded items are two.
+        remaining, _recorded, new_budget = remaining_scope(
+            self.repository, self.repository.get_task(task.task_id)
+        )
+        self.assertEqual([value.source_path for value in remaining], ["Incoming/Sub/Left.2005.mkv"])
+        self.assertEqual(new_budget, 0)
+
+        api = self._api(config)
+        read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
+        self.assertEqual(read_status, 200, detail)
+        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
+        # Ordinary Continue stays refused (no live reusable authority), and the
+        # native recovery entry is advertised for exactly that refusal.
+        self.assertFalse(resume["available"])
+        self.assertEqual(resume["preview"]["available"], True)
+        self.assertEqual(
+            resume["preview"]["path"],
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+        )
+
+        overview_status, overview = request(
+            api, f"/api/v1/operations/runs/{task.task_id}", token="admin-token"
+        )
+        self.assertEqual(overview_status, 200, overview)
+        overview_resume = next(
+            item for item in overview["lifecycle"]["actions"] if item["action"] == "resume"
+        )
+        self.assertFalse(overview_resume["available"])
+        self.assertEqual(overview_resume["preview"]["available"], True)
+
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        self.assertEqual(admission["recoverySourceTaskId"], task.task_id)
+        self.assertEqual(admission["sideEffects"], "none")
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertEqual(document["prepared"], True)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [item.source.path for item in preview.items], ["Incoming/Sub/Left.2005.mkv"]
+        )
+        self.assertEqual(preview.configuration_snapshot_id, active.revision_id)
+        self.assertEqual((self.root / "Incoming" / "Sub" / "Kept.2006.mkv").read_bytes(), b"kept")
+        self.assertEqual((self.root / "Incoming" / "Sub" / "Left.2005.mkv").read_bytes(), b"left")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_a_single_recorded_pending_item_is_recoverable_at_a_full_budget(self) -> None:
+        """The smallest full-budget boundary: `item_limit=1` with one Pending."""
+
+        config, active = self._activate(scope="Incoming")
+        task = self._recorded_undecided_scope(active, item_limit=1, keep_success=False)
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        remaining, _recorded, new_budget = remaining_scope(
+            self.repository, self.repository.get_task(task.task_id)
+        )
+        self.assertEqual([value.source_path for value in remaining], ["Incoming/Sub/Left.2005.mkv"])
+        self.assertEqual(new_budget, 0)
+
+        api = self._api(config)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [item.source.path for item in preview.items], ["Incoming/Sub/Left.2005.mkv"]
+        )
+
+    def test_a_full_budget_never_lets_a_new_file_borrow_the_pending_unit(self) -> None:
+        """A later file cannot replace or widen the recorded undecided unit.
+
+        The original admission is fully recorded at `item_limit=2` with `Kept`
+        decided and `Left` pending.  A genuinely new source appears in the same
+        directory afterwards.  The recovery preparation must still observe
+        exactly `Left`: the new file has no admitted unit and must not borrow the
+        pending one.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        task = self._recorded_undecided_scope(active, item_limit=2, keep_success=True)
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        (self.root / "Incoming" / "Sub" / "New.2020.mkv").write_bytes(b"new")
+
+        api = self._api(config)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertEqual(document["prepared"], True)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [item.source.path for item in preview.items], ["Incoming/Sub/Left.2005.mkv"]
+        )
+        for name in ("Kept.2006.mkv", "Left.2005.mkv", "New.2020.mkv"):
+            self.assertTrue((self.root / "Incoming" / "Sub" / name).exists(), name)
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_a_fully_recorded_budget_keeps_the_queued_continue_refusal(self) -> None:
+        """The recovery entry does not weaken the queued continuation boundary.
+
+        The same full-budget run has no unrecorded discovery budget, so
+        `POST /resume` must keep refusing with `no_remaining_scope` and queue
+        nothing; only the separate zero-mutation review remains available.
+        """
+
+        api_config, active = self._activate(scope="Incoming")
+        task = self._recorded_undecided_scope(active, item_limit=2, keep_success=True)
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        api = self._api(api_config)
+
+        jobs_before = len(self.repository.list_jobs(limit=100))
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/resume",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["details"]["reason"], "no_remaining_scope")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(len(self.repository.list_jobs(limit=100)), jobs_before)
+        self.assertIsNone(self.repository.get_scope_continuation_for_source_task(task.task_id))
+        # The recovery preparation is the only remaining surface, and it is a
+        # review: no execution authority is granted and no media changed.
+        preview_status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(preview_status, 202, admission)
+        self.assertEqual(admission["sideEffects"], "none")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_a_fully_decided_chain_at_a_full_budget_is_still_refused(self) -> None:
+        """A truly decided run keeps the truthful refusal with zero new work.
+
+        Success, ignore and uncertain effects are all decided outcomes, so a
+        fully recorded budget made only of them has no recoverable scope: the
+        projection must not advertise the recovery entry and the direct request
+        must stay a bounded 409 with no preparation created.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        sub = self.root / "Incoming" / "Sub"
+        sub.mkdir()
+        (sub / "Kept.2006.mkv").write_bytes(b"kept")
+        task = replace(
+            self._paused_mutation_scan(
+                active, discovered="Incoming/Sub/Kept.2006.mkv", item_limit=1
+            ),
+            command="organize",
+            scope_path="Incoming/Sub",
+        )
+        self.repository.update_task(task)
+        api = self._api(config)
+
+        read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
+        self.assertEqual(read_status, 200, detail)
+        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
+        self.assertFalse(resume["available"])
+        self.assertNotIn("preview", resume)
+
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "no_remaining_scope")
+        self.assertEqual(document["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
+        )
 
     def test_recovery_identity_isolates_tasks_and_ordinary_files_preparations(self) -> None:
         """Two runs' recoveries and an ordinary Files preparation never alias.

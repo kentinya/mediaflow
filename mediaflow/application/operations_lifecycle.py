@@ -53,7 +53,10 @@ from mediaflow.domain.manual_safety import (
     redact_manual_text,
     redact_manual_value,
 )
-from mediaflow.domain.scope_continuation import ScopeContinuationReason
+from mediaflow.domain.scope_continuation import (
+    ScopeContinuationOperation,
+    ScopeContinuationReason,
+)
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
@@ -279,6 +282,13 @@ class TaskExecutionContext:
     #: of the remaining scope) for exactly the refusal that promises it, instead
     #: of matching on translated operator copy.
     continuation_blocked_code: str | None = None
+    #: Whether this exact Task's remaining scope can still be reviewed through
+    #: the zero-mutation recovery preparation, judged by the same shared
+    #: continuation boundary.  It is deliberately independent of the queued
+    #: continuation's own refusal: a fully recorded budget leaves the queued
+    #: boundary nothing to hand out while its still-undecided items remain exactly
+    #: what the recovery preparation observes and offers.
+    recovery_available: bool = False
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -2079,12 +2089,16 @@ def task_lifecycle_document(
                 execution.continuation_blocked_next_action
                 or "follow the linked continuation run for its independent per-item outcomes"
             ),
-            # The native recovery entry RO-5 promises when Continue cannot retain
-            # live authority: an exact zero-mutation Preview of the remaining
-            # scope under the run's own historical pin, followed by one fresh
-            # explicit execution intent.  It is advertised for exactly the
-            # backend refusal code that promises it, never for another obstacle,
-            # and it is only reachable by a principal that may admit manual work.
+            # The native recovery entry RO-5 promises whenever Continue is
+            # withheld but the run's remaining scope can still be reviewed: an
+            # exact zero-mutation Preview of that scope under the run's own
+            # historical pin, followed by one fresh explicit execution intent.
+            # Its eligibility is the shared boundary's own decision for the
+            # *recovery preparation* operation, never a match on one refusal
+            # code: a fully recorded budget leaves the queued continuation
+            # nothing to hand out while its still-undecided items remain exactly
+            # what the recovery preparation observes.  It is only reachable by a
+            # principal that may admit manual work.
             extra=(
                 {
                     "preview": {
@@ -2105,8 +2119,7 @@ def task_lifecycle_document(
                         ),
                     }
                 }
-                if execution.continuation_blocked_code
-                == ScopeContinuationReason.AUTHORITY_REQUIRED.value
+                if execution.recovery_available
                 and ApiPermission.MANAGE_MANUAL_ORGANIZE in permissions
                 else {}
             ),
@@ -2260,6 +2273,19 @@ class TaskLifecycleService:
                 self._repository, task, self._snapshot_validator, self._mutation_authority
             )[0]
             reason, next_action = self.continuation_obstacle(task)
+            # The zero-mutation recovery preparation is its own operation over the
+            # same durable evidence, so it is advertised from its own eligibility
+            # instead of inheriting the queued boundary's refusal.  A refused
+            # queued continuation with a still-reviewable remaining scope keeps
+            # its native preview entry; a queued continuation that is really
+            # available needs none.
+            recovery_reason = continuation_obstacle(
+                self._repository,
+                task,
+                self._snapshot_validator,
+                self._mutation_authority,
+                operation=ScopeContinuationOperation.RECOVERY_PREPARATION,
+            )[0]
             return TaskExecutionContext(
                 TaskExecutionPath.OPERATOR_WORKFLOW,
                 durable_continuation=True,
@@ -2267,6 +2293,7 @@ class TaskLifecycleService:
                 continuation_blocked_reason=reason,
                 continuation_blocked_next_action=next_action,
                 continuation_blocked_code=code.value if code is not None else None,
+                recovery_available=code is not None and recovery_reason is None,
             )
         return TaskExecutionContext(TaskExecutionPath.OPERATOR_WORKFLOW)
 

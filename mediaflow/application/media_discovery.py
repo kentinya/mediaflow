@@ -43,7 +43,7 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
-from mediaflow.application.scope_continuation import recovery_scope as _recovery_scope
+from mediaflow.application.scope_continuation import recovery_scope_plan as _recovery_scope_plan
 from mediaflow.application.task_scope import (
     ScopeResolutionError,
     resolve_resource_library_scope,
@@ -643,6 +643,14 @@ class MediaDiscoveryService:
         * the resulting intent/Preview are the ordinary durable manual records:
           they grant no authority, and the operator must still make one fresh
           explicit execution intent through the existing Execute action.
+
+        ``obstacle`` is the shared continuation boundary's own decision.  It is
+        asked about the *recovery preparation* operation, not about the queued
+        continuation: a fully recorded budget that still holds an undecided item
+        has nothing left to hand to the queued Worker but does have exactly that
+        undecided item to observe and review here.  Every other refusal (command
+        kind, pause state, pin, continuation ownership) is identical for both
+        operations and is therefore never bypassed.
         """
 
         actor = self._actor(actor)
@@ -695,7 +703,10 @@ class MediaDiscoveryService:
                 "the paused run's pinned configuration revision is unavailable",
                 details={"reason": type(error).__name__},
             ) from error
-        remaining, replay_excluded, source_budget = _recovery_scope(repository, task)
+        plan = _recovery_scope_plan(repository, task)
+        remaining = plan.undecided_items
+        replay_excluded = plan.replay_excluded
+        source_budget = plan.new_source_budget
         if not remaining and source_budget == 0:
             raise DiscoveryError(
                 "this run has no remaining eligible item to review; every admitted item already "
@@ -720,9 +731,37 @@ class MediaDiscoveryService:
                 ),
             ) from error
         storage = self._guarded_storage(runtime, library.storage_id)
-        scope_entry = DiscoveryScopeEntry(relative_scope, DiscoveryEntryKind.DIRECTORY)
+        directory_entry = DiscoveryScopeEntry(relative_scope, DiscoveryEntryKind.DIRECTORY)
         if relative_scope:
-            scope_entry = self._resolve_entry_kind(storage, library, scope_entry)
+            directory_entry = self._resolve_entry_kind(storage, library, directory_entry)
+        # When the original admission is fully recorded there is no unrecorded
+        # budget left, so the only work a preparation may legitimately observe is
+        # the recorded-but-undecided set itself.  Observing those exact sources
+        # keeps a file that appeared later from borrowing the undecided unit,
+        # silently replacing it or widening the reviewed scope.  A recorded
+        # source that is no longer inside this ResourceLibrary cannot be part of
+        # the exact scope at all, so it is refused instead of dropped.
+        if plan.unrecorded_budget == 0:
+            relative_undecided = tuple(
+                self._library_relative(item.source_path, library) for item in remaining
+            )
+            if any(value is None for value in relative_undecided):
+                raise DiscoveryError(
+                    "a recorded undecided source is no longer inside this run's ResourceLibrary, "
+                    "so its exact remaining scope cannot be reproduced",
+                    code="scope_unresolved",
+                    status=409,
+                    next_action=(
+                        "inspect the run's recorded per-item evidence, or start a new bounded run "
+                        "from Files under the current Active configuration"
+                    ),
+                )
+            scope_entries = tuple(
+                DiscoveryScopeEntry(value, DiscoveryEntryKind.FILE)
+                for value in sorted(relative_undecided)
+            )
+        else:
+            scope_entries = (directory_entry,)
         excluded = tuple(
             sorted(
                 value
@@ -749,7 +788,9 @@ class MediaDiscoveryService:
                 ),
                 details={"limit": self._budgets.max_scope_paths},
             )
-        if not self._scope_has_remaining_candidate(storage, library, scope_entry, excluded):
+        if not self._scope_has_remaining_candidate(
+            storage, library, scope_entries, excluded, directory_entry
+        ):
             # The whole admitted scope is already decided: refusing here keeps
             # the same truthful refusal the inline boundary produced instead of
             # admitting a durable preparation that can only discover nothing.
@@ -776,7 +817,7 @@ class MediaDiscoveryService:
             library,
             task.configuration_snapshot_id,
             task.configuration_snapshot_digest,
-            scope_entry,
+            scope_entries,
             excluded,
             budgets.max_primary_sources,
         )
@@ -785,13 +826,15 @@ class MediaDiscoveryService:
         now = self._clock()
         progress = DiscoveryProgress(
             "queued",
-            (scope_entry,),
+            scope_entries,
             DiscoveryCounters(),
             DiscoveryIncompleteReason.NONE,
             (),
             (),
-            tuple([scope_entry.path] if scope_entry.kind is DiscoveryEntryKind.FILE else ()),
-            tuple([scope_entry.path] if scope_entry.kind is DiscoveryEntryKind.DIRECTORY else ()),
+            tuple(entry.path for entry in scope_entries if entry.kind is DiscoveryEntryKind.FILE),
+            tuple(
+                entry.path for entry in scope_entries if entry.kind is DiscoveryEntryKind.DIRECTORY
+            ),
             None,
             None,
             (),
@@ -837,7 +880,7 @@ class MediaDiscoveryService:
                 library,
                 task.configuration_snapshot_id,
                 task.configuration_snapshot_digest,
-                scope_entry,
+                scope_entries,
                 excluded,
                 budgets.max_primary_sources,
             )
@@ -852,7 +895,7 @@ class MediaDiscoveryService:
         library,
         snapshot_id,
         snapshot_digest,
-        scope_entry: DiscoveryScopeEntry,
+        scope_entries: tuple[DiscoveryScopeEntry, ...],
         excluded,
         max_primary_sources: int,
     ) -> MediaDiscovery | None:
@@ -866,7 +909,7 @@ class MediaDiscoveryService:
             storage_id=library.storage_id,
             snapshot_id=snapshot_id,
             snapshot_digest=snapshot_digest,
-            scope_signature=discovery_scope_signature((scope_entry,)),
+            scope_signature=discovery_scope_signature(scope_entries),
             recovery_excluded_paths=excluded,
             max_primary_sources=max_primary_sources,
         )
@@ -888,7 +931,12 @@ class MediaDiscoveryService:
         return None
 
     def _scope_has_remaining_candidate(
-        self, storage: Storage, library, scope_entry: DiscoveryScopeEntry, excluded
+        self,
+        storage: Storage,
+        library,
+        scope_entries: tuple[DiscoveryScopeEntry, ...],
+        excluded,
+        directory_entry: DiscoveryScopeEntry,
     ) -> bool:
         """Whether the admitted scope still holds one undecided candidate.
 
@@ -897,10 +945,34 @@ class MediaDiscoveryService:
         but proves no stability and calls no Provider.  It exists only so the
         truthful ``no_remaining_scope`` refusal is decided at admission instead
         of admitting a durable preparation that could only discover nothing.
+
+        The observable shape follows the admitted preparation: a directory walk
+        probes the admitted directory, while a fully recorded admission probes
+        exactly its undecided sources and therefore never counts a file that
+        appeared afterwards.
         """
 
         excluded_paths = frozenset(excluded)
-        pending = [scope_entry.path]
+        files = tuple(
+            entry.path for entry in scope_entries if entry.kind is DiscoveryEntryKind.FILE
+        )
+        if files:
+            for relative in files:
+                if relative in excluded_paths:
+                    continue
+                path = self._join(library.root_path, relative)
+                try:
+                    entry = storage.stat(path)
+                except (StorageError, OSError, ValueError, KeyError):
+                    return True
+                if not isinstance(entry, StorageEntry):
+                    continue
+                if entry.entry_type is not StorageEntryType.FILE:
+                    continue
+                if classify_entry(library, relative, entry) is ScanEntryVerdict.CANDIDATE:
+                    return True
+            return False
+        pending = [directory_entry.path]
         visited = 0
         while pending and visited <= self._budgets.max_visited_entries:
             relative = pending.pop(0)

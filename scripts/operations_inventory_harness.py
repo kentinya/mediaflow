@@ -580,6 +580,19 @@ def build_managed_fixture(
                         genres=("Animation",),
                         countries=("JP",),
                     ),
+                    # The full-budget recovery fixture's own sources: its one
+                    # recorded-but-undecided item must resolve to an actionable
+                    # plan, and the newcomer written after admission must never
+                    # borrow that item's unit.
+                    MediaCandidate(
+                        "tmdb",
+                        "230",
+                        MediaType.MOVIE,
+                        "FullBudgetLeft",
+                        year=2005,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
                     # The RO-2 sibling-independence proof's own sources, so a
                     # real MOVE of one never consumes another journey's media.
                     MediaCandidate(
@@ -2339,7 +2352,7 @@ def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
             destination_path="Movies/BatchSingle (2006)/BatchSingle (2006).mkv",
             recognition_type="C",
             provider="tmdb",
-            provider_id="206",
+            provider_id="230",
             metadata_policy_id="C",
             naming_policy_id="A",
             classification_policy_id="A",
@@ -2714,6 +2727,14 @@ AUTHORITY_TARGETS = (
     "Movies/Movies/Anime/Eight (2008) [tmdbid-108]/Eight (2008).mkv",
 )
 
+#: The full-budget recovery fixture: a paused run whose whole admitted budget is
+#: recorded while one item is still undecided, plus a later newcomer that must
+#: never borrow that unit.
+FULL_BUDGET_SCOPE = "FullBudget"
+FULL_BUDGET_KEPT_FILE = "FullBudgetKept.2006.mkv"
+FULL_BUDGET_LEFT_FILE = "FullBudgetLeft.2005.mkv"
+FULL_BUDGET_NEW_FILE = "FullBudgetNew.2020.mkv"
+
 CONTINUATION_RECORDED_FILE = "C/Continuation/Six.2006.mkv"
 CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
 
@@ -2913,11 +2934,12 @@ def authority_execution_state(
     task = state.repository.get_task(source_task_id) if source_task_id else None
     active = state.managed.configuration_service.active()
     scope = task.scope_path if task is not None and task.scope_path else AUTHORITY_SCOPE
-    filenames = (
-        AUTHORITY_MISSING_PIN_FILES
-        if scope == AUTHORITY_MISSING_PIN_SCOPE
-        else (AUTHORITY_FIRST_FILE, AUTHORITY_SECOND_FILE)
-    )
+    if scope == FULL_BUDGET_SCOPE:
+        filenames = (FULL_BUDGET_KEPT_FILE, FULL_BUDGET_LEFT_FILE, FULL_BUDGET_NEW_FILE)
+    elif scope == AUTHORITY_MISSING_PIN_SCOPE:
+        filenames = AUTHORITY_MISSING_PIN_FILES
+    else:
+        filenames = (AUTHORITY_FIRST_FILE, AUTHORITY_SECOND_FILE)
     source_root = state.managed.root / "source" / scope
     destination_root = state.managed.root / "destination"
     destination_paths = AUTHORITY_TARGETS if scope == AUTHORITY_SCOPE else ()
@@ -2990,6 +3012,119 @@ def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -
         "taskSnapshotId": task_snapshot_id,
         "activeSnapshotId": (successor.revision_id if successor else current_active.revision_id),
         "remainingSources": list(fixture_files),
+    }
+
+
+def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
+    """Create one real paused run whose whole admitted budget is recorded.
+
+    `Kept` is successful and decided; `Left` is recorded with trustworthy source
+    evidence but is still `pending`, so every unit of the original
+    ``item_limit`` is occupied while one item of real work remains undecided.
+    This is the exact boundary at which "no new discovery budget" must not be
+    read as "nothing to recover".
+
+    A third eligible source is deliberately written into the same directory
+    afterwards: it has no admitted unit, so the recovery preparation must
+    observe exactly `Left` and never let the newcomer borrow that unit.
+    """
+
+    from mediaflow.infrastructure.local_storage import LocalStorage
+
+    active = state.managed.active
+    source_root = state.managed.root / "source"
+    scope_root = source_root / FULL_BUDGET_SCOPE
+    scope_root.mkdir(parents=True, exist_ok=True)
+    kept = scope_root / FULL_BUDGET_KEPT_FILE
+    left = scope_root / FULL_BUDGET_LEFT_FILE
+    kept.write_bytes(b"full budget kept synthetic media")
+    left.write_bytes(b"full budget left synthetic media")
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    task = coordinator.create(
+        "organize",
+        execute_authorized=True,
+        scope_path=FULL_BUDGET_SCOPE,
+        item_limit=2,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+    )
+    kept_item = coordinator.record_discovered(
+        task.task_id,
+        "source-storage",
+        "source",
+        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
+        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
+    )
+    now = datetime.now(UTC)
+    state.repository.upsert_item(
+        dataclasses.replace(kept_item, status=TaskItemStatus.SUCCESS, updated_at=now)
+    )
+    state.repository.append_result(
+        PersistentResultRecord(
+            result_id=f"{kept_item.item_id}-full-budget-result",
+            task_id=task.task_id,
+            item_id=kept_item.item_id,
+            source_storage_id=kept_item.storage_id,
+            source_path=kept_item.source_path,
+            destination_storage_id="media-target",
+            destination_path="Movies/FullBudget/Kept.2006.mkv",
+            recognition_type="C",
+            provider="tmdb",
+            provider_id="230",
+            metadata_policy_id="C",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="A",
+            operation="MOVE",
+            status="success",
+            created_at=now,
+            title="Kept",
+            effect_certainty="verified_complete",
+        )
+    )
+    left_item = coordinator.record_discovered(
+        task.task_id,
+        "source-storage",
+        "source",
+        f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+        f"source-storage:{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+    )
+    library = LocalStorage("source-storage", source_root)
+    entry = library.stat(left_item.source_path)
+    fingerprint = source_fingerprint("source-storage", "source", entry)
+    state.repository.upsert_item(
+        dataclasses.replace(
+            left_item,
+            status=TaskItemStatus.PENDING,
+            stage="pending",
+            source_fingerprint=fingerprint.value,
+            source_fingerprint_state="verified",
+            source_occurrence_id=occurrence_id_for(
+                "source-storage", "source", left_item.source_path, fingerprint.value
+            ),
+            source_observed_at=now,
+            updated_at=now,
+        )
+    )
+    state.repository.request_task_pause(task.task_id, now)
+    paused = coordinator.acknowledge_pause(task.task_id)
+    if paused.status is not PersistentTaskStatus.PAUSED:
+        raise RuntimeError("full-budget fixture Task did not pause")
+    # A genuinely new source appears after the admission: it has no admitted
+    # unit and must never borrow the still-undecided one.
+    (scope_root / FULL_BUDGET_NEW_FILE).write_bytes(b"full budget new synthetic media")
+    return {
+        "taskId": task.task_id,
+        "status": paused.status.value,
+        "scope": FULL_BUDGET_SCOPE,
+        "itemLimit": paused.item_limit,
+        "recordedSources": [
+            f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_KEPT_FILE}",
+            f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+        ],
+        "undecidedSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
+        "newSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_NEW_FILE}",
     }
 
 
@@ -4425,6 +4560,8 @@ def application(environ, start_response):
             document = seed_continuation_journey(STATE)
         elif path == "/__harness__/run-continuation-worker" and method == "POST":
             document = run_continuation_worker_once(STATE)
+        elif path == "/__harness__/seed-full-budget-recovery" and method == "POST":
+            document = seed_full_budget_recovery(STATE)
         elif path == "/__harness__/seed-authority-refusal" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             missing_snapshot = (query.get("missingPin") or ["0"])[0] == "1"

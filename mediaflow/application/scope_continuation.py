@@ -32,6 +32,7 @@ from mediaflow.domain.scope_continuation import (
     CONTINUATION_BOUNDARY,
     ScopeContinuation,
     ScopeContinuationError,
+    ScopeContinuationOperation,
     ScopeContinuationReason,
     ScopeContinuationStatus,
 )
@@ -67,6 +68,10 @@ _LINEAGE_REASON = "the recorded continuation history no longer proves the origin
 _LINEAGE_NEXT_ACTION = (
     "inspect the linked continuation run and its configuration history; start a new bounded run "
     "if the original scope cannot be restored"
+)
+_NO_REMAINING_SCOPE_NEXT_ACTION = (
+    "inspect the linked continuation run and its independent per-item results, or start "
+    "a new bounded run from 操作与任务"
 )
 
 #: The item dispositions that still hold remaining admitted work.  This mirrors
@@ -120,6 +125,28 @@ _CHAIN_TERMINAL_STATUSES = frozenset(
 #: A hard bound on how many linked Tasks one chain walk will follow, so a
 #: corrupted or externally written link row can never make a read unbounded.
 _MAX_CHAIN_TASKS = 64
+
+
+@dataclass(frozen=True)
+class RecoveryScopePlan:
+    """The exact scope one remaining-scope *recovery preparation* may observe.
+
+    ``unrecorded_budget`` decides the observable shape of the preparation:
+
+    * ``0`` means the original admission is fully recorded, so the only work that
+      can legitimately still be reviewed is the recorded-but-undecided set
+      itself.  The preparation then observes exactly those sources, so a file
+      that appeared in the directory afterwards can neither borrow the undecided
+      unit nor silently replace or widen the reviewed scope;
+    * a positive value (or ``None`` for an unlimited admission) leaves real
+      discovery budget, so the preparation walks the admitted directory and the
+      existing budget/stability rules apply exactly as an ordinary admission.
+    """
+
+    undecided_items: tuple[PersistentTaskItem, ...]
+    replay_excluded: frozenset[tuple[str, str]]
+    new_source_budget: int | None
+    unrecorded_budget: int | None
 
 
 @dataclass(frozen=True)
@@ -262,14 +289,32 @@ def continuation_obstacle(
     mutation_authority: Callable[[PersistentTask], bool] | None = None,
     *,
     exclude_job_id: str | None = None,
+    operation: ScopeContinuationOperation = ScopeContinuationOperation.QUEUED_CONTINUATION,
 ) -> tuple[ScopeContinuationReason | None, str | None, str | None]:
-    """Why one continuable Task cannot be continued now.
+    """Why one continuable Task cannot be continued/recovered now.
 
     Returns ``(reason, bounded_message, next_action)``, or ``(None, None,
-    None)`` when the Task's exact remaining scope may be queued.  The lifecycle
+    None)`` when the requested ``operation`` may proceed.  The lifecycle
     projection, the admission boundary and the resident Worker all call this, so
     the advertised control and the real submission can never disagree about
     whether Continue would be accepted.
+
+    ``operation`` selects which remaining-scope consumption is being judged.
+    Both share the same durable evidence (command kind, pause state, immutable
+    pin, continuation chain and live authority) but differ in exactly two
+    places, so the shared decision models them explicitly instead of letting one
+    operation ignore the other's refusal:
+
+    * the *budget* test: a queued continuation hands the unrecorded discovery
+      budget to the Worker and therefore has nothing left once the original
+      admission is fully recorded, while a recovery preparation re-offers the
+      already recorded but still *undecided* items under the same original
+      budget;
+    * the *authority* test: a queued continuation that would mutate media needs
+      live reusable authority, while a zero-mutation recovery preparation grants
+      and requires none.
+
+    Every other refusal applies identically to both operations.
 
     The decision is made over the whole recorded continuation chain, not one
     Task in isolation:
@@ -335,17 +380,37 @@ def continuation_obstacle(
             "follow the linked continuation run instead of submitting the remaining scope again",
         )
     try:
-        _remaining, _recorded, remaining_limit = remaining_scope(repository, task)
+        plan = recovery_scope_plan(repository, task)
     except Exception:
-        remaining_limit = None
-    if remaining_limit == 0:
-        return (
-            ScopeContinuationReason.NO_REMAINING_SCOPE,
-            "every unit of this Task's originally admitted item budget is already recorded, so "
-            "no remaining scope exists to continue",
-            "inspect the linked continuation run and its independent per-item results, or start "
-            "a new bounded run from 操作与任务",
-        )
+        plan = None
+    if operation is ScopeContinuationOperation.RECOVERY_PREPARATION:
+        # A recovery preparation re-offers the still-undecided items inside the
+        # original admission.  Only a chain with neither an undecided item nor
+        # any further unrecorded budget has truly nothing left to recover.
+        if plan is not None and not plan.undecided_items and plan.new_source_budget == 0:
+            return (
+                ScopeContinuationReason.NO_REMAINING_SCOPE,
+                "every item of this Task's originally admitted scope already has a decided "
+                "outcome, so no remaining scope exists to recover",
+                _NO_REMAINING_SCOPE_NEXT_ACTION,
+            )
+    else:
+        try:
+            _remaining, _recorded, remaining_limit = remaining_scope(repository, task)
+        except Exception:
+            remaining_limit = None
+        if remaining_limit == 0:
+            # The queued boundary hands the *unrecorded* discovery budget to the
+            # Worker and skips every recorded source, so a fully recorded budget
+            # leaves it no work.  A recorded-but-undecided item is therefore not
+            # recoverable here; it stays recoverable through the zero-mutation
+            # recovery preparation instead.
+            return (
+                ScopeContinuationReason.NO_REMAINING_SCOPE,
+                "every unit of this Task's originally admitted item budget is already recorded, "
+                "so no remaining scope exists to continue",
+                _NO_REMAINING_SCOPE_NEXT_ACTION,
+            )
     owner = chain_owner(repository, task)
     if owner.task_id != task.task_id:
         return (
@@ -354,10 +419,13 @@ def continuation_obstacle(
             "run would queue the same remaining work twice",
             "open the linked continuation run and continue its remaining scope there",
         )
-    if task.execute_authorized:
+    if task.execute_authorized and operation is ScopeContinuationOperation.QUEUED_CONTINUATION:
         # A persisted execute flag is a record of the original admission, never
         # a reusable credential.  The live authority must be proven again here,
-        # by the same check the Worker repeats at every mutation boundary.
+        # by the same check the Worker repeats at every mutation boundary.  A
+        # zero-mutation recovery preparation needs no such authority: it
+        # observes, analyses and previews, and every execution still requires one
+        # fresh explicit intent.
         proven = False
         if mutation_authority is not None:
             try:
@@ -524,25 +592,43 @@ def recovery_scope(
     repository,
     task: PersistentTask,
 ) -> tuple[tuple[PersistentTaskItem, ...], frozenset[tuple[str, str]], int | None]:
+    """The exact ``(undecided, replay_excluded, new_source_budget)`` triple.
+
+    This stays the compact public shape both the admission and its existing
+    callers read.  :func:`recovery_scope_plan` is the same computation plus the
+    extra ``unrecorded_budget`` fact that decides the observable shape of a
+    preparation, so the two can never disagree.
+    """
+
+    plan = recovery_scope_plan(repository, task)
+    return plan.undecided_items, plan.replay_excluded, plan.new_source_budget
+
+
+def recovery_scope_plan(
+    repository,
+    task: PersistentTask,
+) -> RecoveryScopePlan:
     """The exact scope a remaining-scope *recovery preparation* may still offer.
 
-    Returns ``(undecided_items, replay_excluded_sources, new_source_budget)``
-    and is computed over the same durable chain as :func:`remaining_scope`, with
-    the two sets kept deliberately distinct:
+    The two recorded sets are kept deliberately distinct:
 
     * ``undecided_items`` are the chain's still-undecided items.  They are part
       of the recovery scope: the operator explicitly asked to review exactly
       what is left, and a pending/processing/failed/paused item has no decided
       outcome yet, so refusing or silently skipping it would lose the remaining
       work;
-    * ``replay_excluded_sources`` are the recorded sources whose outcome is
-      already decided: a successful/dry-run sibling, an explicit ignore, or an
-      uncertain effect that must only ever be investigated.  They are never
-      observed, re-offered or replayed;
+    * ``replay_excluded`` are the recorded sources whose outcome is already
+      decided: a successful/dry-run sibling, an explicit ignore, or an uncertain
+      effect that must only ever be investigated.  They are never observed,
+      re-offered or replayed;
     * ``new_source_budget`` is the number of *further* sources the walk may still
       discover.  Undecided items already occupy their unit of the original
       admitted budget (they are recorded items), so they are not deducted twice;
-      the budget is never enlarged beyond the original admission.
+      the budget is never enlarged beyond the original admission;
+    * ``unrecorded_budget`` is the part of the original admission no recorded
+      item occupies.  It is ``0`` exactly when the admission is fully recorded,
+      which is what makes the preparation observe the undecided set itself
+      instead of re-walking a directory that now advertises further sources.
 
     A chain whose recorded items consumed the whole original budget still keeps
     its undecided items recoverable; only a chain with neither an undecided item
@@ -558,7 +644,12 @@ def recovery_scope(
         # The undecided sources are already inside the original admission, so
         # they stay admissible on top of the still-unrecorded budget.
         new_source_budget = remaining_limit + len(remaining)
-    return remaining, replay_excluded, new_source_budget
+    return RecoveryScopePlan(
+        remaining,
+        replay_excluded,
+        new_source_budget,
+        remaining_limit,
+    )
 
 
 class ScopeContinuationService:
@@ -583,19 +674,41 @@ class ScopeContinuationService:
         return self._repository
 
     def obstacle(
-        self, task: PersistentTask
+        self,
+        task: PersistentTask,
+        *,
+        operation: ScopeContinuationOperation = ScopeContinuationOperation.QUEUED_CONTINUATION,
     ) -> tuple[ScopeContinuationReason | None, str | None, str | None]:
         """The exact decision this boundary would apply to one Task.
 
         The API and the lifecycle projection call this so a recovery surface is
         offered for exactly the refusal the admission would really return, using
         the same validator and live-authority checker rather than a re-derived
-        approximation.
+        approximation.  ``operation`` names which remaining-scope consumption is
+        being judged, so the queued continuation and the zero-mutation recovery
+        preparation state their own eligibility instead of sharing one
+        budget/authority conclusion.
         """
 
         return continuation_obstacle(
-            self._repository, task, self._snapshot_validator, self._mutation_authority
+            self._repository,
+            task,
+            self._snapshot_validator,
+            self._mutation_authority,
+            operation=operation,
         )
+
+    def recovery_obstacle(
+        self, task: PersistentTask
+    ) -> tuple[ScopeContinuationReason | None, str | None, str | None]:
+        """The exact decision for a zero-mutation remaining-scope recovery.
+
+        This is the same shared boundary asked about the recovery operation, so
+        a caller cannot accidentally judge a recovery preparation with the
+        queued continuation's *budget* or *live authority* conclusion.
+        """
+
+        return self.obstacle(task, operation=ScopeContinuationOperation.RECOVERY_PREPARATION)
 
     def submit(
         self,
@@ -938,10 +1051,12 @@ class ScopeContinuationWorkerService:
 
 __all__ = [
     "PreparedScopeContinuation",
+    "RecoveryScopePlan",
     "ScopeContinuationService",
     "ScopeContinuationSubmission",
     "ScopeContinuationWorkerService",
     "is_continuable_task_command",
     "recovery_scope",
+    "recovery_scope_plan",
     "remaining_scope",
 ]

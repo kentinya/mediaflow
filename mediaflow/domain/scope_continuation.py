@@ -79,6 +79,31 @@ class ScopeRecoveryLink:
     completed_at: datetime | None = None
 
 
+class ScopeContinuationOperation(StrEnum):
+    """The two distinct operations that share the same continuation evidence.
+
+    Both operations read the same durable chain, the same pause state, the same
+    immutable pin, the same continuation ownership and the same live authority,
+    but they consume the remaining scope differently, so one shared decision must
+    not answer for both:
+
+    * ``QUEUED_CONTINUATION`` re-queues the paused Task's *unrecorded* discovery
+      budget for the resident Worker.  An already-recorded source is skipped by
+      construction (``skip_sources``), so once the originally admitted budget is
+      fully recorded there is no queued work left to hand out — and, critically,
+      an item that is recorded but still undecided cannot be replayed by it;
+    * ``RECOVERY_PREPARATION`` observes the same remaining scope under the run's
+      own historical pin and re-offers exactly the still-undecided items.  An
+      undecided item already occupies its unit of the original admission, so a
+      zero *new* discovery budget is not the same statement as "nothing is
+      recoverable".  It also needs no execution authority: it is a zero-mutation
+      observation that grants none.
+    """
+
+    QUEUED_CONTINUATION = "queued_continuation"
+    RECOVERY_PREPARATION = "recovery_preparation"
+
+
 class ScopeContinuationReason(StrEnum):
     """The closed set of bounded, operator-facing continuation refusals."""
 

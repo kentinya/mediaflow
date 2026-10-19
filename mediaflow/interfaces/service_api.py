@@ -13734,17 +13734,23 @@ class MediaFlowApi:
         return max(candidates, key=lambda candidate: candidate[0])[1]
 
     def _remaining_scope_obstacle(self):
-        """The shared continuation obstacle the Preview admission reuses.
+        """The shared continuation obstacle the recovery admission reuses.
 
-        The recovery entry is offered for exactly the refusal the real admission
-        boundary would return, so it delegates to that boundary's own decision
-        instead of re-deriving the pin or live-authority rules here.
+        The recovery entry is offered for exactly the refusal the real recovery
+        admission boundary would return, so it delegates to that boundary's own
+        decision instead of re-deriving the pin, chain ownership or remaining
+        scope here.  The decision is asked for the *recovery preparation*
+        operation: a fully recorded budget with one still-undecided item has no
+        unrecorded discovery budget to hand to the queued Worker, but it does
+        have exactly that undecided item to observe and review, so the recovery
+        entry must not inherit the queued-continuation budget/authority refusal
+        when deciding whether a review is possible at all.
         """
 
         service = self._scope_continuations
 
         def obstacle(task):
-            reason, message, next_action = service.obstacle(task)
+            reason, message, next_action = service.recovery_obstacle(task)
             return (reason.value if reason is not None else None), message, next_action
 
         return obstacle

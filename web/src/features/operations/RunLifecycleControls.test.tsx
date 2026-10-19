@@ -356,6 +356,56 @@ describe("RunLifecycleControls", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders the recovery entry of a fully recorded budget with an undecided item", async () => {
+    // The queued continuation has no unrecorded budget left, so Continue stays
+    // withheld with that exact reason. The zero-mutation review of the still
+    // undecided item is a different operation and stays reachable.
+    const user = userEvent.setup();
+    const onPreview = vi.fn();
+    render(
+      <RunLifecycleControls
+        projection={projection({
+          state: "paused",
+          actions: [
+            action(
+              "resume",
+              false,
+              "every unit of this Task's originally admitted item budget is already recorded, so no remaining scope exists to continue",
+              {
+                recovery: {
+                  action: "preview",
+                  method: "POST",
+                  path: "/api/v1/tasks/task-1/remaining-scope-previews",
+                  available: true,
+                  confirmationRequired: false,
+                  durableOutcome:
+                    "a durable zero-mutation exact Preview of the remaining eligible scope is stored",
+                  sideEffects: "none",
+                  nextAction:
+                    "review the exact Preview, then make one fresh explicit execution intent",
+                },
+              },
+            ),
+          ],
+        })}
+        onInvoke={vi.fn()}
+        pendingAction={null}
+        result={null}
+        onReconcile={vi.fn()}
+        locked={false}
+        onPreview={onPreview}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "继续剩余范围" }),
+    ).not.toBeInTheDocument();
+    const recovery = screen.getByRole("button", {
+      name: "在当前界面生成剩余范围摘要",
+    });
+    await user.click(recovery);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+  });
+
   it("disables the recovery entry while a control is in flight", () => {
     render(
       <RunLifecycleControls
