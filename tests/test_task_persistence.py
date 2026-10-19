@@ -1264,6 +1264,309 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
         )
 
 
+class DiscoveryAdmissionIdentityTests(unittest.TestCase):
+    """The durable identity that separates every admission kind (B45.5 P1-2).
+
+    The storage writer and both open-work finders must agree on one identity, so
+    an ordinary Files preparation, two paused runs' recoveries and one repeated
+    recovery request can never alias each other.  These cases exercise the real
+    SQLite writer and both finders, including a reopen across connections.
+    """
+
+    @staticmethod
+    def _discovery(
+        discovery_id: str,
+        *,
+        status=None,
+        auto_prepare: bool = False,
+        recovery_task: str | None = None,
+        excluded: tuple[str, ...] = (),
+        budget: int = 100,
+        definition: tuple[str, str] | None = None,
+    ):
+        from mediaflow.domain.media_discovery import (
+            DefinitionRunOnceOrigin,
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+        )
+
+        now = datetime(2026, 10, 19, tzinfo=UTC)
+        origin = None
+        if definition is not None:
+            origin = DefinitionRunOnceOrigin(
+                definition[0],
+                "Nightly",
+                definition[1],
+                "snap",
+                1,
+                "digest",
+                "library",
+                "Sub",
+                4,
+                4,
+            )
+        return MediaDiscovery(
+            discovery_id,
+            "operator",
+            "library",
+            "storage",
+            "snap",
+            "digest",
+            status or DiscoveryStatus.QUEUED,
+            1,
+            replace(DiscoveryBudgets(), max_primary_sources=budget),
+            DiscoveryProgress(
+                "queued",
+                (DiscoveryScopeEntry("Sub", DiscoveryEntryKind.DIRECTORY),),
+                DiscoveryCounters(),
+                DiscoveryIncompleteReason.NONE,
+                (),
+                (),
+            ),
+            now,
+            now,
+            auto_prepare=auto_prepare,
+            definition_origin=origin,
+            recovery_source_task_id=recovery_task,
+            recovery_excluded_paths=excluded,
+        )
+
+    def test_ordinary_definition_and_recovery_admissions_never_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "identity.sqlite3")
+            with SQLiteTaskRepository(database) as repository:
+                ordinary = self._discovery("discovery-ordinary", auto_prepare=True)
+                repository.create_media_discovery(ordinary)
+                # The same scope/pin/actor admitted as a recovery preparation of
+                # task one is a genuinely different intent and must not be
+                # refused as a duplicate of the ordinary preparation.
+                recovery = self._discovery(
+                    "discovery-recovery",
+                    auto_prepare=True,
+                    recovery_task="task-one",
+                    excluded=("Sub/Done.2001.mkv",),
+                    budget=2,
+                )
+                repository.create_media_discovery(recovery)
+                # A second paused run over the identical scope is its own work.
+                other = self._discovery(
+                    "discovery-other",
+                    auto_prepare=True,
+                    recovery_task="task-two",
+                    budget=2,
+                )
+                repository.create_media_discovery(other)
+                # Two definitions over the same scope are two intents.
+                for discovery_id, fingerprint in (
+                    ("discovery-definition-a", "a" * 64),
+                    ("discovery-definition-b", "b" * 64),
+                ):
+                    repository.create_media_discovery(
+                        self._discovery(
+                            discovery_id,
+                            auto_prepare=True,
+                            definition=("nightly", fingerprint),
+                        )
+                    )
+
+                # Each finder resolves exactly its own admission kind.
+                found = repository.find_open_media_discovery(
+                    actor="operator",
+                    resource_library_id="library",
+                    storage_id="storage",
+                    snapshot_id="snap",
+                    snapshot_digest="digest",
+                    scope_signature='[["Sub","directory"]]',
+                    auto_prepare=True,
+                )
+                assert found is not None and found.discovery_id == "discovery-ordinary"
+                for task_id, expected in (
+                    ("task-one", "discovery-recovery"),
+                    ("task-two", "discovery-other"),
+                ):
+                    recovered = repository.find_open_recovery_discovery(
+                        actor="operator",
+                        recovery_source_task_id=task_id,
+                        resource_library_id="library",
+                        storage_id="storage",
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                        scope_signature='[["Sub","directory"]]',
+                        recovery_excluded_paths=(
+                            ("Sub/Done.2001.mkv",) if task_id == "task-one" else ()
+                        ),
+                        max_primary_sources=2,
+                    )
+                    assert recovered is not None, task_id
+                    assert recovered.discovery_id == expected, (task_id, recovered.discovery_id)
+                # A *changed* recovery context is a new admission, not a silent
+                # reuse of the record that was admitted under different
+                # exclusions/budget.
+                assert (
+                    repository.find_open_recovery_discovery(
+                        actor="operator",
+                        recovery_source_task_id="task-one",
+                        resource_library_id="library",
+                        storage_id="storage",
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                        scope_signature='[["Sub","directory"]]',
+                        recovery_excluded_paths=(),
+                        max_primary_sources=2,
+                    )
+                    is None
+                )
+                assert (
+                    repository.find_open_media_discovery(
+                        actor="operator",
+                        resource_library_id="library",
+                        storage_id="storage",
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                        scope_signature='[["Sub","directory"]]',
+                        auto_prepare=True,
+                        definition_id="nightly",
+                        definition_fingerprint="a" * 64,
+                    ).discovery_id
+                    == "discovery-definition-a"
+                )
+                assert (
+                    repository.find_open_media_discovery(
+                        actor="operator",
+                        resource_library_id="library",
+                        storage_id="storage",
+                        snapshot_id="snap",
+                        snapshot_digest="digest",
+                        scope_signature='[["Sub","directory"]]',
+                        auto_prepare=True,
+                        definition_id="nightly",
+                        definition_fingerprint="b" * 64,
+                    ).discovery_id
+                    == "discovery-definition-b"
+                )
+            # The identity is durable: a second connection reads the same
+            # partitions without recomputing anything from the current Active.
+            with SQLiteTaskRepository(database) as reopened:
+                recovered = reopened.find_open_recovery_discovery(
+                    actor="operator",
+                    recovery_source_task_id="task-one",
+                    resource_library_id="library",
+                    storage_id="storage",
+                    snapshot_id="snap",
+                    snapshot_digest="digest",
+                    scope_signature='[["Sub","directory"]]',
+                    recovery_excluded_paths=("Sub/Done.2001.mkv",),
+                    max_primary_sources=2,
+                )
+                assert recovered is not None
+                assert recovered.discovery_id == "discovery-recovery"
+                assert recovered.recovery_excluded_paths == ("Sub/Done.2001.mkv",)
+                assert recovered.recovery_source_task_id == "task-one"
+
+    def test_an_ordinary_admission_keeps_its_previous_durable_identity(self) -> None:
+        """An already open ordinary admission still reconciles byte-identically.
+
+        The origin keys are only added for a definition/recovery admission, so a
+        discovery written before this correction keeps the same stored
+        signature and the same reconciliation outcome.  Nothing is cleared,
+        backfilled or rewritten.
+        """
+
+        from mediaflow.domain.media_discovery import (
+            DiscoveryBudgets,
+            DiscoveryCounters,
+            DiscoveryEntryKind,
+            DiscoveryIncompleteReason,
+            DiscoveryProgress,
+            DiscoveryScopeEntry,
+            DiscoveryStatus,
+            MediaDiscovery,
+            discovery_admission_identity,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "compat.sqlite3")
+            now = datetime(2026, 10, 19, tzinfo=UTC)
+            # The exact identity the previous implementation persisted.
+            legacy_signature = json.dumps(
+                {
+                    "actor": "operator",
+                    "resourceLibraryId": "library",
+                    "storageId": "storage",
+                    "scope": '[["Sub","directory"]]',
+                    "snapshotId": "snap",
+                    "snapshotDigest": "digest",
+                    "autoPrepare": True,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            assert (
+                discovery_admission_identity(
+                    actor="operator",
+                    resource_library_id="library",
+                    storage_id="storage",
+                    snapshot_id="snap",
+                    snapshot_digest="digest",
+                    scope_signature='[["Sub","directory"]]',
+                    auto_prepare=True,
+                )
+                == legacy_signature
+            )
+            discovery = MediaDiscovery(
+                "discovery-legacy",
+                "operator",
+                "library",
+                "storage",
+                "snap",
+                "digest",
+                DiscoveryStatus.QUEUED,
+                1,
+                DiscoveryBudgets(),
+                DiscoveryProgress(
+                    "queued",
+                    (DiscoveryScopeEntry("Sub", DiscoveryEntryKind.DIRECTORY),),
+                    DiscoveryCounters(),
+                    DiscoveryIncompleteReason.NONE,
+                    (),
+                    (),
+                ),
+                now,
+                now,
+                auto_prepare=True,
+            )
+            with SQLiteTaskRepository(database) as repository:
+                # Seed the row exactly as the prior implementation stored it,
+                # which is also what this build would store for the same input.
+                stored = replace(discovery, recovery_source_task_id=None)
+                repository.create_media_discovery(stored)
+                self.assertEqual(
+                    repository._connection.execute(
+                        "SELECT admission_signature FROM media_discoveries WHERE discovery_id=?",
+                        ("discovery-legacy",),
+                    ).fetchone()["admission_signature"],
+                    legacy_signature,
+                )
+                found = repository.find_open_media_discovery(
+                    actor="operator",
+                    resource_library_id="library",
+                    storage_id="storage",
+                    snapshot_id="snap",
+                    snapshot_digest="digest",
+                    scope_signature='[["Sub","directory"]]',
+                    auto_prepare=True,
+                )
+                assert found is not None
+                assert found.discovery_id == "discovery-legacy"
+
+
 class ManualRecoveryPreparationPersistenceTests(unittest.TestCase):
     def test_preparation_round_trips_and_supersedes_without_authority(self) -> None:
         """A prepared summary persists, supersedes and never invents authority."""

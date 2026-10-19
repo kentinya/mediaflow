@@ -116,6 +116,7 @@ from mediaflow.domain.media_discovery import (
     DiscoveryStatus,
     DiscoveryUnavailable,
     MediaDiscovery,
+    discovery_admission_identity,
     discovery_scope_signature,
 )
 from mediaflow.domain.media_evidence import (
@@ -11034,6 +11035,8 @@ class SQLiteTaskRepository:
         snapshot_digest: str,
         scope_signature: str,
         auto_prepare: bool | None = None,
+        definition_id: str | None = None,
+        definition_fingerprint: str | None = None,
     ) -> MediaDiscovery | None:
         """One already durable *open* discovery for this exact admission.
 
@@ -11041,29 +11044,31 @@ class SQLiteTaskRepository:
         open admission is reconciled even after it has long left every bounded
         list window.  Terminal and frozen records are excluded, so deliberate
         successor work is always a new discovery, and the lookup is bound to the
-        actor, the exact library/Storage binding and the immutable pin, so two
-        libraries with the same relative path can never answer for each other.
+        actor, the exact library/Storage binding, the immutable pin and the
+        origin (ordinary Files, definition Run once or remaining-scope recovery)
+        so two libraries with the same relative path, two definitions over the
+        same scope and an ordinary selection never answer for each other.
         """
 
         if not isinstance(actor, str) or not actor.strip():
             raise ValueError("media discovery actor is required")
-        signature = json.dumps(
-            {
-                "actor": actor,
-                "resourceLibraryId": resource_library_id,
-                "storageId": storage_id,
-                "snapshotId": snapshot_id,
-                "snapshotDigest": snapshot_digest,
-                "scope": scope_signature,
-                "autoPrepare": bool(auto_prepare),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+        # An ordinary Files selection carries no recovery origin or exclusions;
+        # the recovery lookup is its own explicit boundary.
+        signature = discovery_admission_identity(
+            actor=actor,
+            resource_library_id=resource_library_id,
+            storage_id=storage_id,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            scope_signature=scope_signature,
+            auto_prepare=bool(auto_prepare),
+            definition_id=definition_id,
+            definition_fingerprint=definition_fingerprint,
         )
         with self._lock:
             row = self._connection.execute(
                 "SELECT discovery_id FROM media_discoveries WHERE admission_signature=? "
+                "AND recovery_source_task_id IS NULL "
                 "AND intent_id IS NULL AND frozen_at IS NULL "
                 "AND status NOT IN (?, ?, ?, ?) "
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
@@ -11088,34 +11093,52 @@ class SQLiteTaskRepository:
         storage_id: str,
         snapshot_id: str,
         snapshot_digest: str,
+        scope_signature: str,
+        recovery_excluded_paths: tuple[str, ...] = (),
+        max_primary_sources: int | None = None,
     ) -> MediaDiscovery | None:
         """One already durable *open* remaining-scope recovery preparation.
 
         A repeated or lost-response recovery request converges on the exact
         durable preparation it created instead of starting a second walk, and
         the lookup is bound to the actor, the exact source Task, the library/
-        Storage binding and the immutable pin.  Terminal and frozen records are
+        Storage binding, the immutable pin and the exact exclusion/budget
+        context that decided what this preparation may observe.  Two paused runs
+        of the same library therefore never alias each other, and a *different*
+        recovery context (for example a sibling that became undecided after a
+        correction) is its own admission.  Terminal and frozen records are
         excluded so a deliberate new preparation is always a new admission.
         """
 
         if not isinstance(actor, str) or not actor.strip():
             raise ValueError("media discovery actor is required")
+        if not isinstance(recovery_source_task_id, str) or not recovery_source_task_id.strip():
+            raise ValueError("media discovery recovery source Task identity is required")
+        if not isinstance(scope_signature, str):
+            raise ValueError("media discovery recovery scope signature is required")
+        signature = discovery_admission_identity(
+            actor=actor,
+            resource_library_id=resource_library_id,
+            storage_id=storage_id,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+            scope_signature=scope_signature,
+            # A remaining-scope preparation is always a full preparation.
+            auto_prepare=True,
+            recovery_source_task_id=recovery_source_task_id,
+            recovery_excluded_paths=recovery_excluded_paths,
+            max_primary_sources=max_primary_sources,
+        )
         with self._lock:
             row = self._connection.execute(
-                "SELECT discovery_id FROM media_discoveries "
-                "WHERE actor=? AND recovery_source_task_id=? AND resource_library_id=? "
-                "AND storage_id=? AND configuration_snapshot_id=? "
-                "AND configuration_snapshot_digest=? "
+                "SELECT discovery_id FROM media_discoveries WHERE admission_signature=? "
+                "AND recovery_source_task_id=? "
                 "AND intent_id IS NULL AND frozen_at IS NULL "
                 "AND status NOT IN (?, ?, ?, ?) "
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
                 (
-                    actor,
+                    signature,
                     recovery_source_task_id,
-                    resource_library_id,
-                    storage_id,
-                    snapshot_id,
-                    snapshot_digest,
                     DiscoveryStatus.COMPLETED.value,
                     DiscoveryStatus.PARTIAL_SUCCESS.value,
                     DiscoveryStatus.FAILED.value,
@@ -12646,30 +12669,40 @@ class SQLiteTaskRepository:
 
     @staticmethod
     def _admission_signature(discovery: MediaDiscovery) -> str:
-        """The durable actor/binding/pin/scope identity of one admission.
+        """The durable identity of one admission, from the single shared authority.
 
         The signature is stored as a generated column value rather than
         recomputed by scanning a recent-list window, so an equivalent open
         admission is reconciled however long ago it was created and however many
         unrelated discoveries were admitted since.  It contains no secret and no
         physical Storage path: the actor, the enabled library/Storage binding,
-        the immutable configuration pin, the exact canonical scope and whether
-        the admission is a full preparation.
+        the immutable configuration pin, the exact canonical scope, whether the
+        admission is a full preparation, the definition/任务 origin a definition-
+        bound or remaining-scope admission carries, its exclusions and its primary
+        bound.
         """
 
-        return json.dumps(
-            {
-                "actor": discovery.actor,
-                "resourceLibraryId": discovery.resource_library_id,
-                "storageId": discovery.storage_id,
-                "snapshotId": discovery.snapshot_id,
-                "snapshotDigest": discovery.snapshot_digest,
-                "scope": discovery_scope_signature(discovery.progress.scope_entries),
-                "autoPrepare": discovery.auto_prepare,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+        origin = discovery.definition_origin
+        return discovery_admission_identity(
+            actor=discovery.actor,
+            resource_library_id=discovery.resource_library_id,
+            storage_id=discovery.storage_id,
+            snapshot_id=discovery.snapshot_id,
+            snapshot_digest=discovery.snapshot_digest,
+            scope_signature=discovery_scope_signature(discovery.progress.scope_entries),
+            auto_prepare=discovery.auto_prepare,
+            definition_id=origin.definition_id if origin is not None else None,
+            definition_fingerprint=(origin.definition_fingerprint if origin is not None else None),
+            recovery_source_task_id=discovery.recovery_source_task_id,
+            recovery_excluded_paths=discovery.recovery_excluded_paths,
+            # The primary bound only decides *which* sources a recovery
+            # preparation may still offer, so it is part of that admission's
+            # identity and of no other kind's.
+            max_primary_sources=(
+                discovery.budgets.max_primary_sources
+                if discovery.recovery_source_task_id is not None
+                else None
+            ),
         )
 
     def _load_media_discovery_locked(self, discovery_id: str) -> MediaDiscovery | None:

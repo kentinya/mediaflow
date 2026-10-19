@@ -43,7 +43,7 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
-from mediaflow.application.scope_continuation import remaining_scope as _remaining_scope
+from mediaflow.application.scope_continuation import recovery_scope as _recovery_scope
 from mediaflow.application.task_scope import (
     ScopeResolutionError,
     resolve_resource_library_scope,
@@ -631,10 +631,11 @@ class MediaDiscoveryService:
           against the Task's own immutable historical pin, so the preparation
           can never broaden the admitted budget and never re-offer a completed,
           ignored or uncertain sibling;
-        * every source an earlier attempt of the chain already recorded is an
-          explicit durable exclusion, so the walk neither observes nor offers
-          it again and the admitted primary bound measures only the remaining
-          scope;
+        * the durable exclusion set is exactly the sources whose outcome is
+          already *decided* (successful, dry-run, ignored, or an uncertain effect
+          that may only be investigated).  An item the chain still holds as
+          pending/processing/failed/paused is part of the remaining scope, not a
+          completed sibling, so it is observed and offered again;
         * the resident Worker observes the scope, persists the first observation,
           sets the real re-observation deadline and only freezes/analyses once
           the configured interval is proven; a changed size/mtime/validator
@@ -694,8 +695,8 @@ class MediaDiscoveryService:
                 "the paused run's pinned configuration revision is unavailable",
                 details={"reason": type(error).__name__},
             ) from error
-        remaining, already_recorded, remaining_limit = _remaining_scope(repository, task)
-        if remaining_limit == 0:
+        remaining, replay_excluded, source_budget = _recovery_scope(repository, task)
+        if not remaining and source_budget == 0:
             raise DiscoveryError(
                 "this run has no remaining eligible item to review; every admitted item already "
                 "has a decided outcome",
@@ -724,12 +725,30 @@ class MediaDiscoveryService:
             scope_entry = self._resolve_entry_kind(storage, library, scope_entry)
         excluded = tuple(
             sorted(
-                self._library_relative(path, library)
-                for storage_id, path in already_recorded
-                if storage_id == library.storage_id
+                value
+                for value in (
+                    self._library_relative(path, library)
+                    for storage_id, path in replay_excluded
+                    if storage_id == library.storage_id
+                )
+                if value is not None
             )
         )
-        excluded = tuple(value for value in excluded if value is not None)
+        if len(excluded) > self._budgets.max_scope_paths:
+            # The durable exclusions are part of the preparation's identity, so
+            # they are never truncated: silently dropping one would re-offer a
+            # decided sibling.  A chain that large is refused by name instead.
+            raise DiscoveryError(
+                "this run already recorded more decided sources than one bounded recovery "
+                "preparation can safely carry",
+                code="recovery_scope_over_limit",
+                status=409,
+                next_action=(
+                    "inspect the run's recorded per-item outcomes, or start a new bounded run "
+                    "from 操作与任务"
+                ),
+                details={"limit": self._budgets.max_scope_paths},
+            )
         if not self._scope_has_remaining_candidate(storage, library, scope_entry, excluded):
             # The whole admitted scope is already decided: refusing here keeps
             # the same truthful refusal the inline boundary produced instead of
@@ -744,18 +763,22 @@ class MediaDiscoveryService:
                     "from 操作与任务"
                 ),
             )
-        # The admitted primary bound is the Task's exact remaining budget, so a
-        # scope that really holds more remaining candidates than the original
-        # run may still organize is refused instead of silently truncated.
+        # The admitted primary bound is the exact remaining budget of the
+        # original admission: undecided items already occupy their unit and the
+        # still-unrecorded part stays discoverable, so the preparation can never
+        # broaden the original admission nor lose an already admitted item.
         budgets = self._budgets
-        if remaining_limit is not None and remaining_limit < budgets.max_primary_sources:
-            budgets = replace(budgets, max_primary_sources=max(1, remaining_limit))
+        if source_budget is not None and source_budget < budgets.max_primary_sources:
+            budgets = replace(budgets, max_primary_sources=max(1, source_budget))
         existing = self._reconcile_recovery(
             actor,
             task_id,
             library,
             task.configuration_snapshot_id,
             task.configuration_snapshot_digest,
+            scope_entry,
+            excluded,
+            budgets.max_primary_sources,
         )
         if existing is not None:
             return existing
@@ -814,13 +837,24 @@ class MediaDiscoveryService:
                 library,
                 task.configuration_snapshot_id,
                 task.configuration_snapshot_digest,
+                scope_entry,
+                excluded,
+                budgets.max_primary_sources,
             )
             if winner is not None:
                 return winner
             raise
 
     def _reconcile_recovery(
-        self, actor, task_id, library, snapshot_id, snapshot_digest
+        self,
+        actor,
+        task_id,
+        library,
+        snapshot_id,
+        snapshot_digest,
+        scope_entry: DiscoveryScopeEntry,
+        excluded,
+        max_primary_sources: int,
     ) -> MediaDiscovery | None:
         finder = getattr(self._repository, "find_open_recovery_discovery", None)
         if not callable(finder):
@@ -832,6 +866,9 @@ class MediaDiscoveryService:
             storage_id=library.storage_id,
             snapshot_id=snapshot_id,
             snapshot_digest=snapshot_digest,
+            scope_signature=discovery_scope_signature((scope_entry,)),
+            recovery_excluded_paths=excluded,
+            max_primary_sources=max_primary_sources,
         )
 
     @staticmethod
@@ -1286,18 +1323,25 @@ class MediaDiscoveryService:
         storage_id: str,
         *,
         auto_prepare: bool = False,
+        definition_origin: DefinitionRunOnceOrigin | None = None,
     ) -> MediaDiscovery | None:
         """Find one already durable open discovery for this exact admission.
 
         The match is bound to the actor, the *exact ResourceLibrary binding*
         (library identity plus its pinned Storage/root context), the canonical
-        deduplicated scope signature and the admitted configuration pin.  A
-        lost admission response therefore reconciles to the original durable
-        record instead of admitting a duplicate walk, while a different scope,
-        a different principal, a different library/Storage binding or a
-        repinned Active configuration is always a new admission.  Two enabled
-        ResourceLibraries with the same relative path can never answer for
-        each other: the relative path alone is not the source identity.
+        deduplicated scope signature, the admitted configuration pin and the
+        definition origin.  A lost admission response therefore reconciles to
+        the original durable record instead of admitting a duplicate walk, while
+        a different scope, a different principal, a different library/Storage
+        binding, a different definition or a repinned Active configuration is
+        always a new admission.  Two enabled ResourceLibraries with the same
+        relative path can never answer for each other: the relative path alone
+        is not the source identity.
+
+        An ordinary admission also never reconciles onto a remaining-scope
+        recovery preparation (and vice versa): those are different operator
+        intents with different origins and exclusion sets, so the durable
+        identity the writer stores is the identity read here.
         """
 
         lister = getattr(self._repository, "list_media_discoveries", None)
@@ -1315,6 +1359,8 @@ class MediaDiscoveryService:
                 snapshot_digest=snapshot_digest,
                 scope_signature=signature,
                 auto_prepare=auto_prepare,
+                definition_id=getattr(definition_origin, "definition_id", None),
+                definition_fingerprint=getattr(definition_origin, "definition_fingerprint", None),
             )
         if not callable(lister):
             return None
@@ -1324,6 +1370,16 @@ class MediaDiscoveryService:
             if candidate.terminal or candidate.frozen:
                 continue
             if candidate.auto_prepare != auto_prepare:
+                continue
+            # A recovery preparation is its own admission kind: an ordinary
+            # selection never inherits its origin, exclusions or budget.
+            if candidate.recovery_source_task_id is not None:
+                continue
+            if (
+                candidate.definition_origin.definition_id
+                if candidate.definition_origin is not None
+                else None
+            ) != getattr(definition_origin, "definition_id", None):
                 continue
             if (
                 candidate.resource_library_id != resource_library_id

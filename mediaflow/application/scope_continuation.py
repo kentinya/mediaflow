@@ -520,6 +520,47 @@ def remaining_scope(
     return remaining, already_recorded, remaining_limit
 
 
+def recovery_scope(
+    repository,
+    task: PersistentTask,
+) -> tuple[tuple[PersistentTaskItem, ...], frozenset[tuple[str, str]], int | None]:
+    """The exact scope a remaining-scope *recovery preparation* may still offer.
+
+    Returns ``(undecided_items, replay_excluded_sources, new_source_budget)``
+    and is computed over the same durable chain as :func:`remaining_scope`, with
+    the two sets kept deliberately distinct:
+
+    * ``undecided_items`` are the chain's still-undecided items.  They are part
+      of the recovery scope: the operator explicitly asked to review exactly
+      what is left, and a pending/processing/failed/paused item has no decided
+      outcome yet, so refusing or silently skipping it would lose the remaining
+      work;
+    * ``replay_excluded_sources`` are the recorded sources whose outcome is
+      already decided: a successful/dry-run sibling, an explicit ignore, or an
+      uncertain effect that must only ever be investigated.  They are never
+      observed, re-offered or replayed;
+    * ``new_source_budget`` is the number of *further* sources the walk may still
+      discover.  Undecided items already occupy their unit of the original
+      admitted budget (they are recorded items), so they are not deducted twice;
+      the budget is never enlarged beyond the original admission.
+
+    A chain whose recorded items consumed the whole original budget still keeps
+    its undecided items recoverable; only a chain with neither an undecided item
+    nor any remaining budget has truly nothing left to prepare.
+    """
+
+    remaining, already_recorded, remaining_limit = remaining_scope(repository, task)
+    undecided = frozenset((item.storage_id, item.source_path) for item in remaining)
+    replay_excluded = already_recorded - undecided
+    if remaining_limit is None:
+        new_source_budget = None
+    else:
+        # The undecided sources are already inside the original admission, so
+        # they stay admissible on top of the still-unrecorded budget.
+        new_source_budget = remaining_limit + len(remaining)
+    return remaining, replay_excluded, new_source_budget
+
+
 class ScopeContinuationService:
     """Shared API/Web admission of exactly one paused-scope continuation."""
 
@@ -901,5 +942,6 @@ __all__ = [
     "ScopeContinuationSubmission",
     "ScopeContinuationWorkerService",
     "is_continuable_task_command",
+    "recovery_scope",
     "remaining_scope",
 ]

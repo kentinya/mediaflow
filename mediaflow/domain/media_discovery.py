@@ -384,6 +384,69 @@ def discovery_scope_signature(entries: tuple[DiscoveryScopeEntry, ...]) -> str:
     return json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
 
 
+def discovery_admission_identity(
+    *,
+    actor: str,
+    resource_library_id: str,
+    storage_id: str,
+    snapshot_id: str,
+    snapshot_digest: str,
+    scope_signature: str,
+    auto_prepare: bool,
+    definition_id: str | None = None,
+    definition_fingerprint: str | None = None,
+    recovery_source_task_id: str | None = None,
+    recovery_excluded_paths: tuple[str, ...] = (),
+    max_primary_sources: int | None = None,
+) -> str:
+    """The complete durable identity of one discovery admission.
+
+    This is the **single** authority the storage writer and both open-work
+    finders use, so an admission cannot be created under one identity and then
+    looked up under another.  Every part that changes what the admitted walk
+    would observe is included:
+
+    * the principal, the exact enabled ResourceLibrary/Storage binding and the
+      immutable configuration pin;
+    * the canonical admitted scope and whether the admission is a full
+      preparation;
+    * a definition-bound Run once's *definition* identity, because two
+      published definitions over the same library/scope are two different
+      operator intents (the definition also supplies the primary bound);
+    * a remaining-scope recovery preparation's source Task and its exact
+      exclusion/budget context, because that preparation observes a deliberately
+      narrower scope than an ordinary Files selection over the same directory.
+
+    An ordinary Files admission therefore never inherits a recovery
+    preparation's exclusions/origin, and two paused runs' recoveries never
+    block or alias each other.  The value contains no secret and no physical
+    Storage path.
+
+    Only the origin-specific keys are present, so an *ordinary* Files admission
+    keeps the exact byte-identical identity earlier versions wrote: an already
+    open ordinary discovery reconciled before this correction still reconciles
+    now, without rewriting or clearing any stored signature.
+    """
+
+    identity: dict[str, object] = {
+        "actor": actor,
+        "resourceLibraryId": resource_library_id,
+        "storageId": storage_id,
+        "snapshotId": snapshot_id,
+        "snapshotDigest": snapshot_digest,
+        "scope": scope_signature,
+        "autoPrepare": bool(auto_prepare),
+    }
+    if definition_id is not None or definition_fingerprint is not None:
+        identity["definitionId"] = definition_id
+        identity["definitionFingerprint"] = definition_fingerprint
+    if recovery_source_task_id is not None:
+        identity["recoverySourceTaskId"] = recovery_source_task_id
+        identity["recoveryExcludedPaths"] = sorted(set(recovery_excluded_paths))
+        identity["primarySources"] = max_primary_sources
+    return json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def canonical_scope(
     entries: tuple[DiscoveryScopeEntry, ...],
 ) -> tuple[DiscoveryScopeEntry, ...]:

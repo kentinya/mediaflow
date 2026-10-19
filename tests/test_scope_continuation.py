@@ -41,6 +41,7 @@ from mediaflow.application.scope_continuation import (
     continuation_origin,
     definition_occurrence_authority,
     is_continuable_task_command,
+    recovery_scope,
     remaining_scope,
 )
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
@@ -63,6 +64,7 @@ from mediaflow.domain.scope_continuation import (
     ScopeContinuationStatus,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTask,
@@ -2581,6 +2583,214 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual(document["error"]["details"]["sideEffects"], "none")
         self.assertNotIn("mediaflow tasks", json.dumps(document))
         self.assertNotIn(str(self.root), json.dumps(document))
+
+    def test_recovery_keeps_an_undecided_recorded_source_in_the_reviewed_scope(self) -> None:
+        """An already-recorded but undecided source is *remaining*, not decided.
+
+        The recorded `Kept` sibling is successful and its result is decided.  The
+        recorded `Left` item is still `pending` and has no result, so the run's
+        remaining scope really contains it even though the whole scope budget
+        was already recorded.  Recovery must therefore review `Left` instead of
+        reporting `no_remaining_scope`, while still never replaying `Kept`.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        sub = self.root / "Incoming" / "Sub"
+        sub.mkdir()
+        (sub / "Kept.2006.mkv").write_bytes(b"kept")
+        (sub / "Left.2005.mkv").write_bytes(b"left")
+        task = self._paused_mutation_scan(active, discovered="Incoming/Sub/Kept.2006.mkv")
+        task = replace(task, command="organize", scope_path="Incoming/Sub")
+        self.repository.update_task(task)
+        # A recorded but undecided source: the chain owns it and it consumed one
+        # unit of the original budget, but no outcome has been decided yet.
+        item = self.coordinator.record_discovered(
+            task.task_id,
+            "source-storage",
+            "source",
+            "Incoming/Sub/Left.2005.mkv",
+            "source-storage:Incoming/Sub/Left.2005.mkv",
+        )
+        entry = LocalStorage("source-storage", self.root).stat(item.source_path)
+        fingerprint = source_fingerprint("source-storage", "source", entry)
+        self.repository.upsert_item(
+            replace(
+                item,
+                status=TaskItemStatus.PENDING,
+                stage="pending",
+                source_fingerprint=fingerprint.value,
+                source_fingerprint_state="verified",
+                source_occurrence_id=occurrence_id_for(
+                    "source-storage", "source", item.source_path, fingerprint.value
+                ),
+                source_observed_at=datetime.now(UTC),
+            )
+        )
+        remaining, replay_excluded, source_budget = recovery_scope(
+            self.repository, self.repository.get_task(task.task_id)
+        )
+        self.assertEqual([value.source_path for value in remaining], ["Incoming/Sub/Left.2005.mkv"])
+        self.assertEqual(replay_excluded, {("source-storage", "Incoming/Sub/Kept.2006.mkv")})
+        # The original budget was 4, two sources are recorded, so three further
+        # sources stay discoverable *on top of* the one still-undecided item.
+        self.assertEqual(source_budget, 3)
+
+        api = self._api(config)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        self.assertEqual(admission["journey"], "discovery")
+        self.assertEqual(admission["recoverySourceTaskId"], task.task_id)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        # Exactly the undecided source is reviewed; the decided sibling is not.
+        self.assertEqual(
+            [value.source.path for value in preview.items], ["Incoming/Sub/Left.2005.mkv"]
+        )
+        self.assertEqual(preview.configuration_snapshot_id, active.revision_id)
+        self.assertEqual((sub / "Kept.2006.mkv").read_bytes(), b"kept")
+        self.assertEqual((sub / "Left.2005.mkv").read_bytes(), b"left")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_recovery_identity_isolates_tasks_and_ordinary_files_preparations(self) -> None:
+        """Two runs' recoveries and an ordinary Files preparation never alias.
+
+        Same actor, library, root, pinned revision and the same directory scope
+        for every request, which is exactly the shape that used to collapse all
+        three intents onto one durable discovery identity.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        sub = self.root / "Incoming" / "Sub"
+        sub.mkdir()
+        (sub / "Kept.2006.mkv").write_bytes(b"kept")
+        (sub / "Left.2005.mkv").write_bytes(b"left")
+        first = self._paused_mutation_scan(active, discovered="Incoming/Sub/Kept.2006.mkv")
+        first = replace(first, command="organize", scope_path="Incoming/Sub")
+        self.repository.update_task(first)
+        second = PersistentTask(
+            "task-second",
+            "organize",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            scope_path="Incoming/Sub",
+            item_limit=4,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        self.repository.create_task(second)
+        self.repository.request_task_pause(second.task_id, NOW)
+        second = self.coordinator.acknowledge_pause(second.task_id)
+        api = self._api(config)
+
+        status, first_admission = request(
+            api,
+            f"/api/v1/tasks/{first.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, first_admission)
+        # The same exact recovery request converges on its own durable record.
+        status, first_repeat = request(
+            api,
+            f"/api/v1/tasks/{first.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, first_repeat)
+        self.assertEqual(first_repeat["discoveryId"], first_admission["discoveryId"])
+        # A second paused run over the same directory is its own admission.
+        status, second_admission = request(
+            api,
+            f"/api/v1/tasks/{second.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, second_admission)
+        self.assertNotEqual(second_admission["discoveryId"], first_admission["discoveryId"])
+        self.assertEqual(second_admission["recoverySourceTaskId"], second.task_id)
+        # An ordinary Files preparation of the same directory is a new intent.
+        status, ordinary = request(
+            api,
+            "/api/v1/resource-libraries/source/files/discoveries",
+            method="POST",
+            body={"paths": ["Sub"], "autoPrepare": True},
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, ordinary)
+        self.assertNotIn(
+            ordinary["discoveryId"],
+            {first_admission["discoveryId"], second_admission["discoveryId"]},
+        )
+        self.assertIsNone(ordinary.get("recoverySourceTaskId"))
+        # A recovery admitted first does not answer a later ordinary request: the
+        # repeated ordinary admission converges on its own record and keeps the
+        # whole directory it was asked to prepare.
+        status, ordinary_repeat = request(
+            api,
+            "/api/v1/resource-libraries/source/files/discoveries",
+            method="POST",
+            body={"paths": ["Sub"], "autoPrepare": True},
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, ordinary_repeat)
+        self.assertEqual(ordinary_repeat["discoveryId"], ordinary["discoveryId"])
+        # Every intent keeps its own manifest; nothing broadened or narrowed.
+        prepared = {}
+        for discovery in (first_admission, second_admission, ordinary):
+            document = self._drive_recovery(api, discovery["discoveryId"])
+            preview = self.repository.get_manual_preview(document["previewId"])
+            prepared[discovery["discoveryId"]] = sorted(
+                value.source.path for value in preview.items
+            )
+        self.assertEqual(prepared[first_admission["discoveryId"]], ["Incoming/Sub/Left.2005.mkv"])
+        # The second run recorded nothing, so its own remaining scope is the
+        # whole directory: it is a separate admission, never the first run's
+        # narrowed manifest.
+        self.assertEqual(
+            prepared[second_admission["discoveryId"]],
+            ["Incoming/Sub/Kept.2006.mkv", "Incoming/Sub/Left.2005.mkv"],
+        )
+        self.assertEqual(
+            prepared[ordinary["discoveryId"]],
+            ["Incoming/Sub/Kept.2006.mkv", "Incoming/Sub/Left.2005.mkv"],
+        )
+        # An ordinary preparation admitted first does not block a later recovery:
+        # the recovery intent is a new admission that observes only its own
+        # remaining scope.
+        status, after_ordinary = request(
+            api,
+            f"/api/v1/tasks/{first.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, after_ordinary)
+        self.assertNotIn(
+            after_ordinary["discoveryId"],
+            {first_admission["discoveryId"], ordinary["discoveryId"]},
+        )
+        self.assertEqual(after_ordinary["recoverySourceTaskId"], first.task_id)
+        later = self._drive_recovery(api, after_ordinary["discoveryId"])
+        later_preview = self.repository.get_manual_preview(later["previewId"])
+        self.assertEqual(
+            [value.source.path for value in later_preview.items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+        self.assertEqual((sub / "Kept.2006.mkv").read_bytes(), b"kept")
+        self.assertEqual((sub / "Left.2005.mkv").read_bytes(), b"left")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
 
     def _drive_recovery(self, api, discovery_id: str) -> dict:
         """Drive one admitted remaining-scope preparation through its Worker.
