@@ -2019,7 +2019,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 47)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 48)
 
 
 if __name__ == "__main__":

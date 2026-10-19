@@ -3353,6 +3353,7 @@ class ManualOrganizeExecutionService:
             source_fingerprint_state=source_fingerprint_state,
             primary_completed=result.primary_completed,
             attachment_results=result.attachment_results,
+            source_observed_at=getattr(source, "observed_at", None),
         )
 
     def _effects(self, item, plan, result):

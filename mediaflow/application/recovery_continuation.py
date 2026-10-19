@@ -93,6 +93,17 @@ class PreparedRecoveryContinuation:
             return "verified"
         return self.source_item.source_fingerprint_state
 
+    @property
+    def source_observed_at(self):
+        """The durable instant this work first observed the exact source.
+
+        A continuation only measures the configured stable-size interval from
+        this instant; it never treats a trusted fingerprint as elapsed
+        stability.
+        """
+
+        return self.source_item.source_observed_at
+
 
 class RecoveryContinuationService:
     """Shared API/Web submission for exactly one admitted recovery request."""

@@ -56,7 +56,20 @@ class PersistedSourceEvidence:
 
     @property
     def has_exact_evidence(self) -> bool:
-        return bool(self.occurrence_id) and bool(self.fingerprint)
+        """Whether this record can prove a *trusted* exact original occurrence.
+
+        A record that carries matching occurrence/fingerprint strings but is
+        marked ``unverified`` or ``legacy`` is not proof of the reviewed source:
+        the durable trust state is part of the evidence, so a shared consumer
+        must refuse it instead of silently promoting the current stat into a
+        fabricated original identity.
+        """
+
+        return (
+            self.fingerprint_state == OccurrenceState.VERIFIED.value
+            and bool(self.occurrence_id)
+            and bool(self.fingerprint)
+        )
 
 
 @dataclass(frozen=True)

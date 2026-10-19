@@ -363,8 +363,13 @@ class Schema34To35UpgradeTests(unittest.TestCase):
                 self.assertEqual(after[-1], "progress")
                 self.assertEqual(
                     after[-4:-1],
-                    ["source_occurrence_id", "source_fingerprint", "source_fingerprint_state"],
+                    [
+                        "source_fingerprint",
+                        "source_fingerprint_state",
+                        "source_observed_at",
+                    ],
                 )
+                self.assertIn("source_occurrence_id", after)
 
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create("organize", execute_authorized=True)
@@ -901,7 +906,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 47)
+                self.assertEqual(SCHEMA_VERSION, 48)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -1078,7 +1083,7 @@ class Schema44To45DiscoveryUpgradeTests(unittest.TestCase):
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 47)
+                self.assertEqual(SCHEMA_VERSION, 48)
                 # The pre-existing admitted intent survived the additive upgrade.
                 intent = repository.get_manual_intent("intent-base")
                 self.assertIsNotNone(intent)

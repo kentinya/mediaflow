@@ -59,6 +59,16 @@ class PreparedMetadataCorrectionContinuation:
     #: ``None`` when this Worker was assembled without a live source boundary.
     live_source: PersistedSourceValidation | None = None
 
+    @property
+    def source_observed_at(self):
+        """The durable instant this work first observed the exact source.
+
+        A continuation measures the configured stable-size interval from this
+        instant; a trusted fingerprint alone never proves elapsed stability.
+        """
+
+        return self.source_item.source_observed_at
+
 
 @dataclass(frozen=True)
 class MetadataCorrectionContinuationContext:

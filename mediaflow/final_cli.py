@@ -1367,6 +1367,7 @@ def final_main(
                             source_occurrence_id=stored.source_occurrence_id,
                             source_fingerprint=stored.source_fingerprint,
                             source_fingerprint_state=stored.source_fingerprint_state,
+                            source_observed_at=stored.source_observed_at,
                             resolve_source_evidence=False,
                         )
                     )
@@ -2787,6 +2788,10 @@ def _run_metadata_correction_continuation(
                     if prepared.live_source is not None
                     else prepared.source_item.source_fingerprint_state
                 ),
+                # The continuation measures the configured stable-size interval
+                # from the work's own durable first observation, never from a
+                # trusted fingerprint alone.
+                source_observed_at=prepared.source_observed_at,
                 # ``prepare`` already proved the persisted source against live
                 # pinned Storage; the pipeline never re-derives it.
                 resolve_source_evidence=False,
@@ -3086,6 +3091,7 @@ def _run_recovery_continuation(
                 source_occurrence_id=prepared.source_occurrence_id,
                 source_fingerprint=prepared.source_fingerprint,
                 source_fingerprint_state=prepared.source_fingerprint_state,
+                source_observed_at=prepared.source_observed_at,
                 # ``prepare`` already re-observed and proved the original
                 # persisted evidence, so the pipeline must never re-derive it
                 # from the current file.

@@ -215,6 +215,7 @@ class MediaOrganizerService:
         source_occurrence_id: str | None = None,
         source_fingerprint: str | None = None,
         source_fingerprint_state: str = "unverified",
+        source_observed_at: datetime | None = None,
         resolve_source_evidence: bool = True,
     ) -> MediaOrganizerItemResult:
         tracked_item: PersistentTaskItem | None = None
@@ -230,17 +231,20 @@ class MediaOrganizerService:
                 and source_occurrence_id is None
                 and source_fingerprint is None
             ):
-                evidence, pending = self._observe_direct_source(resource_library, storage_path)
+                evidence, pending, observed_at = self._observe_direct_source(
+                    resource_library, storage_path
+                )
                 if pending and evidence is not None:
                     # The source is still inside its configured stable-size
                     # interval after a real wait, so this explicit selection is
                     # recorded as an honest waiting item with zero Provider
                     # calls and zero mutation instead of a first-stat shortcut.
                     return self._direct_waiting_item(
-                        source, resource_library, storage_path, *evidence
+                        source, resource_library, storage_path, *evidence, observed_at
                     )
                 if evidence is not None:
                     source_occurrence_id, source_fingerprint, source_fingerprint_state = evidence
+                    source_observed_at = observed_at
             elif not resolve_source_evidence:
                 # A continuation/retry may only consume the evidence the original
                 # work already saved.  Prove the live source still matches it
@@ -255,6 +259,24 @@ class MediaOrganizerService:
                 )
                 if refusal is not None:
                     return self._failed(source, None, refusal, None, (), stage="storage")
+                # A trusted, unchanged fingerprint proves *identity*, never
+                # elapsed stability.  The configured stability policy under the
+                # work's original pin must be satisfied against a live
+                # re-observation before any Provider analysis or mutation, so an
+                # immediate Retry/Continue only continues waiting.
+                deadline = self._stability_deadline_refusal(
+                    resource_library, storage_path, source_observed_at
+                )
+                if deadline is not None:
+                    return self._continuation_waiting_item(
+                        source,
+                        resource_library,
+                        storage_path,
+                        source_occurrence_id,
+                        source_fingerprint,
+                        source_fingerprint_state,
+                        deadline,
+                    )
             if self._task_coordinator and self._task_id:
                 tracked_item = self._task_coordinator.begin_item(
                     self._task_id,
@@ -265,6 +287,7 @@ class MediaOrganizerService:
                     source_occurrence_id=source_occurrence_id,
                     source_fingerprint=source_fingerprint,
                     source_fingerprint_state=source_fingerprint_state,
+                    source_observed_at=source_observed_at,
                 )
             retry_outcome = self._retry_controller.execute(
                 lambda: self._run_read_only_strategy(
@@ -567,30 +590,76 @@ class MediaOrganizerService:
             return "the exact reviewed source changed or was replaced before continuation"
         return None
 
+    def _stability_deadline_refusal(
+        self,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        source_observed_at: datetime | None,
+    ) -> datetime | None:
+        """The observation instant when a continued source is still waiting.
+
+        A trusted, unchanged fingerprint proves *identity*; it never proves an
+        elapsed stable-size interval.  This applies the configured stability
+        policy under the work's original pin against a live re-observation of
+        the exact source, using the work's own durable first-observation
+        instant.  Returns the (possibly new) observation start when the interval
+        is not yet satisfied, or ``None`` when the source is stable.  Missing
+        observation evidence restarts the interval from now instead of being
+        treated as satisfied.
+        """
+
+        policy = resource_library.stability_policy
+        if policy.stable_size_duration_seconds == 0 and (
+            policy.minimum_age_seconds == 0 and policy.modified_threshold_seconds == 0
+        ):
+            return None
+        storage = self._storages.get(resource_library.storage_id)
+        if storage is None:
+            # A missing Storage is a real refusal elsewhere; treat it as still
+            # waiting rather than silently analyzing.
+            return source_observed_at or datetime.now(UTC)
+        entry = self._stat_entry(storage, storage_path)
+        if entry is None or entry.entry_type is not StorageEntryType.FILE:
+            return source_observed_at or datetime.now(UTC)
+        now = datetime.now(UTC)
+        start = source_observed_at or now
+        unchanged = source_observed_at is not None
+        verdict = stability_decision(
+            policy,
+            entry,
+            now=now,
+            unchanged_previous=unchanged,
+            observed_since=start,
+        )
+        if verdict is StabilityVerdict.STABLE:
+            return None
+        return start
+
     def _observe_direct_source(
         self, resource_library: ResourceLibrary, storage_path: str
-    ) -> tuple[tuple[str, str, str] | None, bool]:
+    ) -> tuple[tuple[str, str, str] | None, bool, datetime | None]:
         """Observe one directly selected source, proving the stable interval.
 
-        Returns ``(evidence, pending)``.  ``pending`` is ``True`` only when the
-        source is still inside a configured stable-size interval after a real
-        elapsed wait and a second live observation; the caller then records an
-        honest waiting item instead of running Provider analysis.  A configured
-        ``stableSizeDurationSeconds`` of 0 keeps the historical immediate
-        behavior.
+        Returns ``(evidence, pending, observed_at)``.  ``pending`` is ``True``
+        only when the source is still inside a configured stable-size interval
+        after a real elapsed wait and a second live observation; the caller then
+        records an honest waiting item whose durable ``observed_at`` lets a
+        later retry/continuation prove the interval instead of a first-stat
+        shortcut.  A configured ``stableSizeDurationSeconds`` of 0 keeps the
+        historical immediate behavior.
         """
 
         storage = self._storages.get(resource_library.storage_id)
         if storage is None:
-            return None, False
+            return None, False, None
         entry = self._stat_entry(storage, storage_path)
         if entry is None or entry.entry_type is not StorageEntryType.FILE:
-            return None, False
+            return None, False, None
         observed = source_fingerprint(
             resource_library.storage_id, resource_library.library_id, entry
         )
         if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
-            return None, False
+            return None, False, None
         occurrence = occurrence_id_for(
             resource_library.storage_id, resource_library.library_id, entry.path, observed.value
         )
@@ -600,18 +669,19 @@ class MediaOrganizerService:
             policy, entry, now=first, unchanged_previous=False, observed_since=None
         )
         if verdict is StabilityVerdict.STABLE:
-            return (occurrence, observed.value, observed.state.value), False
+            return (occurrence, observed.value, observed.state.value), False, first
         remaining = stability_wait_seconds(
             policy, entry, now=first, unchanged_previous=False, observed_since=None
         )
         if remaining <= 0 or remaining > _MAX_STABILITY_WAIT_SECONDS:
             # A long configured interval is not blocked synchronously; the
-            # caller records an honest waiting item with a retry next action.
-            return (occurrence, observed.value, observed.state.value), True
+            # caller records an honest waiting item whose durable observation
+            # start lets a later retry prove the interval.
+            return (occurrence, observed.value, observed.state.value), True, first
         time.sleep(remaining + 0.05)
         second = self._stat_entry(storage, storage_path)
         if second is None or second.entry_type is not StorageEntryType.FILE:
-            return (occurrence, observed.value, observed.state.value), True
+            return (occurrence, observed.value, observed.state.value), True, first
         observed_second = source_fingerprint(
             resource_library.storage_id, resource_library.library_id, second
         )
@@ -634,8 +704,14 @@ class MediaOrganizerService:
                 second.path,
                 observed_second.value,
             )
-            return (occurrence_second, observed_second.value, observed_second.state.value), False
-        return (occurrence, observed.value, observed.state.value), True
+            return (
+                (occurrence_second, observed_second.value, observed_second.state.value),
+                False,
+                first,
+            )
+        # The source changed during the wait, so the interval resets from the
+        # second observation; a later retry must prove the interval from there.
+        return (occurrence, observed.value, observed.state.value), True, datetime.now(UTC)
 
     @staticmethod
     def _stat_entry(storage: Storage, storage_path: str):
@@ -652,6 +728,7 @@ class MediaOrganizerService:
         occurrence: str | None,
         fingerprint: str | None,
         state: str,
+        observed_at: datetime | None,
     ) -> MediaOrganizerItemResult:
         """Record one still-waiting direct selection without analysis or mutation."""
 
@@ -666,6 +743,43 @@ class MediaOrganizerService:
                 source_occurrence_id=occurrence,
                 source_fingerprint=fingerprint,
                 source_fingerprint_state=state,
+                source_observed_at=observed_at,
+            )
+        failure = classify_failure(stage="scanning")
+        return self._complete(
+            MediaOrganizerItemResult(source, error=failure.message, failure=failure), tracked
+        )
+
+    def _continuation_waiting_item(
+        self,
+        source: str,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        occurrence: str | None,
+        fingerprint: str | None,
+        state: str,
+        observed_at: datetime | None,
+    ) -> MediaOrganizerItemResult:
+        """Record one continued source still inside its stable-size interval.
+
+        A retry/continue that cannot yet prove the configured interval keeps
+        zero Provider calls and zero mutation; it only continues waiting, and
+        the durable observation start is preserved so a later real observation
+        can prove the interval.
+        """
+
+        tracked: PersistentTaskItem | None = None
+        if self._task_coordinator and self._task_id:
+            tracked = self._task_coordinator.begin_item(
+                self._task_id,
+                resource_library.storage_id,
+                resource_library.library_id,
+                storage_path,
+                source,
+                source_occurrence_id=occurrence,
+                source_fingerprint=fingerprint,
+                source_fingerprint_state=state,
+                source_observed_at=observed_at,
             )
         failure = classify_failure(stage="scanning")
         return self._complete(
@@ -798,6 +912,10 @@ class MediaOrganizerService:
                     source_occurrence_id=file.occurrence_id,
                     source_fingerprint=file.fingerprint,
                     source_fingerprint_state=file.fingerprint_state,
+                    # The discovery walk already proved this exact source stable
+                    # (or this is the configured zero-duration path), so the
+                    # durable observation start is the interval it proved.
+                    source_observed_at=file.stable_since or file.discovered_at,
                     resolve_source_evidence=False,
                 )
             )
@@ -901,6 +1019,10 @@ class MediaOrganizerService:
                 source_occurrence_id=file.occurrence_id,
                 source_fingerprint=file.fingerprint,
                 source_fingerprint_state=file.fingerprint_state,
+                # The durable instant this explicit work first observed the
+                # source; a later retry measures the configured interval from
+                # here instead of treating an unchanged fingerprint as stable.
+                source_observed_at=file.discovered_at,
             )
         return self._complete(
             MediaOrganizerItemResult(
@@ -982,6 +1104,7 @@ class MediaOrganizerService:
                     source_occurrence_id=file.occurrence_id,
                     source_fingerprint=file.fingerprint,
                     source_fingerprint_state=file.fingerprint_state,
+                    source_observed_at=file.stable_since or file.discovered_at,
                     resolve_source_evidence=False,
                 )
             )

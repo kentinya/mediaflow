@@ -4110,6 +4110,182 @@ class FreshCliSourceEvidenceAndStabilityTests(unittest.TestCase):
                 self.assertEqual(1, len(items))
                 self.assertEqual(TaskItemStatus.FAILED, items[0].status)
 
+    def test_retry_cannot_bypass_a_long_stable_interval(self) -> None:
+        """An immediate retry of an unstable source must keep waiting.
+
+        The original failure records ``unstable_source`` with zero Provider
+        calls and zero mutation; a trusted, unchanged fingerprint must not be
+        treated as elapsed stability.  The retry therefore keeps the source in
+        the waiting state with zero Provider calls and zero media mutation, even
+        with ``--execute``.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+
+            def configure(document):
+                document["resourceLibraries"][0]["stability"] = {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 61,
+                }
+
+            environment = self._environment(directory, document_patch=configure)
+            old = time.time() - 86400
+            os.utime(environment["source_file"], (old, old))
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                first_code = final_main(
+                    ["--config", str(environment["config"]), "organize", "--execute"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(1, first_code)
+            self.assertEqual([], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                original_item = repository.list_items(original.task_id)[0]
+                self.assertEqual(
+                    "unstable_source", repository.list_results(original.task_id)[0].retry_category
+                )
+                self.assertIsNotNone(original_item.source_observed_at)
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                retry_code = final_main(
+                    [
+                        "--config",
+                        str(environment["config"]),
+                        "tasks",
+                        "retry-failed",
+                        original.task_id,
+                        "--execute",
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(1, retry_code)
+            self.assertEqual([], provider.movie_queries)
+            self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_retry_after_the_recorded_interval_proceeds_without_mutation(self) -> None:
+        """Once the configured interval is genuinely satisfied, retry analyzes.
+
+        The work's own durable observation start is the only interval authority:
+        the first run records it and keeps the source waiting; once that exact
+        recorded instant is more than the configured interval in the past, the
+        explicit retry proceeds to read-only analysis with zero media mutation.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+
+            def configure(document):
+                document["resourceLibraries"][0]["stability"] = {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 61,
+                }
+
+            environment = self._environment(directory, document_patch=configure)
+            old = time.time() - 86400
+            os.utime(environment["source_file"], (old, old))
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                first_code = final_main(
+                    ["--config", str(environment["config"]), "organize", "--execute"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(1, first_code)
+            self.assertEqual([], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                item = repository.list_items(original.task_id)[0]
+                self.assertIsNotNone(item.source_observed_at)
+            # The work's own durable observation start is now more than the
+            # configured interval in the past; this is not an mtime fake.
+            observed_at = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+            with sqlite3.connect(environment["database"]) as connection:
+                connection.execute(
+                    "UPDATE task_items SET source_observed_at=? WHERE item_id=?",
+                    (observed_at, item.item_id),
+                )
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                retry_code = final_main(
+                    [
+                        "--config",
+                        str(environment["config"]),
+                        "tasks",
+                        "retry-failed",
+                        original.task_id,
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(0, retry_code)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            # A dry-run retry proves stability and analysis with zero mutation.
+            self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_worker_refuses_untrusted_original_evidence(self) -> None:
+        """A real Worker must not promote an unverified/legacy record.
+
+        The original occurrence/fingerprint stay exact; only the durable trust
+        state is changed.  The Worker must refuse with zero Provider calls and
+        zero media mutation instead of analyzing the replacement path and
+        marking a successor ``verified``.
+        """
+
+        for state in ("unverified", "legacy"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                environment = self._environment(directory)
+                provider = FailingSearchProvider(
+                    (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+                )
+                self._organize(environment, provider, expected_code=1)
+                with SQLiteTaskRepository(environment["database"]) as repository:
+                    task = repository.list_tasks()[0]
+                    item = repository.list_items(task.task_id)[0]
+                self.assertTrue(item.source_fingerprint)
+                self.assertTrue(item.source_occurrence_id)
+                with sqlite3.connect(environment["database"]) as connection:
+                    connection.execute(
+                        "UPDATE task_items SET source_fingerprint_state=? WHERE item_id=?",
+                        (state, item.item_id),
+                    )
+                fixture = RecoveryContinuationTests()
+                admitted, _checkpoint = fixture._admit(environment, task, item)
+                submission = fixture._continue(environment, task, item)
+                provider.failure = False
+                before = len(provider.movie_queries)
+                fixture._run_worker(environment, provider, expected_code=1)
+                self.assertEqual(before, len(provider.movie_queries))
+                with SQLiteTaskRepository(environment["database"]) as repository:
+                    continuation = repository.get_recovery_continuation_for_job(
+                        submission.job.job_id
+                    )
+                    self.assertEqual("failed", continuation.status.value)
+                    if continuation.new_task_id:
+                        self.assertEqual((), repository.list_items(continuation.new_task_id))
+                self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+                self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+                fixture.doCleanups()
+
 
 def _ambiguous_identification() -> MetadataIdentificationResult:
     candidates = (

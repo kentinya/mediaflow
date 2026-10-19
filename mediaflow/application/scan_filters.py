@@ -245,25 +245,50 @@ def stability_wait_seconds(
 
 @dataclass(frozen=True)
 class ObservedSource:
-    """One bounded durable observation of a real Storage source."""
+    """One bounded durable observation of a real Storage source.
+
+    A live walk builds it from the entry facts it just read.  A later process
+    that only has the work's own persisted evidence (occurrence/fingerprint and
+    the instant this work first observed the source) builds the same shape with
+    :meth:`from_persisted`, where ``size``/``modified_at`` are unknown and the
+    identity comparison falls back to the persisted fingerprint.
+    """
 
     path: str
-    size: int
-    modified_at: datetime
+    size: int | None
+    modified_at: datetime | None
     fingerprint: str | None
     observed_at: datetime
     stable_since: datetime | None = None
+
+    @classmethod
+    def from_persisted(
+        cls, path: str, fingerprint: str | None, observed_at: datetime
+    ) -> ObservedSource:
+        """Reconstruct this work's own durable observation without a live read.
+
+        The interval is measured from the instant this explicit work first
+        observed the exact source, so a later real observation can prove the
+        configured stable-size interval across a process restart.  A source
+        whose observable identity changed in between simply fails the
+        fingerprint comparison and starts a fresh interval.
+        """
+
+        return cls(path, None, None, fingerprint, observed_at, observed_at)
 
     def matches(self, entry: StorageEntry, observed_value: str | None = None) -> bool:
         """Whether a fresh observation is the same unchanged occurrence.
 
         ``observed_value`` is the *computed* source fingerprint of the fresh
-        entry.  Size and modification time must be unchanged, and a previously
-        verified digest must still match; a provider that publishes no validator
-        still compares by its observable size/time identity.
+        entry.  When this observation carries real size/time facts they must be
+        unchanged, and a previously verified digest must still match; a
+        reconstructed durable observation (no size/time) compares by its
+        persisted fingerprint alone, which already covers size and mtime.
         """
 
-        if entry.size != self.size or entry.modified_at != self.modified_at:
+        if self.size is not None and (
+            entry.size != self.size or entry.modified_at != self.modified_at
+        ):
             return False
         if self.fingerprint is None:
             return True

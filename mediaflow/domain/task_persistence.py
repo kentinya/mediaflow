@@ -370,6 +370,11 @@ class PersistentTaskItem:
     source_occurrence_id: str | None = None
     source_fingerprint: str | None = None
     source_fingerprint_state: str = "unverified"
+    # The exact instant this explicit work first observed the source.  A later
+    # retry/continuation/resume measures the configured stable-size interval
+    # from this durable instant, so a trusted fingerprint alone can never
+    # substitute for real elapsed stability.
+    source_observed_at: datetime | None = None
     # Added in runtime schema 35: the bounded in-flight transfer progress of one
     # direct Files Copy/Move item.  A JSON object with aggregate counters and a
     # truncated per-entry list, or None for non-transfer items.  It is only an
@@ -422,6 +427,12 @@ class PersistentResultRecord:
     source_fingerprint_state: str = "unverified"
     primary_completed: bool = False
     attachment_results: tuple[dict[str, object], ...] = ()
+    # The exact instant this explicit work first observed the source.  A later
+    # retry/continuation/resume measures the configured stable-size interval
+    # from this durable instant, so a trusted fingerprint alone can never
+    # substitute for real elapsed stability.  Appended last so every existing
+    # positional construction keeps its exact meaning.
+    source_observed_at: datetime | None = None
 
 
 def redact_persistent_result(

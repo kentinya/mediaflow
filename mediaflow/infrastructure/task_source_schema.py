@@ -19,11 +19,17 @@ _TASK_SOURCE_COLUMNS: dict[str, dict[str, str]] = {
         "source_occurrence_id": "TEXT",
         "source_fingerprint": "TEXT",
         "source_fingerprint_state": "TEXT NOT NULL DEFAULT 'unverified'",
+        # The instant this explicit work first observed the exact source.  A
+        # retry/continuation measures the configured stable-size interval from
+        # this durable instant, so a trusted fingerprint alone can never
+        # substitute for real elapsed stability.
+        "source_observed_at": "TEXT",
     },
     "task_results": {
         "source_occurrence_id": "TEXT",
         "source_fingerprint": "TEXT",
         "source_fingerprint_state": "TEXT NOT NULL DEFAULT 'unverified'",
+        "source_observed_at": "TEXT",
     },
 }
 

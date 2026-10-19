@@ -301,7 +301,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -337,6 +337,7 @@ _TASK_ITEM_COLUMNS = (
     "source_occurrence_id",
     "source_fingerprint",
     "source_fingerprint_state",
+    "source_observed_at",
 )
 
 _TASK_ITEM_INSERT = (
@@ -366,7 +367,10 @@ _TASK_ITEM_UPSERT = (
             WHEN excluded.source_occurrence_id IS NULL
             THEN task_items.source_fingerprint_state
             ELSE excluded.source_fingerprint_state
-        END"""
+        END,
+        source_observed_at=COALESCE(
+            excluded.source_observed_at, task_items.source_observed_at
+        )"""
 )
 
 _ATTENTION_TASK_ITEM_STATUSES = (
@@ -14848,6 +14852,7 @@ class SQLiteTaskRepository:
                     attempts INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
                     execution_status TEXT, error TEXT, progress TEXT,
+                    source_observed_at TEXT,
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
@@ -15976,6 +15981,12 @@ class SQLiteTaskRepository:
                     "ALTER TABLE task_results ADD COLUMN "
                     "attachment_results TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "source_observed_at" not in columns:
+                # Additive: a legacy Result keeps no observation instant and is
+                # simply measured from its persisted occurrence on a later read.
+                self._connection.execute(
+                    "ALTER TABLE task_results ADD COLUMN source_observed_at TEXT"
+                )
             grant_columns = {
                 row["name"]
                 for row in self._connection.execute(
@@ -16397,6 +16408,7 @@ class SQLiteTaskRepository:
                 if value.source.occurrence_state == "verified" and value.source.fingerprint
                 else "unverified"
             ),
+            source_observed_at=value.source.observed_at,
         )
 
     def _insert_result_locked(self, result: PersistentResultRecord) -> None:
@@ -16410,9 +16422,9 @@ class SQLiteTaskRepository:
                 completed_operations, attachment_count, retry_attempts, retry_category,
                 cleanup_status, cleanup_step_count, effect_certainty, uncertain_effects,
                 source_occurrence_id, source_fingerprint, source_fingerprint_state,
-                primary_completed, attachment_results
+                primary_completed, attachment_results, source_observed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?)""",
+                      ?, ?, ?, ?, ?, ?, ?, ?)""",
             self._result_values(result),
         )
 
@@ -16431,8 +16443,8 @@ class SQLiteTaskRepository:
         if result.source_occurrence_id and result.source_fingerprint:
             return result
         item = self._connection.execute(
-            """SELECT source_occurrence_id, source_fingerprint, source_fingerprint_state
-            FROM task_items WHERE item_id=?""",
+            """SELECT source_occurrence_id, source_fingerprint, source_fingerprint_state,
+            source_observed_at FROM task_items WHERE item_id=?""",
             (result.item_id,),
         ).fetchone()
         if item is None:
@@ -16445,6 +16457,14 @@ class SQLiteTaskRepository:
                 result.source_fingerprint_state
                 if result.source_occurrence_id
                 else item["source_fingerprint_state"]
+            ),
+            source_observed_at=(
+                result.source_observed_at
+                or (
+                    datetime.fromisoformat(item["source_observed_at"])
+                    if "source_observed_at" in item.keys() and item["source_observed_at"]
+                    else None
+                )
             ),
         )
 
@@ -16484,6 +16504,7 @@ class SQLiteTaskRepository:
             result.source_fingerprint_state,
             int(result.primary_completed),
             json.dumps(result.attachment_results, ensure_ascii=False),
+            result.source_observed_at.isoformat() if result.source_observed_at else None,
         )
 
     @staticmethod
@@ -16534,6 +16555,7 @@ class SQLiteTaskRepository:
             item.source_occurrence_id,
             item.source_fingerprint,
             item.source_fingerprint_state,
+            item.source_observed_at.isoformat() if item.source_observed_at else None,
         )
 
     @staticmethod
@@ -16582,6 +16604,11 @@ class SQLiteTaskRepository:
             row["source_fingerprint_state"]
             if "source_fingerprint_state" in row.keys()
             else "unverified",
+            (
+                datetime.fromisoformat(row["source_observed_at"])
+                if "source_observed_at" in row.keys() and row["source_observed_at"]
+                else None
+            ),
             row["progress"] if "progress" in row.keys() else None,
         )
 
@@ -16623,6 +16650,11 @@ class SQLiteTaskRepository:
                 else "unverified",
                 primary_completed=bool(row["primary_completed"]),
                 attachment_results=tuple(json.loads(row["attachment_results"] or "[]")),
+                source_observed_at=(
+                    datetime.fromisoformat(row["source_observed_at"])
+                    if "source_observed_at" in row.keys() and row["source_observed_at"]
+                    else None
+                ),
             )
         )
 

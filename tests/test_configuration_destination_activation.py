@@ -925,7 +925,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 47)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 48)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
