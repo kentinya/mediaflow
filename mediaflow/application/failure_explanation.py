@@ -25,6 +25,13 @@ _MESSAGES = {
         "or automatic replay occurred"
     ),
     "unstable_source": "unstable source: the file was still being written",
+    "source_changed": (
+        "source changed: the exact reviewed source was replaced before continuation"
+    ),
+    "source_missing": ("source missing: the exact reviewed source is no longer present in Storage"),
+    "source_unverified": (
+        "source unverified: the reviewed source cannot prove its original occurrence"
+    ),
     "recognition_failure": "recognition failure: no durable RecognitionType was selected",
     "metadata_failure": "metadata failure: no durable media identity was selected",
     "naming_failure": "naming failure: a safe target name was not produced",
@@ -73,6 +80,13 @@ _NEXT = {
         "resume or retry this item"
     ),
     "unstable_source": "wait for the source to become stable, then explicitly retry this item",
+    "source_changed": (
+        "re-select the source from the current Files view and prepare a new summary"
+    ),
+    "source_missing": ("restore the original source or re-select it from the current Files view"),
+    "source_unverified": (
+        "re-select the source from the current Files view and prepare a new summary"
+    ),
     "recognition_failure": "resolve Recognition review for this item, then continue it explicitly",
     "metadata_failure": (
         "resolve Metadata review or correction for this item, then continue it explicitly"
@@ -121,6 +135,11 @@ def classify_failure(
 
     if execution is not None:
         return _classify_execution(execution)
+    if isinstance(error, FailureExplanation):
+        # A caller that already built a bounded explanation (for example the
+        # exact source-identity refusal) keeps its category and next action
+        # instead of being re-classified from raw text.
+        return error
     if _is_unstable(error, stage):
         return failure_explanation("unstable_source", durable="failed", retry_safe=True)
     if isinstance(error, MetadataError):
@@ -244,6 +263,12 @@ def _classify_storage_code(code: str) -> FailureExplanation:
 def _category_from_text(text: str) -> str | None:
     if "unattended authority" in text:
         return "unattended_authority"
+    if "changed or was replaced" in text or "source changed" in text:
+        return "source_changed"
+    if "no longer present" in text or "source missing" in text:
+        return "source_missing"
+    if "cannot prove its original occurrence" in text or "source unverified" in text:
+        return "source_unverified"
     if "attachment destination already exists" in text:
         return "attachment_collision"
     if "destination already exists" in text or "target collision" in text:

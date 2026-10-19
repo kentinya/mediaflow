@@ -943,6 +943,19 @@ describe("Operations run inventory landing", () => {
           ...problemItems.items[0],
           item_id: "item-b",
           source_path: "Movies/b.mkv",
+          // A refused continued source persists its own bounded category, so the
+          // panel must show the source-changed reason/next step, never the raw
+          // category token.
+          failure: {
+            category: "source_changed",
+            message:
+              "source changed: the exact reviewed source was replaced before continuation",
+            durableState: "failed outcome is durable",
+            sideEffects: "none",
+            retrySafe: false,
+            nextAction:
+              "re-select the source from the current Files view and prepare a new summary",
+          },
         },
       ],
       truncated: false,
@@ -1015,6 +1028,9 @@ describe("Operations run inventory landing", () => {
     expect(
       (await within(panel).findAllByText(/Movies\/b\.mkv/)).length,
     ).toBeGreaterThan(0);
+    expect(within(panel).getByText(/已核查的来源已被替换/)).toBeVisible();
+    expect(within(panel).getByText(/回到当前文件页重新选择来源/)).toBeVisible();
+    expect(within(panel).queryByText("source_changed")).toBeNull();
     await waitFor(() =>
       expect(router.history.location.search).toContain(
         "problemCursor=page-two",

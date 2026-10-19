@@ -13,6 +13,7 @@ from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.evidence_capture import build_pipeline_evidence
 from mediaflow.application.failure_explanation import (
     classify_failure,
+    failure_explanation,
     sanitize_execution_errors,
 )
 from mediaflow.application.library_pipeline import MediaLibraryResolver
@@ -61,7 +62,12 @@ from mediaflow.domain.scanner import (
     Scanner,
 )
 from mediaflow.domain.source_evidence import OccurrenceState, occurrence_id_for, source_fingerprint
-from mediaflow.domain.storage import Storage, StorageEntryType, StorageError
+from mediaflow.domain.storage import (
+    Storage,
+    StorageEntryType,
+    StorageError,
+    StorageErrorCode,
+)
 from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 
 if TYPE_CHECKING:
@@ -258,7 +264,16 @@ class MediaOrganizerService:
                     source_fingerprint_state,
                 )
                 if refusal is not None:
-                    return self._failed(source, None, refusal, None, (), stage="storage")
+                    return self._refused_source_item(
+                        source,
+                        resource_library,
+                        storage_path,
+                        source_occurrence_id,
+                        source_fingerprint,
+                        source_fingerprint_state,
+                        source_observed_at,
+                        refusal,
+                    )
                 # A trusted, unchanged fingerprint proves *identity*, never
                 # elapsed stability.  The configured stability policy under the
                 # work's original pin must be satisfied against a live
@@ -550,6 +565,31 @@ class MediaOrganizerService:
         except RetryExhausted as error:
             return self._failed(source, None, error, tracked_item, error.events)
         except Exception as error:
+            from mediaflow.application.task_runtime import (
+                TaskClaimLost,
+                TaskLockError,
+                TaskPauseRequested,
+            )
+
+            if tracked_item is None and not isinstance(
+                error, (TaskLockError, TaskPauseRequested, TaskClaimLost)
+            ):
+                # A failure raised before any TaskItem was begun (for example a
+                # pre-Provider source/Storage boundary) must still publish its
+                # own durable failed item.  Otherwise the aggregate would read
+                # an empty item set and falsely report Completed/0.  Task
+                # control-flow exceptions already published their own refusal
+                # inside ``begin_item`` and keep their existing handling.
+                return self._refused_source_item(
+                    source,
+                    resource_library,
+                    storage_path,
+                    source_occurrence_id,
+                    source_fingerprint,
+                    source_fingerprint_state,
+                    source_observed_at,
+                    classify_failure(error),
+                )
             return self._failed(source, None, error, tracked_item)
 
     def _persisted_source_refusal(
@@ -559,23 +599,38 @@ class MediaOrganizerService:
         occurrence: str | None,
         fingerprint: str | None,
         state: str,
-    ) -> str | None:
+    ) -> FailureExplanation | None:
         """Prove a continued/retried source still matches its saved evidence.
 
-        Returns a bounded reason when the live source cannot be proven, or
+        Returns a bounded refusal when the live source cannot be proven, or
         ``None`` when it matches.  Missing, half-written, legacy and unverified
         evidence is refused; the live current stat is never promoted into a
-        fabricated original identity.
+        fabricated original identity.  The categories are the closed, shared
+        failure set so the persisted per-item Result explains whether the source
+        changed, disappeared, was unverifiable, or the Storage connection failed.
         """
 
         if not occurrence or not fingerprint or state != OccurrenceState.VERIFIED.value:
-            return "the reviewed source cannot prove its original occurrence"
+            return failure_explanation("source_unverified", durable="failed", side_effects="none")
         storage = self._storages.get(resource_library.storage_id)
         if storage is None:
-            return "the reviewed source Storage is unavailable"
-        entry = self._stat_entry(storage, storage_path)
+            return failure_explanation(
+                "storage_failure", durable="failed", side_effects="none", retry_safe=True
+            )
+        try:
+            entry = storage.stat(storage_path)
+        except StorageError as error:
+            if error.code is StorageErrorCode.NOT_FOUND:
+                return failure_explanation("source_missing", durable="failed", side_effects="none")
+            return failure_explanation(
+                "storage_failure", durable="failed", side_effects="none", retry_safe=True
+            )
+        except (OSError, ValueError, KeyError):
+            return failure_explanation(
+                "storage_failure", durable="failed", side_effects="none", retry_safe=True
+            )
         if entry is None or entry.entry_type is not StorageEntryType.FILE:
-            return "the exact reviewed source is no longer present in Storage"
+            return failure_explanation("source_missing", durable="failed", side_effects="none")
         observed = source_fingerprint(
             resource_library.storage_id, resource_library.library_id, entry
         )
@@ -587,7 +642,7 @@ class MediaOrganizerService:
             or observed.value != fingerprint
             or live_occurrence != occurrence
         ):
-            return "the exact reviewed source changed or was replaced before continuation"
+            return failure_explanation("source_changed", durable="failed", side_effects="none")
         return None
 
     def _stability_deadline_refusal(
@@ -749,6 +804,42 @@ class MediaOrganizerService:
         return self._complete(
             MediaOrganizerItemResult(source, error=failure.message, failure=failure), tracked
         )
+
+    def _refused_source_item(
+        self,
+        source: str,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        occurrence: str | None,
+        fingerprint: str | None,
+        state: str,
+        observed_at: datetime | None,
+        failure: FailureExplanation,
+    ) -> MediaOrganizerItemResult:
+        """Publish one rejected continuation source as this attempt's item/Result.
+
+        The refusal happens before any Provider call or mutation, but it is still
+        an admitted attempt and must be recorded as its own durable TaskItem and
+        Result.  The original occurrence/fingerprint/trust state and observation
+        instant are carried forward unchanged; the current live stat is never
+        promoted into a new identity.  This keeps a reopened Task truthful (a
+        failed item with a bounded reason) instead of a false Completed/0 run.
+        """
+
+        tracked: PersistentTaskItem | None = None
+        if self._task_coordinator and self._task_id:
+            tracked = self._task_coordinator.begin_item(
+                self._task_id,
+                resource_library.storage_id,
+                resource_library.library_id,
+                storage_path,
+                source,
+                source_occurrence_id=occurrence,
+                source_fingerprint=fingerprint,
+                source_fingerprint_state=state,
+                source_observed_at=observed_at,
+            )
+        return self._failed(source, None, failure, tracked, ())
 
     def _continuation_waiting_item(
         self,
@@ -1209,21 +1300,27 @@ class MediaOrganizerService:
         stage: str | None = None,
     ) -> MediaOrganizerItemResult:
         failure = classify_failure(error, strategy=strategy, stage=stage)
-        message = (
-            failure.message if self._persist_failure_explanations else self._failure_message(error)
-        )
+        # A pre-classified bounded refusal (for example the exact source-identity
+        # refusal) must reach the durable TaskItem/Result as its own category even
+        # on the CLI path, so a reopened Task can explain whether the source
+        # changed, disappeared or was unverifiable.  Ordinary string/exception
+        # failures keep the existing secret-free rendering switch.
+        bounded = self._persist_failure_explanations or isinstance(error, FailureExplanation)
+        message = failure.message if bounded else self._failure_message(error)
         item = MediaOrganizerItemResult(
             source,
             strategy,
             plan,
             error=message,
             retry_events=retry_events,
-            failure=failure if self._persist_failure_explanations else None,
+            failure=failure if bounded else None,
         )
         self._log(LogLevel.ERROR, "media workflow failed", source=source, error=message)
         return self._complete(item, tracked_item)
 
     def _failure_message(self, error: str | Exception) -> str:
+        if isinstance(error, FailureExplanation):
+            return error.message
         if not self._secret_free_errors:
             return str(error)
         if isinstance(error, MetadataError):

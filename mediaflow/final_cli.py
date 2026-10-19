@@ -83,6 +83,7 @@ from mediaflow.domain.classification_review import (
     ClassificationSelection,
 )
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_organize import ManualIntentError
@@ -1797,6 +1798,14 @@ def render_task(task: PersistentTask, items: tuple[PersistentTaskItem, ...]) -> 
     ]
     for item in items:
         detail = item.error or item.destination_path or ""
+        # A persisted bounded failure is stored as a versioned envelope.  Decode
+        # it so the operator reads the category, reason and next action instead
+        # of an opaque token.
+        explanation = decode_failure_explanation(item.error)
+        if explanation is not None:
+            detail = (
+                f"{explanation.category}: {explanation.message} | Next: {explanation.next_action}"
+            )
         lines.append(
             f"{item.status.value} | {item.storage_id}:{item.source_path} | "
             f"attempts={item.attempts} | {detail}"

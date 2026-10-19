@@ -68,6 +68,7 @@ from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
+from mediaflow.domain.storage import StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentResultRecord,
@@ -4550,6 +4551,330 @@ class DirectFileStabilityTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(targets))
             self.assertEqual(b"unchanged-source", targets[0].read_bytes())
+
+
+class RefusedSourceCompletionTests(unittest.TestCase):
+    """A refused continued/fresh source is a durable failed item, not Completed/0.
+
+    Reproduces the B FIX REQUIRED defect: ``process_file`` rejected a source
+    before ``begin_item`` and returned through ``_failed(tracked_item=None)``, so
+    ``_complete`` published no TaskItem/Result and ``finish`` read an empty item
+    set.  The reopened Task then falsely reported ``completed / 0 / 0`` with no
+    reason.  These cases assert the reopened SQLite state, the per-file failure
+    category, the preserved original evidence and zero Provider/mutation.
+    """
+
+    def _environment(self, directory, *, document_patch=None):
+        return RecoveryContinuationTests()._environment(directory, document_patch=document_patch)
+
+    def _run(self, environment, provider, *args, expected_code=None):
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _ids: MetadataProviderRegistry((provider,)),
+        ):
+            code = final_main(
+                ["--config", str(environment["config"]), *args],
+                stdout=output,
+                stderr=errors,
+            )
+        if expected_code is not None:
+            self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
+        return code, output.getvalue(), errors.getvalue()
+
+    def _long_wait_environment(self, directory):
+        def configure(document):
+            document["resourceLibraries"][0]["displayRootPath"] = str(
+                Path(document["storages"][0]["rootPath"]) / "Media"
+            )
+            document["resourceLibraries"][0]["stability"] = {
+                "minimumAgeSeconds": 0,
+                "modifiedThresholdSeconds": 0,
+                "stableSizeDurationSeconds": 61,
+            }
+
+        return self._environment(directory, document_patch=configure)
+
+    def _reopened(self, environment, original_task_id):
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            tasks = [task for task in repository.list_tasks() if task.task_id != original_task_id]
+            self.assertEqual(1, len(tasks))
+            task = tasks[0]
+            return task, repository.list_items(task.task_id), repository.list_results(task.task_id)
+
+    def _assert_refusal(
+        self,
+        environment,
+        provider,
+        original_task_id,
+        *,
+        category,
+        original_item_id,
+    ):
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            original = repository.get_item(original_item_id)
+        task, items, results = self._reopened(environment, original_task_id)
+        self.assertEqual("failed", task.status.value)
+        self.assertEqual(1, task.total_items)
+        self.assertEqual(1, task.failed_items)
+        self.assertIsNone(task.error)
+        self.assertEqual(1, len(items))
+        self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+        self.assertEqual(1, len(results))
+        self.assertEqual(category, results[0].retry_category)
+        self.assertEqual("none", results[0].effect_certainty)
+        # The original exact evidence is preserved and never rebuilt from the
+        # current live stat; no Provider call or media mutation happened.
+        self.assertEqual(original.source_occurrence_id, items[0].source_occurrence_id)
+        self.assertEqual(original.source_fingerprint, items[0].source_fingerprint)
+        self.assertEqual([], provider.movie_queries)
+        self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+        return task, items[0], results[0]
+
+    def test_replaced_source_retry_is_a_durable_failed_item(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._long_wait_environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            code, _, _ = self._run(
+                environment,
+                provider,
+                "organize",
+                str(environment["source_file"]),
+                "--execute",
+                expected_code=1,
+            )
+            self.assertEqual(1, code)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                original_item = repository.list_items(original.task_id)[0]
+            environment["source_file"].write_bytes(b"replacement-after-waiting")
+            self._run(
+                environment,
+                provider,
+                "tasks",
+                "retry-failed",
+                original.task_id,
+                "--execute",
+                expected_code=1,
+            )
+            _task, item, result = self._assert_refusal(
+                environment,
+                provider,
+                original.task_id,
+                category="source_changed",
+                original_item_id=original_item.item_id,
+            )
+            self.assertIn("re-select", result.error or "")
+            self.assertTrue(environment["source_file"].exists())
+            # The operator-facing `tasks show` must decode the bounded envelope
+            # into the reason and next action, never print the raw token.
+            _code, shown, _ = self._run(
+                environment,
+                provider,
+                "tasks",
+                "show",
+                _task.task_id,
+                expected_code=0,
+            )
+            self.assertIn("source changed", shown)
+            self.assertIn("Next:", shown)
+            self.assertNotIn("mediaflow-failure-v1:", shown)
+
+    def test_missing_source_retry_is_a_durable_failed_item(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._long_wait_environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._run(
+                environment,
+                provider,
+                "organize",
+                str(environment["source_file"]),
+                "--execute",
+                expected_code=1,
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                original_item = repository.list_items(original.task_id)[0]
+            environment["source_file"].unlink()
+            self._run(
+                environment,
+                provider,
+                "tasks",
+                "retry-failed",
+                original.task_id,
+                "--execute",
+                expected_code=1,
+            )
+            _task, item, result = self._assert_refusal(
+                environment,
+                provider,
+                original.task_id,
+                category="source_missing",
+                original_item_id=original_item.item_id,
+            )
+            self.assertIn("restore", result.error or "")
+
+    def test_unverified_evidence_retry_is_a_durable_failed_item(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._long_wait_environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._run(
+                environment,
+                provider,
+                "organize",
+                str(environment["source_file"]),
+                "--execute",
+                expected_code=1,
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                original_item = repository.list_items(original.task_id)[0]
+            with sqlite3.connect(environment["database"]) as connection:
+                connection.execute(
+                    "UPDATE task_items SET source_fingerprint_state='unverified' WHERE item_id=?",
+                    (original_item.item_id,),
+                )
+            self._run(
+                environment,
+                provider,
+                "tasks",
+                "retry-failed",
+                original.task_id,
+                "--execute",
+                expected_code=1,
+            )
+            _task, item, result = self._assert_refusal(
+                environment,
+                provider,
+                original.task_id,
+                category="source_unverified",
+                original_item_id=original_item.item_id,
+            )
+            self.assertIn("re-select", result.error or "")
+
+    def test_discovery_race_refusal_is_a_durable_failed_item(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+
+            def configure(document):
+                document["resourceLibraries"][0]["stability"] = {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 0,
+                }
+
+            environment = self._environment(directory, document_patch=configure)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            original_list = LocalStorage.list
+            replaced: list[bool] = []
+
+            def live_list(storage, path):
+                entries = original_list(storage, path)
+                if path == "Media/C" and not replaced:
+                    environment["source_file"].write_bytes(b"replaced-after-discovery")
+                    replaced.append(True)
+                return entries
+
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                patch.object(LocalStorage, "list", live_list),
+                patch(
+                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                    lambda _ids: MetadataProviderRegistry((provider,)),
+                ),
+            ):
+                code = final_main(
+                    ["--config", str(environment["config"]), "organize", "--execute"],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(1, code, f"{errors.getvalue()}\n{output.getvalue()}")
+            self.assertTrue(replaced)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                task = repository.list_tasks()[0]
+                items = repository.list_items(task.task_id)
+                results = repository.list_results(task.task_id)
+            self.assertEqual("failed", task.status.value)
+            self.assertEqual(1, task.total_items)
+            self.assertEqual(1, task.failed_items)
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+            self.assertEqual(1, len(results))
+            self.assertEqual("source_changed", results[0].retry_category)
+            self.assertEqual("none", results[0].effect_certainty)
+            self.assertEqual([], provider.movie_queries)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            self.assertEqual(b"replaced-after-discovery", environment["source_file"].read_bytes())
+
+    def test_storage_connection_failure_is_its_own_durable_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._long_wait_environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._run(
+                environment,
+                provider,
+                "organize",
+                str(environment["source_file"]),
+                "--execute",
+                expected_code=1,
+            )
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.list_tasks()[0]
+                original_item = repository.list_items(original.task_id)[0]
+            original_stat = LocalStorage.stat
+
+            def failing_stat(storage, path):
+                if path == original_item.source_path:
+                    raise StorageError(
+                        StorageErrorCode.CONNECTION_LOST,
+                        "stat",
+                        path,
+                        "connection lost",
+                    )
+                return original_stat(storage, path)
+
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                patch.object(LocalStorage, "stat", failing_stat),
+                patch(
+                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                    lambda _ids: MetadataProviderRegistry((provider,)),
+                ),
+            ):
+                code = final_main(
+                    [
+                        "--config",
+                        str(environment["config"]),
+                        "tasks",
+                        "retry-failed",
+                        original.task_id,
+                        "--execute",
+                    ],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(1, code, f"{errors.getvalue()}\n{output.getvalue()}")
+            task, items, results = self._reopened(environment, original.task_id)
+            self.assertEqual("failed", task.status.value)
+            self.assertEqual(1, task.total_items)
+            self.assertEqual(1, task.failed_items)
+            self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+            self.assertEqual("storage_failure", results[0].retry_category)
+            self.assertEqual("none", results[0].effect_certainty)
+            # A connection failure is a distinct, safely repeatable category; it
+            # is never reported as the file having changed or disappeared.
+            self.assertIn("Storage failure", results[0].error or "")
+            self.assertEqual([], provider.movie_queries)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
 
 
 def _ambiguous_identification() -> MetadataIdentificationResult:

@@ -206,67 +206,75 @@ READY FOR B REVIEW at implementation HEAD `204441f70c0678e9b6526a54f6af8aac75b12
 (Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
 `77dcb8e23003f729ea5b32785a329e0aade2f79a`). Same Task, Base / Goal / T4 unchanged.
 
-### 本轮（B FIX REQUIRED）修正：直接文件入口稳定性 helper 参数与持久等待
+### 本轮（B 第二次 FIX REQUIRED）修正：安全拒绝必须持久为真实失败
 
-**复现（先于修复）。** 复用 B 的隔离 Managed Active / LocalStorage / SQLite / 真实 CLI 与
-functioning fake Provider 矩阵（displayRootPath 精确对应 ResourceLibrary root，Storage path
-`Media/C/Correct.2024.mkv`）：单文件 `organize` 在 `stableSizeDurationSeconds=1` 与 `61` 时约
-0.05s exit1、Provider 0 次、0 TaskItem/0 Result，输出 `'FileStabilityPolicy' object has no
-attribute 'stability_policy'`；`--execute` 同样立即 exit1、零媒体变更。`stable-size=0` 单文件与
-`stable-size=1` 目录入口作为成功对照 exit0。
+**复现（先于修复）。** 直接运行 B 的 `reproduce_refusal_completion.py`（replaced / missing /
+unverified 三例）与 `reproduce_discovery_refusal.py`：拒绝本身正确（exit1、Provider0、零媒体变更、
+原指纹保留），但重开数据库后 Task 均为 `completed / total_items=0 / failed_items=0`，
+无 TaskItem / Result，`tasks show` 只显示 `Total: 0`。脚本断言旧缺陷（exit0 表示复现成功）。
 
-**根因。** `MediaOrganizerService._observe_direct_source` 调用
-`stability_wait_seconds(policy, entry, ...)`，但该共享 helper 的首参是 `ResourceLibrary`，
-内部读取 `library.stability_policy`。直接入口传入了 `FileStabilityPolicy`，任何非零等待区间
-都在 `remaining = ...` 抛 `AttributeError`，被 `process_file` 外层 `except Exception` 归为
-普通失败，既没有真实等待也没有保存逐文件观察/结果。目录入口走 `_wait_seconds(library, ...)`
-所以正常。
+**根因。** `process_file` 的 `resolve_source_evidence=False` 分支在 `begin_item` 之前命中
+`_persisted_source_refusal` 并以 `_failed(..., tracked_item=None, stage="storage")` 返回；
+`_complete` 因没有 tracked item 不发布任何 TaskItem/Result，`PersistentTaskCoordinator.finish`
+读取空持久 items 且无 scan_errors，于是把该次尝试汇总成 Completed/0。首次目录整理在发现与处理
+之间的来源竞态走同一 `except Exception` → `_failed(tracked_item=None)` 路径，同样假成功。
 
-**修复（单点复用现有 helper，不新增稳定性引擎）。** `_observe_direct_source` 改传
-`resource_library`；`stability_decision` 继续接收 policy。审查全部生产调用：
-`media_discovery`（`library`）、`media_organizer._wait_seconds`（`library`）、
-`_observe_direct_source`（现为 `resource_library`）均与 helper 首参一致。真实等待、
-minimum-age / modified-threshold / stable-size 组合与变化重置语义不变。
+**修复（复用既有持久完成路径，不新增结果库）。**
 
-**持久等待与恢复。** 长区间（>60s）不再同步阻塞：直接入口返回 `pending=True`，调用方
-`_direct_waiting_item` 以 `begin_item` 保存该精确来源的 occurrence/fingerprint/verified
-state/`source_observed_at` 并 `_complete` 写入逐文件 Result（`unstable_source`，
-`effect_certainty=none`）；不再只出现在 SUMMARY。短区间真实 `time.sleep` 后二次 stat，未变
-才进入 Provider/计划；期间变化则以第二次观察重置区间并保持等待。续跑/重试
-（`resolve_source_evidence=False`）先经 `_persisted_source_refusal` 校验原证据，再经
-`_stability_deadline_refusal` 以原固定 pin 下的策略和原 `source_observed_at` 判定；立即重试仍
-等待，原区间真正满足且来源未变才继续。重开/重试不重放成功或未知效果。
+1. `_persisted_source_refusal` 返回 `FailureExplanation` 而非裸字符串，按真实原因区分
+   `source_changed` / `source_missing` / `source_unverified` / `storage_failure`（含
+   `StorageErrorCode.NOT_FOUND` 与连接类错误），不再把来源缺失/连接故障混为泛化 storage。
+2. 新增 `_refused_source_item`：以原 occurrence/fingerprint/verified state/`source_observed_at`
+   调用既有 `begin_item`，再走既有 `_failed`/`_complete`/`complete_item` 发布该次尝试的逐文件
+   TaskItem + Result；不重建旧可信证据、不覆盖成功兄弟、不授予分析/执行权、零 Provider、零 mutation。
+3. `process_file` 的通用 `except Exception`：当 `tracked_item is None` 且不是
+   `TaskLockError/TaskPauseRequested/TaskClaimLost`（这些已在 `begin_item` 内发布自身拒绝）时，
+   同样经 `_refused_source_item` 发布，堵住首次目录整理的竞态假成功。
+4. `_failed` 对已分类的 `FailureExplanation` 一律持久化其 envelope（CLI 路径也如此），
+   `_failure_message` 兼容 `FailureExplanation`。
+5. `ErrorCategory` 增加 `source_changed` / `source_missing` / `source_unverified`；
+   `failure_explanation` 增加同类别 message/next action 与文本归类；`classify_failure` 直传
+   已构造的 `FailureExplanation`。
+6. `tasks show` 用 `decode_failure_explanation` 渲染 category/message/next action，不再打印原始
+   `mediaflow-failure-v1:` token。
+7. Web `ProblemFilePanel` 增加三个类别的中文原因/下一步；不改动任何既有 category 文案。
+
+**汇总语义。** 拒绝项现在进入 `failed` counts，Task 汇总为 FAILED；真正的空目录/合法零项仍为
+Completed/0（未改 `finish` 聚合逻辑，也不伪造 scan error）。
 
 ### 实际受影响命令/结果（本轮）
 
+- 修复前：B 两个复现脚本分别命中旧断言（Task completed/0、无 item/result）。修复后：
+  `reproduce_refusal_completion.py` 三例均 `failed / total 1 / failed 1 / items 1 / results 1 / provider 0 / target 0 / fp_unchanged`；
+  `reproduce_discovery_refusal.py` 为 `failed / 1 / 1 / items 1 / results 1 / source_changed / provider 0 / target 0 / 源内容保留`。
+- 新增 `tests/test_recovery_continuation.RefusedSourceCompletionTests`（5 cases）：replaced→
+  `source_changed`、missing→`source_missing`、unverified→`source_unverified`、Storage 连接故障→
+  `storage_failure`（retry-safe，区别于来源变化）、首次目录竞态→`source_changed`；每例断言重开
+  数据库后 status/counts/error、TaskItem、Result、effect_certainty、原证据保留、`tasks show`
+  解码与零 Provider/零 mutation。
+- `test_recovery_continuation test_task_persistence test_scope_continuation test_final_integration test_workflow_retry test_resource_library_pipeline` → 160 OK。
+- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → 40 OK。
+- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 369 OK。
+- `test_task_persistence test_sqlite_backup test_sqlite_restore test_processing_checkpoint test_operations_run_detail test_operations_task_center test_direct_file_operations test_manual_operations_contract test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → 305 OK。
+- `test_automation_definition_execution test_automation_authorized_execution_matrix` → 33 OK；
+  `test_processing_checkpoint test_operations_run_detail test_operations_task_center test_task_center_recovery_lineage` → 74 OK；
+  `test_direct_file_transfers test_operations_run_detail` → 134 OK；
+  `test_organizer test_conflict_resolution test_organizer_rollback test_organizer_mutation_authority test_direct_file_operations test_media_library_direct_commands` → 147 OK；
+  `test_processing_recovery_admission test_task_retry test_processing_worker_readiness test_scan_retirement test_scope_continuation test_configuration_snapshot` → 148 OK；
+  `test_task_pause_resume test_scan_retirement test_sqlite_backup test_sqlite_restore` → 27 OK；
+  `test_metadata_correction test_recognition_review test_classification_review test_metadata_review test_file_media_detail` → 36 OK。
 - `python3 scripts/check_governance.py` → PASS；`git diff --check` 干净；
   `.venv/bin/python -m compileall -q mediaflow tests scripts` → OK。
-- 修正后真实 CLI 矩阵（B 脚本，5 cases）：单文件 0 → exit0/provider1/1 item/1 dry_run Result；
-  单文件 1 → exit0/elapsed≈1.13s/provider1/1 dry_run；单文件 61 → exit1/0.06s/provider0/
-  1 failed item + 1 failed Result（`unstable_source`，durable evidence）；目录 1 → exit0/provider1；
-  单文件 1 `--execute` → exit0/elapsed≈1.13s/provider1/1 success + 真实媒体变更。全部无
-  `stability_policy` 错误。
-- 新增 `tests/test_recovery_continuation.DirectFileStabilityTests`（7 cases）覆盖：0 立即分析且
-  有证据、短区间真实 elapsed 后分析、长区间不阻塞且落库 waiting item/Result、minimum-age 未满足
-  持久拒绝、等待中来源改变重置、记录区间驱动的 retry（立即仍等待→真实满足后分析、零重放）、
-  `--execute` 真实等待后执行。
-- `test_recovery_continuation test_task_persistence test_scope_continuation` → 138 OK（含新 7）。
-- `test_final_integration test_workflow_retry test_resource_library_pipeline test_scanner test_scan_retirement_stability` → 43 OK。
-- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → 40 OK（分页修正保留）。
-- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize` → 116+121 OK。
-- `test_task_center_recovery_lineage test_direct_file_operations test_manual_operations_contract test_operations_task_center` → 98 OK。
-- `test_classification_review test_metadata_review test_metadata_correction test_recognition_review test_file_media_detail test_operations_run_detail_log_isolation` → 43 OK。
-- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → 140 OK。
-- `test_scan_retirement` → 9 OK；`test_sqlite_backup test_sqlite_restore` → 8 OK；
-  `test_processing_checkpoint test_processing_worker_readiness test_processing_recovery_admission test_task_retry` → 48 OK。
-- `.venv/bin/ruff check mediaflow/application/media_organizer.py tests/test_recovery_continuation.py` → All checks passed；
-  `.venv/bin/ruff format --check` 同两文件 → already formatted。
-- 本轮测试实际耗时保守合计约 110s，占本轮开发时间不足 30%；未跑全量/Web/E2E/wheel/Docker。
+- `.venv/bin/ruff check` / `ruff format --check` 覆盖
+  `failure_explanation.py media_organizer.py domain/processing_checkpoint.py final_cli.py tests/test_recovery_continuation.py` → passed / formatted。
+- Web：`npm run typecheck` 通过；`npm run test -- run OperationsInventory.test.tsx OperationsRouter.test.tsx run-detail.test.ts` → 82 passed；
+  `npx prettier --check` / `npx eslint` 修改文件通过。
+- 本轮测试实际耗时保守合计约 180s，占本轮开发时间不足 30%；未跑全量/Web build/E2E/wheel/Docker。
 
 ### 已知失败/风险
 
 - `tests/e2e/direct-files.python.spec.ts` 既有 flaky 仍待 B 独立确认（非本 Task 引入）。
-- 长区间等待上限 `_MAX_STABILITY_WAIT_SECONDS=60s` 的交互已由持久 waiting item + retry 证明，
+- 长区间等待上限 `_MAX_STABILITY_WAIT_SECONDS=60s` 的持久 waiting item + retry 交互已由单元测试覆盖，
   真实入口 61s 反例与恢复仍待 B 在真实浏览器/Worker 路径确认。
 - wheel/隔离安装、生产 Docker、真实 SMB/OpenList/S3/TMDB 与 1536×1024/380×720 截图等
   T4 门禁仍 pending B；Developer 不跑全量/发布矩阵。

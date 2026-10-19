@@ -146,6 +146,18 @@ const FAILURE_COPY: Readonly<
     reason: "来源文件仍在变化",
     nextAction: "等待文件稳定，再按允许操作重新检查。",
   },
+  source_changed: {
+    reason: "已核查的来源已被替换",
+    nextAction: "回到当前文件页重新选择来源，并生成新的摘要后再继续。",
+  },
+  source_missing: {
+    reason: "已核查的来源已不存在",
+    nextAction: "恢复原来源，或回到当前文件页重新选择后生成新摘要。",
+  },
+  source_unverified: {
+    reason: "无法证明来源仍是原来源",
+    nextAction: "回到当前文件页重新选择来源，并生成新的摘要后再继续。",
+  },
   recognition_failure: {
     reason: "未能完成媒体识别",
     nextAction: "检查识别证据并处理待确认决定，再继续此文件。",
