@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -290,6 +294,13 @@ class RecoveryContinuationTests(unittest.TestCase):
         snapshot_id, snapshot_digest = environment["snapshot"]
         storage_path = source_path or environment["storage_path"]
         display_source = str(Path(environment["display_source"]).parent / Path(storage_path).name)
+        # Mirror production: a first explicit selection records the exact live
+        # occurrence/fingerprint of the source it reviewed, so a later recovery
+        # can only ever compare against that original evidence.  A source that
+        # does not exist at seed time (an intentional missing-source case)
+        # carries no evidence and the continuation refuses it.
+        source_evidence = self._live_evidence(environment, storage_path)
+        sibling_evidence = self._live_evidence(environment, "Media/C/Sibling.mkv")
         with SQLiteTaskRepository(environment["database"]) as repository:
             coordinator = _coordinator(repository)
             task = coordinator.create(
@@ -307,6 +318,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                 "source",
                 storage_path,
                 display_source,
+                source_occurrence_id=source_evidence[0],
+                source_fingerprint=source_evidence[1],
+                source_fingerprint_state=source_evidence[2],
             )
             if item_id is not None:
                 item = replace(item, item_id=item_id)
@@ -350,6 +364,9 @@ class RecoveryContinuationTests(unittest.TestCase):
                     "source",
                     "Media/C/Sibling.mkv",
                     str(Path(display_source).parent / "Sibling.mkv"),
+                    source_occurrence_id=sibling_evidence[0],
+                    source_fingerprint=sibling_evidence[1],
+                    source_fingerprint_state=sibling_evidence[2],
                 )
                 repository.upsert_item(
                     replace(
@@ -387,6 +404,19 @@ class RecoveryContinuationTests(unittest.TestCase):
                 )
                 repository.append_result(sibling_result)
         return task, item
+
+    def _live_evidence(self, environment, storage_path: str):
+        """The exact live occurrence/fingerprint of one seeded source, if present."""
+
+        source_root = Path(environment["root"]) / "Incoming"
+        path = source_root / storage_path
+        if not path.is_file():
+            return None, None, "unverified"
+        storage = LocalStorage("source-storage", source_root)
+        entry = storage.stat(storage_path)
+        observed = source_fingerprint("source-storage", "source", entry)
+        occurrence = occurrence_id_for("source-storage", "source", entry.path, observed.value)
+        return occurrence, observed.value, observed.state.value
 
     def _api(self, environment, *, maximum_active_jobs=100):
         repository = SQLiteTaskRepository(environment["database"])
@@ -3860,6 +3890,225 @@ class RecoveryContinuationTests(unittest.TestCase):
                     if value.status.value == "active"
                 )
                 self.assertEqual((), active_authorizations)
+
+
+class FreshCliSourceEvidenceAndStabilityTests(unittest.TestCase):
+    """RO-7: a real fresh CLI run records evidence and proves stability.
+
+    These cases exercise the production ``organize`` entry point with a real
+    LocalStorage source and a counting fake Provider, not a fixture that
+    pre-seeds exact evidence.  They cover:
+
+    * a first failed CLI item carries its own real occurrence/fingerprint;
+    * a replacement at the same path is refused before any Provider call;
+    * a missing/legacy item with no exact evidence is refused rather than
+      promoted from the current stat;
+    * a configured stable-size interval is proven by real elapsed time, so two
+      unchanged CLI runs actually analyze the source instead of completing 0.
+    """
+
+    def _environment(self, directory, *, document_patch=None):
+        return RecoveryContinuationTests()._environment(directory, document_patch=document_patch)
+
+    def _organize(self, environment, provider, *, expected_code=0):
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _ids: MetadataProviderRegistry((provider,)),
+        ):
+            code = final_main(
+                ["--config", str(environment["config"]), "organize"],
+                stdout=output,
+                stderr=errors,
+            )
+        self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
+        return output.getvalue()
+
+    def test_fresh_cli_failure_records_exact_source_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = FailingSearchProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._organize(environment, provider, expected_code=1)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                tasks = repository.list_tasks()
+                self.assertEqual(1, len(tasks))
+                items = repository.list_items(tasks[0].task_id)
+                self.assertEqual(1, len(items))
+                self.assertEqual("verified", items[0].source_fingerprint_state)
+                self.assertIsNotNone(items[0].source_occurrence_id)
+                self.assertIsNotNone(items[0].source_fingerprint)
+                results = repository.list_results(tasks[0].task_id)
+                self.assertEqual(1, len(results))
+                self.assertEqual(items[0].source_fingerprint, results[0].source_fingerprint)
+
+    def test_fresh_cli_replacement_is_refused_before_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = FailingSearchProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._organize(environment, provider, expected_code=1)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                task = repository.list_tasks()[0]
+                item = repository.list_items(task.task_id)[0]
+            environment["source_file"].write_bytes(b"a-different-file")
+            provider.failure = False
+            provider.movie_queries.clear()
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                output, errors = io.StringIO(), io.StringIO()
+                code = final_main(
+                    ["--config", str(environment["config"]), "tasks", "retry-failed", task.task_id],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(1, code, f"{errors.getvalue()}\n{output.getvalue()}")
+            self.assertEqual([], provider.movie_queries)
+            self.assertEqual(b"a-different-file", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                original = repository.get_item(item.item_id)
+                assert original is not None
+                self.assertEqual(item.source_fingerprint, original.source_fingerprint)
+
+    def test_cli_stability_waits_and_then_analyzes_the_unchanged_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+
+            def configure(document):
+                document["resourceLibraries"][0]["stability"] = {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 1,
+                }
+
+            environment = self._environment(directory, document_patch=configure)
+            old = time.time() - 86400
+            os.utime(environment["source_file"], (old, old))
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            self._organize(environment, provider)
+            elapsed = time.monotonic() - started
+            self.assertGreaterEqual(elapsed, 1.0)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                tasks = repository.list_tasks()
+                self.assertEqual(1, len(tasks))
+                items = repository.list_items(tasks[0].task_id)
+                self.assertEqual(1, len(items))
+                self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
+
+    def test_retry_without_provable_original_evidence_is_refused(self) -> None:
+        """A record that lost its exact evidence is refused, not re-promoted.
+
+        Empty, half-written and unverified/legacy evidence all fail closed with
+        zero Provider calls; the current file is never read and promoted into the
+        original identity.
+        """
+
+        for evidence in (
+            (None, None, "unverified"),
+            ("occ-partial", None, "unverified"),
+            (None, "f" * 64, "unverified"),
+            ("occ-legacy", "f" * 64, "legacy"),
+        ):
+            with self.subTest(evidence=evidence), tempfile.TemporaryDirectory() as directory:
+                environment = self._environment(directory)
+                provider = FailingSearchProvider(
+                    (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+                )
+                self._organize(environment, provider, expected_code=1)
+                with SQLiteTaskRepository(environment["database"]) as repository:
+                    task = repository.list_tasks()[0]
+                    item = repository.list_items(task.task_id)[0]
+                # Simulate a legacy/partial row: the durable upsert deliberately
+                # preserves existing evidence, so clear it directly.
+                with sqlite3.connect(environment["database"]) as connection:
+                    connection.execute(
+                        "UPDATE task_items SET source_occurrence_id=?, source_fingerprint=?,"
+                        " source_fingerprint_state=? WHERE item_id=?",
+                        (evidence[0], evidence[1], evidence[2], item.item_id),
+                    )
+                provider.failure = False
+                provider.movie_queries.clear()
+                with patch(
+                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                    lambda _ids: MetadataProviderRegistry((provider,)),
+                ):
+                    output, errors = io.StringIO(), io.StringIO()
+                    code = final_main(
+                        [
+                            "--config",
+                            str(environment["config"]),
+                            "tasks",
+                            "retry-failed",
+                            task.task_id,
+                        ],
+                        stdout=output,
+                        stderr=errors,
+                    )
+                self.assertEqual(1, code, f"{errors.getvalue()}\n{output.getvalue()}")
+                self.assertEqual([], provider.movie_queries)
+                self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+                self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_cli_stability_default_zero_does_not_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            old = time.time() - 86400
+            os.utime(environment["source_file"], (old, old))
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            self._organize(environment, provider)
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+
+    def test_cli_stability_change_resets_the_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+
+            def configure(document):
+                document["resourceLibraries"][0]["stability"] = {
+                    "minimumAgeSeconds": 0,
+                    "modifiedThresholdSeconds": 0,
+                    "stableSizeDurationSeconds": 5,
+                }
+
+            environment = self._environment(directory, document_patch=configure)
+            old = time.time() - 86400
+            os.utime(environment["source_file"], (old, old))
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            # Change the source while the CLI is proving the stable interval, so
+            # the real re-observation sees a changed size and resets it.  The
+            # source must then stay waiting rather than being analyzed.
+            changed = threading.Event()
+
+            def mutate() -> None:
+                time.sleep(0.4)
+                environment["source_file"].write_bytes(b"changed-during-wait")
+                changed.set()
+
+            writer = threading.Thread(target=mutate, daemon=True)
+            writer.start()
+            started = time.monotonic()
+            self._organize(environment, provider, expected_code=1)
+            writer.join(timeout=10)
+            self.assertTrue(changed.is_set())
+            self.assertLess(time.monotonic() - started, 5.5)
+            self.assertEqual([], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                task = repository.list_tasks()[0]
+                items = repository.list_items(task.task_id)
+                self.assertEqual(1, len(items))
+                self.assertEqual(TaskItemStatus.FAILED, items[0].status)
 
 
 def _ambiguous_identification() -> MetadataIdentificationResult:

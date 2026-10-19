@@ -1361,6 +1361,13 @@ def final_main(
                             resource_library=resource,
                             storage_path=stored.source_path,
                             execute=execute,
+                            # A retry only re-validates the evidence the original
+                            # work already saved: a replacement at the same path
+                            # must never be re-bound to the old review.
+                            source_occurrence_id=stored.source_occurrence_id,
+                            source_fingerprint=stored.source_fingerprint,
+                            source_fingerprint_state=stored.source_fingerprint_state,
+                            resolve_source_evidence=False,
                         )
                     )
                 summary = MediaOrganizerBatchResult(tuple(retried))
@@ -2780,6 +2787,9 @@ def _run_metadata_correction_continuation(
                     if prepared.live_source is not None
                     else prepared.source_item.source_fingerprint_state
                 ),
+                # ``prepare`` already proved the persisted source against live
+                # pinned Storage; the pipeline never re-derives it.
+                resolve_source_evidence=False,
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
@@ -3076,6 +3086,10 @@ def _run_recovery_continuation(
                 source_occurrence_id=prepared.source_occurrence_id,
                 source_fingerprint=prepared.source_fingerprint,
                 source_fingerprint_state=prepared.source_fingerprint_state,
+                # ``prepare`` already re-observed and proved the original
+                # persisted evidence, so the pipeline must never re-derive it
+                # from the current file.
+                resolve_source_evidence=False,
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)

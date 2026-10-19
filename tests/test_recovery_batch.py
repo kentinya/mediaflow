@@ -494,9 +494,12 @@ class RecoveryBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             helper = _RecoveryContinuationTests()
             environment = helper._environment(directory)
-            source_task, source_item = helper._seed_failed_item(environment)
+            # A sibling source that a real first pass would have reviewed must
+            # exist when the work is admitted, so its exact occurrence evidence
+            # is recorded with the original TaskItem.
             sibling_path = Path(environment["source_file"]).with_name("Sibling.mkv")
             sibling_path.write_bytes(b"unchanged-sibling")
+            source_task, source_item = helper._seed_failed_item(environment)
             with SQLiteTaskRepository(environment["database"]) as repository:
                 sibling = repository.list_items(source_task.task_id)[1]
                 sibling = replace(

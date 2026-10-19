@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
@@ -13,9 +15,14 @@ from mediaflow.application.failure_explanation import (
     classify_failure,
     sanitize_execution_errors,
 )
-from mediaflow.application.library_pipeline import MediaLibraryResolver, ResourceLibraryScanner
+from mediaflow.application.library_pipeline import MediaLibraryResolver
 from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
-from mediaflow.application.scan_filters import ObservedSource
+from mediaflow.application.scan_filters import (
+    ObservedSource,
+    StabilityVerdict,
+    stability_decision,
+    stability_wait_seconds,
+)
 from mediaflow.application.strategy_test import StrategyTestResult, StrategyTestRunner
 from mediaflow.application.workflow_retry import (
     RetryExhausted,
@@ -45,8 +52,16 @@ from mediaflow.domain.organizer import (
 )
 from mediaflow.domain.recognition import RecognitionStatus, RecognitionTypePolicy
 from mediaflow.domain.recognition_review import RecognitionSelection
-from mediaflow.domain.scanner import CancellationToken, FileScanStatus, ScanError, Scanner
-from mediaflow.domain.storage import Storage, StorageError
+from mediaflow.domain.scanner import (
+    CancellationToken,
+    DiscoveredFile,
+    FileChange,
+    FileScanStatus,
+    ScanError,
+    Scanner,
+)
+from mediaflow.domain.source_evidence import OccurrenceState, occurrence_id_for, source_fingerprint
+from mediaflow.domain.storage import Storage, StorageEntryType, StorageError
 from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 
 if TYPE_CHECKING:
@@ -114,6 +129,19 @@ class MediaOrganizerBatchResult:
 
 ProgressReporter = Callable[[int, int | None, str], None]
 CancellationCheck = Callable[[], bool]
+
+#: A required stable-size interval is proven by *real* elapsed time.  A
+#: synchronous command only waits when the remaining interval is short enough to
+#: finish promptly; a longer configured interval is recorded as an honest waiting
+#: item (with a retry next action) rather than blocking the command.
+_MAX_STABILITY_WAIT_SECONDS = 60.0
+
+
+@dataclass(frozen=True)
+class _ObservedEntry:
+    """The bounded entry facts a stability wait needs from one observation."""
+
+    modified_at: datetime
 
 
 class MediaOrganizerService:
@@ -187,9 +215,46 @@ class MediaOrganizerService:
         source_occurrence_id: str | None = None,
         source_fingerprint: str | None = None,
         source_fingerprint_state: str = "unverified",
+        resolve_source_evidence: bool = True,
     ) -> MediaOrganizerItemResult:
         tracked_item: PersistentTaskItem | None = None
         try:
+            # A first explicit selection establishes its own exact source
+            # evidence from one live Storage stat before any Provider call, so
+            # the durable TaskItem/Result can later prove the same occurrence.
+            # A continuation/retry passes ``resolve_source_evidence=False`` and
+            # may only compare the evidence the original work already saved: a
+            # replaced file must never be re-bound to the old review.
+            if (
+                resolve_source_evidence
+                and source_occurrence_id is None
+                and source_fingerprint is None
+            ):
+                evidence, pending = self._observe_direct_source(resource_library, storage_path)
+                if pending and evidence is not None:
+                    # The source is still inside its configured stable-size
+                    # interval after a real wait, so this explicit selection is
+                    # recorded as an honest waiting item with zero Provider
+                    # calls and zero mutation instead of a first-stat shortcut.
+                    return self._direct_waiting_item(
+                        source, resource_library, storage_path, *evidence
+                    )
+                if evidence is not None:
+                    source_occurrence_id, source_fingerprint, source_fingerprint_state = evidence
+            elif not resolve_source_evidence:
+                # A continuation/retry may only consume the evidence the original
+                # work already saved.  Prove the live source still matches it
+                # before any Provider analysis, so a replacement at the same path
+                # is refused with zero Provider calls and zero mutation.
+                refusal = self._persisted_source_refusal(
+                    resource_library,
+                    storage_path,
+                    source_occurrence_id,
+                    source_fingerprint,
+                    source_fingerprint_state,
+                )
+                if refusal is not None:
+                    return self._failed(source, None, refusal, None, (), stage="storage")
             if self._task_coordinator and self._task_id:
                 tracked_item = self._task_coordinator.begin_item(
                     self._task_id,
@@ -464,6 +529,149 @@ class MediaOrganizerService:
         except Exception as error:
             return self._failed(source, None, error, tracked_item)
 
+    def _persisted_source_refusal(
+        self,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        occurrence: str | None,
+        fingerprint: str | None,
+        state: str,
+    ) -> str | None:
+        """Prove a continued/retried source still matches its saved evidence.
+
+        Returns a bounded reason when the live source cannot be proven, or
+        ``None`` when it matches.  Missing, half-written, legacy and unverified
+        evidence is refused; the live current stat is never promoted into a
+        fabricated original identity.
+        """
+
+        if not occurrence or not fingerprint or state != OccurrenceState.VERIFIED.value:
+            return "the reviewed source cannot prove its original occurrence"
+        storage = self._storages.get(resource_library.storage_id)
+        if storage is None:
+            return "the reviewed source Storage is unavailable"
+        entry = self._stat_entry(storage, storage_path)
+        if entry is None or entry.entry_type is not StorageEntryType.FILE:
+            return "the exact reviewed source is no longer present in Storage"
+        observed = source_fingerprint(
+            resource_library.storage_id, resource_library.library_id, entry
+        )
+        live_occurrence = occurrence_id_for(
+            resource_library.storage_id, resource_library.library_id, entry.path, observed.value
+        )
+        if (
+            observed.state is not OccurrenceState.VERIFIED
+            or observed.value != fingerprint
+            or live_occurrence != occurrence
+        ):
+            return "the exact reviewed source changed or was replaced before continuation"
+        return None
+
+    def _observe_direct_source(
+        self, resource_library: ResourceLibrary, storage_path: str
+    ) -> tuple[tuple[str, str, str] | None, bool]:
+        """Observe one directly selected source, proving the stable interval.
+
+        Returns ``(evidence, pending)``.  ``pending`` is ``True`` only when the
+        source is still inside a configured stable-size interval after a real
+        elapsed wait and a second live observation; the caller then records an
+        honest waiting item instead of running Provider analysis.  A configured
+        ``stableSizeDurationSeconds`` of 0 keeps the historical immediate
+        behavior.
+        """
+
+        storage = self._storages.get(resource_library.storage_id)
+        if storage is None:
+            return None, False
+        entry = self._stat_entry(storage, storage_path)
+        if entry is None or entry.entry_type is not StorageEntryType.FILE:
+            return None, False
+        observed = source_fingerprint(
+            resource_library.storage_id, resource_library.library_id, entry
+        )
+        if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
+            return None, False
+        occurrence = occurrence_id_for(
+            resource_library.storage_id, resource_library.library_id, entry.path, observed.value
+        )
+        policy = resource_library.stability_policy
+        first = datetime.now(UTC)
+        verdict = stability_decision(
+            policy, entry, now=first, unchanged_previous=False, observed_since=None
+        )
+        if verdict is StabilityVerdict.STABLE:
+            return (occurrence, observed.value, observed.state.value), False
+        remaining = stability_wait_seconds(
+            policy, entry, now=first, unchanged_previous=False, observed_since=None
+        )
+        if remaining <= 0 or remaining > _MAX_STABILITY_WAIT_SECONDS:
+            # A long configured interval is not blocked synchronously; the
+            # caller records an honest waiting item with a retry next action.
+            return (occurrence, observed.value, observed.state.value), True
+        time.sleep(remaining + 0.05)
+        second = self._stat_entry(storage, storage_path)
+        if second is None or second.entry_type is not StorageEntryType.FILE:
+            return (occurrence, observed.value, observed.state.value), True
+        observed_second = source_fingerprint(
+            resource_library.storage_id, resource_library.library_id, second
+        )
+        unchanged = (
+            second.size == entry.size
+            and second.modified_at == entry.modified_at
+            and observed_second.value == observed.value
+        )
+        verdict_second = stability_decision(
+            policy,
+            second,
+            now=datetime.now(UTC),
+            unchanged_previous=unchanged,
+            observed_since=first,
+        )
+        if verdict_second is StabilityVerdict.STABLE and observed_second.value is not None:
+            occurrence_second = occurrence_id_for(
+                resource_library.storage_id,
+                resource_library.library_id,
+                second.path,
+                observed_second.value,
+            )
+            return (occurrence_second, observed_second.value, observed_second.state.value), False
+        return (occurrence, observed.value, observed.state.value), True
+
+    @staticmethod
+    def _stat_entry(storage: Storage, storage_path: str):
+        try:
+            return storage.stat(storage_path)
+        except (StorageError, OSError, ValueError, KeyError):
+            return None
+
+    def _direct_waiting_item(
+        self,
+        source: str,
+        resource_library: ResourceLibrary,
+        storage_path: str,
+        occurrence: str | None,
+        fingerprint: str | None,
+        state: str,
+    ) -> MediaOrganizerItemResult:
+        """Record one still-waiting direct selection without analysis or mutation."""
+
+        tracked: PersistentTaskItem | None = None
+        if self._task_coordinator and self._task_id:
+            tracked = self._task_coordinator.begin_item(
+                self._task_id,
+                resource_library.storage_id,
+                resource_library.library_id,
+                storage_path,
+                source,
+                source_occurrence_id=occurrence,
+                source_fingerprint=fingerprint,
+                source_fingerprint_state=state,
+            )
+        failure = classify_failure(stage="scanning")
+        return self._complete(
+            MediaOrganizerItemResult(source, error=failure.message, failure=failure), tracked
+        )
+
     def _run_read_only_strategy(
         self, source: str, *, resource_library: ResourceLibrary, storage_path: str
     ) -> StrategyTestResult:
@@ -527,56 +735,59 @@ class MediaOrganizerService:
             library.library_id, library.root_path
         )
         self._log(LogLevel.INFO, "library scan started", library_id=library.library_id)
+        # One bounded discovery pass of this exact scope.  The discovered
+        # evidence (occurrence/fingerprint and the real stable interval) is the
+        # work's own durable observation; a required stable-size interval that
+        # is not yet proven is waited out in real time and then re-observed
+        # instead of being reported as a completed zero-item run.
+        ready_files, waiting_files, scan_errors = self._discover_ready_files(
+            library,
+            cancellation=cancellation,
+            cancellation_check=cancellation_check,
+        )
+        if waiting_files and not ready_files:
+            # Record this pass's real observation time *before* waiting, so the
+            # later re-observation measures a genuine elapsed interval instead of
+            # the instant the wait ended.
+            self._previous_observations = {
+                **self._previous_observations,
+                **self._observation_map(library, ready_files + waiting_files),
+            }
+            remaining = min(self._wait_seconds(library, file) for file in waiting_files)
+            if 0 < remaining <= _MAX_STABILITY_WAIT_SECONDS and not (
+                cancellation_check and cancellation_check()
+            ):
+                # A real elapsed interval.  A longer configured interval is not
+                # blocked synchronously: the candidate stays an honest waiting
+                # item with a retry next action.
+                time.sleep(remaining + 0.05)
+                # The later observation consumes this pass's durable evidence, so
+                # a stable interval is proven by real elapsed time, never by a
+                # first-stat shortcut.
+                ready_files, waiting_files, scan_errors = self._discover_ready_files(
+                    library,
+                    cancellation=cancellation,
+                    cancellation_check=cancellation_check,
+                )
+        # Keep this pass's live observations for the work's own continuation and
+        # for any still-waiting candidate the caller re-runs later.
+        self._previous_observations = {
+            **self._previous_observations,
+            **self._observation_map(library, ready_files + waiting_files),
+        }
 
-        def discovered(file) -> None:
+        def handle(file: DiscoveredFile) -> None:
             nonlocal selected_count, bound_reached
             if cancellation_check and cancellation_check():
                 cancellation.cancel()
                 return
             if file.status is not FileScanStatus.READY:
-                if (
-                    file.status is FileScanStatus.UNSTABLE
-                    and self._task_coordinator
-                    and self._task_id
-                    and self._persist_failure_explanations
-                ):
-                    relative_display_path = file.path
-                    library_root = library.root_path.strip("/")
-                    if library_root and file.path.startswith(f"{library_root}/"):
-                        relative_display_path = file.path[len(library_root) + 1 :]
-                    source = posixpath.join(
-                        display_root,
-                        relative_display_path,
-                    )
-                    tracked = self._task_coordinator.begin_item(
-                        self._task_id,
-                        library.storage_id,
-                        library.library_id,
-                        file.path,
-                        source,
-                    )
-                    failure = classify_failure(stage="scanning")
-                    items.append(
-                        self._complete(
-                            MediaOrganizerItemResult(
-                                source,
-                                error=failure.message,
-                                failure=failure,
-                            ),
-                            tracked,
-                        )
-                    )
+                if file.status is FileScanStatus.UNSTABLE:
+                    items.append(self._waiting_item(library, file, display_root))
                 return
             if (library.storage_id, file.path) in (skip_sources or set()):
                 return
-            relative_display_path = file.path
-            library_root = library.root_path.strip("/")
-            if library_root and file.path.startswith(f"{library_root}/"):
-                relative_display_path = file.path[len(library_root) + 1 :]
-            source = posixpath.join(
-                display_root,
-                relative_display_path,
-            )
+            source = self._display_source(file.path, library, display_root)
             selected_count += 1
             items.append(
                 self.process_file(
@@ -584,6 +795,10 @@ class MediaOrganizerService:
                     resource_library=library,
                     storage_path=file.path,
                     execute=execute,
+                    source_occurrence_id=file.occurrence_id,
+                    source_fingerprint=file.fingerprint,
+                    source_fingerprint_state=file.fingerprint_state,
+                    resolve_source_evidence=False,
                 )
             )
             if progress:
@@ -592,20 +807,117 @@ class MediaOrganizerService:
                 bound_reached = True
                 cancellation.cancel()
 
-        scan = self._scanner.scan(
-            library,
-            cancellation=cancellation,
-            on_discovered=discovered,
-            previous=self._previous_observations,
-        )
+        scan_errors: tuple[ScanError, ...] = scan_errors
+        # The discovery pass already consumed this exact scope; process the same
+        # observation it just proved stable.
+        for file in ready_files + waiting_files:
+            handle(file)
+            if cancellation.is_cancelled:
+                break
         self._log(
             LogLevel.INFO,
             "library scan completed",
             library_id=library.library_id,
             files=len(items),
-            errors=len(scan.errors),
+            errors=len(scan_errors),
         )
-        return MediaOrganizerBatchResult(tuple(items), scan.errors, bound_reached)
+        return MediaOrganizerBatchResult(tuple(items), scan_errors, bound_reached)
+
+    def _discover_ready_files(
+        self,
+        library: ResourceLibrary,
+        *,
+        cancellation: CancellationToken,
+        cancellation_check: CancellationCheck | None,
+    ) -> tuple[list[DiscoveredFile], list[DiscoveredFile], tuple[ScanError, ...]]:
+        """One bounded, metadata-only walk split into ready and waiting files."""
+
+        ready: list[DiscoveredFile] = []
+        waiting: list[DiscoveredFile] = []
+
+        def collect(file: DiscoveredFile) -> None:
+            if cancellation_check and cancellation_check():
+                cancellation.cancel()
+                return
+            if file.status is FileScanStatus.READY:
+                ready.append(file)
+            elif file.status is FileScanStatus.UNSTABLE:
+                waiting.append(file)
+
+        result = self._scanner.scan(
+            library,
+            cancellation=cancellation,
+            on_discovered=collect,
+            previous=self._previous_observations,
+        )
+        return ready, waiting, result.errors
+
+    @staticmethod
+    def _observation_map(
+        library: ResourceLibrary, files: list[DiscoveredFile]
+    ) -> dict[str, ObservedSource]:
+        observed_at = datetime.now(UTC)
+        values: dict[str, ObservedSource] = {}
+        for file in files:
+            values[file.path] = ObservedSource(
+                file.path,
+                file.size,
+                file.modified_at,
+                file.fingerprint,
+                observed_at,
+                file.stable_since,
+            )
+        return values
+
+    @staticmethod
+    def _wait_seconds(library: ResourceLibrary, file: DiscoveredFile) -> float:
+        entry = _ObservedEntry(file.modified_at)
+        return stability_wait_seconds(
+            library,
+            entry,
+            now=datetime.now(UTC),
+            unchanged_previous=file.change is FileChange.UNCHANGED,
+            observed_since=file.stable_since,
+        )
+
+    def _waiting_item(
+        self,
+        library: ResourceLibrary,
+        file: DiscoveredFile,
+        display_root: str,
+    ) -> MediaOrganizerItemResult:
+        """Record one still-waiting candidate without a mutation or execution right."""
+
+        source = self._display_source(file.path, library, display_root)
+        failure = classify_failure(stage="scanning")
+        tracked = None
+        if self._task_coordinator and self._task_id:
+            tracked = self._task_coordinator.begin_item(
+                self._task_id,
+                library.storage_id,
+                library.library_id,
+                file.path,
+                source,
+                source_occurrence_id=file.occurrence_id,
+                source_fingerprint=file.fingerprint,
+                source_fingerprint_state=file.fingerprint_state,
+            )
+        return self._complete(
+            MediaOrganizerItemResult(
+                source,
+                error=failure.message,
+                failure=failure,
+            ),
+            tracked,
+        )
+
+    @staticmethod
+    def _display_source(path: str, library: ResourceLibrary, display_root: str) -> str:
+        relative_display_path = path
+        library_root = library.root_path.strip("/")
+        if library_root and path.startswith(f"{library_root}/"):
+            relative_display_path = path[len(library_root) + 1 :]
+        return posixpath.join(display_root, relative_display_path)
 
     def process_all_libraries(
         self,
@@ -619,10 +931,47 @@ class MediaOrganizerService:
     ) -> MediaOrganizerBatchResult:
         """Process all enabled configured libraries without local-path assumptions."""
         items: list[MediaOrganizerItemResult] = []
+        errors: list[ScanError] = []
+        selected_count = 0
+        ready_files, waiting_files, first_errors = self._discover_all_libraries(
+            libraries, cancellation_check=cancellation_check
+        )
+        errors.extend(first_errors)
+        if waiting_files and not ready_files:
+            # Record this pass's real observation time *before* waiting, so the
+            # later re-observation measures a genuine elapsed interval instead of
+            # the instant the wait ended.
+            self._previous_observations = {
+                **self._previous_observations,
+                **self._observation_map_multi(ready_files + waiting_files),
+            }
+            remaining = min(self._wait_seconds(library, file) for library, file in waiting_files)
+            if 0 < remaining <= _MAX_STABILITY_WAIT_SECONDS and not (
+                cancellation_check and cancellation_check()
+            ):
+                time.sleep(remaining + 0.05)
+                ready_files, waiting_files, later_errors = self._discover_all_libraries(
+                    libraries, cancellation_check=cancellation_check
+                )
+                errors = list(later_errors)
+        self._previous_observations = {
+            **self._previous_observations,
+            **self._observation_map_multi(ready_files + waiting_files),
+        }
 
-        def discovered(library: ResourceLibrary, file) -> None:
+        def handle(library: ResourceLibrary, file: DiscoveredFile) -> None:
+            nonlocal selected_count
             if cancellation_check and cancellation_check():
                 return
+            if limit is not None and selected_count >= limit:
+                return
+            if file.status is not FileScanStatus.READY:
+                if file.status is FileScanStatus.UNSTABLE:
+                    items.append(self._waiting_item(library, file, library.root_path))
+                return
+            if (library.storage_id, file.path) in (skip_sources or set()):
+                return
+            selected_count += 1
             source = f"{library.storage_id}:{file.path}"
             items.append(
                 self.process_file(
@@ -630,29 +979,100 @@ class MediaOrganizerService:
                     resource_library=library,
                     storage_path=file.path,
                     execute=execute,
+                    source_occurrence_id=file.occurrence_id,
+                    source_fingerprint=file.fingerprint,
+                    source_fingerprint_state=file.fingerprint_state,
+                    resolve_source_evidence=False,
                 )
             )
             if progress:
                 progress(len(items), limit, source)
 
-        batch = ResourceLibraryScanner(self._scanner, libraries, self._storages).scan_all(
-            limit=limit,
-            on_discovered=discovered,
-            include_discovered=lambda library, file: (
-                (
-                    library.storage_id,
-                    file.path,
-                )
-                not in (skip_sources or set())
-            ),
-            cancellation_check=cancellation_check,
-        )
-        errors = tuple(error for result in batch.results for error in result.errors)
+        for library, file in ready_files + waiting_files:
+            handle(library, file)
+            if limit is not None and selected_count >= limit:
+                break
         return MediaOrganizerBatchResult(
             tuple(items),
-            errors,
-            limit is not None and batch.discovered >= limit,
+            tuple(errors),
+            limit is not None and selected_count >= limit,
         )
+
+    def _discover_all_libraries(
+        self,
+        libraries: tuple[ResourceLibrary, ...],
+        *,
+        cancellation_check: CancellationCheck | None,
+    ) -> tuple[
+        list[tuple[ResourceLibrary, DiscoveredFile]],
+        list[tuple[ResourceLibrary, DiscoveredFile]],
+        list[ScanError],
+    ]:
+        """One bounded discovery pass across every enabled library.
+
+        Each library keeps its own observation scope so a same-named relative
+        path in two libraries is never the same source.  A missing Storage or a
+        disabled library is skipped exactly like the shared library scanner.
+        """
+
+        ready: list[tuple[ResourceLibrary, DiscoveredFile]] = []
+        waiting: list[tuple[ResourceLibrary, DiscoveredFile]] = []
+        errors: list[ScanError] = []
+        for library in libraries:
+            if not library.enabled or library.storage_id not in self._storages:
+                continue
+            if cancellation_check and cancellation_check():
+                break
+
+            def collect(file: DiscoveredFile, _library=library) -> None:
+                if file.status is FileScanStatus.READY:
+                    ready.append((_library, file))
+                elif file.status is FileScanStatus.UNSTABLE:
+                    waiting.append((_library, file))
+
+            result = self._scanner.scan(
+                library,
+                on_discovered=collect,
+                previous=self._observations_for_library(library),
+            )
+            errors.extend(result.errors)
+        return ready, waiting, errors
+
+    def _observations_for_library(
+        self, library: ResourceLibrary
+    ) -> Mapping[str, ObservedSource] | None:
+        """This library's own durable observations from the multi-library map.
+
+        A caller may have constructed the service with the historical flat
+        ``{path: ObservedSource}`` map; that form is returned unchanged because
+        it can only ever describe one library scope.
+        """
+
+        if all(isinstance(key, str) for key in self._previous_observations):
+            return dict(self._previous_observations) or None
+        selected = {
+            key[1]: value
+            for key, value in self._previous_observations.items()
+            if isinstance(key, tuple) and len(key) == 2 and key[0] == library.library_id
+        }
+        return selected or None
+
+    @staticmethod
+    def _observation_map_multi(
+        values: list[tuple[ResourceLibrary, DiscoveredFile]],
+    ) -> dict[tuple[str, str], ObservedSource]:
+        observed_at = datetime.now(UTC)
+        result: dict[tuple[str, str], ObservedSource] = {}
+        for library, file in values:
+            result[(library.library_id, file.path)] = ObservedSource(
+                file.path,
+                file.size,
+                file.modified_at,
+                file.fingerprint,
+                observed_at,
+                file.stable_since,
+            )
+        return result
 
     def _failed(
         self,

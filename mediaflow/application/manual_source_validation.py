@@ -182,9 +182,10 @@ class ManualSourceValidator:
         live observation is returned so the continuation records the *current*
         occurrence instead of copying a stale label forward.
 
-        A TaskItem that carries no exact evidence (a legacy item) is still proven
-        against live Storage: the current verified observation is required, but no
-        older identity is fabricated or trusted.
+        A TaskItem that carries no exact evidence (a legacy item) is refused with
+        ``source_unverified`` and a re-select/prepare next action: the current
+        verified observation is never promoted into a fabricated original
+        identity.
         """
 
         if not isinstance(evidence, PersistedSourceEvidence):
@@ -247,6 +248,19 @@ class ManualSourceValidator:
                 next_action=_CONTINUATION_REFRESH_ACTION,
                 details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
             )
+        if not evidence.has_exact_evidence:
+            # A record that cannot prove its exact original occurrence -- empty,
+            # half-written, legacy or unverified -- is refused.  The live current
+            # stat must never be silently promoted into the original identity,
+            # because a replacement at the same path would then be accepted as
+            # the reviewed source.
+            raise ManualIntentError(
+                "the persisted continuation source cannot prove its original occurrence",
+                code="source_unverified",
+                status=409,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
+            )
         if evidence.has_exact_evidence and (
             entry.path != evidence.path
             or observed.value != evidence.fingerprint
@@ -255,16 +269,6 @@ class ManualSourceValidator:
             raise ManualIntentError(
                 "the exact reviewed source changed or was replaced before continuation",
                 code="source_stale",
-                status=409,
-                next_action=_CONTINUATION_REFRESH_ACTION,
-                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
-            )
-        if not evidence.has_exact_evidence and (evidence.occurrence_id or evidence.fingerprint):
-            # Half-written or legacy-partial evidence cannot prove the exact
-            # occurrence, so it is refused instead of being completed by guesswork.
-            raise ManualIntentError(
-                "the persisted continuation source evidence is incomplete",
-                code="source_unverified",
                 status=409,
                 next_action=_CONTINUATION_REFRESH_ACTION,
                 details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},

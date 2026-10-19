@@ -106,7 +106,9 @@ class ResourceLibraryScanner:
         on_discovered: LibraryDiscoveryCallback | None = None,
         include_discovered: LibraryDiscoveryFilter | None = None,
         cancellation_check: CancellationCheck | None = None,
-        previous_observations: Mapping[str, ObservedSource] | None = None,
+        previous_observations: Mapping[str, ObservedSource]
+        | Mapping[tuple[str, str], ObservedSource]
+        | None = None,
     ) -> ResourceLibraryScanBatch:
         if limit is not None and limit < 1:
             raise ValueError("scan limit must be positive")
@@ -144,7 +146,38 @@ class ResourceLibraryScanner:
                     library,
                     cancellation=cancellation,
                     on_discovered=receive,
-                    previous=previous_observations,
+                    previous=self._observations_for(library, previous_observations),
                 )
             )
         return ResourceLibraryScanBatch(tuple(results), discovered)
+
+    @staticmethod
+    def _observations_for(
+        library: ResourceLibrary,
+        previous_observations: Mapping[str, ObservedSource]
+        | Mapping[tuple[str, str], ObservedSource]
+        | None,
+    ) -> Mapping[str, ObservedSource] | None:
+        """Select one library's own observations from a per-library or flat map.
+
+        A caller that walks several libraries must keep each library's
+        observations isolated: a same-named relative path in two libraries is
+        never the same source.  A flat map (the historical single-library form)
+        is accepted unchanged.
+        """
+
+        if not previous_observations:
+            return None
+        selected = {
+            path: value
+            for key, value in previous_observations.items()
+            if isinstance(key, tuple)
+            and len(key) == 2
+            and key[0] == library.library_id
+            and isinstance(path := key[1], str)
+        }
+        if selected:
+            return selected
+        if all(isinstance(key, str) for key in previous_observations):
+            return previous_observations  # type: ignore[return-value]
+        return None
