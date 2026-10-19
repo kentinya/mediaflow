@@ -536,6 +536,15 @@ class ConfigurationObjectService:
         self._setup_check_timeout_seconds = float(setup_check_timeout_seconds)
         self._metadata_provider_registry_factory = metadata_provider_registry_factory
         self._storage_adapters = dict(storage_adapters or {})
+        # The setup Storage picker shares the persisted deployment-internal
+        # cursor key with the live runtime browser, so a cursor minted while
+        # configuring a Draft is verifiable by the same process generation that
+        # later serves the Active revision.  Focused tests may still inject a
+        # fixed secret.
+        if storage_browser_cursor_secret is None:
+            resolver = getattr(managed, "storage_browser_cursor_key", None)
+            if callable(resolver):
+                storage_browser_cursor_secret = resolver()
         self._storage_browser = StorageBrowserService(
             managed,
             storage_adapters=self._storage_adapters,

@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,6 +35,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 EXAMPLES = Path("config/strategy.example.json")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 #: Every module that made up the retired FileIndex product.  Importing any of
 #: them must now fail: there is no repository, no lifecycle service and no
@@ -336,6 +340,253 @@ class FileIndexRetirementTests(unittest.TestCase):
                 self.assertEqual((), repository.list_manual_intents())
                 self.assertEqual((), repository.list_manual_previews("does-not-exist"))
                 self.assertEqual((), repository.list_results("does-not-exist"))
+
+
+class CrossProcessCliPaginationTests(unittest.TestCase):
+    """RO-7 P1 regression: a cursor issued by one CLI process must page in the next.
+
+    The previous implementation built a fresh ``StorageBrowserService`` per CLI
+    invocation with a per-process random cursor key, so the ``Next cursor``
+    printed by one process was unverifiable by the next.  These tests drive two
+    independent ``mediaflow`` processes against one isolated Active store and
+    assert that real pages load, never overlap, reach the last page and
+    reconstruct the directory, and that scope/tamper/expiry are still refused.
+    """
+
+    def _run_cli(self, config: Path, *arguments: str) -> tuple[int, str]:
+        """Run ``mediaflow`` in a real, independent interpreter process."""
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; from mediaflow.final_cli import final_main; "
+                    "sys.exit(final_main(sys.argv[1:], stdout=sys.stdout, stderr=sys.stderr))"
+                ),
+                "--config",
+                str(config),
+                "files",
+                "list",
+                *arguments,
+            ],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        return completed.returncode, completed.stdout
+
+    @staticmethod
+    def _names(output: str) -> list[str]:
+        names = []
+        for line in output.splitlines():
+            match = re.match(r"^(.*) \| (file|directory) \| \d+ \| ", line)
+            if match is not None and match.group(1) != "NAME":
+                names.append(match.group(1))
+        return names
+
+    @staticmethod
+    def _next_cursor(output: str) -> str | None:
+        for line in output.splitlines():
+            if line.startswith("Next cursor:"):
+                value = line.split(":", 1)[1].strip()
+                return value if value and value != "-" else None
+        return None
+
+    def _pageable_fixture(self, root: Path) -> tuple[Path, Path]:
+        config, document = _bootstrap(root)
+        movies = root / "source" / "Media" / "Movies"
+        for index in range(7):
+            (movies / f"Page-{index:02d}.mkv").write_bytes(b"x")
+        database = root / "runtime.sqlite3"
+        _activate(database, document)
+        return config, database
+
+    def test_two_independent_processes_page_through_every_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = self._pageable_fixture(root)
+            full_code, full_output = self._run_cli(
+                config, "--resource-library", "source", "--path", "Movies", "--limit", "100"
+            )
+            self.assertEqual(0, full_code)
+            expected = self._names(full_output)
+            self.assertGreater(len(expected), 3)
+
+            first_code, first_output = self._run_cli(
+                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
+            )
+            self.assertEqual(0, first_code)
+            self.assertIn("More available: yes", first_output)
+            first_names = self._names(first_output)
+            self.assertEqual(3, len(first_names))
+
+            cursor = self._next_cursor(first_output)
+            self.assertIsNotNone(cursor)
+            # A second, independent process must accept the first page's cursor.
+            second_code, second_output = self._run_cli(
+                config,
+                "--resource-library",
+                "source",
+                "--path",
+                "Movies",
+                "--limit",
+                "3",
+                "--cursor",
+                cursor,
+            )
+            self.assertEqual(0, second_code)
+            self.assertNotIn("storage_browser_cursor_invalid", second_output)
+            second_names = self._names(second_output)
+            self.assertEqual(3, len(second_names))
+            self.assertEqual([], sorted(set(first_names) & set(second_names)))
+
+            collected = first_names + second_names
+            cursor = self._next_cursor(second_output)
+            while cursor is not None:
+                code, output = self._run_cli(
+                    config,
+                    "--resource-library",
+                    "source",
+                    "--path",
+                    "Movies",
+                    "--limit",
+                    "3",
+                    "--cursor",
+                    cursor,
+                )
+                self.assertEqual(0, code)
+                self.assertNotIn("storage_browser_cursor_invalid", output)
+                collected.extend(self._names(output))
+                cursor = self._next_cursor(output)
+            self.assertEqual(sorted(expected), sorted(collected))
+
+    def test_cursor_is_rejected_across_kind_directory_and_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = self._pageable_fixture(root)
+            _, first_output = self._run_cli(
+                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
+            )
+            cursor = self._next_cursor(first_output)
+            self.assertIsNotNone(cursor)
+
+            # Same cursor, different library kind: kind/root binding refuses it.
+            _, media_output = self._run_cli(
+                config,
+                "--media-library",
+                "movies",
+                "--path",
+                "Movies",
+                "--limit",
+                "3",
+                "--cursor",
+                cursor,
+            )
+            self.assertIn("storage_browser_cursor_invalid", media_output)
+
+            # Same cursor, different directory: directory binding refuses it.
+            _, directory_output = self._run_cli(
+                config,
+                "--resource-library",
+                "source",
+                "--path",
+                "",
+                "--limit",
+                "3",
+                "--cursor",
+                cursor,
+            )
+            self.assertIn("storage_browser_cursor_invalid", directory_output)
+
+            # A tampered cursor is refused rather than silently re-read.
+            tampered = cursor[:-1] + ("A" if cursor[-1] != "A" else "B")
+            _, tampered_output = self._run_cli(
+                config,
+                "--resource-library",
+                "source",
+                "--path",
+                "Movies",
+                "--limit",
+                "3",
+                "--cursor",
+                tampered,
+            )
+            self.assertIn("storage_browser_cursor_invalid", tampered_output)
+
+    def test_paging_is_read_only_and_key_is_created_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, database = self._pageable_fixture(root)
+            with sqlite3.connect(database) as connection:
+                first_key = connection.execute(
+                    "SELECT key_material FROM managed_internal_keys "
+                    "WHERE key_name='storage_browser_cursor'"
+                ).fetchone()[0]
+            before = database.read_bytes()
+            _, first_output = self._run_cli(
+                config, "--resource-library", "source", "--path", "Movies", "--limit", "3"
+            )
+            cursor = self._next_cursor(first_output)
+            self._run_cli(
+                config,
+                "--resource-library",
+                "source",
+                "--path",
+                "Movies",
+                "--limit",
+                "3",
+                "--cursor",
+                cursor,
+            )
+            # Listing and paging never rewrite the store; the internal key is
+            # created once by the supported initialization, not by a read.
+            self.assertEqual(before, database.read_bytes())
+            with sqlite3.connect(database) as connection:
+                second_key = connection.execute(
+                    "SELECT key_material FROM managed_internal_keys "
+                    "WHERE key_name='storage_browser_cursor'"
+                ).fetchone()[0]
+            self.assertEqual(first_key, second_key)
+            with SQLiteTaskRepositoryContext(database) as repository:
+                self.assertEqual((), repository.list_tasks())
+                self.assertEqual((), repository.list_results("does-not-exist"))
+
+    def test_listing_without_initialized_key_is_refused_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, database = self._pageable_fixture(root)
+            # Remove the internal key to model a store whose supported
+            # initialization never ran the key creation.
+            with sqlite3.connect(database) as connection:
+                connection.execute("DELETE FROM managed_internal_keys")
+            before = database.read_bytes()
+            code, output = self._run_cli(config, "--resource-library", "source", "--path", "Movies")
+            self.assertEqual(0, code)
+            self.assertIn("files_list_internal_key_unavailable", output)
+            self.assertIn("no configuration was created", output)
+            # A read never mints a one-off key or writes the store.
+            self.assertEqual(before, database.read_bytes())
+
+    def test_internal_key_survives_reopen_and_reuses_persisted_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "configuration.sqlite3"
+            from mediaflow.domain.configuration_management import (
+                STORAGE_BROWSER_CURSOR_KEY_NAME,
+            )
+
+            with SQLiteConfigurationRepository(database) as repository:
+                first = repository.internal_key(STORAGE_BROWSER_CURSOR_KEY_NAME)
+                self.assertIsNotNone(first)
+                self.assertGreaterEqual(len(first), 32)
+            with SQLiteConfigurationRepository(database) as reopened:
+                # The create-if-absent key is never overwritten, so a cursor
+                # issued before a restart stays verifiable afterwards.
+                self.assertEqual(first, reopened.internal_key(STORAGE_BROWSER_CURSOR_KEY_NAME))
+            # A second store in the same directory never shares key material.
+            with SQLiteConfigurationRepository(root / "other.sqlite3") as other:
+                self.assertNotEqual(first, other.internal_key(STORAGE_BROWSER_CURSOR_KEY_NAME))
 
 
 class SQLiteTaskRepositoryContext:

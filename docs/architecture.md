@@ -503,6 +503,13 @@ reopen/recovery cannot replay known or uncertain effects. Fresh deployments have
 no old-index migration/dual-write/API compatibility and no automatic clear/drop/rebuild of user data.
 Necessary shared Automation coupling may be cleaned without preserving43 UI or resuming its redesign.
 
+Continuation cursors for the shared live listing are stateless and authenticated with one
+deployment-internal key generated create-if-absent in the managed configuration store. The key is
+internal metadata (not business configuration, not part of an Active revision, never portable or
+exported) so a cursor issued by one CLI/API process stays verifiable by a later process. A strictly
+read-only listing reads the key without creating or upgrading the store and refuses an uninitialized
+store explicitly rather than minting a one-off process key.
+
 ## TARGET — Standalone Preview retirement and shared analysis (Slice45)
 
 [The Preview retirement design](preview-retirement-spec.md) owns `V2-OPS-013` / RO-8. Use the Scan

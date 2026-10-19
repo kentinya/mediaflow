@@ -2000,7 +2000,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIsNotNone(repository.get_organize_authority(draft.revision_id))
                 self.assertIsNotNone(repository.get_destination_preview(draft.revision_id))
                 self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
-                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
+                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 11)
             with sqlite3.connect(database) as connection:
                 connection.execute("DROP INDEX managed_destination_prechecks_status")
                 connection.execute("DROP TABLE managed_destination_prechecks")

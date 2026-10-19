@@ -1681,6 +1681,13 @@ def _render_live_library_directory(configuration, arguments) -> str:
 
 def _live_library_directory_document(configuration, arguments) -> dict[str, object]:
     from mediaflow.application.storage_browser import RuntimeFilesBrowserService
+    from mediaflow.domain.configuration_management import (
+        STORAGE_BROWSER_CURSOR_KEY_NAME,
+    )
+    from mediaflow.infrastructure.internal_key_store import (
+        InternalKeyUnavailable,
+        read_internal_key_read_only,
+    )
     from mediaflow.infrastructure.read_only_active_configuration import (
         ReadOnlyActiveRevisionSource,
         active_revision_failure_document,
@@ -1714,10 +1721,41 @@ def _live_library_directory_document(configuration, arguments) -> dict[str, obje
             next_action="complete first setup in the Web Settings page and activate a revision",
             durable_state="no configuration was created, changed or upgraded",
         )
+    # Cursor continuation must stay verifiable across CLI/API processes, so the
+    # authentication key is the one persisted in the managed store.  Reading it
+    # here stays strictly read-only: a store that has not been initialized with
+    # the key is refused explicitly instead of minting a one-off process key.
+    try:
+        cursor_key = read_internal_key_read_only(database_path, STORAGE_BROWSER_CURSOR_KEY_NAME)
+    except InternalKeyUnavailable as error:
+        raise StorageBrowserError(
+            "files_list_internal_key_unavailable",
+            getattr(error, "reason", "internal_key_unavailable"),
+            str(error),
+            status=409,
+            next_action=(
+                "complete supported initialization (for example the Web Settings or "
+                "resident service startup) so the internal cursor key exists, then retry"
+            ),
+            durable_state="no configuration was created, changed or upgraded",
+        ) from error
+    if cursor_key is None:
+        raise StorageBrowserError(
+            "files_list_internal_key_unavailable",
+            "internal_key_unavailable",
+            "the internal cursor-authentication key has not been initialized in this store",
+            status=409,
+            next_action=(
+                "complete supported initialization (for example the Web Settings or "
+                "resident service startup) so the internal cursor key exists, then retry"
+            ),
+            durable_state="no configuration was created, changed or upgraded",
+        )
     browser = RuntimeFilesBrowserService(
         ReadOnlyActiveRevisionSource(active),
         active_revision=active,
         runtime_configuration=_active_runtime_for_browsing(active, database_path),
+        cursor_secret=cursor_key,
     )
     limit = _live_list_limit(arguments.limit)
     if arguments.resource_library is not None:

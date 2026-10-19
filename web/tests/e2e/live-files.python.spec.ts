@@ -184,6 +184,20 @@ test("CLI and the Web MediaLibrary page list the same live directory", async ({
 test("cursor pagination binds library kind/id/root and reaches every entry", async ({
   page,
 }) => {
+  // The full fixture directory is fixed, so paging through every bounded page
+  // must reconstruct it entry-for-entry.  A CLI cursor failure still exits 0,
+  // so the assertions must prove real, non-empty, non-overlapping pages rather
+  // than only checking the exit code.
+  const full = await cliFilesList(page, {
+    kind: "resource",
+    library: "source",
+    path: LIVE_PATH,
+    limit: 100,
+  });
+  expect(full.code).toBe(0);
+  const expected = cliRows(full.output).map(([name]) => name);
+  expect(expected.length).toBeGreaterThan(5);
+
   const first = await cliFilesList(page, {
     kind: "resource",
     library: "source",
@@ -192,6 +206,7 @@ test("cursor pagination binds library kind/id/root and reaches every entry", asy
   });
   expect(first.code).toBe(0);
   expect(first.output).toContain("More available: yes");
+  expect(first.output).not.toContain("storage_browser_cursor_invalid");
   const cursor = first.output.match(/Next cursor: (.+)/)?.[1]?.trim();
   expect(cursor).toBeTruthy();
   expect(cursor).not.toBe("-");
@@ -204,6 +219,34 @@ test("cursor pagination binds library kind/id/root and reaches every entry", asy
     cursor: cursor as string,
   });
   expect(second.code).toBe(0);
+  // The second page must actually load: a cursor error would otherwise be
+  // invisible behind the CLI's exit code.
+  expect(second.output).not.toContain("storage_browser_cursor_invalid");
+  const secondNames = cliRows(second.output).map(([name]) => name);
+  expect(secondNames.length).toBeGreaterThan(0);
+  const firstNames = cliRows(first.output).map(([name]) => name);
+  expect(secondNames).not.toEqual(firstNames);
+  expect(secondNames.some((name) => firstNames.includes(name))).toBe(false);
+
+  // Continue to the last page and prove the union equals the full listing.
+  const collected = [...firstNames, ...secondNames];
+  let next: string | undefined = second.output
+    .match(/Next cursor: (.+)/)?.[1]
+    ?.trim();
+  while (next && next !== "-") {
+    const pageResult = await cliFilesList(page, {
+      kind: "resource",
+      library: "source",
+      path: LIVE_PATH,
+      limit: 5,
+      cursor: next,
+    });
+    expect(pageResult.code).toBe(0);
+    expect(pageResult.output).not.toContain("storage_browser_cursor_invalid");
+    collected.push(...cliRows(pageResult.output).map(([name]) => name));
+    next = pageResult.output.match(/Next cursor: (.+)/)?.[1]?.trim();
+  }
+  expect([...collected].sort()).toEqual([...expected].sort());
 
   // The same cursor is rejected across a different library kind and root: a
   // cursor is bound to library kind, ID, root, configuration and directory.

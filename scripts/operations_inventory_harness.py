@@ -421,7 +421,6 @@ def build_managed_fixture(
     )
     objects = ConfigurationObjectService(
         configuration_service,
-        storage_browser_cursor_secret="operations-inventory-harness-secret",
     )
     draft = configuration_service.import_draft(document, actor="harness")
     validated = configuration_service.validate(draft.revision_id, actor="harness")

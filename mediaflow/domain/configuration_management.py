@@ -40,6 +40,14 @@ CONFIGURATION_REFERENCE_EVIDENCE_LIMIT = 32
 CONFIGURATION_SETUP_CHECK_PATH_LIMIT = 4096
 CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024
 
+#: The stable name of the deployment-internal key that authenticates live
+#: Storage browser continuation cursors.  It is generated create-if-absent in
+#: the managed configuration store so a cursor issued by one CLI/API process
+#: can be verified by a later one.  It is internal metadata: never business
+#: configuration, never part of an Active revision document, never portable and
+#: never projected to operators.
+STORAGE_BROWSER_CURSOR_KEY_NAME = "storage_browser_cursor"
+
 #: Deployment-owned startup authority inside a managed configuration document:
 #: the durable database locator and the API principal/role/token identity live
 #: with the deployment bootstrap file and environment.  They are never managed

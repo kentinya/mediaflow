@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import sqlite3
 import threading
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from mediaflow.domain.configuration_management import (
+    STORAGE_BROWSER_CURSOR_KEY_NAME,
     ClassificationPreviewEvidence,
     ConfigurationActivationConflict,
     ConfigurationChangeAudit,
@@ -42,7 +44,7 @@ from mediaflow.domain.configuration_management import (
     validate_storage_configuration,
 )
 
-CONFIGURATION_SCHEMA_VERSION = 10
+CONFIGURATION_SCHEMA_VERSION = 11
 
 
 class SQLiteConfigurationRepository:
@@ -681,6 +683,17 @@ class SQLiteConfigurationRepository:
             "digest": row["last_active_digest"],
             "updatedAt": row["updated_at"],
         }
+
+    def internal_key(self, name: str) -> bytes | None:
+        """Return one persisted deployment-internal key, or ``None`` if absent."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT key_material FROM managed_internal_keys WHERE key_name=?", (name,)
+            ).fetchone()
+        if row is None:
+            return None
+        return bytes(row["key_material"])
 
     def activate_revision(
         self,
@@ -1967,6 +1980,11 @@ class SQLiteConfigurationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS managed_destination_prechecks_status
                     ON managed_destination_prechecks(status, prechecked_at);
+                CREATE TABLE IF NOT EXISTS managed_internal_keys (
+                    key_name TEXT PRIMARY KEY,
+                    key_material BLOB NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             self._connection.execute(
@@ -2082,3 +2100,17 @@ class SQLiteConfigurationRepository:
                                     audit["occurred_at"],
                                 ),
                             )
+            # The cursor-authentication key is deployment-internal metadata.
+            # It is generated exactly once per store (create-if-absent) so a
+            # continuation cursor stays verifiable across CLI/API processes and
+            # restarts.  It is never business configuration, never part of an
+            # Active revision and never exported.
+            self._connection.execute(
+                "INSERT OR IGNORE INTO managed_internal_keys "
+                "(key_name, key_material, created_at) VALUES (?, ?, ?)",
+                (
+                    STORAGE_BROWSER_CURSOR_KEY_NAME,
+                    secrets.token_bytes(32),
+                    datetime.now(UTC).isoformat(),
+                ),
+            )

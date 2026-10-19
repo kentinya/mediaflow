@@ -200,6 +200,25 @@ class ManagedConfigurationService:
 
         return self._management_only
 
+    def storage_browser_cursor_key(self) -> bytes | None:
+        """Return the persisted internal cursor-authentication key, if any.
+
+        The key is deployment-internal metadata shared by every CLI/API process
+        that serves a live library browse, so a continuation cursor minted by
+        one process stays verifiable by a later one.  The repository owns its
+        create-if-absent generation; this accessor only reads it and never
+        writes, so a caller that must stay read-only can still resolve it.
+        """
+
+        from mediaflow.domain.configuration_management import (
+            STORAGE_BROWSER_CURSOR_KEY_NAME,
+        )
+
+        reader = getattr(self._repository, "internal_key", None)
+        if reader is None:
+            return None
+        return reader(STORAGE_BROWSER_CURSOR_KEY_NAME)
+
     def status_document(self) -> dict[str, object]:
         active = None
         health = "HEALTHY"

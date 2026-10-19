@@ -402,8 +402,14 @@ class MediaFlowApi:
         ):
             raise ValueError("stale Job age must be between 60 and 604800 seconds")
         self._storage_adapters = dict(storage_adapters or {})
-        self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._configuration_service = configuration_service
+        # A cursor minted by one API/CLI process must be verifiable by a later
+        # one, so the shared runtime browser and the setup storage picker use
+        # the same persisted internal key when no explicit secret is injected
+        # (focused tests still inject their own).
+        if storage_browser_cursor_secret is None and configuration_service is not None:
+            storage_browser_cursor_secret = configuration_service.storage_browser_cursor_key()
+        self._storage_browser_cursor_secret = storage_browser_cursor_secret
         self._maximum_active_jobs_override = maximum_active_jobs
         self._manual_intents = manual_intent_service
         if self._manual_intents is None and configuration_service is not None:

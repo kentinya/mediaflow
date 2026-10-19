@@ -922,7 +922,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     )
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
-                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
+                self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 11)
                 # Runtime schema 43 adds durable scope continuations; schema
                 # 44 links exact-Preview recovery to the paused source Task.
                 self.assertEqual(RUNTIME_SCHEMA_VERSION, 48)
