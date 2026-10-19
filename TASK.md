@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER COMPLETES SOURCE EVIDENCE AND WORK-SCOPED STABILITY IN THE SAME TASK
+Next Action: DEVELOPER FIXES RETRY STABILITY BYPASS AND WORKER TRUST-STATE CHECK IN THE SAME TASK
 ```
 
 ## Goal
@@ -267,45 +267,57 @@ READY FOR B REVIEW at implementation HEAD `72682d1e3277343b674d62e5ceda99a824036
 ## B Review Result
 
 ```text
-Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..906def76fc596acf4208767ed2dcdee7d2076f06
-Decision: FIX REQUIRED — B-1 reproduced fixed; B-2 incomplete; CLI stability P1
-Acceptance runs: 70 focused tests OK (7.741s, zero skips); four B independent scripts with actual JSON
-Task blockers: missing initial source evidence / unsafe evidence fallback; CLI stability lifecycle
+Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..a3fbb36c7f86ed08629e08247a08e5f154d4adbb
+Decision: FIX REQUIRED — retry bypasses stability; Worker promotes untrusted source state
+Acceptance runs: 6 new CLI tests OK (6.778s, zero skips); four independent B scripts with actual JSON
+Task blockers: long/changed-source stability continuation; unverified/legacy Worker admission
 Slice Required Outcomes / Surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX LOOP; B COMPLETES REMAINING DIFF REVIEW / ASSIGNED T4 ON CORRECTED CANDIDATE
 ```
 
-固定实现候选为上述 Head；交接 `b7d5ba13bb907f44c0e47f709bb941bf0c65d7d8` 相对候选仅改
-`TASK.md`，执行输入相同。上轮已读适用需求/旅程/架构及父 Contract 无变更，本轮核对当前
-指针、契约及修正 diff，并沿 Task Base..Head 检查生产来源/观察/恢复/持久化链。
-按 workflow §6 已证实阻塞提前拒绝；不声称全部 diff 审查、T4 或 Slice-final 已完成。
+实现固定为上述候选；交接 `b0f070b1801754d2d53ab9f992374fbc3e7ea3f9` 相对候选仅改
+`TASK.md`。已读适用需求/完整旅程/架构及父 Contract 无变更，本轮核对当前指针、契约、修正
+生产 diff，并沿原 Task Base..Head 检查来源/观察/恢复链。workflow §6 允许已证实阻塞
+提前拒绝；未声称完成整个 Task 全部 diff 审查、T4 或 Slice-final。
 
-已独立确认：B-1 的 payload/digest 和不支持 schema 两反例均被拒绝、数据库字节不变；
-带原精确证据的替换来源也在 Provider 前拒绝（Worker exit1、continuation failed、无新项/结果）。
-本轮的缺口不撤销这些已证实的修正，但不足以让整个 B-2 / RO-7 通过。
+已独立确认本次进展：fresh CLI 初次 Provider 失败前已有 verified 来源证据，排队后替换
+会拒绝（Worker exit1、0 Provider、无续作项/结果）；1秒稳定间隔的未变来源实际进入分析。
+B-1 历史修正保持，相关配置校验源码未改；这些事实不等同于整个 RO-7 通过。
 
 ### 同一 Task 的必需修正
 
-1. **B-2 / P1 — 从首次处理到恢复保持精确来源。** 正常新建 CLI `organize` 的失败 TaskItem
-   目前没有 occurrence/fingerprint；必须在原工作初次观察/准入时保存真实来源证据，并传递到
-   TaskItem/Result/恢复，不能在恢复时首次 stat 后将替换文件标为原项的 verified 来源。
-   覆盖实际 `process_file`、`process_library`、`process_all_libraries`、Worker/Automation
-   共用调用中断掉的证据传递；复用现有 Storage/source-evidence/coordinator，不恢复索引或
-   全局目录。验证器对缺失、半缺失、unverified/legacy 等不能证明原来源的记录明确拒绝并
-   指向重新选择/准备；不得把当前 fingerprint 自动补成旧来源的证明。完整旧证据才可比较后
-   继续，合法旧 pin、成功兄弟和未知效果非重放保持。
-2. **P1 — CLI 真实稳定观察闭环。** `organize` 库级遍历在 stable-size 非0时不能每次都从
-   无观察开始、过滤掉全部候选并以 completed/0 结束。让受支持的 CLI/Worker 共用现有有界
-   发现/持久观察：保留该显式工作自己的等待/再次观察、真实区间、大小/mtime/有效指纹变化
-   重置及重开语义，满足后进入完整分析；若无法安全继续，明确阶段/原因和可行下一步。
-   不提示等待后重复一个永远无法就绪的命令，不用旧mtime/首stat伪造稳定、不建全局缓存。
-   核对直接文件、单库目录和全部库入口同约束，保留范围/控制/fence/未确认零mutation。
-3. 用真实生产入口补足断言：fresh 临时库通过真实 CLI 和可工作的本地 Storage/fake Provider
-   产生初次失败，检查原项已有 verified occurrence/fingerprint，再排队后替换/删除并验证
-   Worker 拒绝、零 Provider 请求/错误结果/媒体变更。另测丢失或不可信原证据必须拒绝，以及
-   未变来源与 superseded pin 正例。禁止只用预先灌入精确证据的 fixture 证明所有新建任务。
-   stable-size 非0的 CLI 用真实经过时间验证从等待到分析、来源变化重置与重开，不把0项完成
-   当作“稳定性安全”通过；保留原安全断言和独立结果，不扩大重试/超时以掩盖问题。
+1. **P1 — 稳定观察必须约束重试与执行。** 本轮真实反例：配置61秒，首次
+   `organize --execute` 记录 unstable_source/failed；立即
+   `tasks retry-failed TASK_ID --execute` 在整个流程0.083秒内实际 MOVE 成功。
+   当前 `resolve_source_evidence=False` 只对比 fingerprint，既不读取/验证原稳定观察，
+   也不重新满足策略。必须将“来源身份可验证”与“稳定区间已满足”分开；所有受支持的
+   retry/resume/recovery/Worker/Automation 调用在 Provider/执行前仍校验原pin下的稳定策略。
+   长区间、变化后再次等待、重开/新进程都不能绕过。稳定证据缺失时重新开始观察，不能
+   将当前stat/旧mtime/指纹相等直接当作区间已满足，也不能把 `resolve_source_evidence`
+   布尔开关当作跳过稳定性的许可。
+2. **持久等待闭环，不用60秒阈值掩盖。** `_previous_observations` 目前仅在 Python 对象中，
+   没有任何新的观察保存/加载路径；注释和报告称 durable 不能作为重开证据。复用现有
+   discovery/工作checkpoint与Task/Worker，把观察起点、来源证据、固定作用域、到期时间和
+   合法owner/fence落在该显式工作中；等待到期后真实重观察，变化重置，原证据丢失则重新
+   观察。长等待可及时返回真实工作状态/身份与安全下一步，不需要同步阻塞整个区间；但立即
+   Retry/Continue 只能继续观察/等待，不能直接进入分析或媒体变更。不得只删60秒上限、增加
+   `sleep`、再加一次临时stat或删除重试入口来掩盖缺口。保留0秒无需等待、真实空目录可0项
+   完成、协作控制和有界发现；不建第二队列/执行引擎或全局文件目录。
+3. **B-2 / P1 — Worker 必须校验原证据的可信状态。**
+   `PersistedSourceEvidence.has_exact_evidence` 当前只检查两个字符串非空，未检查
+   `fingerprint_state`，所以真实 Worker 会将携带正确字段但标为 unverified/legacy 的原项
+   分析为 completed/dry_run，并将续作改成 verified。让共享 validator 在消费原证据时明确
+   要求其为可信 verified 状态；缺失/半缺失/unverified/legacy 一律 source_unverified，
+   保留记录并引导重新选择/准备；不能根据当前stat将不可信原记录升级。恢复和元数据纠正
+   Worker、普通重试必须采用同义检查，避免 `_persisted_source_refusal` 与
+   `ManualSourceValidator` 两套判断继续漂移。完整可信来源未变及合法旧pin正例继续通过。
+4. **先写可区分缺陷的反例，再修。** 稳定性用61秒配置立即重试即可快速验证“未到期零
+   Provider/零mutation”，不必每次真等61秒。到期允许、变化重置与重开使用短真实间隔和
+   受控时钟/持久观察组合，不能只改mtime假装已经观察。覆盖0、1、超过60秒，直接文件/
+   单库目录/全部库及真实Worker续作，原成功兄弟/未知效果不重放。可信状态测试须保留原来
+   **真实且匹配的 occurrence/fingerprint，只将状态设为 unverified/legacy**，然后驱动
+   真实 `worker run-next`，断言拒绝、0 Provider/媒体变更和不伪造verified；只用伪造字符串
+   或仅测直接CLI重试，无法区分“指纹不匹配”与“状态不可信”。
 
 ### Developer 执行顺序与代码定位
 
@@ -352,6 +364,7 @@ Next: SAME TASK FIX LOOP; B COMPLETES REMAINING DIFF REVIEW / ASSIGNED T4 ON COR
 | 原证据完整且来源未变，期间发布新Active | 在合法原pin下完成分析；原身份、原结果和其他成功项不被改写或重放。 |
 | stable-size默认0 | 不增加固定等待；有效来源继续现有完整分析。 |
 | stable-size=1秒，来源未变 | 首观察后保持真实等待；超过1秒实际重观察后进入分析，不能两次CLI都 completed/0。 |
+| stable-size=61秒，首次等待项后立即Retry/Continue，含 `--execute` | 原稳定区间未满足时继续观察/等待；0 Provider/零媒体mutation，不能仅凭指纹相同执行。 |
 | 等待期间大小/mtime/有效validator变化，或同一工作重开 | 变化重新计时；合法持久观察可恢复，丢失证据重新观察；未满足前零执行权/媒体mutation。 |
 
 Developer 本次先跑下列新增/修改和直接受影响组；其他实际改动按本 Task 原分配追加对应组
@@ -362,6 +375,7 @@ python3 scripts/check_governance.py
 PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_recovery_continuation test_metadata_correction_continuation test_task_persistence
 PYTHONPATH=tests .venv/bin/python -m unittest test_scanner test_resource_library_pipeline test_final_integration test_scan_retirement_stability test_organize_preparation
 PYTHONPATH=tests .venv/bin/python -m unittest test_automation_definition_execution test_automation_authorized_execution_matrix test_task_center_recovery_lineage
+PYTHONPATH=tests .venv/bin/python -m unittest test_task_retry test_scope_continuation test_processing_recovery_admission test_task_pause_resume
 git diff --check
 ```
 
@@ -371,19 +385,20 @@ B 在修正固定 SHA 重做独立关键复现、审完原 Base..新 Head，并�
 Developer 原报告的 direct-files Base/flaky 归因仍未由 B 独立确认，不作为豁免。
 
 本轮本机 ignored evidence：
-`.git/validation-evidence/906def76fc596acf4208767ed2dcdee7d2076f06/task45.5/b-review/`。
-`active-integrity.json` / `exact-replaced-recovery.json` 为修正通过的独立反例；
-`fresh-task-missing-evidence.json` 为真实新建 CLI 失败→替换→恢复 completed/dry_run、1次
-Provider 搜索、新项被标 verified 的阻塞；`cli-stability.json` 为配置1秒、实际等待1.105秒后
-两次CLI仍 exit0/completed/0项、Provider为0的阻塞。四脚本、原始测试日志和说明均保留。
-70 tests OK/无skip，日志的 ResourceWarning 原样保留；反例复现媒体mutation均为0。
-测试命令总耗时少于15秒；本轮复核已超过3分钟，低于用户50%上限。
+`.git/validation-evidence/a3fbb36c7f86ed08629e08247a08e5f154d4adbb/task45.5/b-review/`。
+四脚本及JSON：`fresh-task-evidence.json`、`cli-short-stability.json` 为已修正反例；
+`long-stability-retry.json` 是61秒策略在0.083秒内通过立即重试实际MOVE（临时fixture媒体）；
+`untrusted-worker-evidence.json` 两种状态均被Worker分析 completed、1次Provider、续作verified。
+`focused-tests.log` 为6 tests OK/无skip；全部B执行的测试命令耗时少于15秒，复核超过3分钟，
+低于用户50%上限。真实MOVE只发生于隔离临时根，未触碰用户媒体/数据库。
 
-45.4原PASS/Base/Reviewed Head/验证例外不变；未规划新Task，未更改Slice/Roadmap/Progress。
-RO-7通过后再核对全部RO/Surfaces，满足即停止造Task、补齐/复用最终门禁并交A；RO-8仍待实现。
-本轮preflight：main@b7d5ba13bb907f44c0e47f709bb941bf0c65d7d8，治理PASS，workspace/Git可写。
-预存图片删除、未跟踪截图/.DS_Store/ZIP/浏览器结果/开发log均保留且不纳入本checkpoint；
-未读取或修改私有ignored配置、用户运行库或媒体。上轮详细复核保留在 `0ccca98:TASK.md`。
+按已证实阻塞提前停止昂贵门禁。Required Tests 的全部B T4/真实入口/wheel/安装消费者/
+Docker/视觉门禁仍pending B，修正固定SHA再执行；匹配证据按workflow复用，不机械重跑Final。
+Developer的全量报告与未核实的direct-files Base/flaky归因不作为B验收或豁免。
+45.4历史PASS/验证例外保持；未规划新Task，未改Slice/Roadmap/Progress，RO-8仍待实现。
+本轮preflight：main@b0f070b1801754d2d53ab9f992374fbc3e7ea3f9，治理PASS，workspace/Git可写。
+预存图片删除、未跟踪截图/.DS_Store/ZIP/浏览器结果/开发log全部保留，不纳入checkpoint；
+未读取或修改私有ignored配置、用户运行库或媒体。此前详细复核保留在Git及原证据目录。
 
 ## Developer Fix Round Report (B-1 / B-2 / B-3)
 
