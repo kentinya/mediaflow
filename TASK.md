@@ -202,89 +202,124 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 ## Developer Completion Report
 
-READY FOR B REVIEW at implementation HEAD `86f8af953cf9c2501e107831a2da754bd68c0640`
+READY FOR B REVIEW at implementation HEAD `6f79676a12147a671a1b466af885fff1e7ce1790`
 (Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previously reviewed candidate
-`4afeb5eea39130325e1739a9eb2602f57262719b`). Same Task, Base / Goal / High / T4 unchanged.
+`86f8af953cf9c2501e107831a2da754bd68c0640`; this handoff differs only in TASK.md). Same Task,
+Base / Goal / High / T4 unchanged. B's review finding was **FIX REQUIRED — a fully recorded budget
+still hides/refuses undecided recovery**; this fix round commits only that correction and its
+tests.
 
-### 本轮（B 第四次 FIX REQUIRED）修正
+### 先复现（修复前）
 
-**先重现（修复前）。** 直接运行 B 的 `reproduce_recovery_scope.py`（Task Base 不变）：
-P1-1 真实 409 `no_remaining_scope`（`remaining()` 已返回 Left、预算 >0）；P1-2 Task B 恢复
-409 `discovery_conflict`，普通 Files 准备 202 却拿到 A 的同一 discovery 且带 A 的
-recoverySourceTaskId、计划只剩 Left。两处均在修改前复现，未改动断言。
+Running B's own script (unchanged candidate, unchanged assertions) reproduced the P1 exactly:
+`item_limit=2`, `Kept` successful, `Left` recorded-but-`pending`, so `remaining_scope()` returned
+`Left` with `remaining_limit == 0`. The real API answered `POST
+/api/v1/tasks/{id}/remaining-scope-previews` with 409 `no_remaining_scope` ("every unit ... already
+recorded"), and `GET /api/v1/operations/runs/{id}` exposed a `resume` action with **no** `preview`
+recovery entry — the required journey was unreachable. Media unchanged, target files 0.
 
-**P1-1 根因与修复：未决来源必须留在恢复范围。**
-`admit_recovery_preparation` 把 `remaining_scope()` 的 `already_recorded`（所有已记录项，
-含 Pending/Processing/Failed/Paused）整体当作排除项，同时用 `remaining_limit==0` 判定"无剩余"。
-当原预算已全部被记录占用、但其中仍有未决项时，范围被排空且拒绝。
+Root cause was exactly the three-layer one B described: `continuation_obstacle()` decided
+"nothing remaining" from the queued continuation's *budget*, the API passed that verdict straight
+into `admit_recovery_preparation()`, which refused before ever reaching the recovery scope, and the
+native projection published the recovery entry only for the `authority_required` code. Before
+touching application code, the new `test_a_fully_recorded_budget_still_recovers_its_undecided_item`
+was executed against the unmodified modules (stash of the five application files) and failed at
+`resume["preview"]` — the failing case is real, not retro-fitted.
 
-- 新增 `application.scope_continuation.recovery_scope()`：`undecided_items` =
-  仍在 `_REMAINING_ITEM_STATUSES` 且无终态 Result/不确定效果的项；
-  `replay_excluded_sources` = 已记录 − 未决（即成功/DryRun/Skipped/Ignored/不确定效果）；
-  `new_source_budget` = 原剩余未记录预算 + 未决项数（未决项已计入原准入，不重复扣减、也不放宽原预算）。
-- 准入：排除集只取 `replay_excluded_sources`；`no_remaining_scope` 仅在既无未决项又无进一步
-  来源预算时给出；有界只读探针与 admitted primary bound 使用同一固定选择
-  （`max_primary_sources = new_source_budget`）。
-- 排除集超过 `max_scope_paths` 时明确 409 `recovery_scope_over_limit`，不截断（截断会重新提供已决来源）。
-- Worker walk 的排除语义不变：成功/忽略/未知效果 sibling 仍不 observe/不重新提供/不重放。
+### 修正：区分"没有新的发现名额"与"没有任何可安全恢复项"
 
-**P1-2 根因与修复：统一应用层与存储层的完整准入身份。**
-`_admission_signature`（唯一索引检查工具）与 `find_open_media_discovery` 各自拼装，且都不含
-definition origin / recovery origin / 排除集 / 预算，因此恢复准备、普通准备、其他 Task 的恢复
-在存储层是同一身份。
+1. **共享边界显式建模两种操作** (`domain/scope_continuation.py`, `application/scope_continuation.py`):
+   新增 `ScopeContinuationOperation{QUEUED_CONTINUATION, RECOVERY_PREPARATION}`，`continuation_obstacle()`
+   和 `ScopeContinuationService.obstacle()/recovery_obstacle()` 按操作给出结论。两者共享同一条链、
+   paused 状态、不可变 pin、continuation 所有权与 live authority 校验；只有两处按操作分叉：
+   - **预算**：queued continuation 把*未记录*发现名额交给 Worker 且跳过已记录来源，因此原准入
+     全部记录后确实没有可排队工作，仍给出 `no_remaining_scope`；recovery preparation 重新观察
+     已记录但**未决**的项，只有"既无未决项又无剩余名额"才拒绝。
+   - **授权**：queued continuation 若会修改媒体仍需 live 可复用授权；零变更 recovery
+     preparation 不要求也不授予执行权（执行仍需一次全新显式确认）。
+   其他拒绝（命令类型、paused、pin、chain owner/continuation 已存在、RBAC、claim/fence）对
+   两种操作完全一致，未被绕过。普通 Continue 的预算限制保留。
 
-- 新增 `domain.media_discovery.discovery_admission_identity()` 作为**唯一**身份权威：
-  actor / 库 / Storage / pin / 规范 scope / autoPrepare，加上 definition（定义身份+指纹）与
-  恢复（原 Task、排序去重排除集、primary bound）；origin 键仅在实际属于该入口时出现，因此
-  普通 Files 准入保持**逐字节相同**的旧签名（已开普通记录仍可协调，无需清库/回填）。
-- writer（`_discovery_values`/`_admission_signature`）、`find_open_media_discovery`、
-  `find_open_recovery_discovery` 全部改用该函数；普通 finder 额外以
-  `recovery_source_task_id IS NULL` 硬隔离，恢复 finder 以 `recovery_source_task_id=?` 绑定。
-- `_reconcile_admission` 传入 definition origin；内存替身回退路径同样排除恢复记录并比对定义。
-- 原子性不变：`create_media_discovery` 仍在 `BEGIN IMMEDIATE` 内做请求身份/别名/签名检查；
-  重复/并发/丢响应同一原请求收敛同一记录，不同 Task 与普通新意图互不借用 origin/排除集。
+2. **精确恢复范围** (`RecoveryScopePlan`): `recovery_scope()` 保持原三元组返回，新增
+   `recovery_scope_plan()` 提供同一计算的 `unrecorded_budget`。原准入被完全记录时
+   (`unrecorded_budget == 0`)，preparation 观察**恰好那些未决来源**而不是重走目录，因此满额之后
+   才出现的新文件不能借用未决名额、静默替换或扩大范围；新来源准入身份由 scope signature 逐项
+   绑定，重复请求仍收敛同一 durable preparation。仍有未记录名额时继续走原有目录遍历与预算。
 
-### 实际受影响命令/结果（本轮）
+3. **原生投影按恢复资格发布** (`application/operations_lifecycle.py`):
+   `TaskExecutionContext.recovery_available` 来自共享边界的 recovery 结论，`lifecycle.resume`
+   的 `preview` 入口据此发布（仍仅对有 `MANAGE_MANUAL_ORGANIZE` 的主体）。真正全已决的运行
+   不发布入口。API `_remaining_scope_obstacle()` 改为调用 `recovery_obstacle()`，真实 POST 与
+   投影不再可能不一致。
 
-仓库根，`PYTHONPATH=tests`：
+4. **一致性**: fake server 与 real-Python harness 同步表达同一规则（recovery 资格而非单一
+   refusal code），新增 harness fixture `seed-full-budget-recovery` 与专用 Provider 候选。
 
-- `test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **187 OK**
-- `test_task_persistence test_sqlite_backup test_sqlite_restore test_task_center_recovery_lineage test_recovery_continuation test_automation_run_once test_v2_automation_run_once test_preview_analysis` → **189 OK**
-- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser test_scanner test_resource_library_pipeline test_scan_retirement_stability test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_direct_file_operations test_manual_operations_contract test_operations_task_center test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → **405 OK**
-- 新增用例（真实 API/SQLite/LocalStorage/fake Provider，`_drive_recovery` 驱动持久 Worker）：
-  - `test_scope_continuation`：`test_recovery_keeps_an_undecided_recorded_source_in_the_reviewed_scope`
-    （Kept 成功 + Left Pending 已记录、原 budget 4 → 202；计划恰为 `Incoming/Sub/Left.2005.mkv`，
-    Preview 带原 Task、媒体零变更、target 0）；
-    `test_recovery_identity_isolates_tasks_and_ordinary_files_preparations`
-    （A 重复→同 discovery；B 恢复→202 独立；普通 Sub 准备→202 独立且 origin 为 null；
-     recovery→ordinary 后再 recovery 仍 202 且计划只含 Left；三份计划逐项相等）。
-  - `test_task_persistence`：`DiscoveryAdmissionIdentityTests`（普通/恢复/两 Task 恢复/两定义
-     在真实 SQLite 中互不 alias、变更排除集为不同准入、跨连接重开后仍按原身份读取）与
-     `test_an_ordinary_admission_keeps_its_previous_durable_identity`（普通签名与旧实现逐字节相等）。
-- 证据脚本 `.git/validation-evidence/task45.5-developer-fix2/verify_recovery_scope_and_identity.py`
-  与输出 `recovery-scope.json`（exit 0；两案均通过，`elapsedSeconds` 0.3s）。
-- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
-  `.venv/bin/python -m compileall -q mediaflow tests scripts` OK；
-  `.venv/bin/ruff check` 与 `ruff format --check` 覆盖全部 6 个改动 Python 文件 → passed / formatted。
-- 本轮未改 Web/API 契约（仍返回 discovery 投影），故未重跑 Web/E2E；TASK 追加的
-  Web 直接受影响项留给 B 在候选上执行。
+### 实际受影响命令/结果（本轮，仓库根，`PYTHONPATH=tests`）
 
-### 已知失败/风险
+- `test_scope_continuation` → **65 OK**（含 4 个新增用例）
+- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → **40 OK**
+- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize` → **257 OK**
+- `test_recovery_continuation test_task_center_recovery_lineage test_scope_continuation test_media_discovery_provider_manifest test_organize_preparation` → **152 OK**
+- `test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **100 OK**
+- `test_task_persistence test_sqlite_backup test_sqlite_restore test_direct_file_operations test_manual_operations_contract` → **98 OK**
+- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → **140 OK**
 
-- B 的 `reproduce_recovery_scope.py` 中 P1-1/P1-2 的**旧断言**现在按设计失败（它们编码的是缺陷
-  行为）；本报告以上述新用例和证据脚本的等价/更强断言取代，未删除或弱化任何产品断言。
-- 恢复身份现在包含排除集与 primary bound：同一原 Task 在**排除集实质变化**（例如某未决项被
-  纠正为已决）后会成为新准入，而不再复用一个已不匹配的记录——这是有意的精确语义，B 需确认
-  其符合"原请求重复收敛、实质改变拒绝/新准备"的要求。
-- runtime schema 仍为 49（本次仅新增身份字符串内容，无新列/表）；B 仍需在真实 wheel/Docker 上
-  复核 fresh/reopen 与支持版本迁移。
+新增/修改用例（真实 API/SQLite/LocalStorage/fake Provider/持久 Worker）：
+
+- `test_a_fully_recorded_budget_still_recovers_its_undecided_item`：`item_limit=2`、两名额全部
+  记录、`Left` Pending。断言 `remaining_scope` 的 `new_budget == 0`；原生 task 投影与
+  `/operations/runs/{id}` 都不提供 Continue 但**提供** `preview` 入口；真实 POST → 202；持久
+  Worker 摘要恰为 `Left`，`Kept` 不重放，媒体字节不变、目标 0。
+- `test_a_single_recorded_pending_item_is_recoverable_at_a_full_budget`：`item_limit=1` 且唯一
+  Pending 的最小满额边界。
+- `test_a_fully_decided_chain_at_a_full_budget_is_still_refused`：成功+Pending 之外的真正全已决
+  仍 409 `no_remaining_scope`，且不发布 `preview`、不创建任何 Preview。
+- `test_a_full_budget_never_lets_a_new_file_borrow_the_pending_unit`：满额后新增
+  `New.2020.mkv`，摘要仍恰为 `Left`，三个源文件都在、目标 0。
+- `test_a_fully_recorded_budget_keeps_the_queued_continue_refusal`：同一状态 `POST /resume`
+  仍 409 `no_remaining_scope`、零 Job、零 continuation 记录；只有零变更复核可用。
+- 修正原 `test_recovery_keeps_an_undecided_recorded_source_in_the_reviewed_scope` 的说明：它
+  实际是 budget=4 的对照（两名额未用），现明确写出并断言 `unrecorded_budget == 2`。
+
+Web（cwd `web/`）：`npm run test -- run src/entities/operations/lifecycle.test.ts
+src/features/operations/RunLifecycleControls.test.tsx src/features/operations/RunDetailTabs.test.tsx
+src/features/operations/OperationsInventory.test.tsx` → **65 passed**（新增"非 authority refusal
+仍保留 recovery 入口"与"满额仍有未决项时渲染摘要按钮"两个断言）；`npm run typecheck` 通过；
+`npm run build` 成功（production assets 供 E2E 使用）；
+`npm run test:e2e -- --config=playwright.python.config.ts
+tests/e2e/operations-inventory.python.spec.ts -g "fully recorded budget|mutation-authorized paused
+run|missing configuration pin"` → **3 passed**，其中新增的 full-budget 浏览器旅程在 production
+build + 真实 Python API/Worker 上完成：Continue 不可用但摘要按钮可见 → 摘要恰含
+`FullBudgetLeft.2005.mkv`、不含 `Kept`/新文件 → `确认继续整理剩余 1 项` → 无 mediaflow CLI 文案 →
+目标 0 → 重复 POST 202 收敛。
+
+静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
+`.venv/bin/python -m compileall -q mediaflow tests scripts` OK；`ruff check` 与
+`ruff format --check` 覆盖全部 7 个改动 Python 文件 → passed / formatted；
+`npx prettier --check`、`npx eslint` 覆盖 3 个改动 Web 文件。
+
+证据：`.git/validation-evidence/task45.5-developer-fix3/verify_full_budget_scope.py` 与
+`full-budget-scope.json`（exit 0；四案：budget4/budget2 均 202 且摘要恰为 Left；两种准入顺序的
+三份独立 admission 与真实 Worker 清单），以及 `README.md` 记录候选、命令与实际结果。
+
+### 已知风险/边界
+
+- 恢复身份现在包含**观察形态**：原准入满额时 scope signature 是未决文件集合，仍有名额时是目录。
+  未决集合或排除集实质变化会产生新准入（既有 B 已确认的精确语义），不变则收敛同一记录。
+- 满额恢复只观察未决来源，因此对"原目录里后来出现的文件"是显式不扩大；这符合 B 第 4 条要求，
+  但也意味着新文件需要通过新的有界运行处理。
+- runtime schema 仍为 49（无新列/表）；B 仍需在真实 wheel/Docker 复核 fresh/reopen 与支持版本
+  迁移。
 - `tests/e2e/direct-files.python.spec.ts` 既有 flaky 仍待 B 独立确认（非本 Task 引入）。
-- wheel/隔离安装、生产 Docker、真实 Worker 长区间、1536×1024/380×720 截图等 T4 门禁仍 pending B。
+- wheel/隔离安装、生产 Docker、真实长区间 Worker、1536×1024/380×720 全套截图与 failover 仍是
+  B 的 T4 门禁，本轮未运行也未声称通过。
+- 本轮测试执行合计约 2 分钟，占本开发轮次总时长（约 48 分钟）约 3%，低于 30% 上限。
 
 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
 `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
-私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready。
+私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
 
 ## B Review Result
 
