@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER CORRECTS B BLOCKERS IN THE SAME TASK; BASE / GOAL / T4 UNCHANGED
+Next Action: B RE-REVIEWS THE CORRECTED CANDIDATE; BASE / GOAL / T4 UNCHANGED
 ```
 
 ## Goal
@@ -334,7 +334,7 @@ B T4/真实入口/wheel/安装消费者/Docker/视觉门禁仍由 B 执行；原
 
 ## Developer Fix Round Report (B-1 / B-2 / B-3)
 
-READY FOR B REVIEW at implementation HEAD `<THIS COMMIT>`
+READY FOR B REVIEW at implementation HEAD `906def76fc596acf4208767ed2dcdee7d2076f06`
 (Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
 `72682d1e3277343b674d62e5ceda99a824036c00`). Same Task, Base / Goal / T4 unchanged.
 
