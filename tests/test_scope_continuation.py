@@ -2128,37 +2128,177 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         original = self._paused_mutation_scan(active, discovered="Incoming/Kept.2006.mkv")
         api = self._api(config)
 
-        status, document = request(
+        status, admission = request(
             api,
             f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
             method="POST",
             body=None,
             token="admin-token",
         )
-        self.assertEqual(status, 201, document)
-        self.assertEqual(document["journey"], "organize")
-        self.assertEqual(document["runTaskId"], original.task_id)
-        self.assertEqual(document["zeroMutation"], True)
-        self.assertEqual(document["sideEffects"], "none")
-        # Every reviewed item really produced a plan: the pinned analysis
-        # dependencies are live, so the Preview is an actionable review rather
-        # than a placeholder that would make Execute impossible.
-        self.assertEqual([item["status"] for item in document["items"]], ["previewed"])
-        self.assertIn(document["status"], {"previewed", "partial"})
+        # The native recovery admission is durable and asynchronous: it records
+        # the bounded observation and lets the resident Worker prove the
+        # configured stability interval before freezing and analysing.
+        self.assertEqual(status, 202, admission)
+        self.assertEqual(admission["journey"], "discovery")
+        self.assertEqual(admission["recoverySourceTaskId"], original.task_id)
+        self.assertEqual(admission["zeroMutation"], True)
+        self.assertEqual(admission["sideEffects"], "none")
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertEqual(document["prepared"], True)
         # Only the undecided source is reviewed; the recorded sibling is never
         # re-offered, and the plan runs under the run's own historical pin.
-        self.assertEqual(
-            [item["source"]["path"] for item in document["items"]], ["Incoming/Left.2005.mkv"]
-        )
-        self.assertEqual(document["configurationSnapshotId"], active.revision_id)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual([item.source.path for item in preview.items], ["Incoming/Left.2005.mkv"])
+        self.assertEqual(preview.configuration_snapshot_id, active.revision_id)
         self.assertIn("previewId", document)
-        # The exact Preview grants no authority: the operator still has to make
-        # one fresh explicit execution intent.
-        self.assertEqual(document["actions"]["execute"]["requiresConfirmation"], True)
         payload = json.dumps(document)
         self.assertNotIn(str(self.root), payload)
         self.assertNotIn("scope_path", payload)
         # Zero Storage mutation happened during the review.
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Incoming").iterdir()),
+            ["Kept.2006.mkv", "Left.2005.mkv"],
+        )
+
+    def test_remaining_scope_recovery_proves_a_nonzero_stability_interval(self) -> None:
+        """A nonzero configured interval is proven by a real elapsed observation.
+
+        This is the exact B blocker: the remaining-scope recovery must not
+        discard its first observation and reject every later read.  The durable
+        preparation persists the first observation, records the real
+        re-observation deadline and only freezes once the interval is proven.
+        """
+
+        import os
+        import time
+
+        from mediaflow.application.media_discovery import MediaDiscoveryService
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.strategy_test import SyntheticMetadataProvider
+        from mediaflow.domain.media_discovery import DiscoveryStatus
+        from mediaflow.domain.metadata import MediaCandidate, MediaType
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Kept.2006.mkv").write_bytes(b"kept")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        old = time.time() - 86400
+        os.utime(self.root / "Incoming" / "Kept.2006.mkv", (old, old))
+        os.utime(self.root / "Incoming" / "Left.2005.mkv", (old, old))
+        # Rewrite the Active revision with a one-second stable-size interval.
+        document = json.loads(config.read_text(encoding="utf-8"))
+        document["resourceLibraries"][0]["stability"] = {
+            "minimumAgeSeconds": 0,
+            "modifiedThresholdSeconds": 0,
+            "stableSizeDurationSeconds": 1,
+        }
+        configuration_repository = SQLiteConfigurationRepository(self.database)
+        self.addCleanup(configuration_repository.close)
+        managed = ManagedConfigurationService(
+            configuration_repository, bootstrap_database_path=str(self.database)
+        )
+        draft = managed.import_draft(document, actor="operator")
+        validated = managed.validate(draft.revision_id, actor="operator")
+        active = managed.activate(
+            validated.revision_id, expected_version=validated.version, actor="operator"
+        )
+        config.write_text(json.dumps(document), encoding="utf-8")
+        task = self._paused_mutation_scan(active, discovered="Incoming/Kept.2006.mkv")
+        from dataclasses import replace as _replace
+
+        task = _replace(task, command="organize")
+        self.repository.update_task(task)
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                active.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=active.revision_id,
+            digest=active.digest,
+        )
+        storages = runtime.create_storages(
+            external={
+                "source-storage": LocalStorage("source-storage", self.root),
+                "media-target": LocalStorage("media-target", self.root / "Target"),
+            }
+        )
+        providers = MetadataProviderRegistry(
+            (
+                SyntheticMetadataProvider(
+                    (
+                        MediaCandidate(
+                            "tmdb",
+                            "100",
+                            MediaType.MOVIE,
+                            "Left",
+                            year=2005,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                    )
+                ),
+            )
+        )
+        from mediaflow.application.manual_organize import ManualOrganizeIntentService
+        from mediaflow.application.manual_organize_preview import (
+            ManualOrganizePreviewService,
+        )
+
+        intents = ManualOrganizeIntentService(
+            self.repository,
+            managed,
+            runtime_resolver=lambda *_: runtime,
+            storage_factory=lambda *_: dict(storages),
+        )
+        previews = ManualOrganizePreviewService(
+            self.repository,
+            intents,
+            configuration=runtime,
+            runtime_resolver=lambda *_: runtime,
+            storages=dict(storages),
+            providers=providers,
+        )
+        discovery = MediaDiscoveryService(
+            self.repository,
+            intents,
+            configuration=runtime,
+            runtime_resolver=lambda *_: runtime,
+            preview_service=previews,
+            storages=dict(storages),
+        )
+        from mediaflow.application.scope_continuation import ScopeContinuationService
+
+        obstacle_service = ScopeContinuationService(
+            self.repository, snapshot_validator=lambda *_: None
+        )
+        discovery.admit_recovery_preparation(
+            task.task_id, actor="admin", obstacle=obstacle_service.obstacle
+        )
+        first = discovery.claim_and_run(worker_id="first", claim_token="first")
+        self.assertIs(first.status, DiscoveryStatus.WAITING_STABILITY)
+        self.assertEqual((), first.sources)
+        self.assertIsNotNone(first.next_observation_at)
+        # An immediate re-read is deliberately not claimable before the real
+        # interval elapses: waiting work never spins and never fabricates the
+        # interval.
+        self.assertIsNone(discovery.claim_and_run(worker_id="early", claim_token="early"))
+        time.sleep(1.1)
+        settled = None
+        for index in range(6):
+            settled = discovery.claim_and_run(
+                worker_id=f"later-{index}", claim_token=f"later-token-{index}"
+            )
+            if settled is None:
+                break
+            if settled.preview_id is not None or settled.terminal:
+                break
+        self.assertIsNotNone(settled)
+        self.assertIsNotNone(settled.preview_id)
+        preview = self.repository.get_manual_preview(settled.preview_id)
+        self.assertEqual([item.source.path for item in preview.items], ["Incoming/Left.2005.mkv"])
+        # Zero media mutation during the whole observation and analysis.
         self.assertEqual(
             sorted(path.name for path in (self.root / "Incoming").iterdir()),
             ["Kept.2006.mkv", "Left.2005.mkv"],
@@ -2175,18 +2315,20 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         original = self._paused_mutation_scan(active, item_limit=2)
         api = self._api(config)
 
-        status, preview = request(
+        status, admission = request(
             api,
             f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
             method="POST",
             body=None,
             token="admin-token",
         )
-        self.assertEqual(status, 201, preview)
-        self.assertEqual(len(preview["items"]), 2)
-        self.assertEqual(preview["recoverySourceTaskId"], original.task_id)
-        preview_id = preview["previewId"]
-        item_ids = [item["itemId"] for item in preview["items"]]
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        preview_id = preview.preview_id
+        self.assertEqual(len(preview.items), 2)
+        self.assertEqual(preview.recovery_source_task_id, original.task_id)
+        item_ids = [item.item_id for item in preview.items]
         status, admitted = request(
             api,
             f"/api/v1/operations/organize/previews/{preview_id}/execute",
@@ -2194,7 +2336,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             body={
                 "confirmation": True,
                 "itemIds": item_ids,
-                "expectedIntentVersion": preview["intentVersion"],
+                "expectedIntentVersion": preview.intent_version,
                 "allowOverwrite": False,
                 "allowSourceCleanup": False,
             },
@@ -2439,6 +2581,34 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual(document["error"]["details"]["sideEffects"], "none")
         self.assertNotIn("mediaflow tasks", json.dumps(document))
         self.assertNotIn(str(self.root), json.dumps(document))
+
+    def _drive_recovery(self, api, discovery_id: str) -> dict:
+        """Drive one admitted remaining-scope preparation through its Worker.
+
+        The native recovery admission is durable and asynchronous: the HTTP
+        request records the bounded observation, and the resident Worker proves
+        the configured stability interval before freezing and analysing.  This
+        helper advances the same durable record and returns its final discovery
+        document, exactly as the real Worker loop does.
+        """
+
+        service = api._media_discovery
+        last = None
+        for index in range(8):
+            last = service.claim_and_run(
+                worker_id=f"recovery-{index}", claim_token=f"recovery-token-{index}"
+            )
+            if last is None:
+                break
+            if last.terminal or last.preview_id is not None:
+                break
+        assert last is not None, "remaining-scope preparation was never claimable"
+        status, document = request(
+            api,
+            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+        )
+        assert status == 200, document
+        return document
 
     def _api(self, config: Path):
         """One API over the managed runtime of this journey."""

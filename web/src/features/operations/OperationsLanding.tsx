@@ -30,6 +30,7 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
   fetchOrganizeAdmissionOutcome,
+  fetchOrganizeDiscovery,
   fetchOrganizePreviewDetail,
   mutateLifecycle,
   submitRemainingScopePreview,
@@ -1403,6 +1404,14 @@ function RunDetailPanel({
     readonly previewId: string;
     readonly intentVersion: number;
   } | null>(null);
+  // The durable remaining-scope preparation the operator admitted.  The
+  // bounded observation and the complete analysis run in the resident Worker,
+  // so this page follows the exact discovery until its Preview is linked.  It
+  // is never re-posted: the same discovery identity is polled, so a refresh,
+  // reconnect or restart resumes the same work instead of starting another.
+  const [remainingDiscoveryId, setRemainingDiscoveryId] = useState<
+    string | null
+  >(null);
   const [remainingSelection, setRemainingSelection] = useState<
     readonly string[] | null
   >(null);
@@ -1549,14 +1558,70 @@ function RunDetailPanel({
       setRemainingOverwrite(false);
       setRemainingCleanup(false);
       setRemainingMessage(
-        "已在当前界面生成剩余范围的零变更计划摘要。检查后选择就绪子集并明确确认继续。",
+        "已受理剩余范围的零变更观察。常驻 Worker 将在配置的稳定区间满足后生成计划摘要。",
       );
-      setRemainingScope({
-        previewId: result.model.previewId,
-        intentVersion: result.model.intentVersion ?? 0,
-      });
+      setRemainingDiscoveryId(result.model.discoveryId);
+      setRemainingScope(null);
     },
   });
+
+  // The bounded read of the exact admitted preparation.  It polls only while
+  // the preparation is still active and settles once it links its Preview or
+  // reaches a terminal state; it never repeats the admission POST.
+  const remainingPreparationQuery = useQuery({
+    queryKey: ["operations.remaining-scope-preparation", remainingDiscoveryId],
+    queryFn: () =>
+      fetchOrganizeDiscovery(token, remainingDiscoveryId ?? ""),
+    enabled: token !== null && remainingDiscoveryId !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 2_000,
+    refetchInterval: (query) => {
+      const read = query.state.data;
+      if (read === undefined || !read.ok) return false;
+      const model = read.model;
+      if (model.previewId !== null) return false;
+      return ["completed", "partial_success", "failed", "cancelled"].includes(
+        model.status,
+      )
+        ? false
+        : 2_000;
+    },
+    refetchIntervalInBackground: false,
+  });
+
+  const remainingPreparation =
+    remainingPreparationQuery.data?.ok === true
+      ? remainingPreparationQuery.data.model
+      : undefined;
+
+  useEffect(() => {
+    if (remainingPreparation === undefined) return;
+    if (remainingPreparation.previewId !== null) {
+      // The preparation linked its exact zero-mutation Preview: review it in
+      // this same panel and confirm the ready subset.
+      setRemainingScope({
+        previewId: remainingPreparation.previewId,
+        intentVersion: 0,
+      });
+      setRemainingDiscoveryId(null);
+      setRemainingMessage(
+        "已在当前界面生成剩余范围的零变更计划摘要。检查后选择就绪子集并明确确认继续。",
+      );
+      return;
+    }
+    if (
+      ["failed", "cancelled"].includes(remainingPreparation.status) ||
+      (remainingPreparation.status === "partial_success" &&
+        !remainingPreparation.previewId)
+    ) {
+      setRemainingMessage(
+        remainingPreparation.nextAction ||
+          "剩余范围准备未能完成；请按提示修复后重新发起。",
+      );
+    }
+  }, [remainingPreparation]);
 
   const confirmRemainingScope = async () => {
     if (

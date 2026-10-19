@@ -12096,6 +12096,7 @@ class MediaFlowApi:
             "autoPrepare": discovery.auto_prepare,
             "prepared": discovery.prepared,
             "previewId": discovery.preview_id,
+            "recoverySourceTaskId": discovery.recovery_source_task_id,
             "intentId": discovery.intent_id,
             "frozen": frozen,
             "frozenAt": (
@@ -13751,29 +13752,33 @@ class MediaFlowApi:
     def _operations_run_remaining_scope_preview(
         self, task_id: str, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
     ):
-        """Admit one native exact Preview of a paused run's remaining scope.
+        """Admit one durable remaining-scope recovery preparation for a paused run.
 
         This is the recovery path RO-5 promises when Continue cannot retain live
-        execution authority.  It admits a zero-mutation review of the run's
-        *durable* remaining scope under the run's own immutable historical pin,
-        and grants no execution authority: the operator still has to make one
-        fresh explicit execution intent through the ordinary Execute action.
+        execution authority.  It admits a zero-mutation bounded observation of
+        the run's *durable* remaining scope under the run's own immutable
+        historical pin, runs the complete analysis chain in the resident Worker
+        once the configured stability interval is proven, and grants no
+        execution authority: the operator still has to make one fresh explicit
+        execution intent through the ordinary Execute action.
         """
 
         self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-        if self._manual_previews is None or not callable(
-            getattr(self._manual_previews, "create_remaining_scope_from_task", None)
-        ):
+        service = getattr(self, "_media_discovery", None)
+        if service is None or not callable(getattr(service, "admit_recovery_preparation", None)):
             return self._error(
                 start_response,
                 503,
                 "service_unavailable",
-                "the exact Preview service is unavailable",
+                "the remaining-scope recovery service is unavailable",
                 details={
-                    "durableState": "no_preview_created",
+                    "durableState": "no_preparation_created",
                     "sideEffects": "none",
                     "retrySafe": True,
-                    "nextAction": "restore a valid Active runtime and Preview services, then retry",
+                    "nextAction": (
+                        "restore a valid Active runtime and the bounded discovery Worker, "
+                        "then retry"
+                    ),
                 },
             )
         self._require_empty_query(environ, "remaining-scope Preview")
@@ -13828,16 +13833,20 @@ class MediaFlowApi:
                 },
             )
         try:
-            preview = self._manual_previews.create_remaining_scope_from_task(
+            discovery = self._media_discovery.admit_recovery_preparation(
                 task_id,
                 actor=principal.principal_id,
                 obstacle=self._remaining_scope_obstacle(),
             )
+        except DiscoveryError as error:
+            return self._discovery_step_error(start_response, error)
         except ManualPreviewError as error:
             return self._manual_step_error(start_response, error)
-        operator_document = self._organize_preview_document(preview, principal)
-        operator_document["runTaskId"] = task_id
-        return self._response(start_response, 201, operator_document)
+        return self._response(
+            start_response,
+            202,
+            self._discovery_document(discovery, principal, self._runtime_binding),
+        )
 
     def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
         """Backend-computed controls for one selected run, or ``None``."""

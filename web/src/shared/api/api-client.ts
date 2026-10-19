@@ -2656,14 +2656,17 @@ export type OrganizePreviewRead =
  * This is the RO-5 recovery entry the backend advertises alongside a withheld
  * Continue. The browser sends nothing but the run identity: the scope, the
  * historical pin and every source identity are resolved server-side, and the
- * response is the ordinary zero-mutation organize Preview the operator then
- * reviews and explicitly executes.
+ * backend durably admits one bounded remaining-scope observation.  The resident
+ * Worker proves the configured stability interval, freezes the remaining
+ * sources and links the ordinary zero-mutation organize Preview the operator
+ * then reviews and explicitly executes.  The response is therefore the
+ * discovery projection, not a finished Preview.
  */
 export async function submitRemainingScopePreview(
   token: string | null,
   options: { readonly taskId: string },
   fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<OrganizePreviewModel>> {
+): Promise<OrganizeMutationResult<OrganizeDiscoveryModel>> {
   if (!isSafeIdentifier(options.taskId)) {
     return { ok: false, status: 0, code: "invalid_request" };
   }
@@ -2671,7 +2674,7 @@ export async function submitRemainingScopePreview(
     token,
     `/api/v1/tasks/${encodeURIComponent(options.taskId)}/remaining-scope-previews`,
     {},
-    normalizeOrganizePreview,
+    normalizeOrganizeDiscovery,
     fetchImpl,
   );
 }

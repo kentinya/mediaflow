@@ -2104,8 +2104,22 @@ test("a mutation-authorized paused run without live authority is refused nativel
   });
   await expect(summaryButton).toBeVisible();
   await summaryButton.click();
+  // The recovery admission is durable: the resident Worker proves the
+  // configured stability interval, freezes the remaining sources and links the
+  // exact zero-mutation Preview.  The browser only polls the same durable
+  // discovery state; it never re-posts the admission.
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) break;
+  }
   const summary = detail.getByRole("region", { name: "新计划摘要" });
-  await expect(summary).toBeVisible();
+  await expect(summary).toBeVisible({ timeout: 30_000 });
   // The reviewed scope is exactly the run's own remaining sources: nothing
   // outside the run's admitted scope is ever reviewed.
   await expect(summary).toContainText("Seven.2007.mkv");

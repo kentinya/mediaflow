@@ -882,6 +882,21 @@ class MediaDiscovery:
     #: admitted for, or ``None`` for an ordinary Files folder/mixed selection.
     #: It is durable origin evidence only and grants no execution authority.
     definition_origin: DefinitionRunOnceOrigin | None = None
+    #: The exact paused Task this discovery is an explicit *remaining-scope
+    #: recovery preparation* for, or ``None`` for an ordinary Files
+    #: folder/mixed selection or a definition-bound Run once.  It is durable
+    #: work linkage only: the discovery still observes the same bounded
+    #: ResourceLibrary scope, grants no execution authority and mutates nothing.
+    #: A recovery preparation never broadens the original Task's admitted
+    #: budget and never re-offers an already-decided sibling.
+    recovery_source_task_id: str | None = None
+    #: The exact ResourceLibrary-relative source paths this recovery preparation
+    #: must never observe or offer again because an earlier attempt of the same
+    #: continuation chain already recorded them.  It is empty for every ordinary
+    #: discovery.  The walk skips these paths entirely, so the admitted primary
+    #: bound measures only the *remaining* scope and a recorded sibling can never
+    #: be re-offered or displace a genuinely remaining source.
+    recovery_excluded_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.discovery_id, str) or not _SAFE_ID.fullmatch(self.discovery_id):
@@ -918,6 +933,20 @@ class MediaDiscovery:
             self.definition_origin, DefinitionRunOnceOrigin
         ):
             raise ValueError("discovery definition origin is invalid")
+        if self.recovery_source_task_id is not None and (
+            not isinstance(self.recovery_source_task_id, str)
+            or not _SAFE_ID.fullmatch(self.recovery_source_task_id)
+        ):
+            raise ValueError("discovery recovery source Task identity is invalid")
+        if len(self.recovery_excluded_paths) > MAX_DISCOVERY_SCOPE_PATHS:
+            raise ValueError("discovery recovery exclusions exceed their bound")
+        for value in self.recovery_excluded_paths:
+            if (
+                not isinstance(value, str)
+                or not value
+                or len(value.encode("utf-8")) > MAX_DISCOVERY_PATH_BYTES
+            ):
+                raise ValueError("discovery recovery exclusion path is invalid")
 
     @property
     def terminal(self) -> bool:
@@ -957,6 +986,8 @@ class MediaDiscovery:
             "definitionOrigin": (
                 self.definition_origin.document() if self.definition_origin is not None else None
             ),
+            "recoverySourceTaskId": self.recovery_source_task_id,
+            "recoveryExcludedPaths": list(self.recovery_excluded_paths),
             "nextObservationAt": (
                 self.next_observation_at.isoformat()
                 if self.next_observation_at is not None
@@ -1022,6 +1053,16 @@ class MediaDiscovery:
                 DefinitionRunOnceOrigin.from_document(value["definitionOrigin"])
                 if isinstance(value.get("definitionOrigin"), dict)
                 else None
+            ),
+            (
+                str(value["recoverySourceTaskId"])
+                if isinstance(value.get("recoverySourceTaskId"), str)
+                else None
+            ),
+            (
+                tuple(str(item) for item in value["recoveryExcludedPaths"] if isinstance(item, str))
+                if isinstance(value.get("recoveryExcludedPaths"), list)
+                else ()
             ),
         )
 

@@ -202,11 +202,91 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 ## Developer Completion Report
 
+READY FOR B REVIEW at implementation HEAD `<FILLED AFTER COMMIT>`
+(Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
+`8732c2588cda76646a72dfbea60bd72abc93e935`). Same Task, Base / Goal / T4 unchanged.
+
+### 本轮（B 第三次 FIX REQUIRED）修正：剩余范围恢复改为持久工作内观察
+
+**复现（先于修复）。** 直接运行 B 的 `reproduce_remaining_stability.py`（supported organize
+Task，stable-size 0 对照 / 1s 反例，真实等待后第二次请求）：旧实现两次均 409 `source_not_ready`，
+`media_discovery_observations=0`，任意次数等待/刷新都无法跨越非零稳定期。
+
+**根因。** 内联的 `ManualOrganizePreviewService.create_remaining_scope_from_task` →
+`_source_identity_from_storage` 每次调用都以 `unchanged_previous=False, observed_since=None`
+做 `stability_decision`，拒绝即退出且不保存本次观察，因此非零 stable-size 区间永远无法被证明。
+
+**修复（复用既有有界发现/Worker，不新建引擎）。**
+
+1. 原生 `POST /api/v1/tasks/{id}/remaining-scope-previews` 改为通过既有
+   `MediaDiscoveryService.admit_recovery_preparation` 持久准入一次 remaining-scope recovery
+   preparation：解析原 Task 身份→原发布 pin→`remaining_scope()`→原库/root 精确剩余范围；
+   每个 chain 已记录来源作为持久排除项；admitted primary bound = 原剩余预算。响应 202 + discovery
+   文档，不再内联生成 Preview。
+2. 观察/冻结/分析完全交给既有 `MediaDiscoveryWorker`：首次观察持久化，设置真实
+   `next_observation_at`，非零区间由真实二次 `stat` 证明；size/mtime/validator 变化重置区间；
+   重开继续同一记录。冻结后经既有 `_analyze` 运行完整分析链并链接精确 Preview。
+3. 排除项在 walk 中真正跳过（不 observe/list/计数），已记录 sibling 不会被重新提供，也不会
+   挤占剩余来源或触发 primary bound。
+4. 空剩余范围在准入期以有界只读探针给出真实 `no_remaining_scope` 409，而不是准入一个必然
+   无发现的 preparation。
+5. `MediaDiscovery` 增加 `recovery_source_task_id` / `recovery_excluded_paths`（runtime schema
+   49，additive migration，fresh 无新增产品表）；`find_open_recovery_discovery` 保证重复/丢响应
+   收敛同一准备；`_analyze` 把 `recovery_source_task_id` 链接到 Preview，运行概览的 durable
+   recovery link 与旧内联路径一致。
+6. 删除已死的内联 `create_remaining_scope_from_task` / `_scope_library` /
+   `_remaining_scope_sources`（约 250 行），共享 scope 解析抽到纯 `application/task_scope.py`，
+   不保留第二套恢复引擎。
+7. Web `submitRemainingScopePreview` 改为返回 discovery 投影；`OperationsLanding` 在当前面板
+   轮询同一 discovery（不重复 POST），链接 Preview 后进入既有同页摘要→精确子集确认。
+
+**边界不变。** 原 pin/剩余范围/预算/权限不放宽；准备阶段零 Provider（等待）/零媒体 mutation/
+零执行权；成功/忽略/未知效果 sibling 不重新纳入；丢证据重新观察，不用旧 mtime/单次 stat 伪造稳定。
+
+### 实际受影响命令/结果（本轮）
+
+- 新增 `.git/validation-evidence/task45.5-developer-fix/verify_remaining_scope_recovery.py`：
+  stable-size=0 → 首遍 analyzing，随后 completed 并链接 `Incoming/Left.2005.mkv`；stable-size=1 →
+  首遍 `waiting_stability`、立即重读 `None`（不可领取）、真实等待 1.1s 后 completed 且链接同一来源；
+  两例 Provider 1 次（仅分析阶段）、kept/left 内容不变、target 0、recoverySourceTaskId 一致。
+- `test_scope_continuation` 新增 `test_remaining_scope_recovery_proves_a_nonzero_stability_interval`
+  （真实 elapsed，非手改时间戳）；三个既有恢复用例改为驱动持久 Worker 契约（202 + discovery）。
+- `test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_scan_retirement_stability test_organize_preparation` → 187 OK。
+- `test_manual_organize_intent test_manual_organize_preview test_recovery_continuation test_task_center_recovery_lineage` → 93 OK。
+- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 329 OK。
+- `test_task_persistence test_sqlite_backup test_sqlite_restore test_processing_checkpoint test_direct_file_operations test_manual_operations_contract test_operations_task_center test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → 271 OK。
+- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → 40 OK。
+- `test_organizer test_conflict_resolution test_organizer_rollback test_organizer_mutation_authority` → 59 OK；
+  `test_recognition test_policy_mapping`（C→A 身份回归）→ 17 OK。
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 干净；
+  `.venv/bin/python -m compileall -q mediaflow tests scripts` → OK。
+- `.venv/bin/ruff check` / `ruff format --check` 覆盖全部新增/修改 Python 文件 → passed / formatted。
+- Web：`npm run typecheck` 通过；`npm run test -- run organize.test.ts OrganizeRouter.test.tsx StorageFilesPage.test.tsx MediaLibraryFilesPage.test.tsx OperationsInventory.test.tsx operations-api.test.ts RunLifecycleControls.test.tsx` → 160 passed；`npm run build` 通过。
+- E2E（production build）：`npx playwright test --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts` → 5 passed；`tests/e2e/operations-inventory.python.spec.ts` → 38 passed；`tests/e2e/operations-task-center-visual.python.spec.ts` → 2 passed。
+- 本轮测试实际耗时保守合计约 300s，占本轮开发时间不足 30%；未跑全量/unicode-principal/wheel/Docker/release matrix。
+
+### 已知失败/风险
+
+- `tests/e2e/direct-files.python.spec.ts` 既有 flaky 仍待 B 独立确认（非本 Task 引入）。
+- runtime schema 由 48→49（additive）；相应断言已更新为 49。B 需在真实 wheel/Docker 上确认
+  fresh/reopen 与支持版本迁移；Developer 未跑 Docker/release matrix。
+- 长区间（>60s）等待仍走既有 discovery `next_observation_at` + Worker 重 claim；本轮真实验证了
+  1s 区间，更长的真实区间与恢复仍待 B 在真实 Worker 路径确认。
+- wheel/隔离安装、生产 Docker、真实 SMB/OpenList/S3/TMDB 与 1536×1024/380×720 截图等 T4 门禁仍 pending B。
+- RO-8 独立 Preview 完整退出未交付；本 Task 只清理其必要索引耦合。
+
+预存修改保留且不纳入 Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
+私有 ignored 配置不读取、不暂存。
+
+### 前一轮报告（历史）
+
 READY FOR B REVIEW at implementation HEAD `8732c2588cda76646a72dfbea60bd72abc93e935`
 (Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
 `204441f70c0678e9b6526a54f6af8aac75b126f4`). Same Task, Base / Goal / T4 unchanged.
 
-### 本轮（B 第二次 FIX REQUIRED）修正：安全拒绝必须持久为真实失败
+### 前一轮（B 第二次 FIX REQUIRED）修正：安全拒绝必须持久为真实失败
 
 **复现（先于修复）。** 直接运行 B 的 `reproduce_refusal_completion.py`（replaced / missing /
 unverified 三例）与 `reproduce_discovery_refusal.py`：拒绝本身正确（exit1、Provider0、零媒体变更、

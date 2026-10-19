@@ -1522,6 +1522,104 @@ const AUTHORITY_PREVIEW = {
     "review the exact Preview, then make one fresh explicit execution intent",
 };
 
+/** The durable remaining-scope preparation document the backend admits. */
+function remainingScopeDiscoveryDocument(
+  overrides: { readonly previewId?: string | null } = {},
+): Record<string, unknown> {
+  const previewId = overrides.previewId ?? null;
+  return {
+    journey: "discovery",
+    discoveryId: "discovery-remaining",
+    resourceLibraryId: "source",
+    storageId: "source-storage",
+    configurationSnapshotId: "snapshot-remaining",
+    status: previewId === null ? "queued" : "completed",
+    version: 1,
+    selection: {
+      scopeCount: 1,
+      scopes: [{ path: "Incoming", kind: "directory" }],
+    },
+    budgets: {},
+    progress: {
+      phase: previewId === null ? "queued" : "prepared",
+      primarySources: previewId === null ? 0 : 1,
+      visitedEntries: 0,
+      visitedDirectories: 0,
+      pageFetches: 0,
+      excludedEntries: 0,
+      unstableEntries: 0,
+      errorEntries: 0,
+      incomplete: false,
+      incompleteReason: null,
+      refusalReasons: [],
+      materialRefusal: null,
+      findings: [],
+      reasons: [],
+      message: "queued for bounded remaining-scope observation",
+    },
+    primarySourceCount: previewId === null ? 0 : 1,
+    admissionRequestId: null,
+    autoPrepare: true,
+    prepared: previewId !== null,
+    previewId,
+    intentId: previewId === null ? null : "intent-remaining",
+    frozen: previewId !== null,
+    frozenAt: null,
+    pauseRequested: false,
+    cancelRequested: false,
+    nextObservationAt: null,
+    worker: {
+      ready: true,
+      condition: "worker_ready",
+      durableState: "one resident Worker is registered",
+      nextAction: "wait for the resident Processing Worker",
+    },
+    actions: {
+      pause: {
+        available: true,
+        method: "POST",
+        path: "/pause",
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      resume: {
+        available: false,
+        method: "POST",
+        path: "/resume",
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      cancel: {
+        available: true,
+        method: "POST",
+        path: "/cancel",
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      finalize: {
+        available: false,
+        method: "POST",
+        path: "/finalize",
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+      prepare: {
+        available: false,
+        method: "POST",
+        path: "/analyze",
+        requiresVersion: true,
+        sideEffects: "none",
+      },
+    },
+    sources: [],
+    nextAction: "wait for the resident Processing Worker",
+    failure: null,
+    sideEffects: "none",
+    zeroMutation: true,
+    execution: "not_available_from_discovery",
+  };
+}
+
 function runLifecycleDocument(overrides: Record<string, unknown> = {}) {
   return {
     objectType: "task",
@@ -1932,10 +2030,17 @@ describe("selected run lifecycle controls", () => {
         ],
       }),
       extraGet: (url) =>
-        url.endsWith("/preview-remaining") ? jsonResponse(preview) : null,
+        url.endsWith("/discoveries/discovery-remaining")
+          ? jsonResponse(remainingScopeDiscoveryDocument({ previewId: "preview-remaining" }))
+          : url.endsWith("/preview-remaining")
+            ? jsonResponse(preview)
+            : null,
       respond: (url) => {
         if (url.endsWith("/remaining-scope-previews")) {
-          return jsonResponse(preview, 201);
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
         }
         if (url.endsWith("/execute")) {
           return jsonResponse(
@@ -2028,28 +2133,35 @@ describe("selected run lifecycle controls", () => {
         ],
       }),
       extraGet: (url) =>
-        url.endsWith("/preview-remaining")
-          ? jsonResponse(preview)
-          : url.includes("/preview-remaining/admission")
-            ? (() => {
-                admissionReads += 1;
-                return jsonResponse({
-                  outcome: "known",
-                  reason: null,
-                  executionId: "execution-remaining",
-                  taskId: "task-remaining",
-                  status: "admitted",
-                  selectedItemIds: ["item-1"],
-                  completedItemCount: 0,
-                  failedItemCount: 0,
-                  sideEffects: "none",
-                  nextAction: "track the durable Worker execution",
-                });
-              })()
-            : null,
+        url.endsWith("/discoveries/discovery-remaining")
+          ? jsonResponse(
+              remainingScopeDiscoveryDocument({ previewId: "preview-remaining" }),
+            )
+          : url.endsWith("/preview-remaining")
+            ? jsonResponse(preview)
+            : url.includes("/preview-remaining/admission")
+              ? (() => {
+                  admissionReads += 1;
+                  return jsonResponse({
+                    outcome: "known",
+                    reason: null,
+                    executionId: "execution-remaining",
+                    taskId: "task-remaining",
+                    status: "admitted",
+                    selectedItemIds: ["item-1"],
+                    completedItemCount: 0,
+                    failedItemCount: 0,
+                    sideEffects: "none",
+                    nextAction: "track the durable Worker execution",
+                  });
+                })()
+              : null,
       respond: (url) => {
         if (url.endsWith("/remaining-scope-previews")) {
-          return jsonResponse(preview, 201);
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
         }
         if (url.endsWith("/execute")) {
           // The admission really committed but the response is lost.

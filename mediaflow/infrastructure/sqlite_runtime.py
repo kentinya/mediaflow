@@ -301,7 +301,7 @@ from mediaflow.infrastructure.task_source_schema import ensure_task_occurrence_c
 # observation and ownership evidence only: discovery performs metadata-only
 # reads, creates no execution authority, and a legacy database simply has no
 # discovery rows, so nothing is backfilled.
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -10915,7 +10915,8 @@ class SQLiteTaskRepository:
         "claim_worker_id, claim_token, claim_expires_at, attempts, "
         "pause_requested, cancel_requested, error, created_at, updated_at, "
         "next_observation_at, admission_signature, admission_request_id, "
-        "auto_prepare, preview_id, definition_origin_json"
+        "auto_prepare, preview_id, definition_origin_json, recovery_source_task_id, "
+        "recovery_excluded_paths_json"
     )
 
     def create_media_discovery(self, discovery: MediaDiscovery) -> MediaDiscovery:
@@ -11005,7 +11006,7 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     f"INSERT INTO media_discoveries ({self._DISCOVERY_COLUMNS}) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "?, ?, ?, ?, ?, ?)",
+                    "?, ?, ?, ?, ?, ?, ?, ?)",
                     self._discovery_values(discovery),
                 )
                 self._connection.commit()
@@ -11068,6 +11069,53 @@ class SQLiteTaskRepository:
                 "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
                 (
                     signature,
+                    DiscoveryStatus.COMPLETED.value,
+                    DiscoveryStatus.PARTIAL_SUCCESS.value,
+                    DiscoveryStatus.FAILED.value,
+                    DiscoveryStatus.CANCELLED.value,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._load_media_discovery_locked(row["discovery_id"])
+
+    def find_open_recovery_discovery(
+        self,
+        *,
+        actor: str,
+        recovery_source_task_id: str,
+        resource_library_id: str,
+        storage_id: str,
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> MediaDiscovery | None:
+        """One already durable *open* remaining-scope recovery preparation.
+
+        A repeated or lost-response recovery request converges on the exact
+        durable preparation it created instead of starting a second walk, and
+        the lookup is bound to the actor, the exact source Task, the library/
+        Storage binding and the immutable pin.  Terminal and frozen records are
+        excluded so a deliberate new preparation is always a new admission.
+        """
+
+        if not isinstance(actor, str) or not actor.strip():
+            raise ValueError("media discovery actor is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT discovery_id FROM media_discoveries "
+                "WHERE actor=? AND recovery_source_task_id=? AND resource_library_id=? "
+                "AND storage_id=? AND configuration_snapshot_id=? "
+                "AND configuration_snapshot_digest=? "
+                "AND intent_id IS NULL AND frozen_at IS NULL "
+                "AND status NOT IN (?, ?, ?, ?) "
+                "ORDER BY created_at DESC, discovery_id DESC LIMIT 1",
+                (
+                    actor,
+                    recovery_source_task_id,
+                    resource_library_id,
+                    storage_id,
+                    snapshot_id,
+                    snapshot_digest,
                     DiscoveryStatus.COMPLETED.value,
                     DiscoveryStatus.PARTIAL_SUCCESS.value,
                     DiscoveryStatus.FAILED.value,
@@ -12588,6 +12636,12 @@ class SQLiteTaskRepository:
                 if discovery.definition_origin is not None
                 else None
             ),
+            discovery.recovery_source_task_id,
+            json.dumps(
+                list(discovery.recovery_excluded_paths),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
 
     @staticmethod
@@ -12660,6 +12714,10 @@ class SQLiteTaskRepository:
                         json.loads(row["definition_origin_json"])
                         if row["definition_origin_json"]
                         else None
+                    ),
+                    "recoverySourceTaskId": row["recovery_source_task_id"],
+                    "recoveryExcludedPaths": json.loads(
+                        row["recovery_excluded_paths_json"] or "[]"
                     ),
                 }
             )
@@ -15065,7 +15123,9 @@ class SQLiteTaskRepository:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     next_observation_at TEXT,
                     admission_signature TEXT, admission_request_id TEXT,
-                    auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT
+                    auto_prepare INTEGER NOT NULL DEFAULT 0, preview_id TEXT,
+                    definition_origin_json TEXT, recovery_source_task_id TEXT,
+                    recovery_excluded_paths_json TEXT NOT NULL DEFAULT '[]'
                 );
                 CREATE INDEX IF NOT EXISTS media_discoveries_status_created
                     ON media_discoveries(status, created_at, discovery_id);
@@ -15731,6 +15791,26 @@ class SQLiteTaskRepository:
                 # Additive: a prior-schema discovery simply has no linked
                 # Preview and stays fully readable.
                 self._connection.execute("ALTER TABLE media_discoveries ADD COLUMN preview_id TEXT")
+            if "recovery_source_task_id" not in discovery_columns:
+                # Additive: a prior-schema discovery is never retroactively
+                # turned into a remaining-scope recovery preparation.  It stays
+                # exactly the Files/Run-once admission it was; a recovery
+                # preparation is always a new admission.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN recovery_source_task_id TEXT"
+                )
+            if "recovery_excluded_paths_json" not in discovery_columns:
+                # Additive: a prior-schema discovery has no recorded exclusions
+                # and is never retroactively narrowed.  It stays exactly the
+                # Files/Run-once admission it was.
+                self._connection.execute(
+                    "ALTER TABLE media_discoveries ADD COLUMN recovery_excluded_paths_json "
+                    "TEXT NOT NULL DEFAULT '[]'"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS media_discoveries_recovery_source "
+                "ON media_discoveries(recovery_source_task_id, created_at, discovery_id)"
+            )
             self._connection.execute(
                 "CREATE INDEX IF NOT EXISTS media_discoveries_request "
                 "ON media_discoveries(actor, admission_request_id)"

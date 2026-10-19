@@ -43,6 +43,11 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
+from mediaflow.application.scope_continuation import remaining_scope as _remaining_scope
+from mediaflow.application.task_scope import (
+    ScopeResolutionError,
+    resolve_resource_library_scope,
+)
 from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
@@ -601,6 +606,316 @@ class MediaDiscoveryService:
         if primary_bound == self._budgets.max_primary_sources:
             return self._budgets
         return replace(self._budgets, max_primary_sources=primary_bound)
+
+    # ------------------------------------------------------------------
+    # Remaining-scope recovery preparation
+    # ------------------------------------------------------------------
+
+    def admit_recovery_preparation(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        obstacle=None,
+        admission_request_id: str | None = None,
+    ) -> MediaDiscovery:
+        """Admit one durable remaining-scope recovery preparation for a paused Task.
+
+        This is the RO-3/RO-4 native recovery of a paused run whose Continue
+        cannot retain live execution authority.  It reuses the *existing*
+        bounded discovery/Worker boundary so a configured stable-size interval
+        is proven by a real later observation instead of a first-stat shortcut:
+
+        * the admitted scope is the Task's durable remaining scope, resolved by
+          the same :func:`remaining_scope` the continuation boundary uses and
+          against the Task's own immutable historical pin, so the preparation
+          can never broaden the admitted budget and never re-offer a completed,
+          ignored or uncertain sibling;
+        * every source an earlier attempt of the chain already recorded is an
+          explicit durable exclusion, so the walk neither observes nor offers
+          it again and the admitted primary bound measures only the remaining
+          scope;
+        * the resident Worker observes the scope, persists the first observation,
+          sets the real re-observation deadline and only freezes/analyses once
+          the configured interval is proven; a changed size/mtime/validator
+          resets the interval;
+        * the resulting intent/Preview are the ordinary durable manual records:
+          they grant no authority, and the operator must still make one fresh
+          explicit execution intent through the existing Execute action.
+        """
+
+        actor = self._actor(actor)
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise DiscoveryError(
+                "remaining-scope recovery requires a Task identity",
+                code="malformed_selection",
+                next_action="reload the paused run and request its exact summary again",
+            )
+        task_id = task_id.strip()
+        repository = self._repository
+        reader = getattr(repository, "get_task", None)
+        task = reader(task_id) if callable(reader) else None
+        if task is None:
+            raise DiscoveryError(
+                "the paused run was not found",
+                code="task_not_found",
+                status=404,
+                next_action="refresh the run inventory and select the exact run again",
+            )
+        if obstacle is not None:
+            reason, message, next_action = obstacle(task)
+            if reason is not None and reason != "authority_required":
+                raise DiscoveryError(
+                    message or "this run has no exact remaining scope to review",
+                    code=str(reason),
+                    status=409,
+                    next_action=next_action
+                    or "refresh the run and review its recorded per-item outcomes",
+                )
+        if not task.configuration_snapshot_id or not task.configuration_snapshot_digest:
+            raise DiscoveryError(
+                "this run has no immutable configuration pin, so its exact original scope "
+                "cannot be reproduced",
+                code="snapshot_unavailable",
+                status=409,
+                next_action=(
+                    "start a new bounded run under the current Active configuration, or inspect "
+                    "the run's recorded per-item evidence"
+                ),
+            )
+        try:
+            runtime = self._load_runtime(
+                task.configuration_snapshot_id, task.configuration_snapshot_digest
+            )
+        except DiscoveryError:
+            raise
+        except Exception as error:  # noqa: BLE001 - one bounded unavailable outcome
+            raise DiscoveryUnavailable(
+                "the paused run's pinned configuration revision is unavailable",
+                details={"reason": type(error).__name__},
+            ) from error
+        remaining, already_recorded, remaining_limit = _remaining_scope(repository, task)
+        if remaining_limit == 0:
+            raise DiscoveryError(
+                "this run has no remaining eligible item to review; every admitted item already "
+                "has a decided outcome",
+                code="no_remaining_scope",
+                status=409,
+                next_action=(
+                    "inspect the run's recorded per-item outcomes, or start a new bounded run "
+                    "from 操作与任务"
+                ),
+            )
+        try:
+            library, relative_scope = resolve_resource_library_scope(runtime, task.scope_path)
+        except ScopeResolutionError as error:
+            raise DiscoveryError(
+                error.message,
+                code=error.reason,
+                status=409,
+                next_action=(
+                    "start a new bounded run from Files under the current Active "
+                    "configuration, or inspect the run's recorded per-item evidence"
+                ),
+            ) from error
+        storage = self._guarded_storage(runtime, library.storage_id)
+        scope_entry = DiscoveryScopeEntry(relative_scope, DiscoveryEntryKind.DIRECTORY)
+        if relative_scope:
+            scope_entry = self._resolve_entry_kind(storage, library, scope_entry)
+        excluded = tuple(
+            sorted(
+                self._library_relative(path, library)
+                for storage_id, path in already_recorded
+                if storage_id == library.storage_id
+            )
+        )
+        excluded = tuple(value for value in excluded if value is not None)
+        if not self._scope_has_remaining_candidate(storage, library, scope_entry, excluded):
+            # The whole admitted scope is already decided: refusing here keeps
+            # the same truthful refusal the inline boundary produced instead of
+            # admitting a durable preparation that can only discover nothing.
+            raise DiscoveryError(
+                "this run has no remaining eligible item to review; every admitted item already "
+                "has a decided outcome",
+                code="no_remaining_scope",
+                status=409,
+                next_action=(
+                    "inspect the run's recorded per-item outcomes, or start a new bounded run "
+                    "from 操作与任务"
+                ),
+            )
+        # The admitted primary bound is the Task's exact remaining budget, so a
+        # scope that really holds more remaining candidates than the original
+        # run may still organize is refused instead of silently truncated.
+        budgets = self._budgets
+        if remaining_limit is not None and remaining_limit < budgets.max_primary_sources:
+            budgets = replace(budgets, max_primary_sources=max(1, remaining_limit))
+        existing = self._reconcile_recovery(
+            actor,
+            task_id,
+            library,
+            task.configuration_snapshot_id,
+            task.configuration_snapshot_digest,
+        )
+        if existing is not None:
+            return existing
+        now = self._clock()
+        progress = DiscoveryProgress(
+            "queued",
+            (scope_entry,),
+            DiscoveryCounters(),
+            DiscoveryIncompleteReason.NONE,
+            (),
+            (),
+            tuple([scope_entry.path] if scope_entry.kind is DiscoveryEntryKind.FILE else ()),
+            tuple([scope_entry.path] if scope_entry.kind is DiscoveryEntryKind.DIRECTORY else ()),
+            None,
+            None,
+            (),
+            "queued for bounded remaining-scope observation by the resident Processing Worker",
+        )
+        discovery = MediaDiscovery(
+            str(uuid4()),
+            actor,
+            library.library_id,
+            library.storage_id,
+            task.configuration_snapshot_id,
+            task.configuration_snapshot_digest,
+            DiscoveryStatus.QUEUED,
+            1,
+            budgets,
+            progress,
+            now,
+            now,
+            (),
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            False,
+            False,
+            None,
+            admission_request_id=admission_request_id,
+            auto_prepare=True,
+            recovery_source_task_id=task_id,
+            recovery_excluded_paths=excluded,
+        )
+        creator = getattr(self._repository, "create_media_discovery", None)
+        if not callable(creator):
+            raise DiscoveryUnavailable("durable media discovery storage is unavailable")
+        try:
+            return creator(discovery)
+        except DiscoveryConflict:
+            winner = self._reconcile_recovery(
+                actor,
+                task_id,
+                library,
+                task.configuration_snapshot_id,
+                task.configuration_snapshot_digest,
+            )
+            if winner is not None:
+                return winner
+            raise
+
+    def _reconcile_recovery(
+        self, actor, task_id, library, snapshot_id, snapshot_digest
+    ) -> MediaDiscovery | None:
+        finder = getattr(self._repository, "find_open_recovery_discovery", None)
+        if not callable(finder):
+            return None
+        return finder(
+            actor=actor,
+            recovery_source_task_id=task_id,
+            resource_library_id=library.library_id,
+            storage_id=library.storage_id,
+            snapshot_id=snapshot_id,
+            snapshot_digest=snapshot_digest,
+        )
+
+    @staticmethod
+    def _library_relative(path: object, library) -> str | None:
+        """The ResourceLibrary-relative form of one recorded Storage path."""
+
+        if not isinstance(path, str) or not path:
+            return None
+        root = str(getattr(library, "root_path", "") or "").strip("/")
+        value = path.strip("/")
+        if not root:
+            return value
+        if value == root:
+            return ""
+        if value.startswith(root + "/"):
+            return value[len(root) + 1 :]
+        return None
+
+    def _scope_has_remaining_candidate(
+        self, storage: Storage, library, scope_entry: DiscoveryScopeEntry, excluded
+    ) -> bool:
+        """Whether the admitted scope still holds one undecided candidate.
+
+        This is a bounded, read-only existence probe: it lists the scope and
+        applies the same pure include/exclude/extension policy the walk does,
+        but proves no stability and calls no Provider.  It exists only so the
+        truthful ``no_remaining_scope`` refusal is decided at admission instead
+        of admitting a durable preparation that could only discover nothing.
+        """
+
+        excluded_paths = frozenset(excluded)
+        pending = [scope_entry.path]
+        visited = 0
+        while pending and visited <= self._budgets.max_visited_entries:
+            relative = pending.pop(0)
+            path = self._join(library.root_path, relative)
+            try:
+                entry = storage.stat(path)
+            except (StorageError, OSError, ValueError, KeyError):
+                return True
+            if not isinstance(entry, StorageEntry):
+                continue
+            if entry.entry_type is StorageEntryType.FILE:
+                if relative in excluded_paths:
+                    continue
+                if classify_entry(library, relative, entry) is ScanEntryVerdict.CANDIDATE:
+                    return True
+                continue
+            if entry.entry_type is not StorageEntryType.DIRECTORY:
+                continue
+            cursor = None
+            while True:
+                try:
+                    page = storage.list_page(
+                        path, limit=min(100, self._budgets.page_limit), cursor=cursor
+                    )
+                except (StorageError, OSError, ValueError, KeyError):
+                    return True
+                for raw in tuple(getattr(page, "entries", ())):
+                    visited += 1
+                    if visited > self._budgets.max_visited_entries:
+                        return True
+                    if not isinstance(raw, StorageEntry):
+                        continue
+                    child = self._relative(raw.path, library.root_path)
+                    if child is None:
+                        continue
+                    if raw.entry_type is StorageEntryType.DIRECTORY:
+                        if excluded_directory(library, child, raw):
+                            continue
+                        if not directory_may_match(library.include_rules, child):
+                            continue
+                        pending.append(child)
+                        continue
+                    if raw.entry_type is not StorageEntryType.FILE:
+                        continue
+                    if child in excluded_paths:
+                        continue
+                    if classify_entry(library, child, raw) is ScanEntryVerdict.CANDIDATE:
+                        return True
+                cursor = getattr(page, "next_cursor", None)
+                if not cursor:
+                    break
+        return False
 
     def _assert_reconciliation_binding(
         self,
@@ -1686,6 +2001,12 @@ class MediaDiscoveryService:
         observations: list[DiscoveryObservation] = []
         previous = self._load_observations(discovery.discovery_id)
         stable_since: dict[str, datetime] = {}
+        # The exact ResourceLibrary-relative paths an earlier attempt of this
+        # recovery chain already recorded.  They are never observed, listed into
+        # the manifest or counted against the primary bound: the admitted scope
+        # is exactly the *remaining* scope, so a recorded sibling can neither be
+        # re-offered nor displace a genuinely remaining source.
+        recovery_excluded = frozenset(discovery.recovery_excluded_paths)
         # The candidate paths this pass actually observed, so a fully completed
         # pass can drop a previously eligible source that disappeared.
         observed_candidates: set[str] = set()
@@ -1769,6 +2090,11 @@ class MediaDiscoveryService:
             """Observe one candidate and return its exact file entry for association."""
 
             nonlocal counters, observation_degraded
+            if relative in recovery_excluded:
+                # A recorded sibling of this recovery chain is never observed,
+                # listed or counted again.  The walk skips it entirely, exactly
+                # as if it did not exist in the remaining scope.
+                return None
             observed_candidates.add(relative)
             if entry is None:
                 try:
@@ -2148,6 +2474,14 @@ class MediaDiscoveryService:
                     continue
                 directory_entries.append((relative, depth, raw))
                 observed_file_entries.setdefault(relative, (relative, depth, raw))
+                # A recorded sibling of this recovery chain is never observed
+                # again.  It is dropped before attachment association and before
+                # the primary bound so it can never be re-offered or inflate the
+                # remaining manifest.
+                if relative in recovery_excluded:
+                    directory_entries.pop()
+                    observed_file_entries.pop(relative, None)
+                    continue
                 # Every ordinary file is observed first.  A sidecar is only
                 # *demoted* afterwards, and only when the production attachment
                 # matcher proves it belongs to an admitted main file: a suffix
@@ -2414,6 +2748,15 @@ class MediaDiscoveryService:
                 expected_version=intent.version,
                 actor=discovery.actor,
                 tolerate_unready_sources=True,
+                # A remaining-scope recovery preparation links the paused Task it
+                # was admitted for, so the run overview's durable recovery link
+                # resolves exactly as the inline path's did.  It still grants no
+                # execution authority.
+                recovery_source_task_id=discovery.recovery_source_task_id,
+                source_scope="resource_library" if discovery.recovery_source_task_id else None,
+                source_scope_id=(
+                    discovery.resource_library_id if discovery.recovery_source_task_id else None
+                ),
             )
         except Exception as error:  # noqa: BLE001 - report one bounded failure
             code = getattr(error, "code", None)
