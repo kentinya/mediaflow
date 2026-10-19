@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER FIXES REAL CLI PAGINATION AND ITS FALSE-POSITIVE PROOF IN THE SAME TASK
+Next Action: DEVELOPER FIXED CROSS-PROCESS CLI PAGINATION AND ITS FALSE-POSITIVE PROOF; READY FOR B RE-REVIEW
 ```
 
 ## Goal
@@ -202,79 +202,65 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 ## Developer Completion Report
 
-READY FOR B REVIEW at implementation HEAD `52e13ce2c316aafa0bd1c2b424587572cee41d06`
+READY FOR B REVIEW at implementation HEAD `77dcb8e23003f729ea5b32785a329e0aade2f79a`
 (Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
-`a3fbb36c7f86ed08629e08247a08e5f154d4adbb`). Same Task, Base / Goal / T4 unchanged.
+`52e13ce2c316aafa0bd1c2b424587572cee41d06`). Same Task, Base / Goal / T4 unchanged.
 
-### 行为与关键决策
+### 本轮（B FIX REQUIRED）修正：CLI 跨进程分页与假阳性证明
 
-- **P1 稳定观察约束重试与执行。** `PersistentTaskItem`/`PersistentResultRecord` 新增
-  `source_observed_at`（runtime schema 48，additive 列，fresh 创建、旧库原地升级不回填）。
-  `MediaOrganizerService.process_file` 首次选择记录该工作自己的真实首观察时刻；retry/resume/
-  recovery/Worker/Automation 调用在 Provider/执行前用同一 `stability_decision` 策略、按工作原
-  pin 与 live `stat` 重新判定。`resolve_source_evidence=False` 只允许继续观察/等待，不再把
-  “指纹相同”当作“区间已满足”。稳定证据缺失时从当前时刻重新计时。
-- **P2 持久等待闭环。** 观察起点/来源证据落在该显式工作的 TaskItem/Result（`source_observed_at`），
-  重开/新进程可读；合法证据继续、丢失证据重新观察。到期后真实重观察，来源变化重置区间。
-  长区间（>60s）不阻塞同步命令，记录为等待项并由 retry 继续观察；0 秒不新增等待、真实空目录
-  仍 0 项结束。未建第二队列/全局目录。
-- **B-2/P1 Worker 校验原证据可信状态。** `PersistedSourceEvidence.has_exact_evidence` 现在同时
-  要求 `fingerprint_state == verified`。`ManualSourceValidator.validate_persisted_source` 与
-  `_persisted_source_refusal` 对缺失/半缺失/unverified/legacy 一律 `source_unverified` 拒绝，
-  保留记录并指向重新选择/准备；不再根据当前 stat 升级不可信原记录。真实 Worker 续作与直接
-  CLI 重试采用同义检查。
-- **fixture 反映生产。** 稳定性反例用 61 秒配置的立即重试快速验证“未到期零 Provider/零
-  mutation”，不必真等；到期允许与重开用受控持久观察（改 `source_observed_at`，非 mtime）
-  验证。可信状态反例保留真实且匹配的 occurrence/fingerprint，只把状态改为 unverified/legacy，
-  再驱动真实 `worker run-next`。
+**复现（先于修复）。** 独立进程两段调用 `.venv/bin/mediaflow --config CONFIG files list
+--resource-library source --path Movies --limit 5`：首页返回 5 项/hasNext 并打印 Next cursor；
+第二进程带 `--cursor` 却输出 `storage_browser_cursor_invalid`，数据库字节不变。
 
-### 实际受影响命令/结果
+**根因。** `final_cli._live_library_directory_document` 每次新建 `RuntimeFilesBrowserService`
+时未传 `cursor_secret`，`StorageBrowserCursorCodec.__init__` 因此每进程 `secrets.token_bytes(32)`；
+不同 CLI 调用的 codec 无法验证前一次签发的游标。API 侧同样未注入共享 key。
 
-- `python3 scripts/check_governance.py` → PASS；`git diff --check` 干净；
-  `python -m compileall -q mediaflow tests scripts` → OK。
-- `PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_recovery_continuation test_metadata_correction_continuation test_task_persistence` → 98 tests OK。
-- `... test_scanner test_resource_library_pipeline test_final_integration test_scan_retirement_stability test_organize_preparation` → 47 tests OK。
-- `... test_automation_definition_execution test_automation_authorized_execution_matrix test_task_center_recovery_lineage` → 38 tests OK。
-- `... test_task_retry test_scope_continuation test_processing_recovery_admission test_task_pause_resume` → 85 tests OK。
-- `... test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 108 tests OK。
-- 条件消费者组（task_persistence/sqlite_backup/sqlite_restore、direct_file_operations/
-  manual_operations_contract/operations_task_center、automation_task_definition_preview/
-  automation_definition_execution/automation_authorized_execution_matrix/configuration_organize、
-  metadata_correction_continuation/recovery_batch）全部 OK。
-- 追加直接受影响组：`test_classification_review`/`test_file_media_detail`/`test_metadata_correction`/
-  `test_metadata_review`/`test_recognition_review`/`test_workflow_retry` → 45 OK；
-  `test_operations_run_detail_log_isolation`/`test_resource_library_activation`/
-  `test_media_library_activation`/`test_scan_retirement` → 58 OK；
-  `test_restart_fault_boundary`/`test_queued_job_execution_boundary`/`test_operations_run_detail`/
-  `test_operations_workspace`/`test_operations_run_inventory` → 105 OK；
-  `test_operator_observability`/`test_processing_checkpoint`/`test_direct_file_transfers` → 126 OK；
-  `test_media_discovery`/`test_scan_retirement_stability`/`test_automation_task_definition_preview` → 133 OK；
-  `test_processing_worker_readiness`/`test_configuration_status`/`test_api_security` → 39 OK；
-  `test_sqlite_backup`/`test_sqlite_restore`/`test_migration_rehearsal`/`test_upgrade_preflight` → 18 OK。
-- 新增 `FreshCliSourceEvidenceAndStabilityTests`（9 cases）覆盖：fresh CLI 失败项已有 verified
-  occurrence/fingerprint；替换来源恢复在 Provider 前拒绝；空/半缺失/legacy/unverified 拒绝；
-  61 秒配置立即重试仍等待（0 Provider/零 mutation，含 `--execute`）；记录的区间真正到期后
-  dry-run 继续分析；1 秒真实等待；默认 0 不等待；变化重置；真实 Worker 对 unverified/legacy
-  原证据拒绝（0 Provider/零 mutation、无新项/结果）。
-- `.venv/bin/ruff check mediaflow/ tests/` → All checks passed；
-  `.venv/bin/ruff format --check mediaflow/ tests/` → 322 files already formatted。
-- Web（cwd `web/`）：`npm run typecheck` 干净；`npm run test -- run` 指定 4 文件 → 93 passed。
+**修复（复用现有 codec/浏览，不新建第二套游标算法）。**
+- `SQLiteConfigurationRepository` 新增内部元数据表 `managed_internal_keys`，受支持的写初始化
+  以 `INSERT OR IGNORE` 原子 create-if-absent 生成一次 `storage_browser_cursor` key（32 字节）；
+  并发初始化不覆盖、正常重开/新进程稳定。配置 schema 10→11（additive，fresh 建表、旧库原地
+  建表建 key，不改写 Active/媒体）。
+- `ManagedConfigurationService.storage_browser_cursor_key()` 只读暴露该 key。
+- `final_cli._live_library_directory_document` 通过新 `internal_key_store.read_internal_key_read_only`
+  以 `mode=ro` 读取并注入现有 `RuntimeFilesBrowserService`；缺失/损坏明确 `files_list_internal_key_unavailable`
+  并指向正常初始化，**不在读取中偷偷生成一次性 key**，不建库/不升级/不写 Task/观察/许可。
+- `MediaFlowApi` 与 `ConfigurationObjectService` 在未显式注入 secret 时复用同一持久 key（聚焦测试
+  仍可注入固定 secret）。harness 移除固定 secret，走生产路径。
+- key 属内部元数据：不属业务配置/Active 文档、不导出、不输出、不进日志。
 
-### B 独立复现对照（同一 ignored 脚本，行为已翻转）
+**假阳性证明修正。** `web/tests/e2e/live-files.python.spec.ts` 分页用例现断言：无游标错误、
+第二页真实非空、与首页无交集，续到末页后与静态 fixture 全体逐项一致；跨种类拒绝保留。
+`tests/test_file_index_retirement.py` 新增 `CrossProcessCliPaginationTests`（5 cases，真实独立解释器
+进程）覆盖：两进程逐页重建全目录、跨种类/跨目录/篡改拒绝、翻页前后库字节不变且 key 只建一次、
+无 key 时只读拒绝且不写库、key 跨重开稳定且不同库不共享。
 
-- `reproduce_long_stability_retry.py`：61 秒配置下首次 `organize --execute` 仍
-  failed/unstable_source（0 Provider/0 目标）；立即 `tasks retry-failed --execute` 现为
-  exit1、0 Provider、来源仍在、0 目标文件（旧结果 exit0/completed/success/实际 MOVE 已不再成立）。
-- `reproduce_untrusted_worker_evidence.py`：unverified/legacy 两种状态现均 `worker_exit=1`、
-  Provider 0、continuation failed、无新项/结果（旧结果 exit0/completed/verified 已不再成立）。
-- `verify_fresh_task_evidence.py` / `verify_cli_short_stability.py` 保持通过（fresh 证据链与
-  1 秒真实等待进入分析）。
+### 实际受影响命令/结果（本轮）
+
+- `python3 scripts/check_governance.py` → PASS；`git diff --check` 干净；`compileall` OK。
+- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser` → 40 OK。
+- `test_configuration_management test_configuration_snapshot test_sqlite_backup test_sqlite_restore` → 57 OK。
+- `test_configuration_objects test_configuration_organize test_configuration_naming test_configuration_classification test_configuration_destination test_configuration_destination_precheck test_configuration_destination_activation test_configuration_package_exchange` → 145 OK。
+- `test_configuration_status test_migration_rehearsal test_upgrade_preflight test_dashboard test_scan_retirement` → 28 OK。
+- `test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize` → 257 OK。
+- `test_manual_organize_intent ... test_recovery_continuation test_task_center_recovery_lineage` → 163 OK。
+- `test_direct_file_operations test_manual_operations_contract test_operations_task_center test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_recovery_batch` → 233 OK。
+- `test_operations_run_detail test_operations_run_inventory test_operations_workspace test_resource_library_activation test_media_library_activation test_metadata_correction test_metadata_review test_recognition_review test_classification_review test_workflow_retry` → 171 OK。
+- `test_task_retry test_scope_continuation test_processing_recovery_admission test_task_pause_resume test_processing_checkpoint test_processing_worker_readiness test_direct_file_transfers test_file_media_detail test_operator_observability` → 241 OK。
+- `test_storage_browser test_runtime_files_browser test_media_library_browser`、`test_configuration_status test_configuration_successor_draft test_api_security test_v2_settings_rule_readiness` → 24 + 49 OK。
+- `.venv/bin/ruff check mediaflow/ tests/ scripts/` → All checks passed；`ruff format --check` → 352 files already formatted。
+- Web（cwd `web/`）：`npm run typecheck` 干净；`npm run test -- run` 指定 4 文件 → 93 passed；
+  `npm run build` OK；`npx eslint/prettier --check tests/e2e/live-files.python.spec.ts` 干净。
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts` → 5 passed
+  （真实 production build + real CLI/API harness，分页用例现断言真实第二页）。
+- 手工跨进程反例（ignored 临时脚本）：修复前第二进程 `cursor_invalid`，修复后第一页→第二页
+  真实条目、末页与全量一致；harness `/__harness__/cli-files-list` 同样第二页非空。
+- additive upgrade 手工核对：schema 10 旧库（删表）重开原地升级到 11、创建 key、Active 保留。
 
 ### 已知失败/风险
 
-- 仍待 B 独立确认 `tests/e2e/direct-files.python.spec.ts` 的既有 flaky（非本 Task 引入）。
-- 稳定等待上限 `_MAX_STABILITY_WAIT_SECONDS=60s`：更长的配置区间不阻塞同步 CLI，而是记录
-  等待项与 retry 下一步；B 可在真实入口确认该交互。
+- `tests/e2e/direct-files.python.spec.ts` 既有 flaky 仍待 B 独立确认（非本 Task 引入）。
+- 稳定等待上限 `_MAX_STABILITY_WAIT_SECONDS=60s` 交互仍待 B 在真实入口确认。
 - wheel/隔离安装、生产 Docker、真实 SMB/OpenList/S3/TMDB 与 1536×1024/380×720 截图等
   T4 门禁仍 pending B；Developer 不跑全量/发布矩阵。
 - RO-8 独立 Preview 完整退出未交付；本 Task 只清理其必要索引耦合。
