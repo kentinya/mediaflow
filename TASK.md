@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B RE-REVIEWS THE CORRECTED CANDIDATE; BASE / GOAL / T4 UNCHANGED
+Next Action: DEVELOPER COMPLETES SOURCE EVIDENCE AND WORK-SCOPED STABILITY IN THE SAME TASK
 ```
 
 ## Goal
@@ -267,70 +267,76 @@ READY FOR B REVIEW at implementation HEAD `72682d1e3277343b674d62e5ceda99a824036
 ## B Review Result
 
 ```text
-Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..72682d1e3277343b674d62e5ceda99a824036c00
-Decision: FIX REQUIRED — early rejection on independently reproduced P1 blockers
-Acceptance runs: 10 focused tests OK; independent Active / replaced-source reproductions FAIL product invariants
-Task blockers: B-1 exact Active integrity; B-2 recovery source revalidation and truthful evidence
+Reviewed: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..906def76fc596acf4208767ed2dcdee7d2076f06
+Decision: FIX REQUIRED — B-1 reproduced fixed; B-2 incomplete; CLI stability P1
+Acceptance runs: 70 focused tests OK (7.741s, zero skips); four B independent scripts with actual JSON
+Task blockers: missing initial source evidence / unsafe evidence fallback; CLI stability lifecycle
 Slice Required Outcomes / Surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX LOOP; B COMPLETES REMAINING DIFF REVIEW / ASSIGNED T4 ON CORRECTED CANDIDATE
 ```
 
-候选固定为上述实现 Head；交接 `214947ed0b90a01b75a2b1798f0a93d8a8d47bd5` 相对候选仅改
-`TASK.md`，执行输入相同。本轮已检查变更清单及关键配置/来源/schema/恢复链路；按 workflow §6
-已证实阻塞提前拒绝，未声称完成全部 diff 审查或 T4。Developer 报告的全量结果不等同于本轮
-B 验收；其已披露 direct-files 失败尚未由 B 独立确认，不认定为 Base failure 或豁免。
+固定实现候选为上述 Head；交接 `b7d5ba13bb907f44c0e47f709bb941bf0c65d7d8` 相对候选仅改
+`TASK.md`，执行输入相同。上轮已读适用需求/旅程/架构及父 Contract 无变更，本轮核对当前
+指针、契约及修正 diff，并沿 Task Base..Head 检查生产来源/观察/恢复/持久化链。
+按 workflow §6 已证实阻塞提前拒绝；不声称全部 diff 审查、T4 或 Slice-final 已完成。
+
+已独立确认：B-1 的 payload/digest 和不支持 schema 两反例均被拒绝、数据库字节不变；
+带原精确证据的替换来源也在 Provider 前拒绝（Worker exit1、continuation failed、无新项/结果）。
+本轮的缺口不撤销这些已证实的修正，但不足以让整个 B-2 / RO-7 通过。
 
 ### 同一 Task 的必需修正
 
-1. **B-1 / P1 — 精确 Active。** 只读 CLI 在创建 Storage/列举前，执行与现有 managed runtime
-   同义的文档 schema、canonical payload digest 完整性校验；优先复用/提取现有纯校验，保持
-   `mode=ro`，不得为此初始化/升级/写入仓库。损坏/不支持配置返回有界原因、未变更状态及
-   Settings/恢复指引，不读取被改写的 root、不回退 JSON。增加真实 CLI 反例：只改 Active
-   payload（保留旧 digest）以及只改文档 schema 为不支持值；两者均拒绝，数据库字节/表结构
-   和媒体不变；合法 Active、缺库/缺 Active 继续按原旅程处理。
-2. **B-2 / P1 — 恢复来源。** 恢复 Worker 在消费旧决定及 Provider 分析前，通过原 pin 下
-   的 live Storage stat 对比原 TaskItem 的精确 occurrence/fingerprint/path/library，不能仅
-   把旧证据复制给新 TaskItem/Result。变更/缺失/不可验证来源必须保留原历史并拒绝该项、给出
-   明确重新选择/准备路径，不能形成成功续作或把新内容关联到旧身份。审查本 Task 同时移除索引
-   检查的 metadata-correction continuation 等直接消费者，使用共享来源验证边界，保留合法旧
-   pin、成功兄弟及未知效果非重放；不恢复索引或引入第二套恢复引擎。
-3. 修正 `test_worker_continuation_preflight_rejects_stale_occurrence_before_pipeline` 的验证方法：
-   用可工作的本地 Storage 和计数 fake Provider，对排队后替换、缺失、原来源未变分别驱动真实
-   `worker run-next`。不能依赖故意抛异常的 Provider factory 让 Worker 失败，再把该失败当作
-   来源拒绝。断言真实拒绝原因、零 Provider 请求/媒体变更、无误标完成/错误关联；合法未变来源
-   必须完成分析，旧 Active pin 在新发布后仍合法。保留有意义的原安全断言。
+1. **B-2 / P1 — 从首次处理到恢复保持精确来源。** 正常新建 CLI `organize` 的失败 TaskItem
+   目前没有 occurrence/fingerprint；必须在原工作初次观察/准入时保存真实来源证据，并传递到
+   TaskItem/Result/恢复，不能在恢复时首次 stat 后将替换文件标为原项的 verified 来源。
+   覆盖实际 `process_file`、`process_library`、`process_all_libraries`、Worker/Automation
+   共用调用中断掉的证据传递；复用现有 Storage/source-evidence/coordinator，不恢复索引或
+   全局目录。验证器对缺失、半缺失、unverified/legacy 等不能证明原来源的记录明确拒绝并
+   指向重新选择/准备；不得把当前 fingerprint 自动补成旧来源的证明。完整旧证据才可比较后
+   继续，合法旧 pin、成功兄弟和未知效果非重放保持。
+2. **P1 — CLI 真实稳定观察闭环。** `organize` 库级遍历在 stable-size 非0时不能每次都从
+   无观察开始、过滤掉全部候选并以 completed/0 结束。让受支持的 CLI/Worker 共用现有有界
+   发现/持久观察：保留该显式工作自己的等待/再次观察、真实区间、大小/mtime/有效指纹变化
+   重置及重开语义，满足后进入完整分析；若无法安全继续，明确阶段/原因和可行下一步。
+   不提示等待后重复一个永远无法就绪的命令，不用旧mtime/首stat伪造稳定、不建全局缓存。
+   核对直接文件、单库目录和全部库入口同约束，保留范围/控制/fence/未确认零mutation。
+3. 用真实生产入口补足断言：fresh 临时库通过真实 CLI 和可工作的本地 Storage/fake Provider
+   产生初次失败，检查原项已有 verified occurrence/fingerprint，再排队后替换/删除并验证
+   Worker 拒绝、零 Provider 请求/错误结果/媒体变更。另测丢失或不可信原证据必须拒绝，以及
+   未变来源与 superseded pin 正例。禁止只用预先灌入精确证据的 fixture 证明所有新建任务。
+   stable-size 非0的 CLI 用真实经过时间验证从等待到分析、来源变化重置与重开，不把0项完成
+   当作“稳定性安全”通过；保留原安全断言和独立结果，不扩大重试/超时以掩盖问题。
 
-Developer 本次修正先跑下列失败/直接受影响组；新增/修改其他消费者时追加本 Task 原有对应
-受影响组及 changed-file ruff 检查，不跑全仓/发布矩阵：
+Developer 本次先跑下列新增/修改和直接受影响组；其他实际改动按本 Task 原分配追加对应组
+及 changed-file ruff 检查。不得把 B 全量/发布矩阵交给 Developer：
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser
-PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_metadata_correction_continuation test_manual_organize_intent test_task_center_recovery_lineage
+PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_recovery_continuation test_metadata_correction_continuation test_task_persistence
+PYTHONPATH=tests .venv/bin/python -m unittest test_scanner test_resource_library_pipeline test_final_integration test_scan_retirement_stability test_organize_preparation
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_definition_execution test_automation_authorized_execution_matrix test_task_center_recovery_lineage
 git diff --check
 ```
 
-B 在修正固定 SHA 上重做上述独立反例、审完原 Base..新 Head，其余 Required Tests 中的全部
-B T4/真实入口/wheel/安装消费者/Docker/视觉门禁仍由 B 执行；原清单不减项，不交回 Developer。
-匹配 B 证据可复用，执行输入改变刷新分配验收；所有尚未执行项保持 pending。
+B 在修正固定 SHA 重做独立关键复现、审完原 Base..新 Head，并负责 Required Tests 原清单中
+全部 T4/真实入口/wheel/安装消费者/Docker/视觉门禁。匹配 B 证据可复用；执行输入改变刷新
+分配验收。尚未运行的全量均 pending，不以环境/证据缺口要求 Developer 改产品。
+Developer 原报告的 direct-files Base/flaky 归因仍未由 B 独立确认，不作为豁免。
 
-本轮证据（本机 ignored storage，非远程产物）：
-`.git/validation-evidence/72682d1e3277343b674d62e5ceda99a824036c00/task45.5/b-review/`。
-包含两份独立复现脚本、JSON 实际结果、10 tests 日志和复核说明。Active 两反例均被 canonical
-校验拒绝但被 CLI 接受；替换来源续作实际 `completed` / `dry_run`、1次 Provider 搜索、仍携带
-旧 fingerprint，媒体 mutation 为0。现有10 tests虽OK，不能覆盖/推翻独立反例。
-按已证实阻塞停止昂贵门禁；本轮测试命令用时少于5秒，复核开始至记录已超过3分钟，低于50%。
+本轮本机 ignored evidence：
+`.git/validation-evidence/906def76fc596acf4208767ed2dcdee7d2076f06/task45.5/b-review/`。
+`active-integrity.json` / `exact-replaced-recovery.json` 为修正通过的独立反例；
+`fresh-task-missing-evidence.json` 为真实新建 CLI 失败→替换→恢复 completed/dry_run、1次
+Provider 搜索、新项被标 verified 的阻塞；`cli-stability.json` 为配置1秒、实际等待1.105秒后
+两次CLI仍 exit0/completed/0项、Provider为0的阻塞。四脚本、原始测试日志和说明均保留。
+70 tests OK/无skip，日志的 ResourceWarning 原样保留；反例复现媒体mutation均为0。
+测试命令总耗时少于15秒；本轮复核已超过3分钟，低于用户50%上限。
 
-45.4原PASS/Base/Reviewed Head/验证例外不变，完整指针见Task Base的 `TASK.md`。
-45.5 PASS后B复核全部RO/Surfaces；未满足才规划下一连贯Task，全部满足即停止造Task，
-补齐/复用最终验证并交Closure Packet：SLICE READY FOR A REVIEW，只有A可以关闭。
-
-本轮B preflight：main@214947ed0b90a01b75a2b1798f0a93d8a8d47bd5，治理PASS，workspace/Git可写；
-原规划preflight为main@3e2cb31aca211a7dcb7fa7c4ba4883d55b951974。
-预存修改保留且不纳入Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
-`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
-`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
-`web/test-results-real-python-final/`。私有ignored配置不读取、不暂存。
+45.4原PASS/Base/Reviewed Head/验证例外不变；未规划新Task，未更改Slice/Roadmap/Progress。
+RO-7通过后再核对全部RO/Surfaces，满足即停止造Task、补齐/复用最终门禁并交A；RO-8仍待实现。
+本轮preflight：main@b7d5ba13bb907f44c0e47f709bb941bf0c65d7d8，治理PASS，workspace/Git可写。
+预存图片删除、未跟踪截图/.DS_Store/ZIP/浏览器结果/开发log均保留且不纳入本checkpoint；
+未读取或修改私有ignored配置、用户运行库或媒体。上轮详细复核保留在 `0ccca98:TASK.md`。
 
 ## Developer Fix Round Report (B-1 / B-2 / B-3)
 
