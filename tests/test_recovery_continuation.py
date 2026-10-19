@@ -4287,6 +4287,271 @@ class FreshCliSourceEvidenceAndStabilityTests(unittest.TestCase):
                 fixture.doCleanups()
 
 
+class DirectFileStabilityTests(unittest.TestCase):
+    """RO-7: a directly selected file proves the configured stability policy.
+
+    A directly selected file must obey the *same* stability policy as a walked
+    directory.  The direct entrance used to pass the ``FileStabilityPolicy``
+    where the shared helper expects the owning ``ResourceLibrary``, so any
+    non-zero interval raised ``'FileStabilityPolicy' object has no attribute
+    'stability_policy'`` and the source was lost with no TaskItem or Result.
+    These cases reproduce that real CLI matrix and prove the corrected
+    behaviour: zero interval analyzes immediately, a short interval waits a
+    genuine elapsed time and then analyzes, a long interval records an honest
+    waiting item with durable observation evidence, a source that changes
+    during the wait resets its interval, and the recorded interval is the only
+    authority a later retry may use.
+    """
+
+    def _environment(self, directory, *, document_patch=None):
+        return RecoveryContinuationTests()._environment(directory, document_patch=document_patch)
+
+    def _direct_environment(self, directory, seconds, *, source_age_seconds=86400, **stability):
+        def configure(document):
+            document["resourceLibraries"][0]["displayRootPath"] = str(
+                Path(document["storages"][0]["rootPath"]) / "Media"
+            )
+            document["resourceLibraries"][0]["stability"] = {
+                "minimumAgeSeconds": stability.get("minimum_age", 0),
+                "modifiedThresholdSeconds": stability.get("modified_threshold", 0),
+                "stableSizeDurationSeconds": seconds,
+            }
+
+        environment = self._environment(directory, document_patch=configure)
+        old = time.time() - source_age_seconds
+        os.utime(environment["source_file"], (old, old))
+        return environment
+
+    def _run(self, environment, provider, *extra, expected_code=None):
+        output, errors = io.StringIO(), io.StringIO()
+        with patch(
+            "mediaflow.final_cli.metadata_provider_registry_from_environment",
+            lambda _ids: MetadataProviderRegistry((provider,)),
+        ):
+            code = final_main(
+                [
+                    "--config",
+                    str(environment["config"]),
+                    "organize",
+                    str(environment["source_file"]),
+                    *extra,
+                ],
+                stdout=output,
+                stderr=errors,
+            )
+        if expected_code is not None:
+            self.assertEqual(code, expected_code, f"{errors.getvalue()}\n{output.getvalue()}")
+        return code, output.getvalue(), errors.getvalue()
+
+    def _records(self, environment):
+        with SQLiteTaskRepository(environment["database"]) as repository:
+            tasks = repository.list_tasks()
+            items = [item for task in tasks for item in repository.list_items(task.task_id)]
+            results = [result for task in tasks for result in repository.list_results(task.task_id)]
+        return tasks, items, results
+
+    def test_direct_zero_interval_analyzes_immediately_with_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 0)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            code, output, _ = self._run(environment, provider, expected_code=0)
+            self.assertLess(time.monotonic() - started, 1.0)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            tasks, items, results = self._records(environment)
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
+            self.assertEqual("verified", items[0].source_fingerprint_state)
+            self.assertIsNotNone(items[0].source_occurrence_id)
+            self.assertIsNotNone(items[0].source_fingerprint)
+            self.assertEqual(1, len(results))
+            self.assertEqual("dry_run", results[0].status)
+            # Analysis is zero mutation: the source is untouched and no target
+            # file exists yet.
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_short_interval_waits_real_time_then_analyzes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 1)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            code, output, _ = self._run(environment, provider, expected_code=0)
+            elapsed = time.monotonic() - started
+            self.assertGreaterEqual(elapsed, 1.0)
+            self.assertLess(elapsed, 5.0)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            tasks, items, results = self._records(environment)
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
+            self.assertEqual(1, len(results))
+            self.assertEqual("dry_run", results[0].status)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_long_interval_records_waiting_item_without_synchronous_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 61)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            code, output, _ = self._run(environment, provider, expected_code=1)
+            self.assertLess(time.monotonic() - started, 5.0)
+            self.assertEqual([], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            tasks, items, results = self._records(environment)
+            # The waiting selection is a durable TaskItem + Result, not a
+            # SUMMARY-only error: it can be retried or continued later.
+            self.assertEqual(1, len(tasks))
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+            self.assertEqual("failed", items[0].stage)
+            self.assertEqual("verified", items[0].source_fingerprint_state)
+            self.assertIsNotNone(items[0].source_occurrence_id)
+            self.assertIsNotNone(items[0].source_fingerprint)
+            self.assertIsNotNone(items[0].source_observed_at)
+            self.assertEqual(1, len(results))
+            self.assertEqual("failed", results[0].status)
+            self.assertEqual("unstable_source", results[0].retry_category)
+            self.assertEqual("none", results[0].effect_certainty)
+            self.assertTrue(environment["source_file"].exists())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_minimum_age_refusal_records_durable_waiting_item(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(
+                directory, 0, source_age_seconds=1, minimum_age=3600
+            )
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            code, output, _ = self._run(environment, provider, expected_code=1)
+            self.assertEqual([], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            _tasks, items, results = self._records(environment)
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+            self.assertIsNotNone(items[0].source_observed_at)
+            self.assertEqual("unstable_source", results[0].retry_category)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_source_change_during_wait_resets_the_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 5)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            changed = threading.Event()
+
+            def mutate() -> None:
+                time.sleep(0.4)
+                environment["source_file"].write_bytes(b"changed-during-wait")
+                changed.set()
+
+            writer = threading.Thread(target=mutate, daemon=True)
+            writer.start()
+            started = time.monotonic()
+            code, output, _ = self._run(environment, provider, expected_code=1)
+            writer.join(timeout=10)
+            self.assertTrue(changed.is_set())
+            self.assertLess(time.monotonic() - started, 5.5)
+            self.assertEqual([], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            _tasks, items, results = self._records(environment)
+            self.assertEqual(1, len(items))
+            self.assertEqual(TaskItemStatus.FAILED, items[0].status)
+            self.assertEqual("unstable_source", results[0].retry_category)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_retry_uses_the_recorded_interval_without_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 61)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            self._run(environment, provider, expected_code=1)
+            self.assertEqual([], provider.movie_queries)
+            _tasks, items, _results = self._records(environment)
+            self.assertEqual(1, len(items))
+            original = items[0]
+            self.assertIsNotNone(original.source_observed_at)
+            # An immediate reopen + retry must keep waiting: the durable
+            # observation start proves the interval is not yet satisfied.
+            provider.movie_queries.clear()
+            output, errors = io.StringIO(), io.StringIO()
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                retry_code = final_main(
+                    [
+                        "--config",
+                        str(environment["config"]),
+                        "tasks",
+                        "retry-failed",
+                        original.task_id,
+                    ],
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(1, retry_code, f"{errors.getvalue()}\n{output.getvalue()}")
+            self.assertEqual([], provider.movie_queries)
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+            # The work's own recorded interval start is the only authority a
+            # later retry may use; once it is genuinely satisfied the retry
+            # analyzes without mutation and without replaying the failed item.
+            observed_at = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+            with sqlite3.connect(environment["database"]) as connection:
+                connection.execute(
+                    "UPDATE task_items SET source_observed_at=? WHERE item_id=?",
+                    (observed_at, original.item_id),
+                )
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                retry_code = final_main(
+                    [
+                        "--config",
+                        str(environment["config"]),
+                        "tasks",
+                        "retry-failed",
+                        original.task_id,
+                    ],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(0, retry_code)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_direct_execute_waits_then_performs_the_real_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._direct_environment(directory, 1)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            started = time.monotonic()
+            code, output, _ = self._run(environment, provider, "--execute", expected_code=0)
+            self.assertGreaterEqual(time.monotonic() - started, 1.0)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            self.assertNotIn("stability_policy", output)
+            self.assertFalse(environment["source_file"].exists())
+            targets = [
+                path for path in Path(environment["target_root"]).rglob("*") if path.is_file()
+            ]
+            self.assertEqual(1, len(targets))
+            self.assertEqual(b"unchanged-source", targets[0].read_bytes())
+
+
 def _ambiguous_identification() -> MetadataIdentificationResult:
     candidates = (
         MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),

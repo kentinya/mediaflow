@@ -671,7 +671,7 @@ class MediaOrganizerService:
         if verdict is StabilityVerdict.STABLE:
             return (occurrence, observed.value, observed.state.value), False, first
         remaining = stability_wait_seconds(
-            policy, entry, now=first, unchanged_previous=False, observed_since=None
+            resource_library, entry, now=first, unchanged_previous=False, observed_since=None
         )
         if remaining <= 0 or remaining > _MAX_STABILITY_WAIT_SECONDS:
             # A long configured interval is not blocked synchronously; the
