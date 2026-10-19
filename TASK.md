@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER PERSISTS SOURCE REFUSALS AND TRUTHFUL TASK OUTCOMES IN THE SAME TASK; B RETAINS FULL ACCEPTANCE
+Next Action: DEVELOPER FIXES WORK-SCOPED STABILITY FOR SUPPORTED REMAINING-SCOPE RECOVERY; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -288,115 +288,121 @@ Completed/0（未改 `finish` 聚合逻辑，也不伪造 scan error）。
 ## B Review Result
 
 ```text
-Reviewed candidate: 204441f70c0678e9b6526a54f6af8aac75b126f4
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..204441f70c0678e9b6526a54f6af8aac75b126f4
-Handoff: 3e1bbdaef87e9ca559d8be9ac72e9721eee79c56 (TASK.md only; execution inputs identical)
-Decision: FIX REQUIRED — refused sources are persisted as Completed / 0 items / 0 failures
-Previous direct-file stability blocker: independently fixed, including real elapsed execution
+Reviewed candidate: 8732c2588cda76646a72dfbea60bd72abc93e935
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..8732c2588cda76646a72dfbea60bd72abc93e935
+Handoff: 03c4c2d08ffce5002ac3df0051bd2ca73f35ad86 (TASK.md only; execution inputs identical)
+Decision: FIX REQUIRED — remaining-scope recovery cannot complete any nonzero stable-size interval
+Previous durable-refusal blocker: independently fixed, four real CLI/SQLite cases
 Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX LOOP; B FINISHES ORIGINAL BASE..CORRECTED HEAD REVIEW / ASSIGNED T4
 ```
 
-本轮 main 固定上述候选，治理 PASS，workspace/Git 可写；预存图片删除、未跟踪截图、
-日志、ZIP、浏览器结果和私有配置均保持。读毕 AGENTS/workflow/B experience、已提交
-Contract/Task/当前指针，并核对适用需求、列表/整理/恢复完整旅程及 CURRENT/TARGET。
-本次继续原 Base..Head 的浏览、源证据、恢复、扫描/批量、Automation、API、持久化与前端
-审查；发现确定 P1 后按 workflow §6 提前拒绝，不宣称全部 diff 或完整 T4 已完成。
+本轮 main 固定上述候选；治理 PASS，Git/workspace 可写。预存图片删除、未跟踪截图/日志/
+ZIP/浏览器结果及私有配置均保持。读毕 AGENTS/workflow/B experience、已提交 Contract/
+Task/当前指针，核对适用需求、列表/整理/恢复完整旅程及 CURRENT/TARGET。无 A-owned
+边界变化；继续原 Base..Head 的共享来源/持久化/控制/恢复及 API/Web 消费者审查。
+发现确定 P1 后按 workflow §6 提前拒绝；未声称全部 diff 或完整 T4 已完成。
 
 ### 上轮修正已独立通过
 
-真实 CLI / Active / LocalStorage / SQLite / functioning fake Provider：单文件稳定期0立即
-分析成功；1秒真实等待后分析成功；61秒立即保存1个可信等待 TaskItem 和1个 Result，
-Provider0；目录1秒成功；单文件1秒 --execute 真实等待后实际 Move 成功。未再出现
-helper 参数错误。B 脚本断言实际结果/时间/持久状态与临时媒体效果，不复用旧失败期待。
+替换、缺失、unverified 的真实 CLI 重试，及首次目录发现→处理间替换来源，四例均保持
+Provider0 / 零媒体 mutation，重开后保存为 Failed / total1 / failed1，存在1 TaskItem /
+1 Result，分别保留 source_changed / source_missing / source_unverified、下一步和原证据。
+真实 tasks show 能显示失败原因。B 复用旧独立脚本的 fixture，但已更新断言为修正后结果；
+没有把旧缺陷脚本 exit0 或 Developer 标签当作产品通过。
 
-### 当前 P1：安全拒绝没有落入逐文件结果，任务反而显示完成
+### 当前 P1：剩余范围摘要每次都丢弃稳定观察
 
-四组独立真实入口反例均 exit1、Provider0、零媒体变更，但数据库重开后的 Task 均为
-`completed / total_items=0 / failed_items=0 / error=None`，无 TaskItem / Result。
-`tasks show <new-task>` 也明确打印 `Status: completed`、`Total: 0`。
+独立 fixture 使用 **受支持的 organize Task**，不是要求保留独立 Preview 产品：
+精确 Managed Active + SQLite + LocalStorage，原 Task 已暂停、一次性执行权限不可复用，
+保留成功兄弟 Kept.2006.mkv，尚需处理 Left.2005.mkv；原 pin、库/目录和预算固定。
+真实 API `POST /api/v1/tasks/{id}/remaining-scope-previews` 是当前原生“重新生成剩余范围
+摘要”的消费者；临时文件旧mtime已超过一天，内容全程未变。
 
-| 真实触发 | CLI 当次输出 | 持久结果缺口 |
-|---|---|---|
-| 单文件61秒等待落库后，替换该文件，再 retry-failed --execute | reviewed source changed/replaced | 新尝试 Completed0，无拒绝原因 |
-| 同样等待后删除源文件，再重试 | reviewed source no longer present | 同上 |
-| 同样等待后模拟原证据信任状态丢失，再重试 | cannot prove original occurrence | 同上；未把 live stat 冒充旧证据 |
-| 新目录 organize --execute；真实 list 返回观察后、处理前替换源文件 | reviewed source changed/replaced | 原始整理任务直接 Completed0 |
+| 原pin策略 | 第一次请求 | 真实等待后的第二次请求 | 工作内观察 / 计划 |
+|---|---|---|---|
+| stable-size=0 | 201，真实生成精确计划摘要 | 无需第二次 | 1 intent / 1 plan；成功兄弟未选入 |
+| stable-size=1秒 | 409 source_not_ready | 等1.129秒后仍409 source_not_ready | 0观察 / 0 intent / 0 plan，Provider0 |
 
-最后一组只在临时 fixture 对真实 LocalStorage.list 返回与消费者处理之间注入外部写入，
-不 mock 校验结果或 Provider。证明同一缺陷也影响普通首次整理，不只是历史重试。
-安全拒绝本身正确，禁止恢复成“继续执行”；要修的是已受理尝试的逐文件失败证据和真实
-汇总状态。CLI 一次输出、普通访问/操作日志不能替代重连/重开后可查看的正式结果。
+错误仍让操作者“等待稳定区间、刷新并重新选择”。但再次读取总是首次观察，任意次数等待/
+刷新都无法跨越非零稳定期。安全拒绝没有放宽，但受支持普通整理的剩余范围恢复已无法
+完成，违反 RO-7 无索引稳定观察→摘要/恢复、RO-4 控制与重开及 Task 的完整失败恢复旅程。
+这不是要恢复旧 Scan/FileIndex 或保留独立 Preview 的兼容产品。
 
 ### Developer 必需修正与执行顺序
 
-1. **先复现并断言数据库重开后的结果。** 使用上表隔离 fixture；保留原等待 Task 的
-   精确 evidence/pin，分别替换/删除/丢失信任后重试，并覆盖发现与处理之间变化的首次
-   目录整理。必须同时看 exit / 输出、Task status / counts / error、TaskItem、Result、
-   检查点及已知效果，不只断言 exit1、Provider0、源未变或原指纹没被覆盖。
-2. **让早期拒绝沿现有持久完成路径发布。** 定位
-   `MediaOrganizerService.process_file` 的 `resolve_source_evidence=False` 分支：
-   `_persisted_source_refusal` 拒绝后调用 `_failed(..., tracked_item=None, stage="storage")`，
-   此时尚未 `begin_item`，故 `_complete` 不会发布 TaskItem/Result。
-   在既有 Task/coordinator 职责内记录该新尝试的精确受理项和拒绝结果，复用现有
-   `_complete` / `complete_item` / checkpoint / evidence 机制；不要另建结果库或索引。
-   若需调整开始记录的时机，保持 pin、库/路径范围、锁/claim/fence、去重及已终结项保护；
-   不把其他 owner 的进行中项当作本次失败覆盖。
-3. **持久保留原证据与可执行的补正说明。** 拒绝记录沿用原受理的来源、occurrence /
-   fingerprint / trust state / observation time 与 pin；不以当前文件重建旧可信证据，
-   不覆盖原任务/成功兄弟/未知效果，也不因为保存失败而重放媒体。分别解释来源已变化、
-   已缺失、不可验证和真实 Storage 连接故障，记录未执行/已知零效果。
-   变化/不可验证应引导回当前 Files 重新选择并准备新摘要；缺失说明恢复原来源或重新选择；
-   连接故障按现有修复/安全重验流程。不要把上述全部归成泛化 storage_failure + Retry，
-   不授予自动分析/执行或放松来源比较。使用既有 bounded failure 投影/共享语义。
-4. **修正汇总的假成功，并保留真实零项语义。**
-   `PersistentTaskCoordinator.finish` 当前只从持久 items / scan_errors 决定状态，遗漏
-   SUMMARY 中已拒绝却未持久化的 item。修复主路径后，核对拒绝项和 failed counts 一致；
-   审查同类 `_failed` 提前返回，避免再制造没有正式记录的失败。
-   只把 aggregate 改成 FAILED、仍不保存逐文件原因不满足本 Task；也不能把所有正常空目录/
-   合法零结果都改失败，或伪造 scan error 掩盖来源校验阶段。
-5. **直接消费者与交接。** 覆盖单文件 retry/resume、目录/批量新发现到处理、实际调用同一
-   分支的 Worker/定义基础消费者。按必要范围修改，不展开 RO-8 或冻结43。
-   提交固定候选，保留 Task45.5 / Base / Goal / High / T4，不新造修正 Task。
+1. **先复现真实剩余范围恢复。** 沿上述 organize Task 路径使用稳定期0成功对照和1秒反例。
+   固定原 pin/预算/成功兄弟，核对第一次请求后究竟持久保存了什么；真实等待后第二次仍
+   拒绝必须可复现。不要仅测试 CLI process_file，因为其真实等待已经修好，此处是另一个
+   实际消费者。不要把 fixture command=preview 作为支持范围前提。
+2. **修正工作内观察生命周期，复用现有能力。**
+   `ManualOrganizePreviewService.create_remaining_scope_from_task` → `_remaining_scope_sources`
+   → `_source_identity_from_storage` 当前每次调用
+   `stability_decision(... unchanged_previous=False, observed_since=None)`，拒绝即退出，且未
+   保存本次观察。继续使用 `scan_filters` 的同一稳定性规则；把首次观察、真实间隔、二次
+   stat、变化重置及完成条件放进该显式恢复准备工作的既有持久上下文，重开能继续。
+   优先消费同一 Task/工作已有的可信 observation；尚无观察时复用已有有界
+   MediaDiscovery/Worker 的观察、next_observation_at、claim/lease/fence 和 finalize 能力，
+   做必要内部适配，不另建扫描产品/索引、全局文件观察缓存或另一套稳定性/恢复引擎。
+3. **原pin/剩余范围/权限不可放宽。** 重用 Discovery 时注意其普通 admit 默认取当前 Active，
+   不能直接拿新 Active 重建旧任务的剩余方案；只从服务端核验的原 Task 身份解析原发布
+   pin、库/Storage/root、精确剩余范围和原预算。必要内部历史pin适配必须默认保持普通新建
+   请求的当前 Active 规则，不能允许浏览器提交任意pin/来源证据。
+   同路径换文件、size/mtime/有效validator变化重置观察或明确要求重新准备；丢证据重新观察，
+   不用旧mtime/单次stat/虚构时间当稳定证明。成功/忽略/未知效果兄弟绝不重新纳入；准备仍
+   零 Provider（等待阶段）/零媒体 mutation/零执行权，完整摘要后保持精确子集确认。
+4. **原生等待与可恢复操作要可完成。** 在当前任务处理上下文显示实际观察进度/等待原因，
+   用户无需反复猜测刷新时间、管理内部token或先跑Scan。长区间走现有持久Worker，HTTP请求
+   不长时间 sleep；刷新/读取不偷偷重新准入或调用 Provider。重复/丢响应收敛同一准备工作，
+   pause/cancel/reopen 的已观察事实和安全边界保留；满足真实区间后能够生成可确认摘要。
+   如仅修复错误文案仍永远拒绝，不满足本 Task。
+5. **同源消费者与边界。** 盘点此 helper 当前支持的整理/恢复调用，修复同一根因影响的
+   路径；独立 Preview 专用产品退出仍留 RO-8，不为它新建保留/兼容流程。本次要求保留的是
+   organize 的共享准备/剩余范围恢复，不提前实施整个 RO-8。若确需改变父 Contract，报B→A，
+   不自行取消必需恢复、改Base或降低稳定性。修正继续 Task45.5 / High / T4。
 
 ### Developer 本次受影响验证
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_task_persistence test_scope_continuation test_final_integration test_workflow_retry test_resource_library_pipeline
-# 若修改共享失败说明/投影或 coordinator，追加其直接消费者
-PYTHONPATH=tests .venv/bin/python -m unittest test_processing_checkpoint test_operations_run_detail test_operations_task_center test_task_center_recovery_lineage
-# 若生产修改实际影响定义执行/Worker，追加对应组；不扩成全仓
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_definition_execution test_automation_authorized_execution_matrix
+PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_scan_retirement_stability test_organize_preparation
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent test_manual_organize_preview test_recovery_continuation test_task_center_recovery_lineage
+# 实际改变持久化/任务控制时，追加对应直接消费者
+PYTHONPATH=tests .venv/bin/python -m unittest test_task_persistence test_processing_checkpoint test_task_pause_resume
 .venv/bin/ruff check <changed-python-files>
 .venv/bin/ruff format --check <changed-python-files>
 git diff --check
+# cwd web/；有实际Web/契约变化才追加直接受影响测试及
+npm run typecheck
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
 ```
 
-新增/加强回归须核对持久失败和下一步（包括 reopen / tasks show / 对应任务详情的实际投影），
-保留未变正常成功、真正空目录零项、立即等待与区间满足、混合成功/失败及未知效果非重放。
-没有 Web 产品修改时不要求 Developer 跑全仓 Web；有实际投影变更则只追加直接受影响测试。
-B 对修正候选重做关键正反例、原 Base..Head 审查，继续承担 Required Tests 原分配的完整
-T4 / Python / Web / E2E / 真实浏览器与视觉 / wheel / 安装消费者 / Docker / 安全与持久化
-门禁；未跑或中断不算 PASS，不把全量交回 Developer。按 workflow 复用匹配证据，不机械
-重跑 Slice Final，也不拿旧执行输入的结果充当本候选全量通过。
+新增真实 organize 剩余范围场景：非零区间到成功摘要、首次等待零Provider/媒体/许可、变化
+重置、观察重开、成功/未知兄弟排除、旧合法pin在新Active发布后保持、重复/未知响应不重复
+准入、真实剩余预算及取消。至少一个短区间真实 elapsed 到成功；可控时钟单测分开标识，
+不能手改 observation timestamp 后声称真实等待已通过。普通 Files 浏览仍只读不记录观察。
+
+Developer 只跑修改/失败与直接受影响组，提交固定候选即可。B 完成原 Base..Head 审查，
+承担 Required Tests 中原分配的完整 T4 / Python / Web / E2E / 原生与视觉 / wheel / 安装
+消费者 / Docker / 安全、持久化和独立关键复现。匹配输入/产物证据按 workflow 复用，不
+机械重复 Final；本轮中断/未执行门禁不算 PASS，不交回 Developer 补全量证据。
 
 ### 本轮实际验证与证据
 
-本机稳定 ignored storage（非远程 CI）：
-`.git/validation-evidence/204441f70c0678e9b6526a54f6af8aac75b126f4/task45.5/b-review/`。
+本机稳定 ignored storage（非远程CI）：
+`.git/validation-evidence/8732c2588cda76646a72dfbea60bd72abc93e935/task45.5/b-review/`。
 
-- `verify_direct_stability.py` / `direct-stability.json`：上轮修正的5组真实成功/等待/执行对照。
-- `reproduce_refusal_completion.py` / `refusal-completion.json`：源替换、缺失、unverified 的
-  真实 CLI 重试 + 重开数据库 + tasks show；脚本成功表示已重现缺陷，非产品 PASS。
-- `reproduce_discovery_refusal.py` / `discovery-refusal.json`：首次目录整理的来源竞态反例。
-- 全仓 ruff format / check 通过；compileall、pip check、两份示例 config validate 通过；
-  禁止依赖检索无匹配（exit1）。原始日志/实际命令见同目录 README。
-- 全 Python unittest discover 已启动；发现确定 P1 后 SIGINT 终止已核实的该子进程，
-  外层181.93秒、exit130，原始输出/ResourceWarning/中断栈保留。无完整测试数/PASS声明。
-  未启动 Web/E2E/wheel/Docker/视觉门禁，仍 pending B；Docker daemon29.5.2可用。
-- 测试/质量命令累计保守上限195秒，起止和比例见同目录 review-timing.json；本轮收尾
-  必须低于用户50%上限，不靠空等增加分母。
+- `verify_refusal_completion.py` / `refusal-completion.json`、`verify_discovery_refusal.py` /
+  `discovery-refusal.json`：上轮四例修正独立通过，核对持久状态、原因/下一步和实际 effects。
+- `reproduce_remaining_stability.py` / `remaining-stability.json`：受支持 organize Task 的
+  真实 API / SQLite / LocalStorage 正反例；0秒201，1秒真实等待后两次409，0工作观察。
+  脚本 exit0 表示已证实缺陷和成功对照，非产品 PASS。
+- 全 Python unittest discover 启动后发现确定 P1，核实子进程后 SIGINT 终止；
+  外层149.39秒、exit130，原始输出/ResourceWarning/中断栈保留，无完整数或PASS声明。
+- 治理与 git diff --check 通过。未启动 Web/E2E/wheel/Docker/视觉等完整门禁，继续 pending B；
+  不用旧执行输入的历史结果冒充本候选通过。完整日志、命令和时间见同目录 README / timing。
+- 验证命令保守累计上限160秒；本轮收尾低于总复核时间50%，不靠空等增加分母。
 
-本轮只提交 Task 审查/执行指导，不含预存用户文件变化；Slice/Roadmap/Progress、45.4
-历史 PASS/例外均不变。RO-7 尚未通过、RO-8 未实现，不规划下个 Task 或提交 Closure Packet。
+本轮仅 checkpoint Task 审查及执行指导，不含预存用户变化；Slice/Roadmap/Progress、45.4
+历史接受/例外不变。RO-7未通过、RO-8未实现，不造新Task、不提交Closure Packet、不关闭。
