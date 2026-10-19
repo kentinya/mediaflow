@@ -63,6 +63,7 @@ from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus, R
 from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
 from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     PersistentResultRecord,
@@ -1030,39 +1031,111 @@ class RecoveryContinuationTests(unittest.TestCase):
                     actor="operator",
                 )
             # Replace the source so the reviewed occurrence no longer matches
-            # the live content at the same path.
+            # the live content at the same path.  The real Worker and local
+            # Storage must make their own source-identity decision; no Provider
+            # or Storage factory is made to fail to manufacture the refusal.
             environment["source_file"].write_bytes(b"replaced-before-worker")
             with SQLiteTaskRepository(environment["database"]) as repository:
                 submission = self._submit_continuation(services, run, repository)
             self._close_manual_services(services)
-            provider_factory = Mock(side_effect=AssertionError("worker reached Provider"))
-            storage_factory = Mock(side_effect=AssertionError("worker reached Storage"))
-            with (
-                patch(
-                    "mediaflow.final_cli.metadata_provider_registry_from_environment",
-                    provider_factory,
-                ),
-                patch.object(RuntimeConfiguration, "create_storages", storage_factory),
-            ):
-                code = final_main(
-                    ["--config", str(environment["config"]), "worker", "run-next"],
-                    stdout=io.StringIO(),
-                    stderr=io.StringIO(),
-                )
-            self.assertEqual(1, code)
-            # A stale source is rejected at the pipeline's live re-observation
-            # boundary: the provider registry may be constructed, but no
-            # Provider request and no Storage construction happens.
-            self.assertEqual(0, storage_factory.call_count)
+            provider.movie_queries.clear()
+            self._run_worker(environment, provider, expected_code=1)
+            # A replaced source is refused at the live re-observation boundary:
+            # no Provider request and no new TaskItem/Result is produced.
+            self.assertEqual([], provider.movie_queries)
             with SQLiteTaskRepository(environment["database"]) as repository:
                 continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
                 assert continuation is not None
                 self.assertEqual(RecoveryContinuationStatus.FAILED, continuation.status)
                 self.assertIsNone(continuation.new_task_id)
-                self.assertTrue(continuation.error)
+                self.assertIn("source", (continuation.error or "").lower())
+                self.assertIn("re-select", continuation.recovery or "")
             self.assertEqual(b"replaced-before-worker", environment["source_file"].read_bytes())
             self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
             self._assert_no_link_authority_or_mutation(environment, run, 1)
+
+    def test_worker_continuation_refuses_missing_source_before_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            environment["source_file"].unlink()
+            provider.movie_queries.clear()
+            self._run_worker(environment, provider, expected_code=1)
+            self.assertEqual([], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
+                assert continuation is not None
+                self.assertEqual(RecoveryContinuationStatus.FAILED, continuation.status)
+                self.assertIsNone(continuation.new_task_id)
+                self.assertIn("source", (continuation.error or "").lower())
+                self.assertIn("re-select", continuation.recovery or "")
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
+
+    def test_worker_continuation_accepts_unchanged_source_and_superseded_pin(self):
+        """A legitimate unchanged source completes; a later Active does not rebind it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct", year=2024),)
+            )
+            services, run, _record, _preview = self._fail_manual_organize(environment, provider)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                submission = self._admit_and_continue(services, run, repository)
+            self._close_manual_services(services)
+            # Publish a successor Active revision while the Job stays pinned to
+            # the original one: the old pin must remain legitimate.
+            successor = self._publish_successor(environment)
+            self.assertNotEqual(successor.revision_id, environment["snapshot"][0])
+            provider.movie_queries.clear()
+            self._run_worker(environment, provider)
+            self.assertEqual([("Correct", 2024)], provider.movie_queries)
+            self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_recovery_continuation_for_job(submission.job.job_id)
+                assert continuation is not None
+                self.assertEqual(RecoveryContinuationStatus.COMPLETED, continuation.status)
+                new_task = repository.get_task(continuation.new_task_id or "")
+                assert new_task is not None
+                self.assertEqual(environment["snapshot"][0], new_task.configuration_snapshot_id)
+                items = repository.list_items(new_task.task_id)
+                self.assertEqual(1, len(items))
+                self.assertEqual(TaskItemStatus.DRY_RUN, items[0].status)
+                live = source_fingerprint(
+                    "source-storage",
+                    "source",
+                    LocalStorage("source-storage", Path(environment["root"]) / "Incoming").stat(
+                        environment["storage_path"]
+                    ),
+                )
+                self.assertEqual(items[0].source_fingerprint, live.value)
+                self.assertEqual(
+                    items[0].source_occurrence_id,
+                    occurrence_id_for(
+                        "source-storage", "source", environment["storage_path"], live.value
+                    ),
+                )
+
+    def _publish_successor(self, environment):
+        """Publish one successor Active revision over the same database."""
+
+        with SQLiteConfigurationRepository(environment["database"]) as repository:
+            managed = ManagedConfigurationService(
+                repository, bootstrap_database_path=str(environment["database"])
+            )
+            document = json.loads(json.dumps(environment["document"]))
+            document["historyPath"] = str(Path(environment["root"]) / "history-successor.jsonl")
+            draft = managed.import_draft(document, actor="tester")
+            validated = managed.validate(draft.revision_id, actor="tester")
+            return managed.activate(
+                validated.revision_id, expected_version=validated.version, actor="tester"
+            )
 
     def test_continuation_is_single_item_pinned_dryrun_and_durable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

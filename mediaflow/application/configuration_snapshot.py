@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationAuthority,
@@ -33,8 +36,6 @@ from mediaflow.infrastructure.runtime_configuration import (
     load_minimal_management_bootstrap,
     load_runtime_configuration,
 )
-
-MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION = 1
 
 _BUSINESS_CAPABILITY_SECTIONS = {
     "storage": "storages",
@@ -1126,10 +1127,7 @@ def _canonical_document(document: object) -> dict[str, object]:
 
 
 def _digest(document: dict[str, object]) -> str:
-    encoded = json.dumps(
-        document, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    )
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return canonical_document_digest(document)
 
 
 def _reject_literal_secrets(value: object, path: str = "configuration") -> None:

@@ -43,6 +43,7 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
+from mediaflow.application.manual_source_validation import ManualSourceValidator
 from mediaflow.application.media_organizer import MediaOrganizerBatchResult, MediaOrganizerService
 from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
@@ -84,6 +85,7 @@ from mediaflow.domain.classification_review import (
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
+from mediaflow.domain.manual_organize import ManualIntentError
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionSelection,
     MetadataCorrectionStatus,
@@ -2659,7 +2661,11 @@ def _run_metadata_correction_continuation(
     job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
 ) -> str | None:
     with SQLiteTaskRepository(configuration.database_path) as repository:
-        continuation_service = MetadataCorrectionContinuationWorkerService(repository)
+        shared_storages = _SharedResolvedStorages(configuration)
+        continuation_service = MetadataCorrectionContinuationWorkerService(
+            repository,
+            source_validator=_continuation_source_validator(configuration, shared_storages),
+        )
         prepared = None
         started = False
         task_id: str | None = None
@@ -2693,7 +2699,7 @@ def _run_metadata_correction_continuation(
                     f"{prepared.source_item.resource_library_id!r}"
                 )
             providers = metadata_provider_registry_from_environment((prepared.selection.provider,))
-            storages = configuration.create_storages()
+            storages = shared_storages.get()
             strategy = strategy_runner_from_configuration(
                 configuration.strategy, providers, storages=storages
             )
@@ -2756,6 +2762,24 @@ def _run_metadata_correction_continuation(
                 resource_library=resource,
                 storage_path=prepared.source_item.source_path,
                 execute=False,
+                # ``prepare`` already re-observed the exact source against live
+                # pinned Storage; the live verified occurrence travels with the
+                # new TaskItem/Result instead of copying a saved label forward.
+                source_occurrence_id=(
+                    prepared.live_source.occurrence_id
+                    if prepared.live_source is not None
+                    else prepared.source_item.source_occurrence_id
+                ),
+                source_fingerprint=(
+                    prepared.live_source.fingerprint
+                    if prepared.live_source is not None
+                    else prepared.source_item.source_fingerprint
+                ),
+                source_fingerprint_state=(
+                    "verified"
+                    if prepared.live_source is not None
+                    else prepared.source_item.source_fingerprint_state
+                ),
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
@@ -2782,6 +2806,18 @@ def _run_metadata_correction_continuation(
                 continuation_service.cancelled(job.job_id)
             elif prepared is not None:
                 continuation_service.cancelled(job.job_id)
+            raise
+        except ManualIntentError as error:
+            # A source that changed, disappeared or could not be verified before
+            # the pipeline is refused with its own bounded reason and recovery
+            # action instead of a generic preflight failure.
+            continuation_service.failed(
+                job.job_id,
+                queued=True,
+                preflight=True,
+                error=str(error),
+                recovery=error.next_action,
+            )
             raise
         except Exception:
             if task_id is not None:
@@ -2821,11 +2857,69 @@ def _fail_recovery_continuation_snapshot(job, configured_path: str | None) -> No
         return
 
 
+class _SharedResolvedStorages:
+    """Build one Worker resolution's Storage adapters exactly once.
+
+    Source revalidation and the pipeline must read the *same* live adapters, and a
+    linkage refusal must still occur before any adapter is constructed.  This
+    cache builds on first use (which is only reached after the durable linkage
+    checks pass) and then serves both callers.
+    """
+
+    def __init__(self, configuration: RuntimeConfiguration) -> None:
+        self._configuration = configuration
+        self._values: dict | None = None
+
+    def get(self, storage_ids=None):
+        if self._values is None:
+            self._values = self._configuration.create_storages(storage_ids=storage_ids)
+        return self._values
+
+
+def _continuation_source_validator(
+    configuration: RuntimeConfiguration,
+    storages: _SharedResolvedStorages | None = None,
+) -> ManualSourceValidator:
+    """Build the live pinned-Storage source validator for one Worker resolution.
+
+    Reuses the same application source-validation boundary the manual intent and
+    Preview admission use, pinned to the exact configuration the Worker already
+    resolved.  Storage adapters are constructed only when validation actually
+    runs, and every read is guarded read-only.
+    """
+
+    from mediaflow.application.manual_source_validation import ManualSourceValidator
+
+    shared = storages or _SharedResolvedStorages(configuration)
+
+    def resolve(snapshot_id: str, snapshot_digest: str):
+        if (
+            configuration.configuration_snapshot_id != snapshot_id
+            or configuration.configuration_snapshot_digest != snapshot_digest
+        ):
+            raise ManualIntentError(
+                "the continuation source pin does not match the resolved configuration",
+                code="storage_unavailable",
+                status=503,
+                next_action="restore the saved published revision, then continue only this item",
+            )
+        return configuration
+
+    return ManualSourceValidator(
+        runtime_resolver=resolve,
+        storage_factory=lambda runtime, storage_ids: shared.get(),
+    )
+
+
 def _run_recovery_continuation(
     job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
 ) -> str | None:
     with SQLiteTaskRepository(configuration.database_path) as repository:
-        continuation_service = RecoveryContinuationWorkerService(repository)
+        shared_storages = _SharedResolvedStorages(configuration)
+        continuation_service = RecoveryContinuationWorkerService(
+            repository,
+            source_validator=_continuation_source_validator(configuration, shared_storages),
+        )
         prepared = None
         started = False
         task_id: str | None = None
@@ -2912,7 +3006,7 @@ def _run_recovery_continuation(
                 )
             )
             providers = metadata_provider_registry_from_environment(provider_ids or ("tmdb",))
-            storages = configuration.create_storages()
+            storages = shared_storages.get()
             strategy = strategy_runner_from_configuration(
                 configuration.strategy, providers, storages=storages
             )
@@ -2974,11 +3068,14 @@ def _run_recovery_continuation(
                 storage_path=prepared.source_item.source_path,
                 execute=False,
                 # The continuation analyzes the exact source occurrence the
-                # original TaskItem was admitted under, so a replacement at the
-                # same path is never mistaken for the reviewed source.
-                source_occurrence_id=prepared.source_item.source_occurrence_id,
-                source_fingerprint=prepared.source_item.source_fingerprint,
-                source_fingerprint_state=prepared.source_item.source_fingerprint_state,
+                # original TaskItem was admitted under.  ``prepare`` already
+                # re-observed that source against live pinned Storage, so the
+                # live verified occurrence travels with the new TaskItem/Result
+                # instead of copying a saved label forward; a changed or missing
+                # source never reaches Provider analysis.
+                source_occurrence_id=prepared.source_occurrence_id,
+                source_fingerprint=prepared.source_fingerprint,
+                source_fingerprint_state=prepared.source_fingerprint_state,
             )
             if cancellation_check():
                 coordinator.cancel(task.task_id)
@@ -3005,6 +3102,18 @@ def _run_recovery_continuation(
                 continuation_service.cancelled(job.job_id)
             elif prepared is not None:
                 continuation_service.cancelled(job.job_id)
+            raise
+        except ManualIntentError as error:
+            # A source that changed, disappeared or could not be verified before
+            # the pipeline is refused with its own bounded reason and recovery
+            # action instead of a generic preflight failure.
+            continuation_service.failed(
+                job.job_id,
+                queued=True,
+                preflight=True,
+                error=str(error),
+                recovery=error.next_action,
+            )
             raise
         except Exception:
             if task_id is not None:

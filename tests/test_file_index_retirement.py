@@ -206,6 +206,84 @@ class FileIndexRetirementTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         _cli(["--config", str(config), "files", retired, "some-id"])
 
+    def test_files_list_rejects_a_tampered_active_payload(self) -> None:
+        """A rewritten Active payload is refused before any Storage is followed.
+
+        The canonical managed integrity rule is the same one runtime consumes, so
+        a payload whose stored digest no longer matches must be reported with a
+        bounded reason and never listed (even from the rewritten root).
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, document = _bootstrap(root)
+            database = root / "runtime.sqlite3"
+            active = _activate(database, document)
+            (root / "unpublished" / "Media" / "Movies").mkdir(parents=True)
+            (root / "unpublished" / "Media" / "Movies" / "unpublished.txt").write_bytes(b"x")
+            with sqlite3.connect(database) as connection:
+                payload = json.loads(
+                    connection.execute(
+                        "SELECT payload FROM managed_configuration_revisions WHERE revision_id=?",
+                        (active.revision_id,),
+                    ).fetchone()[0]
+                )
+                payload["storages"][0]["rootPath"] = str(root / "unpublished")
+                connection.execute(
+                    "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                    (json.dumps(payload), active.revision_id),
+                )
+            before = database.read_bytes()
+            code, output = _cli(
+                [
+                    "--config",
+                    str(config),
+                    "files",
+                    "list",
+                    "--resource-library",
+                    "source",
+                    "--path",
+                    "Movies",
+                ]
+            )
+            self.assertEqual(0, code)
+            self.assertIn("files_list_digest_corrupt", output)
+            self.assertIn("no configuration was created", output)
+            self.assertNotIn("unpublished.txt", output)
+            self.assertNotIn("One.2001.mkv", output)
+            self.assertEqual(before, database.read_bytes())
+
+    def test_files_list_rejects_an_unsupported_active_document_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, document = _bootstrap(root)
+            database = root / "runtime.sqlite3"
+            active = _activate(database, document)
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE managed_configuration_revisions SET schema_version=999 "
+                    "WHERE revision_id=?",
+                    (active.revision_id,),
+                )
+            before = database.read_bytes()
+            code, output = _cli(
+                [
+                    "--config",
+                    str(config),
+                    "files",
+                    "list",
+                    "--resource-library",
+                    "source",
+                    "--path",
+                    "Movies",
+                ]
+            )
+            self.assertEqual(0, code)
+            self.assertIn("files_list_schema_unsupported", output)
+            self.assertIn("no configuration was created", output)
+            self.assertNotIn("One.2001.mkv", output)
+            self.assertEqual(before, database.read_bytes())
+
     def test_api_has_no_file_index_product_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

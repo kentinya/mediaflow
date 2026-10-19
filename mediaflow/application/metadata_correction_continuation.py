@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
@@ -17,6 +18,12 @@ from mediaflow.domain.metadata_correction import (
     MetadataCorrectionStatus,
 )
 from mediaflow.domain.task_persistence import PersistentTaskItem, TaskItemStatus
+
+if TYPE_CHECKING:
+    from mediaflow.application.manual_source_validation import (
+        ManualSourceValidator,
+        PersistedSourceValidation,
+    )
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}")
 _ACTIVE_STATUSES = {
@@ -48,6 +55,9 @@ class PreparedMetadataCorrectionContinuation:
     review: MetadataCorrectionReview
     source_item: PersistentTaskItem
     selection: MetadataCorrectionSelection
+    #: The live, verified re-observation of the exact persisted source, or
+    #: ``None`` when this Worker was assembled without a live source boundary.
+    live_source: PersistedSourceValidation | None = None
 
 
 @dataclass(frozen=True)
@@ -225,8 +235,11 @@ class FileMetadataCorrectionContinuationService:
 class MetadataCorrectionContinuationWorkerService:
     """Durable claim/outcome boundary around the existing one-file production pipeline."""
 
-    def __init__(self, repository) -> None:
+    def __init__(
+        self, repository, *, source_validator: ManualSourceValidator | None = None
+    ) -> None:
         self._repository = repository
+        self._source_validator = source_validator
 
     def prepare(self, job_id: str) -> PreparedMetadataCorrectionContinuation:
         self._job_identifier(job_id)
@@ -276,6 +289,7 @@ class MetadataCorrectionContinuationWorkerService:
             or job.configuration_snapshot_digest != continuation.configuration_snapshot_digest
         ):
             raise ValueError("continuation Job configuration snapshot changed")
+        live_source = self._validate_live_source(item, continuation)
         return PreparedMetadataCorrectionContinuation(
             continuation,
             review,
@@ -289,6 +303,34 @@ class MetadataCorrectionContinuationWorkerService:
                 review.corrected_media_type or "",
                 review.direct_provider_id,
             ),
+            live_source,
+        )
+
+    def _validate_live_source(self, item, continuation) -> PersistedSourceValidation | None:
+        """Prove the exact persisted source still exists under its pinned Active pin.
+
+        The retired index preflight only checked that a catalog row still carried
+        the same File identity.  With the index gone, the same shared live-Storage
+        boundary used by manual intents must re-observe the exact source before
+        any saved correction or Provider analysis is consumed, so a replaced or
+        missing file is refused instead of analyzed under a stale identity.
+        """
+
+        if self._source_validator is None:
+            return None
+        from mediaflow.application.manual_source_validation import PersistedSourceEvidence
+
+        return self._source_validator.validate_persisted_source(
+            PersistedSourceEvidence(
+                storage_id=item.storage_id,
+                resource_library_id=item.resource_library_id,
+                path=item.source_path,
+                occurrence_id=item.source_occurrence_id,
+                fingerprint=item.source_fingerprint,
+                fingerprint_state=item.source_fingerprint_state,
+            ),
+            snapshot_id=continuation.configuration_snapshot_id,
+            snapshot_digest=continuation.configuration_snapshot_digest,
         )
 
     def started(self, job_id: str) -> MetadataCorrectionContinuation:
@@ -360,15 +402,17 @@ class MetadataCorrectionContinuationWorkerService:
         snapshot_unavailable: bool = False,
         queued: bool = False,
         preflight: bool = False,
+        error: str | None = None,
+        recovery: str | None = None,
     ) -> None:
-        error = (
+        error = error or (
             "saved configuration snapshot is unavailable"
             if snapshot_unavailable
             else "continuation linkage or eligibility validation failed before pipeline"
             if preflight
             else "continuation failed before Task completion"
         )
-        recovery = (
+        recovery = recovery or (
             "restore the saved published revision, or create a new correction under the current "
             "Active configuration"
             if snapshot_unavailable

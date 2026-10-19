@@ -37,6 +37,38 @@ class LiveSourceValidation:
     occurrence_id: str
 
 
+@dataclass(frozen=True)
+class PersistedSourceEvidence:
+    """The exact source evidence a durable TaskItem carries into a continuation.
+
+    It is deliberately smaller than :class:`ManualSourceIdentity`: a continuation
+    only needs to prove that the *same* Storage/library/path content is still
+    present, so the durable occurrence/fingerprint plus the identity fields are
+    enough.  Nothing here is a catalog row.
+    """
+
+    storage_id: str
+    resource_library_id: str
+    path: str
+    occurrence_id: str | None
+    fingerprint: str | None
+    fingerprint_state: str = "unverified"
+
+    @property
+    def has_exact_evidence(self) -> bool:
+        return bool(self.occurrence_id) and bool(self.fingerprint)
+
+
+@dataclass(frozen=True)
+class PersistedSourceValidation:
+    """The live re-observation of one exact persisted continuation source."""
+
+    evidence: PersistedSourceEvidence
+    entry: StorageEntry
+    fingerprint: str
+    occurrence_id: str
+
+
 class ManualSourceValidator:
     """Validate one reviewed source against live pinned Storage.
 
@@ -132,6 +164,113 @@ class ManualSourceValidator:
             )
         return LiveSourceValidation(source, entry, observed.value, observed_occurrence)
 
+    def validate_persisted_source(
+        self,
+        evidence: PersistedSourceEvidence,
+        *,
+        snapshot_id: str,
+        snapshot_digest: str,
+    ) -> PersistedSourceValidation:
+        """Re-observe one durable continuation source against live pinned Storage.
+
+        A recovery Worker must never consume a saved decision or run Provider
+        analysis for a source it can no longer prove.  This re-reads the exact
+        Storage/library/path the original TaskItem was admitted under and compares
+        the live, verified fingerprint and occurrence identity with the persisted
+        evidence.  A replaced, missing, relocated or unverifiable source fails
+        closed with an explicit reason and a re-select/prepare next action; the
+        live observation is returned so the continuation records the *current*
+        occurrence instead of copying a stale label forward.
+
+        A TaskItem that carries no exact evidence (a legacy item) is still proven
+        against live Storage: the current verified observation is required, but no
+        older identity is fabricated or trusted.
+        """
+
+        if not isinstance(evidence, PersistedSourceEvidence):
+            raise ManualIntentError(
+                "the persisted continuation source evidence is invalid",
+                code="source_invalid",
+                next_action=_CONTINUATION_REFRESH_ACTION,
+            )
+        runtime = self._runtime_snapshot(snapshot_id, snapshot_digest)
+        library = self._runtime_library(runtime, evidence.resource_library_id)
+        self._assert_evidence_confined(evidence, library)
+        storage = self._live_storage(runtime, library.storage_id)
+        try:
+            entry = storage.stat(evidence.path)
+        except StorageError as error:
+            code = getattr(getattr(error, "code", None), "value", "unknown")
+            if code == "not_found":
+                raise ManualIntentError(
+                    "the exact reviewed source is no longer present in Storage",
+                    code="source_missing",
+                    status=404,
+                    next_action=_CONTINUATION_REFRESH_ACTION,
+                    details={
+                        "resourceLibraryId": evidence.resource_library_id,
+                        "path": evidence.path,
+                    },
+                ) from error
+            raise ManualIntentError(
+                "the reviewed source Storage is unavailable",
+                code="storage_unavailable",
+                status=503,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"storageId": evidence.storage_id, "reason": code},
+            ) from error
+        except (OSError, ValueError, KeyError) as error:
+            raise ManualIntentError(
+                "the reviewed source Storage is unavailable",
+                code="storage_unavailable",
+                status=503,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"storageId": evidence.storage_id, "reason": type(error).__name__},
+            ) from error
+        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
+            raise ManualIntentError(
+                "the reviewed source is no longer a regular file in Storage",
+                code="source_stale",
+                status=409,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
+            )
+        observed = source_fingerprint(evidence.storage_id, evidence.resource_library_id, entry)
+        observed_occurrence = occurrence_id_for(
+            evidence.storage_id, evidence.resource_library_id, entry.path, observed.value
+        )
+        if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
+            raise ManualIntentError(
+                "the reviewed source cannot be verified against live Storage",
+                code="source_unverified",
+                status=409,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
+            )
+        if evidence.has_exact_evidence and (
+            entry.path != evidence.path
+            or observed.value != evidence.fingerprint
+            or observed_occurrence != evidence.occurrence_id
+        ):
+            raise ManualIntentError(
+                "the exact reviewed source changed or was replaced before continuation",
+                code="source_stale",
+                status=409,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
+            )
+        if not evidence.has_exact_evidence and (evidence.occurrence_id or evidence.fingerprint):
+            # Half-written or legacy-partial evidence cannot prove the exact
+            # occurrence, so it is refused instead of being completed by guesswork.
+            raise ManualIntentError(
+                "the persisted continuation source evidence is incomplete",
+                code="source_unverified",
+                status=409,
+                next_action=_CONTINUATION_REFRESH_ACTION,
+                details={"resourceLibraryId": evidence.resource_library_id, "path": evidence.path},
+            )
+        return PersistedSourceValidation(evidence, entry, observed.value, observed_occurrence)
+
     # ------------------------------------------------------------------
     # Runtime / Storage authority
     # ------------------------------------------------------------------
@@ -179,35 +318,59 @@ class ManualSourceValidator:
     def _assert_confined(source: ManualSourceIdentity, library) -> None:
         """Require the source to stay inside its ResourceLibrary root."""
 
+        ManualSourceValidator._assert_path_confined(
+            source.storage_id,
+            source.resource_library_id,
+            source.path,
+            library,
+        )
+
+    @staticmethod
+    def _assert_evidence_confined(evidence: PersistedSourceEvidence, library) -> None:
+        """Require one persisted continuation source to stay inside its library root."""
+
+        ManualSourceValidator._assert_path_confined(
+            evidence.storage_id,
+            evidence.resource_library_id,
+            evidence.path,
+            library,
+        )
+
+    @staticmethod
+    def _assert_path_confined(
+        storage_id: str, resource_library_id: str, path: str, library
+    ) -> None:
+        """Require one Storage-relative path to stay inside its ResourceLibrary root."""
+
         root = str(getattr(library, "root_path", "") or "").replace("\\", "/").strip("/")
-        path = str(source.path).replace("\\", "/")
-        if getattr(library, "storage_id", None) != source.storage_id:
+        path = str(path).replace("\\", "/")
+        if getattr(library, "storage_id", None) != storage_id:
             raise ManualIntentError(
                 "the selected source belongs to a different Storage authority",
                 code="source_cross_authority",
                 next_action=_REFRESH_ACTION,
-                details={"resourceLibraryId": source.resource_library_id},
+                details={"resourceLibraryId": resource_library_id},
             )
         if not path or path.startswith("/") or "\x00" in path:
             raise ManualIntentError(
                 "the selected source path is not a safe Storage-relative identity",
                 code="source_invalid",
                 next_action=_REFRESH_ACTION,
-                details={"resourceLibraryId": source.resource_library_id},
+                details={"resourceLibraryId": resource_library_id},
             )
         if any(part in {"", ".", ".."} for part in path.split("/")):
             raise ManualIntentError(
                 "the selected source path is not a safe Storage-relative identity",
                 code="source_invalid",
                 next_action=_REFRESH_ACTION,
-                details={"resourceLibraryId": source.resource_library_id},
+                details={"resourceLibraryId": resource_library_id},
             )
         if root and path != root and not path.startswith(f"{root}/"):
             raise ManualIntentError(
                 "the selected source escaped the ResourceLibrary boundary",
                 code="source_cross_authority",
                 next_action=_REFRESH_ACTION,
-                details={"resourceLibraryId": source.resource_library_id},
+                details={"resourceLibraryId": resource_library_id},
             )
 
     def _live_storage(self, runtime, storage_id: str) -> Storage:
@@ -241,3 +404,6 @@ class ManualSourceValidator:
 
 
 _REFRESH_ACTION = "refresh Files and create or reopen the intent from the current selection"
+_CONTINUATION_REFRESH_ACTION = (
+    "re-select or re-prepare the source from the current Files view, then continue only that item"
+)

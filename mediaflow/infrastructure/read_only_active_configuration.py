@@ -24,6 +24,10 @@ import urllib.parse
 from datetime import datetime
 from pathlib import Path
 
+from mediaflow.domain.configuration_integrity import (
+    MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION,
+    canonical_document_digest,
+)
 from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
@@ -65,7 +69,7 @@ def read_active_revision_read_only(
                 "managed configuration has more than one Active revision",
                 reason="active_ambiguous",
             )
-        return _revision(rows[0])
+        return _verified_revision(rows[0])
     except sqlite3.Error as error:
         raise RuntimeSnapshotUnavailable(
             "the Active configuration store is unreadable",
@@ -80,6 +84,35 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone()
     return row is not None
+
+
+def _verified_revision(row: sqlite3.Row) -> ManagedConfigurationRevision:
+    """Read one Active row and apply the same canonical integrity rule as runtime.
+
+    A tampered payload (its stored digest no longer matches) or a document schema
+    this build does not support must be refused *before* the document is handed to
+    Storage construction, so a read-only listing can never follow a rewritten root
+    or trust an unsupported snapshot.
+    """
+
+    revision = _revision(row)
+    if revision.schema_version != MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {revision.revision_id!r} schema is unsupported",
+            revision_id=revision.revision_id,
+            version=revision.revision_sequence,
+            digest=revision.digest,
+            reason="schema_unsupported",
+        )
+    if canonical_document_digest(revision.document) != revision.digest:
+        raise RuntimeSnapshotUnavailable(
+            f"managed configuration snapshot {revision.revision_id!r} digest is corrupt",
+            revision_id=revision.revision_id,
+            version=revision.revision_sequence,
+            digest=revision.digest,
+            reason="digest_corrupt",
+        )
+    return revision
 
 
 def _revision(row: sqlite3.Row) -> ManagedConfigurationRevision:
@@ -130,6 +163,14 @@ _FAILURE_NEXT_ACTIONS = {
     "active_ambiguous": "inspect the configuration store and publish exactly one Active revision",
     "active_unreadable": (
         "restore the last published snapshot, or stage and activate a new Draft in Settings"
+    ),
+    "digest_corrupt": (
+        "the published Active revision was modified after activation; restore it or stage and "
+        "activate a new Draft in Settings"
+    ),
+    "schema_unsupported": (
+        "this Active revision uses a document schema this build cannot consume; restore a "
+        "supported revision or stage and activate a new Draft in Settings"
     ),
 }
 

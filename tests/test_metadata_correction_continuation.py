@@ -96,6 +96,22 @@ class ExplodingSearchProvider(DetailCountingProvider):
         raise RuntimeError("provider exception marker")
 
 
+def _live_source_evidence(environment):
+    """Return the exact live Storage occurrence a production admission carries."""
+
+    from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
+    from mediaflow.infrastructure.local_storage import LocalStorage
+
+    storage = LocalStorage("source-storage", Path(environment["root"]) / "Incoming")
+    entry = storage.stat(environment["storage_path"])
+    observed = source_fingerprint("source-storage", "source", entry)
+    return {
+        "occurrence_id": occurrence_id_for("source-storage", "source", entry.path, observed.value),
+        "fingerprint": observed.value,
+        "occurrence_state": observed.state,
+    }
+
+
 class MetadataCorrectionContinuationTests(unittest.TestCase):
     def _environment(self, directory: str | Path):
         root = Path(directory)
@@ -148,6 +164,7 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
         strategy = development_strategy_configuration()
         policy = next(value for value in strategy.metadata_policies if value.policy_id == "C")
         snapshot_id, snapshot_digest = environment["snapshot"]
+        evidence = _live_source_evidence(environment)
         with SQLiteTaskRepository(environment["database"]) as repository:
             coordinator = _coordinator(repository)
             task = coordinator.create(
@@ -165,6 +182,9 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 "source",
                 environment["storage_path"],
                 environment["display_source"],
+                source_occurrence_id=evidence["occurrence_id"],
+                source_fingerprint=evidence["fingerprint"],
+                source_fingerprint_state=evidence["occurrence_state"].value,
             )
             review = MetadataCorrectionService(repository, strategy.metadata_policies).create(
                 item,
@@ -832,6 +852,56 @@ class MetadataCorrectionContinuationTests(unittest.TestCase):
                 self.assertNotIn("provider exception marker", results[0].error or "")
             history = Path(environment["root"] / "history.jsonl")
             self.assertNotIn("provider exception marker", history.read_text(encoding="utf-8"))
+
+    def test_replaced_source_is_refused_before_provider_with_live_storage(self) -> None:
+        """A source replaced after admission is refused by the live shared boundary.
+
+        The metadata-correction Worker must re-observe the exact persisted source
+        before consuming the saved correction or any Provider analysis, so a
+        replacement at the same path cannot be analyzed under the old identity.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            _source_task, _source_item, review = self._seed_resolved_correction(environment)
+            api = self._api(environment)
+            link = self._correction_link(environment)
+            status, accepted = api_request(
+                api,
+                self._continue_url(environment),
+                method="POST",
+                body={
+                    "reviewId": review.review_id,
+                    "expectedCorrectionVersion": link["correctionVersion"],
+                },
+            )
+            self.assertEqual(status, 202)
+            environment["source_file"].write_bytes(b"replaced-after-admission")
+            provider = DetailCountingProvider(
+                (MediaCandidate("tmdb", "42", MediaType.MOVIE, "Correct Title", year=2024),)
+            )
+            with patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                lambda _ids: MetadataProviderRegistry((provider,)),
+            ):
+                code = final_main(
+                    ["--config", str(environment["config"]), "worker", "run-next"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual([], provider.movie_queries)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                continuation = repository.get_metadata_correction_continuation_for_review(
+                    review.review_id
+                )
+                assert continuation is not None
+                self.assertEqual(continuation.status.value, "failed")
+                self.assertIsNone(continuation.new_task_id)
+                self.assertIn("source", (continuation.error or "").lower())
+                self.assertIn("re-select", continuation.recovery or "")
+            self.assertEqual(b"replaced-after-admission", environment["source_file"].read_bytes())
+            self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
 
     def test_linkage_eligibility_and_worker_preflight_fail_before_provider_or_storage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

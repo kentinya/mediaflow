@@ -331,3 +331,72 @@ B T4/真实入口/wheel/安装消费者/Docker/视觉门禁仍由 B 执行；原
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
 `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
 `web/test-results-real-python-final/`。私有ignored配置不读取、不暂存。
+
+## Developer Fix Round Report (B-1 / B-2 / B-3)
+
+READY FOR B REVIEW at implementation HEAD `<THIS COMMIT>`
+(Task Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974`; previous reviewed candidate
+`72682d1e3277343b674d62e5ceda99a824036c00`). Same Task, Base / Goal / T4 unchanged.
+
+### 行为与关键决策
+
+- **B-1 精确 Active。** 提取纯完整性规则到 `domain/configuration_integrity.py`
+  (`MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION` / `canonical_document_digest`)；
+  `application/configuration_snapshot.py` 复用同一常量与函数（行为不变）。
+  `infrastructure/read_only_active_configuration.py` 在构造 Storage 前调用
+  `_verified_revision`，对文档 schema 与 canonical payload digest 执行与 managed runtime
+  同义校验；损坏/不支持返回有界 `digest_corrupt` / `schema_unsupported` 原因、未变更状态及
+  Settings/恢复指引，仍为 `mode=ro`，不创建/升级/写入仓库。
+- **B-2 恢复来源。** `ManualSourceValidator.validate_persisted_source` 复用同一 live
+  pinned-Storage 边界，按原 pin 重读原 TaskItem 的 Storage/library/path，对比精确
+  occurrence/fingerprint；缺失/替换/不可验证分别以 `source_missing` / `source_stale` /
+  `source_unverified` 拒绝并给出重新选择/准备路径。`RecoveryContinuationWorkerService` 与
+  `MetadataCorrectionContinuationWorkerService` 在消费旧决定/Provider 前调用它，并把
+  **live 已验证** occurrence/fingerprint 写入新 TaskItem/Result，而非复制旧标签。
+  `final_cli` 通过 `_SharedResolvedStorages` 让校验与 pipeline 共用一次 Storage 装配
+  （linkage 失败仍先于任何 adapter 构造）；`ManualIntentError` 分支把拒绝原因写入 continuation
+  的 error/recovery，不形成成功续作。旧 Active pin 在新发布后仍合法（校验绑定 Job 的 pin，
+  不重绑当前 Active）。
+- **B-3 测试方法。** `test_worker_continuation_preflight_rejects_stale_occurrence_before_pipeline`
+  改为真实 Worker + 本地 LocalStorage + 计数 fake Provider：排队后替换来源被拒绝、零 Provider
+  请求、零媒体变更、continuation failed。新增缺失来源反例与“未变来源完成分析 + 旧 pin 合法”
+  正例；`test_file_index_retirement` 增加 payload 篡改与不支持 schema 两个真实 CLI 反例；
+  `test_metadata_correction_continuation` 增加 live Storage 替换来源反例。
+
+### 实际受影响命令/结果
+
+- `python3 scripts/check_governance.py` → PASS。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser` → 23 tests OK（含 2 个新增 Active 反例）。
+- `... test_recovery_continuation test_metadata_correction_continuation test_manual_organize_intent test_task_center_recovery_lineage` → 72 tests OK。
+- `... test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation` → 154 tests OK。
+- `... test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage` → 154 tests OK。
+- 条件消费者组（task_persistence/sqlite_backup/sqlite_restore、direct_file_operations/
+  manual_operations_contract/operations_task_center、automation_task_definition_preview/
+  automation_definition_execution/automation_authorized_execution_matrix/configuration_organize、
+  metadata_correction_continuation/recovery_batch）全部 OK。
+- 相关配置/Automation 组：`test_configuration_snapshot/management/status/successor_draft/package_exchange/objects` → 157 OK；
+  `test_automation_task_definition_preview/definition_execution/definition_occurrence/preview_grant_gate/v2_automation_lifecycle` → 100 OK。
+- `.venv/bin/ruff check mediaflow/ tests/` → All checks passed；`ruff format --check` → 322 files already formatted；
+  `python -m compileall -q mediaflow tests scripts` → OK；`git diff --check` 干净。
+- Web（cwd `web/`）：`npm run typecheck` → 干净。
+
+### B 独立复现对照（同一 ignored 脚本）
+
+- `reproduce_active_integrity.py`：两反例现均 `cli_explicit_integrity_rejection=true`、
+  不读被改写/未发布 root、数据库字节不变；合法 Active 仍正常列举发布 root。
+- `reproduce_replaced_recovery.py`：替换来源后 `worker_exit=1`、Provider 请求 0、
+  `continuation_status=failed`、无新 TaskItem/Result、媒体 mutation 0。
+
+### 已知失败/风险
+
+- B 上轮披露的 `tests/e2e/direct-files.python.spec.ts` 既有 flaky 未在本轮处理（非本 Task 引入，
+  仍由 B 独立确认）。
+- wheel/隔离安装、生产 Docker、真实 SMB/OpenList/S3/TMDB 与 1536×1024/380×720 截图等
+  T4 门禁仍 pending B；Developer 不跑全量/发布矩阵。
+- 未变来源仍会构造一次 Storage（校验需要），但只在 linkage 通过后发生；linkage/eligibility
+  失败仍是零构造。
+
+预存修改保留且不纳入 Task checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-batch-check/`、
+`web/test-results-real-python-final/` 及开发 `.log` 文件。私有ignored配置不读取、不暂存。

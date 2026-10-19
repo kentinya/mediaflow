@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.application.manual_source_validation import (
+    ManualSourceValidator,
+    PersistedSourceEvidence,
+    PersistedSourceValidation,
+)
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
@@ -64,6 +69,29 @@ class PreparedRecoveryContinuation:
     continuation: RecoveryContinuation
     request: RecoveryRequest
     source_item: PersistentTaskItem
+    #: The live, verified re-observation of the exact persisted source, or
+    #: ``None`` when this Worker was assembled without a live source boundary.
+    #: When present, the continuation must analyze *this* occurrence instead of
+    #: copying a saved label forward.
+    live_source: PersistedSourceValidation | None = None
+
+    @property
+    def source_occurrence_id(self) -> str | None:
+        if self.live_source is not None:
+            return self.live_source.occurrence_id
+        return self.source_item.source_occurrence_id
+
+    @property
+    def source_fingerprint(self) -> str | None:
+        if self.live_source is not None:
+            return self.live_source.fingerprint
+        return self.source_item.source_fingerprint
+
+    @property
+    def source_fingerprint_state(self) -> str:
+        if self.live_source is not None:
+            return "verified"
+        return self.source_item.source_fingerprint_state
 
 
 class RecoveryContinuationService:
@@ -321,8 +349,11 @@ class RecoveryContinuationService:
 class RecoveryContinuationWorkerService:
     """Durable claim/outcome boundary around the existing one-item pipeline."""
 
-    def __init__(self, repository) -> None:
+    def __init__(
+        self, repository, *, source_validator: ManualSourceValidator | None = None
+    ) -> None:
         self._repository = repository
+        self._source_validator = source_validator
 
     def prepare(self, job_id: str) -> PreparedRecoveryContinuation:
         self._job_identifier(job_id)
@@ -374,7 +405,35 @@ class RecoveryContinuationWorkerService:
         active = self._repository.get_active_recovery_request(item.item_id)
         if active is None or active.request_id != continuation.request_id:
             raise ValueError("recovery request is no longer the active request")
-        return PreparedRecoveryContinuation(continuation, request, item)
+        live_source = self._validate_live_source(item, continuation)
+        return PreparedRecoveryContinuation(continuation, request, item, live_source)
+
+    def _validate_live_source(self, item, continuation) -> PersistedSourceValidation | None:
+        """Prove the exact persisted source still exists under its pinned Active pin.
+
+        The index preflight this replaces never returned a verdict; without a
+        live re-observation a replacement at the same path would be analyzed and
+        marked completed under the old reviewed identity.  When this Worker owns
+        a live source boundary, the source must be re-observed *before* any saved
+        decision or Provider analysis is consumed.  A changed, missing or
+        unverifiable source fails closed with its own bounded reason.
+        """
+
+        if self._source_validator is None:
+            return None
+        evidence = PersistedSourceEvidence(
+            storage_id=item.storage_id,
+            resource_library_id=item.resource_library_id,
+            path=item.source_path,
+            occurrence_id=item.source_occurrence_id,
+            fingerprint=item.source_fingerprint,
+            fingerprint_state=item.source_fingerprint_state,
+        )
+        return self._source_validator.validate_persisted_source(
+            evidence,
+            snapshot_id=continuation.configuration_snapshot_id,
+            snapshot_digest=continuation.configuration_snapshot_digest,
+        )
 
     def started(self, job_id: str) -> RecoveryContinuation:
         return self._repository.mark_recovery_continuation_running(job_id)
@@ -442,15 +501,17 @@ class RecoveryContinuationWorkerService:
         snapshot_unavailable: bool = False,
         queued: bool = False,
         preflight: bool = False,
+        error: str | None = None,
+        recovery: str | None = None,
     ) -> None:
-        error = (
+        error = error or (
             "saved configuration snapshot is unavailable"
             if snapshot_unavailable
             else "continuation linkage or eligibility validation failed before pipeline"
             if preflight
             else "recovery continuation failed before Task completion"
         )
-        recovery = (
+        recovery = recovery or (
             "restore the saved published revision, or create a new recovery request under "
             "the current Active configuration"
             if snapshot_unavailable
