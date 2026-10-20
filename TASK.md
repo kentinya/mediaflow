@@ -264,7 +264,8 @@ B 的精确时序：同一资源库有两个真实目录 `Folder `（末尾一�
   完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
 - 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在上一轮基线上
   即失败，本轮未改变其范围；留给 B 判定。
-- 本轮测试执行合计约 1.2 分钟，占本开发轮次总时长约 25%，低于 30% 上限。
+- 本轮测试执行（上述所有 unittest 套件加真实探针）合计约 3 分钟，占本开发轮次总时长约 16%，
+  低于 30% 上限。
 
 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
