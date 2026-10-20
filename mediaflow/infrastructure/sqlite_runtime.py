@@ -10411,7 +10411,9 @@ class SQLiteTaskRepository:
                 raise
         return True
 
-    def _assert_recovery_preparation_live_locked(self, recovery_source_task_id: object) -> None:
+    def _assert_recovery_preparation_live_locked(
+        self, recovery_source_task_id: object, sources: object = None
+    ) -> None:
         """Refuse an atomic admission whose recovery sources were decided.
 
         The application boundary has already asked the shared remaining-scope
@@ -10421,6 +10423,13 @@ class SQLiteTaskRepository:
         transaction that consumes the one-shot authority, so an already-decided
         source can never acquire a second execution, no matter how the two
         attempts interleave.
+
+        ``sources`` is the exact ``(storage_id, path)`` selection this
+        transaction is about to admit.  A mixed recovery scope stays eligible
+        while one sibling is undecided, so the chain-level verdict alone would
+        let a decided sibling through on the strength of an unrelated legal one;
+        passing the selection lets the shared contract refuse each decided
+        source by name.  ``None`` keeps the whole-chain decision only.
 
         A source already recorded as undecided (a zero-effect failure) stays
         legitimately recoverable, and this execution's own items do not exist yet
@@ -10442,15 +10451,32 @@ class SQLiteTaskRepository:
         eligibility = recovery_preparation_eligibility(
             self, recovery_source_task_id=recovery_source_task_id
         )
-        if eligibility.eligible:
+        if not eligibility.applies:
             return
+        if not eligibility.eligible:
+            raise ManualExecutionError(
+                eligibility.message or "the recovery summary's remaining scope changed",
+                code=getattr(eligibility, "code", None) or "recovery_scope_stale",
+                next_action=(
+                    eligibility.next_action
+                    or "request a fresh plan summary for the still-undecided sources"
+                ),
+            )
+        if sources is None:
+            return
+        refused = eligibility.refused_sources(sources)
+        if not refused:
+            return
+        storage_id, path = refused[0]
         raise ManualExecutionError(
-            eligibility.message or "the recovery summary's remaining scope changed",
-            code=getattr(eligibility, "code", None) or "recovery_scope_stale",
+            "a source this recovery summary still lists already has a decided outcome; it is "
+            "never executed again",
+            code="recovery_scope_decided",
             next_action=(
-                eligibility.next_action
-                or "request a fresh plan summary for the still-undecided sources"
+                "review the run's recorded per-item outcomes; the still-undecided sources keep "
+                "their own exact summary and a decided or uncertain effect is never repeated"
             ),
+            details={"storageId": storage_id, "path": path, "refusedCount": len(refused)},
         )
 
     def admit_manual_execution(
@@ -10562,7 +10588,8 @@ class SQLiteTaskRepository:
                 self._assert_recovery_preparation_live_locked(
                     preview["recovery_source_task_id"]
                     if "recovery_source_task_id" in preview.keys()
-                    else None
+                    else None,
+                    sources=((item.source.storage_id, item.source.path) for item in items),
                 )
                 intent = self._connection.execute(
                     "SELECT status, version, configuration_snapshot_id, "

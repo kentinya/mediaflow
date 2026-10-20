@@ -2596,6 +2596,143 @@ test("an already-admitted recovery preparation never replays a completed source"
   });
 });
 
+test("a frozen mixed recovery preparation never republishes a decided sibling", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  // A real paused organize run whose whole budget records two still-undecided
+  // sources.  Summary A publishes both; preparation B is admitted and driven to
+  // its frozen stage; A then really completes only `Left`, leaving `Right`
+  // undecided so the chain stays eligible.  B must publish only `Right`.
+  const created = await (
+    await request.post(`${BASE}/__harness__/seed-mixed-scope-recovery`)
+  ).json();
+  const taskId = created.taskId as string;
+  expect(taskId).toBeTruthy();
+  expect(created.scope).toBe("MixedScope");
+  expect(created.leftSource).toBe("MixedScope/MixedLeft.2005.mkv");
+  expect(created.rightSource).toBe("MixedScope/MixedRight.2006.mkv");
+
+  await connect(page, ADMIN_TOKEN);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openInventory(page);
+  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(controls).toBeVisible();
+
+  // Summary A: the operator asks for a plan summary and the Worker really
+  // publishes both undecided sources.
+  await controls
+    .getByRole("button", { name: "在当前界面生成剩余范围摘要" })
+    .click();
+  let firstPrepared = false;
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) {
+      firstPrepared = true;
+      break;
+    }
+  }
+  expect(firstPrepared).toBe(true);
+  const firstSummary = detail.getByRole("region", { name: "新计划摘要" });
+  await expect(firstSummary).toBeVisible({ timeout: 30_000 });
+  await expect(firstSummary).toContainText("MixedLeft.2005.mkv");
+  await expect(firstSummary).toContainText("MixedRight.2006.mkv");
+
+  // Preparation B is admitted while both sources are still undecided, then
+  // driven exactly to its frozen stage (sources recorded, no summary yet).
+  const secondAdmission = await request.post(
+    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(secondAdmission.status()).toBe(202);
+  const secondBody = await secondAdmission.json();
+  const frozen = await request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
+  );
+  const frozenBody = (await frozen.json()) as {
+    readonly frozen?: boolean;
+    readonly previewId?: string | null;
+    readonly sourceCount?: number;
+  };
+  expect(frozenBody.frozen).toBe(true);
+  expect(frozenBody.previewId ?? null).toBeNull();
+  expect(frozenBody.sourceCount ?? 0).toBe(2);
+
+  // Summary A is confirmed for exactly `Left` and really copies it.
+  const before = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  const copiesBefore = before.destinationFiles as readonly string[];
+  // Select only `Left` for confirmation; `Right` stays unconfirmed.
+  await firstSummary.getByLabel("选择 MixedRight.2006.mkv").uncheck();
+  await expect(
+    firstSummary.getByLabel("选择 MixedLeft.2005.mkv"),
+  ).toBeChecked();
+  const confirmButton = firstSummary.getByRole("button", {
+    name: /确认继续整理剩余 1 项/,
+  });
+  await expect(confirmButton).toBeVisible();
+  await confirmButton.click();
+  let executed = false;
+  for (let step = 0; step < 20; step += 1) {
+    const workerRun = await request.post(
+      `${BASE}/__harness__/run-manual-worker`,
+    );
+    expect(workerRun.ok()).toBeTruthy();
+    const body = await workerRun.json();
+    if (body.completed === true) {
+      executed = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(executed).toBe(true);
+  const afterFirst = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  const firstCopies = afterFirst.destinationFiles as readonly string[];
+  expect(firstCopies).toHaveLength(copiesBefore.length + 1);
+
+  // Driving B now must publish only the still-undecided `Right`; the completed
+  // `Left` is never re-offered from B's frozen manifest.
+  const driven = await request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
+  );
+  const drivenBody = (await driven.json()) as {
+    readonly previewId?: string | null;
+    readonly sourceCount?: number;
+  };
+  expect(drivenBody.previewId ?? null).not.toBeNull();
+  expect(drivenBody.sourceCount ?? 0).toBe(1);
+  const afterSecond = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  // No new copy of `Left` was produced by B's publication.
+  expect(afterSecond.destinationFiles).toEqual(firstCopies);
+  expect(afterSecond.sourceFiles).toEqual({
+    "MixedLeft.2005.mkv": true,
+    "MixedRight.2006.mkv": true,
+  });
+  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(detail).toBeVisible();
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/mixed-scope-frozen-1536x1024.png`,
+    fullPage: false,
+  });
+});
+
 test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
   page,
   request,

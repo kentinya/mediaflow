@@ -203,11 +203,102 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 ## Developer Completion Report
 
 READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
-T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's finding
-was **FIX REQUIRED — an already-admitted preparation still replays a completed recovery source**
-(P1). This round fixes only that root cause, its boundaries and its tests.
+T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's latest
+finding was **FIX REQUIRED — overall recovery eligibility still authorizes a decided source in a
+mixed scope** (P1). This round fixes only that root cause, its four boundaries and its tests; the
+previous single-source blocker remains fixed.
 
-### 先复现（修复前）
+### 先复现（本轮修复前）
+
+B 的精确混合时序：A 摘要同时发布 `Left`+`Right`；B 在两者都未决时受理并推进到 **frozen**；A 随后只
+真实完成 `Left`，`Right` 仍待处理，因此整链 `eligible=True`。B 的冻结 manifest 已含 `Left`，重新
+发布时逐来源权威虽已拒绝 `Left`，但发布/授权/准入/Worker 都只看整体 `True`，于是 B 再次发布
+`Left`+`Right`，只确认 `Left` 仍二次 COPY 出 `Left (2005) (1).mkv`。
+
+用真实 Managed Active/API/SQLite/LocalStorage/Worker 复现（`reproduce-b-p1-fixed.log`）。
+
+### 修正：把整体资格与具体范围资格分开，并在四个边界重问逐来源结论
+
+`RecoveryPreparationEligibility` 新增 `check_sources()` / `refused_sources()`：`eligible` 只表示整链
+仍有工作，不能作为全部来源的许可；每个待发布/授权/准入/执行的来源按 `(storage_id, path)` 逐项
+判定（未决=可，已决/忽略/未知效果=不可，新来源仅在原准入仍有预算时可）。四个独立边界都消费
+同一结论：
+
+1. **冻结后发布** (`application/media_discovery.py`)：`_begin_preparation_analysis` 与 `_analyze`
+   在冻结/发布前用 `_filter_frozen_recovery_sources` 逐项丢弃已决来源；全部已决则按既有 stale
+   结清（`CANCELLED`+`phase=stale`，零 Preview/权限/mutation）。`_undecided_intent_item_ids`
+   把同一逐来源结论叠加到普通“已受理执行”排除之上，混合范围只发布仍未决的来源。
+2. **应用 authorize/execute** (`application/manual_organize_execution.py`)：`authorize`、
+   `execute`/`admit` 先解析本次精确选择，`_assert_recovery_preparation_live(preview, sources=)`
+   逐项核对，已决来源返回 409 `recovery_scope_decided` 并点名来源。
+3. **确认的原子边界** (`infrastructure/sqlite_runtime.py`)：`admit_manual_execution` 在同一
+   `BEGIN IMMEDIATE` 事务内把 `authorization.scope` 的真实 selected items 逐项传入
+   `_assert_recovery_preparation_live_locked(..., sources=)`，前置校验之后发生的完成事实也无法
+   准入；`eligible=True` 不再放行。
+4. **Worker 逐项效果边界** (`application/manual_organize_execution.py`)：`_run_worker_items`
+   在每个即将执行的来源/步骤前重问 `_recovery_eligibility_for(preview)` 的逐来源结论；仅该来源
+   以 `effect_certainty=none` 结清，独立合法兄弟照常执行，未决来源不会自拒绝。
+
+### 新增真实旅程测试（`tests/test_scope_continuation.py`，6 个）
+
+- `test_a_frozen_mixed_preparation_never_publishes_a_decided_sibling`：B 先冻结两来源，A 只完成
+  `Left`，B 只发布 `Right`，目标恰一份 `Left`，`Right` 仍合法执行。
+- `test_a_frozen_manifest_that_loses_every_source_settles_stale`：B 冻结后两来源全被 A 完成，B 不
+  再发布、无权限、目标不变。
+- `test_a_published_mixed_summary_refuses_only_the_decided_sibling`：已发布混合摘要确认时按名拒绝
+  已决 `Left`，保留合法 `Right`。
+- `test_a_mixed_scope_is_refused_by_the_atomic_admission_alone`：关闭应用预检后，仅仓库事务拒绝
+  已决 `Left`，不创建执行、不消费一次性授权。
+- `test_a_queued_mixed_execution_refuses_the_decided_source_per_item`：混合执行已准入等待中 `Left`
+  被显式忽略，Worker 逐项以 `none` 结清 `Left`、`Right` 真实 SUCCESS。
+- `test_a_mixed_scope_reopens_with_the_same_per_source_refusal`：新连接同结论。
+
+四个边界分别用“仅禁用该边界”验证独立必要性：冻结过滤、应用断言、Worker 逐项各使至少一个用例失败；
+原子事务由 `test_a_mixed_scope_is_refused_by_the_atomic_admission_alone` 在关闭应用预检时独立证明。
+
+### Harness / 原生浏览器旅程
+
+- `scripts/operations_inventory_harness.py`：新增 `seed_mixed_scope_recovery` 与
+  `GET/POST /__harness__/seed-mixed-scope-recovery`、两个 COPY 候选与 `MixedScope` COPY 规则，
+  使混合范围两来源都解析为 COPY，重复执行可见为第二份目标文件。
+- `web/tests/e2e/operations-inventory.python.spec.ts` 新增
+  `a frozen mixed recovery preparation never republishes a decided sibling`：真实 production build +
+  真实 Python API/Worker，深链精确 run；B 冻结后 A 只完成 `Left`，断言 B 驱动后只发布 1 项、目标
+  副本数不再增加、源文件不变。
+
+### 实际受影响命令/结果（仓库根，`PYTHONPATH=tests`）
+
+- `test_scope_continuation` → **89 OK**（含 6 个新增用例）
+- `test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **216 OK**
+- `test_manual_organize_preview test_manual_organize_execution test_recovery_continuation test_task_center_recovery_lineage test_recovery_batch` → **191 OK**
+- `test_task_persistence test_sqlite_backup test_sqlite_restore test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **129 OK**
+- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_v2_manual_organize test_manual_organize_intent` → **124 OK**
+- Web（`cwd web/`）：`npm run typecheck` 干净；`npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx` → **93 passed**；`npx eslint`/`npx prettier --check` 改动 spec 干净；`npm run build` 成功。
+- 原生：`npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g "frozen mixed recovery preparation|already-admitted recovery preparation|fully recorded budget still recovers|mutation-authorized paused run|missing configuration pin|selected execution never blocks"` → **6 passed**（真实 production build + Python API/Worker）。
+- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；`python -m compileall -q mediaflow tests scripts` OK；`ruff check` / `ruff format --check` 覆盖 6 个改动 Python 文件 → passed / formatted。
+
+证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix6/`：
+`reproduce-b-p1-fixed.log`、`verify_mixed_scope_fixed.py`、`fence_independence.py`、
+`unittests.log`、`quality.log`、`README.md`。
+
+### 已知风险/边界
+
+- 逐来源过滤是**读时投影**，不改写任何 Task/Result/Intent/Preview 行；全已决时沿用既有 stale 结清，
+  原观察、计数器、findings、refusals 与 intent 历史仍可独立检查。
+- 普通 Files/定义准入完全不受影响（`applies=False`），独立新意图/新 occurrence 不被旧成功永久压制；
+  跨任务批量 mutation 仍不在本 Task。
+- runtime schema 仍为 49（无新列/表）；wheel/隔离安装、生产 Docker、fresh/reopen 与支持版本迁移、
+  完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
+- 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在上一轮基线上
+  即失败，本轮未改变其范围；留给 B 判定。
+- 本轮测试执行合计约 2 分钟，占本开发轮次总时长约 7%，低于 30% 上限。
+
+预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
+私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
+
+## B Review Result
 
 A recovery preparation is admitted while its exact source is still undecided. Its discovery /
 freeze / analysis then run later in the resident Worker, and the deciding effect of an *earlier*

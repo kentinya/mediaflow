@@ -440,6 +440,31 @@ def build_managed_fixture(
             "outputRecognitionType": "copy-fixture",
         }
     )
+    # The mixed-scope recovery proof also resolves to the COPY fixture type, so
+    # a completed `Left` is visible as a destination copy while `Right` keeps
+    # its own legal remaining work.
+    document["recognitionRules"].append(
+        {
+            "id": "copy-fixture-mixed-library",
+            "name": "Copy fixture mixed resource library",
+            "priority": 150,
+            "score": 100,
+            "stopOnMatch": True,
+            "condition": {
+                "operator": "and",
+                "children": [
+                    {"field": "resource_library_id", "operator": "equals", "value": "source"},
+                    {"field": "path", "operator": "contains", "value": "/MixedScope/"},
+                    {
+                        "field": "extension",
+                        "operator": "in",
+                        "value": ["mkv", "mp4"],
+                    },
+                ],
+            },
+            "outputRecognitionType": "copy-fixture",
+        }
+    )
     overwrite_policy = dict(document["organizePolicies"][0])
     overwrite_policy.update(
         {"id": "overwrite-fixture", "conflictStrategy": "overwrite", "overwrite": True}
@@ -633,6 +658,27 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "FullBudgetLeft",
                         year=2005,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    # The mixed-scope recovery fixture's own sources, so both
+                    # frozen sources resolve to actionable plans and a completed
+                    # `Left` is observable as a destination copy.
+                    MediaCandidate(
+                        "tmdb",
+                        "231",
+                        MediaType.MOVIE,
+                        "MixedLeft",
+                        year=2005,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "232",
+                        MediaType.MOVIE,
+                        "MixedRight",
+                        year=2006,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -3033,6 +3079,8 @@ def authority_execution_state(
         filenames = (FULL_BUDGET_KEPT_FILE, FULL_BUDGET_LEFT_FILE, FULL_BUDGET_NEW_FILE)
     elif scope == AUTHORITY_MISSING_PIN_SCOPE:
         filenames = AUTHORITY_MISSING_PIN_FILES
+    elif scope == MIXED_SCOPE:
+        filenames = (MIXED_LEFT_FILE, MIXED_RIGHT_FILE)
     else:
         filenames = (AUTHORITY_FIRST_FILE, AUTHORITY_SECOND_FILE)
     source_root = state.managed.root / "source" / scope
@@ -3048,6 +3096,26 @@ def authority_execution_state(
         copies = sorted(
             path.relative_to(destination_root).as_posix()
             for path in destination_root.rglob(f"*{FULL_BUDGET_LEFT_STEM}*.mkv")
+        )
+        return {
+            "available": task is not None,
+            "sourceTaskId": task.task_id if task else None,
+            "scope": scope,
+            "sourceTaskStatus": task.status.value if task else None,
+            "taskSnapshotId": task.configuration_snapshot_id if task else None,
+            "taskSnapshotDigest": task.configuration_snapshot_digest if task else None,
+            "activeSnapshotId": active.revision_id if active else None,
+            "activeSnapshotDigest": active.digest if active else None,
+            "sourceFiles": {filename: (source_root / filename).is_file() for filename in filenames},
+            "destinationFiles": copies,
+        }
+    if scope == MIXED_SCOPE:
+        # Both mixed sources are COPY fixtures, so a replay is visible as a
+        # second destination file for the same source stem.
+        copies = sorted(
+            path.relative_to(destination_root).as_posix()
+            for path in destination_root.rglob("*.mkv")
+            if MIXED_LEFT_STEM in path.name or MIXED_RIGHT_STEM in path.name
         )
         return {
             "available": task is not None,
@@ -3305,6 +3373,161 @@ def seed_full_budget_recovery(state: AppState) -> dict[str, object]:
         ],
         "undecidedSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_LEFT_FILE}",
         "newSource": f"{FULL_BUDGET_SCOPE}/{FULL_BUDGET_NEW_FILE}",
+    }
+
+
+#: The mixed-scope recovery fixture: one paused run whose whole budget records
+#: two still-undecided sources.  An earlier attempt can decide one of them while
+#: the other stays real remaining work, which keeps the chain eligible.
+MIXED_SCOPE = "MixedScope"
+MIXED_LEFT_FILE = "MixedLeft.2005.mkv"
+MIXED_RIGHT_FILE = "MixedRight.2006.mkv"
+MIXED_LEFT_STEM = "MixedLeft"
+MIXED_RIGHT_STEM = "MixedRight"
+#: The display scope of the earlier zero-effect attempt whose durable Result is
+#: what the operator's default COPY choice is derived from.
+MIXED_EARLIER_SCOPE = "MixedEarlierBoundedAttempt"
+
+
+def seed_mixed_scope_recovery(state: AppState) -> dict[str, object]:
+    """Create one real paused run with two still-undecided recorded sources.
+
+    Both `Left` and `Right` carry trustworthy source evidence and are still
+    `pending`, so a recovery preparation may legally freeze both.  The earlier
+    attempt that decides one of them is driven by the browser journey itself,
+    which is the exact mixed shape: the chain stays eligible while one sibling
+    is decided.
+    """
+
+    from mediaflow.infrastructure.local_storage import LocalStorage
+
+    active = state.managed.active
+    source_root = state.managed.root / "source"
+    scope_root = source_root / MIXED_SCOPE
+    scope_root.mkdir(parents=True, exist_ok=True)
+    left = scope_root / MIXED_LEFT_FILE
+    right = scope_root / MIXED_RIGHT_FILE
+    left.write_bytes(b"mixed scope left synthetic media")
+    right.write_bytes(b"mixed scope right synthetic media")
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    task = coordinator.create(
+        "organize",
+        execute_authorized=True,
+        scope_path=MIXED_SCOPE,
+        item_limit=2,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+    )
+    library = LocalStorage("source-storage", source_root)
+    now = datetime.now(UTC)
+    for filename in (MIXED_LEFT_FILE, MIXED_RIGHT_FILE):
+        item = coordinator.record_discovered(
+            task.task_id,
+            "source-storage",
+            "source",
+            f"{MIXED_SCOPE}/{filename}",
+            f"source-storage:{MIXED_SCOPE}/{filename}",
+        )
+        entry = library.stat(item.source_path)
+        fingerprint = source_fingerprint("source-storage", "source", entry)
+        state.repository.upsert_item(
+            dataclasses.replace(
+                item,
+                status=TaskItemStatus.PENDING,
+                stage="pending",
+                source_fingerprint=fingerprint.value,
+                source_fingerprint_state="verified",
+                source_occurrence_id=occurrence_id_for(
+                    "source-storage", "source", item.source_path, fingerprint.value
+                ),
+                source_observed_at=now,
+                updated_at=now,
+            )
+        )
+    state.repository.request_task_pause(task.task_id, now)
+    paused = coordinator.acknowledge_pause(task.task_id)
+    if paused.status is not PersistentTaskStatus.PAUSED:
+        raise RuntimeError("mixed-scope fixture Task did not pause")
+    # An earlier bounded attempt on each source failed *before* the mutation
+    # boundary under the COPY fixture policy.  It changed nothing (so both
+    # sources stay genuinely undecided work) but it is the durable record the
+    # operator's default choice is derived from, exactly as an earlier failed
+    # attempt does in production.  Both mixed sources are COPY fixtures, so a
+    # repeated execution of one is visible as a second destination file.
+    items_by_path = {
+        value.source_path: value for value in state.repository.list_items(task.task_id)
+    }
+    for filename, provider_id in (
+        (MIXED_LEFT_FILE, "231"),
+        (MIXED_RIGHT_FILE, "232"),
+    ):
+        source_path = f"{MIXED_SCOPE}/{filename}"
+        source_item = items_by_path[source_path]
+        earlier = coordinator.create(
+            "organize",
+            execute_authorized=False,
+            scope_path=MIXED_EARLIER_SCOPE,
+            item_limit=1,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            require_configuration_snapshot=True,
+        )
+        earlier_item = coordinator.record_discovered(
+            earlier.task_id,
+            "source-storage",
+            "source",
+            source_path,
+            f"source-storage:{source_path}",
+        )
+        state.repository.append_result(
+            PersistentResultRecord(
+                result_id=f"{earlier_item.item_id}-mixed-earlier-attempt",
+                task_id=earlier.task_id,
+                item_id=earlier_item.item_id,
+                source_storage_id=earlier_item.storage_id,
+                source_path=earlier_item.source_path,
+                destination_storage_id=None,
+                destination_path=None,
+                recognition_type="copy-fixture",
+                provider="tmdb",
+                provider_id=provider_id,
+                metadata_policy_id="C",
+                naming_policy_id="A",
+                classification_policy_id="A",
+                organize_policy_id="copy-fixture",
+                operation="COPY",
+                status="failed",
+                created_at=now,
+                title=filename,
+                error="the earlier bounded attempt stopped before Storage mutation",
+                effect_certainty="none",
+                source_occurrence_id=source_item.source_occurrence_id,
+                source_fingerprint=source_item.source_fingerprint,
+            )
+        )
+        state.repository.update_task(
+            dataclasses.replace(
+                earlier,
+                status=PersistentTaskStatus.COMPLETED,
+                failed_items=1,
+                total_items=1,
+                completed_at=now,
+                updated_at=now,
+                error="the earlier bounded attempt stopped before Storage mutation",
+            )
+        )
+    return {
+        "taskId": task.task_id,
+        "status": paused.status.value,
+        "scope": MIXED_SCOPE,
+        "itemLimit": paused.item_limit,
+        "recordedSources": [
+            f"{MIXED_SCOPE}/{MIXED_LEFT_FILE}",
+            f"{MIXED_SCOPE}/{MIXED_RIGHT_FILE}",
+        ],
+        "leftSource": f"{MIXED_SCOPE}/{MIXED_LEFT_FILE}",
+        "rightSource": f"{MIXED_SCOPE}/{MIXED_RIGHT_FILE}",
     }
 
 
@@ -4748,6 +4971,8 @@ def application(environ, start_response):
             document = run_continuation_worker_once(STATE)
         elif path == "/__harness__/seed-full-budget-recovery" and method == "POST":
             document = seed_full_budget_recovery(STATE)
+        elif path == "/__harness__/seed-mixed-scope-recovery" and method == "POST":
+            document = seed_mixed_scope_recovery(STATE)
         elif path == "/__harness__/seed-authority-refusal" and method == "POST":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             missing_snapshot = (query.get("missingPin") or ["0"])[0] == "1"

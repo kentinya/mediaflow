@@ -42,6 +42,7 @@ from mediaflow.application.scope_continuation import (
     continuation_origin,
     definition_occurrence_authority,
     is_continuable_task_command,
+    recovery_preparation_eligibility,
     recovery_scope,
     recovery_scope_plan,
     remaining_scope,
@@ -3631,6 +3632,335 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         document = self._drive_recovery(api, second["discoveryId"])
         self.assertIsNone(document["previewId"])
         self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+    # -- a mixed scope: one decided sibling must not authorise another ----
+
+    def _mixed_two_source_task(self, active):
+        """A paused run whose whole budget records `Left` and `Right` as pending.
+
+        Both sources are trustworthy and still undecided at admission time, so a
+        preparation may legally freeze both.  An earlier attempt can then decide
+        one of them while the other stays real remaining work, which keeps the
+        chain-level ``eligible`` flag ``True``: the exact mixed shape B
+        reproduced.
+        """
+
+        sub = self.root / "Incoming" / "Sub"
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / "Left.2005.mkv").write_bytes(b"left")
+        (sub / "Right.2006.mkv").write_bytes(b"right")
+        task = replace(
+            self._paused_mutation_scan(active, item_limit=2),
+            command="organize",
+            scope_path="Incoming/Sub",
+        )
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        self._record_pending_source(task, "Incoming/Sub/Right.2006.mkv")
+        return task
+
+    def _execute_only(self, api, preview, path: str):
+        """Really COPY exactly one source of a published summary."""
+
+        selected = [value.item_id for value in preview.items if value.source.path == path]
+        self.assertEqual(len(selected), 1, [value.source.path for value in preview.items])
+        status, execution = self._confirm(api, preview, item_ids=selected)
+        self.assertEqual(status, 202, execution)
+        result = self._drive_once(api)
+        self.assertEqual(result.status.value, "completed")
+        return execution["taskId"]
+
+    def test_a_frozen_mixed_preparation_never_publishes_a_decided_sibling(self):
+        """B P1: a frozen mixed manifest must drop a sibling decided afterwards.
+
+        This is B's exact shape.  Summary A publishes both sources, preparation
+        B is admitted while both are still undecided and is driven far enough to
+        *freeze* its manifest, and A then really completes only `Left` — leaving
+        `Right` undecided, so the chain-level ``eligible`` flag stays ``True``.
+        B's frozen manifest already contains `Left`, so only a per-source
+        re-check at publish time can keep it out.  Driving B must neither
+        publish, authorize nor execute `Left` again; `Right` keeps its own legal
+        exact summary and the destination keeps exactly one `Left` file.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, first = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, first)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        self.assertEqual(
+            sorted(value.source.path for value in first_preview.items),
+            ["Incoming/Sub/Left.2005.mkv", "Incoming/Sub/Right.2006.mkv"],
+        )
+
+        # B is admitted and driven up to its *frozen* stage while both sources
+        # are still undecided.  Its manifest now carries both sources and no
+        # summary is published yet.
+        status, second = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, second)
+        self.assertNotEqual(second["discoveryId"], first["discoveryId"])
+        frozen = None
+        for index in range(8):
+            frozen = api._media_discovery.claim_and_run(
+                worker_id=f"mixed-freeze-{index}", claim_token=f"mixed-freeze-{index}"
+            )
+            if frozen is None or frozen.frozen or frozen.preview_id:
+                break
+        self.assertIsNotNone(frozen)
+        self.assertTrue(frozen.frozen)
+        self.assertIsNone(frozen.preview_id)
+        self.assertEqual(
+            sorted(value.get("path") for value in frozen.sources),
+            ["Incoming/Sub/Left.2005.mkv", "Incoming/Sub/Right.2006.mkv"],
+        )
+
+        # A really completes only `Left`; `Right` stays undecided.
+        self._execute_only(api, first_preview, "Incoming/Sub/Left.2005.mkv")
+        plan = recovery_scope_plan(self.repository, self.repository.get_task(task.task_id))
+        self.assertEqual(
+            [value.source_path for value in plan.undecided_items],
+            ["Incoming/Sub/Right.2006.mkv"],
+        )
+        eligibility = recovery_preparation_eligibility(
+            self.repository, recovery_source_task_id=task.task_id
+        )
+        # The exact B shape: the chain is still eligible while `Left` is refused.
+        self.assertTrue(eligibility.eligible)
+        self.assertFalse(eligibility.may_offer("source-storage", "Incoming/Sub/Left.2005.mkv"))
+        self.assertTrue(eligibility.may_offer("source-storage", "Incoming/Sub/Right.2006.mkv"))
+
+        # B is now driven to publication.  Its frozen manifest must publish only
+        # the still-undecided `Right`; the completed `Left` is never re-offered.
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNotNone(document["previewId"], document)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [value.source.path for value in preview.items],
+            ["Incoming/Sub/Right.2006.mkv"],
+        )
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+        # The legal `Right` still really executes, and the destination gains
+        # exactly one new file (never a second `Left`).
+        status, execution = self._confirm(api, preview)
+        self.assertEqual(status, 202, execution)
+        self.assertEqual(self._drive_once(api).status.value, "completed")
+        self.assertEqual(sorted(self._target_files()), ["Left (2005).mkv", "Right (2006).mkv"])
+
+    def test_a_frozen_manifest_that_loses_every_source_settles_stale(self):
+        """A frozen mixed manifest whose every source was decided never publishes.
+
+        Preparation B freezes both sources, then A completes *both* through its
+        own exact summary.  B's chain is then fully decided, so driving it must
+        settle truthfully without publishing a summary, without authority and
+        with zero new destination files.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, first = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, first)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+
+        status, second = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, second)
+        # One Worker pass freezes B's manifest without publishing a summary.
+        frozen = api._media_discovery.claim_and_run(
+            worker_id="mixed-freeze", claim_token="mixed-freeze-claim"
+        )
+        self.assertIsNotNone(frozen)
+        self.assertTrue(frozen.frozen)
+        self.assertIsNone(frozen.preview_id)
+
+        # A completes both sources through its own summary.
+        status, execution = self._confirm(api, first_preview)
+        self.assertEqual(status, 202, execution)
+        self.assertEqual(self._drive_once(api).status.value, "completed")
+        self.assertEqual(sorted(self._target_files()), ["Left (2005).mkv", "Right (2006).mkv"])
+
+        # B's frozen manifest is now fully decided: it must not publish again.
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNone(document["previewId"])
+        self.assertFalse(list(api._media_discovery.get(second["discoveryId"]).sources))
+        self.assertEqual(sorted(self._target_files()), ["Left (2005).mkv", "Right (2006).mkv"])
+
+    def test_a_published_mixed_summary_refuses_only_the_decided_sibling(self):
+        """A published mixed summary must refuse its decided sibling at confirm.
+
+        Two summaries publish both sources before an earlier attempt completes
+        one of them.  Confirming the mixed set must be refused because `Left` is
+        now decided, and the refusal must name it rather than pass on the
+        strength of the legal `Right`.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, first = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, first)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+
+        status, second = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, second)
+        second_document = self._drive_recovery(api, second["discoveryId"])
+        second_preview = self.repository.get_manual_preview(second_document["previewId"])
+        self.assertEqual(
+            sorted(value.source.path for value in second_preview.items),
+            ["Incoming/Sub/Left.2005.mkv", "Incoming/Sub/Right.2006.mkv"],
+        )
+
+        # The earlier summary completes `Left` while `Right` stays pending.
+        self._execute_only(api, first_preview, "Incoming/Sub/Left.2005.mkv")
+
+        # Confirming the whole mixed reviewed set is refused by name.
+        status, refused = self._confirm(api, second_preview)
+        self.assertEqual(status, 409, refused)
+        self.assertEqual(refused["error"]["code"], "recovery_scope_decided")
+        self.assertEqual(
+            refused["error"]["details"]["details"]["path"],
+            "Incoming/Sub/Left.2005.mkv",
+        )
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+    def test_a_mixed_scope_is_refused_by_the_atomic_admission_alone(self):
+        """The repository transaction refuses a decided sibling by itself.
+
+        The application preflight can be disabled for this call, so only the
+        repository's own ``BEGIN IMMEDIATE`` admission transaction can refuse
+        the mixed selection.  The decision is recorded as an explicit operator
+        ignore, which changes no source evidence version, so the guarantee
+        cannot depend on a check that runs before the write.  The unrelated
+        legal `Right` must not carry the already-decided `Left` through.
+        """
+
+        from mediaflow.application.manual_organize_execution import (
+            ManualOrganizeExecutionService,
+        )
+        from mediaflow.domain.manual_execution import ManualExecutionError
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, admission = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        service: ManualOrganizeExecutionService = api._manual_execution
+        # The one-shot authority for the whole mixed set is created while every
+        # source is still undecided.
+        authority = service.authorize(
+            preview.preview_id,
+            [value.item_id for value in preview.items],
+            expected_intent_version=preview.intent_version,
+            actor="admin",
+            confirmation=True,
+        )
+        # An explicit ignore of only `Left` retires that source without a Result
+        # or any evidence-version change; `Right` stays real remaining work.
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.upsert_item(
+            replace(original_item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+        )
+
+        # With the application preflight disabled, only the atomic transaction
+        # can refuse the already-decided `Left`.
+        with mock.patch.object(ManualOrganizeExecutionService, "_assert_recovery_preparation_live"):
+            with self.assertRaises(ManualExecutionError) as raised:
+                service.admit(authority.authorization_id, actor="admin", confirmation=True)
+        self.assertEqual(raised.exception.code, "recovery_scope_decided")
+        self.assertEqual(self._target_files(), [])
+        self.assertEqual(self.repository.list_manual_executions_for_preview(preview.preview_id), ())
+
+    def test_a_queued_mixed_execution_refuses_the_decided_source_per_item(self):
+        """A queued mixed execution re-judges each source before its own mutation.
+
+        Both sources were legally authorized and admitted while undecided, so the
+        durable execution, the reviewed Preview and the Storage fence are all
+        valid.  The deciding effect for `Left` arrives afterwards as an explicit
+        operator ignore, so only the Worker's own per-source boundary can notice
+        it and close that one item as a truthful pre-mutation failure while the
+        independent `Right` still runs.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, admission = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        status, execution = self._confirm(api, preview)
+        self.assertEqual(status, 202, execution)
+
+        # The operator explicitly ignores `Left` while the mixed execution waits
+        # in the queue.  The ignore writes only the original TaskItem; the
+        # admitted execution's own pending item is retired by exact source
+        # evidence, and `Right` remains real remaining work.
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.upsert_item(
+            replace(original_item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+        )
+
+        result = self._drive_once(api)
+        self.assertEqual(result.execution_id, execution["executionId"])
+        self.assertEqual(result.status.value, "partial_success")
+        results = self.repository.list_results(execution["taskId"])
+        by_path = {value.source_path: value for value in results}
+        self.assertEqual(
+            sorted(by_path), ["Incoming/Sub/Left.2005.mkv", "Incoming/Sub/Right.2006.mkv"]
+        )
+        self.assertEqual(by_path["Incoming/Sub/Left.2005.mkv"].effect_certainty, "none")
+        self.assertEqual(by_path["Incoming/Sub/Right.2006.mkv"].status, "SUCCESS")
+        self.assertEqual(sorted(self._target_files()), ["Right (2006).mkv"])
+
+    def test_a_mixed_scope_reopens_with_the_same_per_source_refusal(self):
+        """A reopened connection reaches the same per-source verdict."""
+
+        config, active = self._copy_journey_active()
+        task = self._mixed_two_source_task(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+        status, first = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, first)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        self._execute_only(api, first_preview, "Incoming/Sub/Left.2005.mkv")
+        with SQLiteTaskRepository(self.database) as reopened:
+            source = reopened.get_task(task.task_id)
+            eligibility = recovery_preparation_eligibility(
+                reopened, recovery_source_task_id=source.task_id
+            )
+            self.assertTrue(eligibility.eligible)
+            refused = eligibility.refused_sources(
+                (
+                    ("source-storage", "Incoming/Sub/Left.2005.mkv"),
+                    ("source-storage", "Incoming/Sub/Right.2006.mkv"),
+                )
+            )
+            self.assertEqual(refused, (("source-storage", "Incoming/Sub/Left.2005.mkv"),))
 
     def test_an_ordinary_files_preparation_is_never_governed_by_recovery_eligibility(self):
         """A non-recovery preparation keeps its own independent lifecycle.

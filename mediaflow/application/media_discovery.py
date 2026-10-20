@@ -1883,6 +1883,45 @@ class MediaDiscoveryService:
             snapshot_digest=discovery.snapshot_digest,
         )
 
+    def _settle_stale_recovery(
+        self,
+        discovery: MediaDiscovery,
+        claim_token: str | None,
+        *,
+        message: str,
+        next_action: str,
+    ) -> MediaDiscovery:
+        """Settle one recovery preparation as an explainable, zero-mutation stop."""
+
+        now = self._clock()
+        settled = replace(
+            discovery,
+            status=DiscoveryStatus.CANCELLED,
+            version=discovery.version + 1,
+            # The frozen manifest is the only part of this preparation that could
+            # ever be confirmed and executed, so it is cleared.  The exact
+            # observations, counters, findings, refusals and the linked intent
+            # remain durable history; nothing is rewritten or erased.
+            sources=(),
+            preview_id=None,
+            next_observation_at=None,
+            updated_at=now,
+            error=message[:MAX_DISCOVERY_TEXT_LENGTH],
+            progress=replace(
+                discovery.progress,
+                phase="stale",
+                pending_files=(),
+                pending_directories=(),
+                active_directory=None,
+                active_cursor=None,
+                active_cursors_seen=(),
+                message=next_action[:MAX_DISCOVERY_TEXT_LENGTH],
+            ),
+        )
+        return self._settle_control(
+            settled, expected_version=discovery.version, claim_token=claim_token
+        )
+
     def _stale_recovery_preparation(
         self, discovery: MediaDiscovery, claim_token: str | None
     ) -> MediaDiscovery | None:
@@ -1903,39 +1942,58 @@ class MediaDiscoveryService:
         eligibility = self._recovery_eligibility(discovery)
         if eligibility.eligible:
             return None
-        now = self._clock()
-        settled = replace(
+        return self._settle_stale_recovery(
             discovery,
-            status=DiscoveryStatus.CANCELLED,
-            version=discovery.version + 1,
-            # The frozen manifest is the only part of this preparation that could
-            # ever be confirmed and executed, so it is cleared.  The exact
-            # observations, counters, findings, refusals and the linked intent
-            # remain durable history; nothing is rewritten or erased.
-            sources=(),
-            preview_id=None,
-            next_observation_at=None,
-            updated_at=now,
-            error=(eligibility.message or "the preparation's remaining scope changed")[
-                :MAX_DISCOVERY_TEXT_LENGTH
-            ],
-            progress=replace(
-                discovery.progress,
-                phase="stale",
-                pending_files=(),
-                pending_directories=(),
-                active_directory=None,
-                active_cursor=None,
-                active_cursors_seen=(),
-                message=(
-                    eligibility.next_action
-                    or "request a fresh plan summary for the still-undecided sources"
-                )[:MAX_DISCOVERY_TEXT_LENGTH],
+            claim_token,
+            message=(eligibility.message or "the preparation's remaining scope changed"),
+            next_action=(
+                eligibility.next_action
+                or "request a fresh plan summary for the still-undecided sources"
             ),
         )
-        return self._settle_control(
-            settled, expected_version=discovery.version, claim_token=claim_token
+
+    def _filter_frozen_recovery_sources(
+        self, discovery: MediaDiscovery
+    ) -> tuple[MediaDiscovery, bool]:
+        """Drop the frozen sources this preparation's chain has since decided.
+
+        A recovery preparation can hold an exact frozen source list while an
+        *earlier* attempt of the same chain decides one sibling.  The chain stays
+        eligible while any source is still undecided, so the whole-chain refusal
+        never fires for a mixed scope and the decided sibling would otherwise be
+        published, authorized and executed a second time.  The frozen manifest is
+        the only part that can ever be confirmed, so it is re-judged per exact
+        source here.
+
+        Returns ``(discovery, all_decided)``.  ``all_decided`` is ``True`` when
+        the frozen manifest was non-empty and every entry is now decided; the
+        caller then settles the preparation instead of publishing it.  The
+        manifest and the linked intent are not rewritten here beyond the returned
+        projection, so the analysis can still refuse the decided entries.
+        """
+
+        eligibility = self._recovery_eligibility(discovery)
+        if not eligibility.applies or not eligibility.eligible:
+            return discovery, False
+        refused = eligibility.refused_sources(
+            (value.get("storageId"), value.get("path"))
+            for value in discovery.sources
+            if isinstance(value, dict)
+            and isinstance(value.get("storageId"), str)
+            and isinstance(value.get("path"), str)
         )
+        if not refused:
+            return discovery, False
+        kept = tuple(
+            value
+            for value in discovery.sources
+            if not (
+                isinstance(value, dict) and (value.get("storageId"), value.get("path")) in refused
+            )
+        )
+        if not kept:
+            return replace(discovery, sources=()), True
+        return replace(discovery, sources=kept), False
 
     def run_claimed(
         self,
@@ -2899,7 +2957,9 @@ class MediaDiscoveryService:
         A recovery preparation re-validates its live remaining scope here, at the
         last point before its frozen source list becomes a durable intent.  A
         source another attempt decided while this preparation waited is refused
-        as a stale preparation instead of being frozen and analysed again.
+        as a stale preparation instead of being frozen and analysed again; a
+        *mixed* scope keeps its legal siblings and only the decided ones are
+        dropped from the frozen manifest.
         """
 
         if discovery.recovery_source_task_id is not None:
@@ -2908,6 +2968,20 @@ class MediaDiscoveryService:
             stale = self._stale_recovery_preparation(discovery, None)
             if stale is not None:
                 return stale
+            discovery, all_decided = self._filter_frozen_recovery_sources(discovery)
+            if all_decided:
+                return self._settle_stale_recovery(
+                    discovery,
+                    None,
+                    message=(
+                        "every source this preparation froze now has a decided outcome, so "
+                        "nothing remains to review or confirm"
+                    ),
+                    next_action=(
+                        "open the run and review its recorded per-item outcomes; a decided or "
+                        "uncertain effect is never repeated"
+                    ),
+                )
         try:
             frozen = self._finalize(discovery, None)
         except DiscoveryError as error:
@@ -2962,15 +3036,33 @@ class MediaDiscoveryService:
             # frozen, so the plan analysis is the only remaining chance to
             # notice that this preparation's admitted sources were decided by
             # another attempt.  Publishing a summary here would hand the
-            # operator a confirmable plan for an already-completed source.
+            # operator a confirmable plan for an already-completed source.  A
+            # mixed scope keeps only the still-undecided sources, so a decided
+            # sibling is never re-offered while a legal one still proceeds.
             stale = self._stale_recovery_preparation(discovery, claim_token)
             if stale is not None:
                 return stale
+            discovery, all_decided = self._filter_frozen_recovery_sources(discovery)
+            if all_decided:
+                return self._settle_stale_recovery(
+                    discovery,
+                    claim_token,
+                    message=(
+                        "every source this preparation froze now has a decided outcome, so "
+                        "nothing remains to review or confirm"
+                    ),
+                    next_action=(
+                        "open the run and review its recorded per-item outcomes; a decided or "
+                        "uncertain effect is never repeated"
+                    ),
+                )
         try:
             intent = self._intent_service.get(discovery.intent_id)
         except Exception:  # noqa: BLE001 - a missing intent is a truthful failure
             return self._fail(discovery, claim_token, "intent_unavailable")
         remaining = self._remaining_intent_item_ids(intent)
+        if discovery.recovery_source_task_id is not None:
+            remaining = self._undecided_intent_item_ids(intent, discovery)
         if not remaining:
             # Every item of this preparation has already been admitted to an
             # execution.  Re-running the analysis would only re-review work the
@@ -3071,6 +3163,31 @@ class MediaDiscoveryService:
             except Exception:  # noqa: BLE001 - a missing reader keeps every item eligible
                 admitted = frozenset()
         return tuple(item.item_id for item in intent.items if item.item_id not in admitted)
+
+    def _undecided_intent_item_ids(self, intent, discovery: MediaDiscovery) -> tuple[str, ...]:
+        """The intent items a recovery preparation may still publish for review.
+
+        Two independent exclusions compose here.  The ordinary
+        ``_remaining_intent_item_ids`` drops every item any durable execution of
+        this intent already admitted.  The recovery contract adds the exact
+        per-source verdict: a *mixed* frozen scope stays eligible while one
+        sibling is undecided, so a source an earlier attempt of the same chain
+        decided is dropped by its own ``(storage_id, path)`` identity instead of
+        riding on the legal sibling's eligibility.  The same verdict is what the
+        application, Worker and atomic admission boundaries re-ask, so the
+        published summary and the executable selection can never disagree.
+        """
+
+        remaining = self._remaining_intent_item_ids(intent)
+        eligibility = self._recovery_eligibility(discovery)
+        if not eligibility.applies:
+            return remaining
+        return tuple(
+            item.item_id
+            for item in intent.items
+            if item.item_id in remaining
+            and eligibility.may_offer(item.source.storage_id, item.source.path)
+        )
 
     def preparation_preview_id(self, discovery_id: str) -> str | None:
         """The exact read-only Preview linked by a completed preparation, if any."""

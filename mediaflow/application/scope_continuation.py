@@ -863,6 +863,49 @@ class RecoveryPreparationEligibility:
             return False
         return self.allow_new_sources
 
+    def check_sources(self, sources) -> tuple[bool, ...]:
+        """Whether each exact observed source may still be offered or executed.
+
+        ``eligible`` is only a statement about the *whole* chain: it says the
+        preparation still has work somewhere.  It is deliberately **not** a
+        licence for every individual source, because a mixed scope stays
+        eligible while one sibling is still undecided even though another was
+        decided by an earlier attempt.  A boundary that is about to publish,
+        authorize, admit or execute an exact source set must therefore ask this
+        per-source verdict instead of trusting the chain-level ``eligible``
+        flag, which would let the decided sibling through on the strength of an
+        unrelated legal one.
+
+        ``sources`` is an iterable of ``(storage_id, path)`` pairs.  The
+        returned tuple carries one verdict per input in the same order, so a
+        caller can keep the legal siblings and refuse only the sources this
+        chain already decided.  An ordinary (non-recovery) admission is never
+        governed and every source stays legal; a stale preparation refuses
+        every source.
+        """
+
+        values = tuple((storage_id, path) for storage_id, path in sources)
+        if not self.applies:
+            return tuple(True for _ in values)
+        if not self.eligible:
+            return tuple(False for _ in values)
+        return tuple(self.may_offer(storage_id, path) for storage_id, path in values)
+
+    def refused_sources(self, sources) -> tuple[tuple[str, str], ...]:
+        """The exact subset of ``sources`` this preparation may no longer offer.
+
+        A read-only projection of :meth:`check_sources` for boundaries that
+        need to name which selected source was retired (for a bounded refusal
+        detail or for trimming a frozen manifest).
+        """
+
+        values = tuple((storage_id, path) for storage_id, path in sources)
+        return tuple(
+            source
+            for source, allowed in zip(values, self.check_sources(values), strict=True)
+            if not allowed
+        )
+
 
 def recovery_preparation_eligibility(
     repository,
