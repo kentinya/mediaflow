@@ -204,94 +204,67 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
 T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's latest
-finding was **FIX REQUIRED — overall recovery eligibility still authorizes a decided source in a
-mixed scope** (P1). This round fixes only that root cause, its four boundaries and its tests; the
-previous single-source blocker remains fixed.
+finding was **FIX REQUIRED — recovery trims the admitted directory and reviews a different
+sibling** (P1). This round fixes only that root cause, its shared resolver, the missing-scope
+refusal and its tests; the previous per-source eligibility fix remains in place.
 
 ### 先复现（本轮修复前）
 
-B 的精确混合时序：A 摘要同时发布 `Left`+`Right`；B 在两者都未决时受理并推进到 **frozen**；A 随后只
-真实完成 `Left`，`Right` 仍待处理，因此整链 `eligible=True`。B 的冻结 manifest 已含 `Left`，重新
-发布时逐来源权威虽已拒绝 `Left`，但发布/授权/准入/Worker 都只看整体 `True`，于是 B 再次发布
-`Left`+`Right`，只确认 `Left` 仍二次 COPY 出 `Left (2005) (1).mkv`。
+B 的精确时序：同一资源库有两个真实目录 `Folder `（末尾一个空格）与 `Folder`，前者只有
+`Left.2005.mkv`，后者只有 `Right.2006.mkv`。真实 CLI `organize '<库>/Folder ' --limit 1` 创建 Task 后
+由真实 pause API 暂停（exit75），持久 `scope_path` 逐字保留末尾空格且无任何已发现项。真实
+`POST /remaining-scope-previews` 返回202 并完成分析，摘要却列出 `Incoming/Folder/Right.2006.mkv`
+而非原范围 `Incoming/Folder /Left.2005.mkv`。
 
-用真实 Managed Active/API/SQLite/LocalStorage/Worker 复现（`reproduce-b-p1-fixed.log`）。
+用 B 的独立探针在修复前复现：`reproduce-b-p1-before.log`（`offered_wrong_sibling=true`）。
 
-### 修正：把整体资格与具体范围资格分开，并在四个边界重问逐来源结论
+### 根因与修正
 
-`RecoveryPreparationEligibility` 新增 `check_sources()` / `refused_sources()`：`eligible` 只表示整链
-仍有工作，不能作为全部来源的许可；每个待发布/授权/准入/执行的来源按 `(storage_id, path)` 逐项
-判定（未决=可，已决/忽略/未知效果=不可，新来源仅在原准入仍有预算时可）。四个独立边界都消费
-同一结论：
+`mediaflow/application/task_scope.py` 的共享 `resolve_resource_library_scope` 对持久 scope 调用
+`.strip()`，并把纯空白字符串当成“未指定范围”，于是目录名末尾空格被删除，解析落到近似邻目录
+`Folder`。修正只改共享解析，不在输出端补名字：
 
-1. **冻结后发布** (`application/media_discovery.py`)：`_begin_preparation_analysis` 与 `_analyze`
-   在冻结/发布前用 `_filter_frozen_recovery_sources` 逐项丢弃已决来源；全部已决则按既有 stale
-   结清（`CANCELLED`+`phase=stale`，零 Preview/权限/mutation）。`_undecided_intent_item_ids`
-   把同一逐来源结论叠加到普通“已受理执行”排除之上，混合范围只发布仍未决的来源。
-2. **应用 authorize/execute** (`application/manual_organize_execution.py`)：`authorize`、
-   `execute`/`admit` 先解析本次精确选择，`_assert_recovery_preparation_live(preview, sources=)`
-   逐项核对，已决来源返回 409 `recovery_scope_decided` 并点名来源。
-3. **确认的原子边界** (`infrastructure/sqlite_runtime.py`)：`admit_manual_execution` 在同一
-   `BEGIN IMMEDIATE` 事务内把 `authorization.scope` 的真实 selected items 逐项传入
-   `_assert_recovery_preparation_live_locked(..., sources=)`，前置校验之后发生的完成事实也无法
-   准入；`eligible=True` 不再放行。
-4. **Worker 逐项效果边界** (`application/manual_organize_execution.py`)：`_run_worker_items`
-   在每个即将执行的来源/步骤前重问 `_recovery_eligibility_for(preview)` 的逐来源结论；仅该来源
-   以 `effect_certainty=none` 结清，独立合法兄弟照常执行，未决来源不会自拒绝。
+- 只有 `None` 或确切空串表示未指定范围（保留原“恰好一个 enabled ResourceLibrary”语义）。
+- 真实路径逐字保留，不再 `.strip()`；`PurePath` 分量、绝对 display-root 映射、分隔符/越界校验
+  均保持原样。目录名首/尾空格、纯空白组件、Unicode/长名不再被改写或误判为整库。
 
-### 新增真实旅程测试（`tests/test_scope_continuation.py`，6 个）
+原精确目录缺失/不可读时，`_resolve_entry_kind` 仍以既有 `source_missing`（404，
+`sideEffects=none`，`relativePath` 逐字）拒绝并保留原 Task，不回退到 trim 目录、父目录或整库。
 
-- `test_a_frozen_mixed_preparation_never_publishes_a_decided_sibling`：B 先冻结两来源，A 只完成
-  `Left`，B 只发布 `Right`，目标恰一份 `Left`，`Right` 仍合法执行。
-- `test_a_frozen_manifest_that_loses_every_source_settles_stale`：B 冻结后两来源全被 A 完成，B 不
-  再发布、无权限、目标不变。
-- `test_a_published_mixed_summary_refuses_only_the_decided_sibling`：已发布混合摘要确认时按名拒绝
-  已决 `Left`，保留合法 `Right`。
-- `test_a_mixed_scope_is_refused_by_the_atomic_admission_alone`：关闭应用预检后，仅仓库事务拒绝
-  已决 `Left`，不创建执行、不消费一次性授权。
-- `test_a_queued_mixed_execution_refuses_the_decided_source_per_item`：混合执行已准入等待中 `Left`
-  被显式忽略，Worker 逐项以 `none` 结清 `Left`、`Right` 真实 SUCCESS。
-- `test_a_mixed_scope_reopens_with_the_same_per_source_refusal`：新连接同结论。
+### 新增真实旅程与聚焦测试
 
-四个边界分别用“仅禁用该边界”验证独立必要性：冻结过滤、应用断言、Worker 逐项各使至少一个用例失败；
-原子事务由 `test_a_mixed_scope_is_refused_by_the_atomic_admission_alone` 在关闭应用预检时独立证明。
-
-### Harness / 原生浏览器旅程
-
-- `scripts/operations_inventory_harness.py`：新增 `seed_mixed_scope_recovery` 与
-  `GET/POST /__harness__/seed-mixed-scope-recovery`、两个 COPY 候选与 `MixedScope` COPY 规则，
-  使混合范围两来源都解析为 COPY，重复执行可见为第二份目标文件。
-- `web/tests/e2e/operations-inventory.python.spec.ts` 新增
-  `a frozen mixed recovery preparation never republishes a decided sibling`：真实 production build +
-  真实 Python API/Worker，深链精确 run；B 冻结后 A 只完成 `Left`，断言 B 驱动后只发布 1 项、目标
-  副本数不再增加、源文件不变。
+- `tests/test_scope_continuation.py` 新增
+  `test_a_paused_run_reviews_its_exact_space_suffixed_directory`：真实 CLI 创建 + 真实 pause API +
+  真实恢复 Worker，断言摘要恰为 `Incoming/Folder /Left.2005.mkv`，邻目录不被观察/变更，源字节
+  不变、零目标 mutation。去掉修正后该用例明确错选 `Right`。
+- 新增 `test_a_missing_exact_scope_directory_never_falls_back_to_its_sibling`：原精确目录缺失时
+  以 `source_missing` 拒绝，原 Task/兄弟文件保持、零 mutation。
+- 新增 `tests/test_task_scope.py`（14 个聚焦用例）：未指定范围、首/尾空格与纯空白组件、Unicode/
+  长名、绝对 display 路径及其同名兄弟、库根、越界与多库歧义/停用库。
 
 ### 实际受影响命令/结果（仓库根，`PYTHONPATH=tests`）
 
-- `test_scope_continuation` → **89 OK**（含 6 个新增用例）
-- `test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **216 OK**
-- `test_manual_organize_preview test_manual_organize_execution test_recovery_continuation test_task_center_recovery_lineage test_recovery_batch` → **191 OK**
-- `test_task_persistence test_sqlite_backup test_sqlite_restore test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **129 OK**
-- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_v2_manual_organize test_manual_organize_intent` → **124 OK**
-- Web（`cwd web/`）：`npm run typecheck` 干净；`npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx` → **93 passed**；`npx eslint`/`npx prettier --check` 改动 spec 干净；`npm run build` 成功。
-- 原生：`npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g "frozen mixed recovery preparation|already-admitted recovery preparation|fully recorded budget still recovers|mutation-authorized paused run|missing configuration pin|selected execution never blocks"` → **6 passed**（真实 production build + Python API/Worker）。
-- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；`python -m compileall -q mediaflow tests scripts` OK；`ruff check` / `ruff format --check` 覆盖 6 个改动 Python 文件 → passed / formatted。
+- `test_task_scope test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **232 OK**
+- `test_manual_organize_preview test_manual_organize_execution test_recovery_continuation test_task_center_recovery_lineage test_recovery_batch test_task_persistence test_sqlite_backup test_sqlite_restore test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **320 OK**
+- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_v2_manual_organize test_manual_organize_intent test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser test_scanner test_resource_library_pipeline test_scan_retirement_stability test_direct_file_operations test_manual_operations_contract test_operations_task_center` → **286 OK**
+- 独立复现：B 探针修复前 `offered_wrong_sibling=true`（`reproduce-b-p1-before.log`）；修正后同一真实旅程
+  摘要恰为 `Incoming/Folder /Left.2005.mkv`（`verify-exact-scope.log`，`offered_exact_intended=true`）。
+- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
+  `python -m compileall -q mediaflow tests scripts` OK；`ruff check` / `ruff format --check` 覆盖
+  3 个改动 Python 文件 → passed / formatted。
 
-证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix6/`：
-`reproduce-b-p1-fixed.log`、`verify_mixed_scope_fixed.py`、`fence_independence.py`、
-`unittests.log`、`quality.log`、`README.md`。
+证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix7/`：
+`reproduce-b-p1-before.log`、`verify_exact_scope_fixed.py`、`verify-exact-scope.log`、`README.md`。
 
 ### 已知风险/边界
 
-- 逐来源过滤是**读时投影**，不改写任何 Task/Result/Intent/Preview 行；全已决时沿用既有 stale 结清，
-  原观察、计数器、findings、refusals 与 intent 历史仍可独立检查。
-- 普通 Files/定义准入完全不受影响（`applies=False`），独立新意图/新 occurrence 不被旧成功永久压制；
-  跨任务批量 mutation 仍不在本 Task。
+- 共享解析只改“未指定范围”判定与去 `.strip()`；未触碰 `final_cli.py` 的 display-root 映射、
+  `scope_continuation` 的 ancestry 逐字比较或既有 pin/锁/准入语义。
 - runtime schema 仍为 49（无新列/表）；wheel/隔离安装、生产 Docker、fresh/reopen 与支持版本迁移、
   完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
 - 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在上一轮基线上
   即失败，本轮未改变其范围；留给 B 判定。
-- 本轮测试执行合计约 2 分钟，占本开发轮次总时长约 7%，低于 30% 上限。
+- 本轮测试执行合计约 1.2 分钟，占本开发轮次总时长约 25%，低于 30% 上限。
 
 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、

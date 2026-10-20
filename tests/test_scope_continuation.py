@@ -4506,6 +4506,123 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual((sub / "Left.2005.mkv").read_bytes(), b"left")
         self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
 
+    def test_a_paused_run_reviews_its_exact_space_suffixed_directory(self) -> None:
+        """B P1: a durable trailing-space directory must never resolve to its sibling.
+
+        Two real directories differ only by a trailing space.  A real CLI run
+        pauses inside the exact ``Folder `` directory; the native remaining-scope
+        recovery must review that directory, never the neighbouring ``Folder``.
+        The pause is a genuine authenticated API request issued from the real
+        Task-creation boundary, so the durable scope is exactly what the CLI
+        admitted.
+        """
+
+        from mediaflow.application.metadata import MetadataProviderRegistry
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+        from mediaflow.final_cli import final_main
+
+        config, active = self._activate(scope="Incoming")
+        intended = self.root / "Incoming" / "Folder "
+        sibling = self.root / "Incoming" / "Folder"
+        intended.mkdir()
+        sibling.mkdir()
+        (intended / "Left.2005.mkv").write_bytes(b"intended")
+        (sibling / "Right.2006.mkv").write_bytes(b"not in original scope")
+        api = self._api(config)
+        report: dict[str, object] = {}
+        original_create = PersistentTaskCoordinator.create
+
+        def create_and_pause(coordinator, *args, **kwargs):
+            task = original_create(coordinator, *args, **kwargs)
+            report["task_id"] = task.task_id
+            report["scope_path"] = task.scope_path
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/pause",
+                method="POST",
+                body={"expectedUpdatedAt": task.updated_at.isoformat()},
+            )
+            self.assertEqual(status, 200, body)
+            return task
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(PersistentTaskCoordinator, "create", create_and_pause),
+            mock.patch(
+                "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                return_value=MetadataProviderRegistry(()),
+            ),
+        ):
+            code = final_main(
+                ["--config", str(config), "organize", str(intended), "--limit", "1"],
+                stdout=stdout,
+                stderr=stderr,
+            )
+        self.assertEqual(code, 75, (stdout.getvalue(), stderr.getvalue()))
+        task = self.repository.get_task(report["task_id"])
+        self.assertIs(task.status, PersistentTaskStatus.PAUSED)
+        self.assertEqual(task.scope_path, str(intended))
+        self.assertEqual(len(self.repository.list_items(task.task_id)), 0)
+
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertEqual(document["prepared"], True)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertEqual(
+            [item.source.path for item in preview.items],
+            ["Incoming/Folder /Left.2005.mkv"],
+        )
+        # The neighbouring sibling is neither observed as a candidate nor
+        # mutated, and the source bytes are unchanged.
+        self.assertEqual((intended / "Left.2005.mkv").read_bytes(), b"intended")
+        self.assertEqual((sibling / "Right.2006.mkv").read_bytes(), b"not in original scope")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_a_missing_exact_scope_directory_never_falls_back_to_its_sibling(self) -> None:
+        """A vanished trailing-space directory must refuse, not review the sibling.
+
+        When the original exact scope no longer exists, recovery keeps the
+        original Task and reports the missing source; it must never quietly
+        re-admit the trimmed neighbour, the parent directory or the whole
+        library.  Zero Storage mutation and no execution authority.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        sibling = self.root / "Incoming" / "Folder"
+        sibling.mkdir()
+        (sibling / "Right.2006.mkv").write_bytes(b"not in original scope")
+        original = self._paused_mutation_scan(active)
+        # The admitted scope is the exact `Folder ` directory, which is absent.
+        self.repository.update_task(
+            replace(original, scope_path=str(self.root / "Incoming" / "Folder "))
+        )
+        api = self._api(config)
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertIn(status, {404, 409}, body)
+        self.assertEqual(body["error"]["code"], "source_missing")
+        self.assertEqual(body["error"]["details"]["relativePath"], "Folder ")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        # The original Task and the sibling remain untouched.
+        self.assertIs(
+            self.repository.get_task(original.task_id).status, PersistentTaskStatus.PAUSED
+        )
+        self.assertEqual((sibling / "Right.2006.mkv").read_bytes(), b"not in original scope")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
     def _drive_recovery(self, api, discovery_id: str) -> dict:
         """Drive one admitted remaining-scope preparation through its Worker.
 

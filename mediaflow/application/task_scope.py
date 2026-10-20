@@ -51,8 +51,12 @@ def resolve_resource_library_scope(runtime, scope_path):
     admitted.
     """
 
-    scope = scope_path
-    if scope is None or not str(scope).strip():
+    # Only an explicitly absent scope means "unspecified".  A real path is
+    # preserved byte-for-byte: a directory name may legally end in a space, and
+    # trimming it (or treating a whitespace-only component as absent) would
+    # silently resolve a *different* neighbouring directory and review/execute a
+    # scope the original run never admitted.
+    if scope_path is None or scope_path == "":
         enabled = tuple(
             value
             for value in getattr(runtime, "resource_libraries", ())
@@ -65,7 +69,7 @@ def resolve_resource_library_scope(runtime, scope_path):
                 "so its exact remaining scope cannot be reproduced",
             )
         return _runtime_library(runtime, enabled[0].library_id), ""
-    raw = str(scope).replace("\\", "/").strip()
+    raw = str(scope_path).replace("\\", "/")
     candidate = PurePath(raw)
     matches: list[tuple[int, str, str]] = []
     for library_id, display_root in tuple(getattr(runtime, "resource_display_roots", ()) or ()):
