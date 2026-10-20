@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER PRESERVES THE EXACT PAUSED SOURCE DIRECTORY; SAME TASK; B OWNS FULL GATES
+Next Action: DEVELOPER PRESERVES SUPPORTED LIVE-SOURCE WORK RECORDS; SAME TASK; B OWNS FULL GATES
 ```
 
 ## Goal
@@ -275,109 +275,133 @@ B 的精确时序：同一资源库有两个真实目录 `Folder `（末尾一�
 ## B Review Result
 
 ```text
-Reviewed candidate: 1e965c095b355eab0feee7ef5ea4b2b1a4d8da08
-Product implementation: 90b697f3b689b57d1d8a155076781d1501a4525c
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..1e965c095b355eab0feee7ef5ea4b2b1a4d8da08
-Decision: FIX REQUIRED — recovery trims the admitted directory and reviews a different sibling
+Reviewed candidate: 349ca47be64e00db6c17e4d793b227e0ccae7609
+Product implementation: 7bc370cc24c534123b694cd752b81041ac67c411
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..349ca47be64e00db6c17e4d793b227e0ccae7609
+Decision: FIX REQUIRED — supported ordinary Organize work loses readable source evidence on reopen
+Previous exact-directory blocker: independently fixed through confirmation/execution/reopen and missing-source refusal
 Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
 Next: SAME TASK FIX; B CONTINUES ORIGINAL BASE..CORRECTED HEAD REVIEW AND ASSIGNED T4
 ```
 
-main、已提交Contract、治理PASS、Git/workspace可写。预存图片删除、未跟踪文件/日志/
-截图/ZIP/浏览器结果及私有配置保持，不暂存。不改A-owned Slice/Roadmap/Progress、45.4
-历史接受或冻结43。已复核适用需求、完整列表/整理/恢复旅程及CURRENT/TARGET。
-候选相比`90b697f`仅修改B报告及下面的B-owned原生测试定位，不改产品代码。
+main、治理PASS、已提交Contract/Base及工作区可写；预存图片删除、未跟踪日志/截图/ZIP/
+浏览器结果与私有配置保持，不读取/暂存。已复核AGENTS/workflow/B经验、适用需求、完整
+列表/整理/恢复旅程及CURRENT/TARGET。A-owned边界、45.4历史接受及冻结43不改。
 
-### P1：真实CLI暂停后，恢复摘要改选了另一个目录
+### 上轮精确目录修正已独立确认
 
-独立复现只使用隔离Managed Active、临时Local Storage、真实CLI/API/SQLite及恢复Worker，
-Provider为离线fixture。暂停时序钩子仅在真实CLI创建Task后调用真实暂停API，未手工写Task/
-TaskItem状态、未伪造结果或替换安全判断：
+- 真实CLI创建原`Folder `范围、真实暂停API200、正常acknowledge exit75；恢复API202及真实
+  Worker只生成`Incoming/Folder /Left.2005.mkv`，没有改选`Folder`内的Right。
+- 明确确认后实际Worker完成Left，目标恰一份，邻目录字节保持；新SQLite连接重开仍保持
+  原scope和精确Result。完成后再次请求同范围恢复409，不重放完成项。
+- 另一次真实CLI正常暂停后移走原精确目录：恢复404/source_missing、relativePath仍为
+  `Folder `、sideEffects=none；不回退邻目录/父目录/整库，原Task和临时源字节保留。
 
-1. 同一资源库有`Folder `（末尾一个空格）和`Folder`两个真实目录，前者只有Left、后者
-   只有Right。真实CLI执行`organize '<资源库>/Folder ' --limit 1`。
-2. 原Task创建后，真实`POST /api/v1/tasks/{id}/pause`返回200；CLI在正常边界确认暂停，
-   exit75。持久Task为paused、scope_path逐字等于CLI输入，尚未发现任何文件。
-3. 真实`POST /api/v1/tasks/{id}/remaining-scope-previews`返回202，实际Worker完成分析。
-   正式摘要列出的来源为`Incoming/Folder/Right.2006.mkv`，而非原范围的
-   `Incoming/Folder /Left.2005.mkv`。两份源内容保持、目标文件为零，未请求执行。
+### P1：普通实时Storage整理的持久来源格式被改名，支持版本重开后无法读取
 
-这是可从正常入口到达的精确范围错误，不依赖上轮已撤回的跨Task忽略语义。原固定来源/
-范围不能在恢复时改写；目录边界空白也已被FileIndex退役设计§2明确要求保留。
+B从**真实Task Base代码**生成工作数据，再用当前候选重开；未手写伪旧记录，未访问用户
+运行库/媒体，也不依赖旧FileIndex产品：
 
-**根因与引入点。** `mediaflow/application/task_scope.py:68`对持久scope调用`.strip()`，
-将目录名末尾空格当成输入装饰删除；line55还把纯空白字符串视作“未指定范围”，可能回退
-库根。`MediaDiscoveryService`在`media_discovery.py:726`使用该结果构造恢复scope entries，
-后续范围/计划检查沿用改错的范围，不能恢复原路径。该helper由`4afeb5eea39130325e1739a9eb2602f57262719b`
-于2026-10-19 21:12:21+08:00引入，当前候选仍存在。Task Base中无此helper。
+1. 从原Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` 提取原`mediaflow/tests/config`，
+   独立进程确认实际import来自该Base源码，提取文件与Git blob逐字匹配。使用其真实
+   `create_current_from_storage`对临时
+   `One.2001.mkv`生成精确计划，合法明确授权并由真实OrganizerExecutor完成MOVE。
+2. Base源对象明确`is_storage_source=True`、`lastScanId=None`，runtime数据库**无file_index表**；
+   Base用于默认值的真实内存catalog也为空（0条索引来源）。
+   普通整理Execution为completed，实际目标一份。Base原生V2执行详情GET返回200。
+3. 对该真实runtime做SQLite backup，仅在隔离副本用当前`SQLiteTaskRepository`重开。
+   候选将支持的runtime版本47升级到49；原Task仍completed、Result仍1份、持久来源JSON
+   字节未改，但intent/计划/authorization/execution四种reader都无法反序列化。
+4. 同一普通V2详情`GET /api/v1/operations/organize/executions/{id}`由200变为**400 invalid_request**，
+   消息`manual source field 'fileId' is not supported`；已完成工作无法正常查看其执行详情。
+
+**原因。** `ManualSourceIdentity`在本Task将持久字段`fileId/lastSeenAt/...`改成
+`sourceId/observedAt/...`，但`from_document`只接受新格式。SQLite四处持久reader都直接使用
+该严格decoder，已有普通live-Storage工作的原格式因而被当作非法新输入/损坏记录。
+引入于`72682d1e3277343b674d62e5ceda99a824036c00`，2026-10-19 03:28:19+08:00；
+当前目录修正没有触碰此问题。
+
+**范围依据。** Contract RO-7/AC-7保留普通Task/Result/pin/安全与重开；Final Validation明确
+要求受影响共享schema的支持版本迁移/失败原子性，RO-8亦保留普通整理分析/执行数据。
+样本是实时Storage整理、不是索引查询/FileID旧API或独立Preview历史兼容。47被当前引擎
+实际接受并推进版本，不能把普通已完成执行详情丢失归为“不支持旧FileIndex迁移”。
+不需要恢复全局索引、查询或旧产品入口，只需保留既有工作内来源证据的合法持久读取。
 
 ### Developer必需修正与顺序
 
-1. **先增加上述真实入口回归。** 两个目录同时存在且名字只差边界空白；用真实CLI创建、
-   真实暂停动作及正常acknowledge，再走恢复准入/Worker。修改前明确看到错选Right；修正后
-   精确摘要只含Left，Right不被观察为本次候选、不进入摘要或确认范围。时序钩子可以发真实
-   控制请求，不能在暂停后直接把条目改成Processing或手工改终态。
-2. **修正共享scope解析，不在输出端补名字。** 区分文档定义的未指定scope（None/确切空串）
-   与真实路径；不要对持久路径/目录名做`.strip()`或用空白判断把有效名字变成库根。
-   保留绝对display-root映射与库相对路径的精确组件，以及现有分隔符/越界校验。`PurePath`
-   转换后也要确保实际解析的库和相对范围仍对应原输入，不能切换到近似名字的邻目录。
-3. **失败保持原范围。** 原精确目录消失、不可读或无法唯一归属时明确拒绝并保留原Task/
-   具体恢复指引；不得改试trim后的目录、父目录或整库。现有歧义/越界/停用库/原pin拒绝
-   不放宽；默认整库语义只属于原本明确未指定范围的合法工作。
-4. **验证完整行为。** 覆盖首尾空格、纯空白目录组件、Unicode/长名；同名近似邻目录的冲突
-   情况；无邻目录时正常恢复及原目录缺失时不回退；绝对display路径和持久相对路径；重开
-   后范围逐字保持。有预算和满额undecided两种范围均保留原边界，不增加索引/第二恢复引擎。
-   合法摘要确认后Worker只处理原范围，未确认零效果，兄弟文件及已完成/未知效果不重放。
-5. 保持Task45.5的Base/Goal/High/T4及此前合法修正，提交连贯修正和真实受影响测试结果。
-   不展开RO-8、冻结43或新增跨Task撤权功能，不改Slice/Roadmap/Progress，不另造Task。
+1. **先锁定持久格式回归。** 使用B真实Base样本或带明确Base来源的最小测试fixture，证明
+   新代码重开后普通执行详情400、四种reader失败；保留Task/Result/状态、原来源JSON、计划、
+   fingerprint/occurrence、pin与已消费授权作为对照。不要把fixture换成候选新格式后宣称迁移通过。
+2. **共享持久解码边界。** 在现有来源值对象/仓储职责内集中解释仍受支持普通live-Storage
+   工作的历史持久格式；四个reader（intent item、preview item、authorization scope、execution
+   item）复用同一规则，不逐处吞异常或返回空清单。可使用仅供durable reader的纯转换函数，
+   新输入校验保持严格；不要让HTTP旧fileId或浏览器自报来源/指纹重新成为执行权威。
+3. **保留原证据与绑定。** 对已验证的历史live来源，旧fileId只解释为该工作内原source identity，
+   不查询索引；原Storage/库/path、原观察时刻（如lastSeenAt）、fingerprint/occurrence及稳定
+   证据按原事实读取。不得以当前stat/当前Active/当前时间补造原证据，不重写计划/结果/pin，
+   不重置CONSUMED授权或产生执行许可。未知格式、冲突字段、缺失/不可信证据拒绝继续，
+   不能一概强行标记verified；也不能把所有正常原格式都当成损坏而丢失可读结果。
+4. **覆盖读取与安全连续性。** 至少包含已完成普通整理的详情/API200、queued已准入工作、
+   零效果失败及unknown/部分效果状态：保存各自原结果和合法动作，已完成/未知不重放；
+   真正继续仍按原pin、精确source/plan和既有claim/lease/authority检查。多次重开/重启后相同。
+   映射不能破坏原source/plan指纹、选择和单次许可的精确绑定；不为兼容读取自动重新授权。
+5. 当前新格式继续正常读写，畸形/混合格式不能绕过路径/信任校验，原始记录/状态不被清空或
+   静默改写。若选用迁移，按现有失败原子性完成，不drop/rebuild/双写；不建设旧索引、独立
+   Preview产品或通用legacy执行器。保持精确目录修正及本Task此前安全修正；同一Task45.5
+   提交连贯修正及真实受影响结果，Base/Goal/High/T4不变，不改A-owned边界或冻结43。
 
 ### Developer受影响验证
 
-增加聚焦scope解析用例（可放`tests/test_task_scope.py`），以及上面的真实CLI/API/Worker
-集成用例；该新增回归随实际命名显式执行。现有直接受影响用例已核对：
+新增聚焦持久来源codec及四种reader/API回归（建议模块`test_persisted_manual_source`，新增后
+实际执行）；直接受影响消费者使用下面的现有模块，并显式执行实际新增集成用例：
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_task_scope
-PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation.ScopeContinuationWorkerJourneyTests.test_native_remaining_scope_preview_reviews_only_the_eligible_items test_scope_continuation.ScopeContinuationWorkerJourneyTests.test_native_remaining_scope_preview_never_widens_an_unresolvable_scope test_scope_continuation.ScopeContinuationWorkerJourneyTests.test_remaining_scope_recovery_proves_a_nonzero_stability_interval test_scope_continuation.ScopeContinuationWorkerJourneyTests.test_a_fully_recorded_budget_still_recovers_its_undecided_item test_scope_continuation.ScopeContinuationWorkerJourneyTests.test_a_full_budget_never_lets_a_new_file_borrow_the_pending_unit
+PYTHONPATH=tests .venv/bin/python -m unittest test_persisted_manual_source
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_task_persistence
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_task_center_recovery_lineage
 .venv/bin/ruff check <changed-python-files>
 .venv/bin/ruff format --check <changed-python-files>
 git diff --check
 ```
 
-`test_task_scope`是本次建议新增模块，创建后执行；不可把尚不存在的用例算已通过。
-若实际修正触及更多消费者，追加对应直接受影响用例。Developer不跑完整Python/Web/E2E/
-wheel/Docker矩阵，不补B全量证据包。已修复的原生定位由B维护，本次不要求Developer改Web。
+若未新增上述建议模块，报告实际模块/命令而非把不存在用例计为通过。若改DDL/迁移，追加
+受影响fresh/reopen/失败回滚和backup/restore用例。没有Web产品变更时不要求Developer跑
+Web矩阵；也不跑完整Python/E2E/wheel/Docker或准备B全量证据包。真实Base进程、隔离安装/
+生产镜像的最终支持版本/普通工作连续性证明及其harness维护仍由B承担。
 
-### B本轮结果、证据与后续门禁
+### B本轮实际结果及证据
 
-- 原生续跑失败已定位为测试将全列表中所有“预览+已完成”行算作本次续作。B改为点击原运行
-  的真实“打开链接的继续运行”，断言URL指向精确child Task且详情已完成；保留原来源、精确
-  剩余清单、重启和单次续作等全部断言。初次focused真实Python浏览器用例1 passed；初次
-  Prettier检查失败，随后修正格式。最终精确候选再验**1 passed**（1.9s，外部进程2.364s），
-  changed ESLint/Prettier均通过；不是放宽断言或加重试，完整原生门禁仍待产品修正候选。
-- 精确候选完整Python回归已启动；独立确认上述P1后主动SIGINT停止，187.119s、exit -2，
-  无完整结果/数量，**INTERRUPTED / PENDING，不是PASS，也不是产品回归FAIL**。原始日志保留，
-  不隐去中断或ResourceWarning。未继续启动完整Web/E2E/wheel/Docker/视觉门禁。
-- 已做原Base..Head清单及部分消费者/安全重点审查，发现P1后按workflow§6提前FIX REQUIRED；
-  不宣称131文件全部diff已审完。已审读取路径含CLI只读Active/游标、来源证据、稳定观察、
-  scope解析/恢复及原生续跑。剩余完整范围审查与Required Tests中的全部T4由B继续承担。
-- 先前冻结混合、已完成不重放、真实稳定观察，以及正常暂停/元数据待处理/已解决三种忽略
-  状态的独立事实保留于前轮证据。已撤回的“执行中忽略旧项即P1”不重新作为修复要求。
-- Docker daemon实际可达（29.5.2）；本轮没有执行镜像矩阵，不以环境不足豁免。
+固定候选`349ca47`，本机stable ignored证据（非远程CI）：
+`.git/validation-evidence/349ca47be64e00db6c17e4d793b227e0ccae7609/task45.5/b-review/`
 
-本机稳定ignored证据：
-`.git/validation-evidence/1e965c095b355eab0feee7ef5ea4b2b1a4d8da08/task45.5/b-review/`
-中的`probe_scope_whitespace.py`、`scope-whitespace.log/json`、`python-full.log/json`、
-`review-manifest.txt`、`b-harness-fix.patch`、README/耗时记录。原生定位通过日志及trace策略见
-`.git/validation-evidence/77da20c26491af2a3190f2bc9aae445615c34ef2/task45.5/full-review/`。
-本地证据不冒充远程CI；不机械复用已改执行输入的完整门禁，不机械重跑Final。
+- `exact-scope-fixed.log/json`、`verify_scope_fixed.py`：原目录摘要→明确确认→实际执行→重开→
+  完成后拒绝再次准备；`missing-exact-scope.log/json`与脚本：真实暂停后目录消失且不回退，通过。
+- `python-full.log/json`：`.venv/bin/python -m unittest discover -s tests`，**2725 tests，
+  OK (skipped=7)**，测试264.772s、进程265.148s。这是当前候选完整Python结果，不是全部T4通过。
+- `ruff-check.log/json`、`ruff-format.log/json`：全仓ruff check及format --check通过。
+- 最终`base-live-empty-catalog.log/json`、`base-live-execution.json`、`base-live-runtime.sqlite3`及
+  `seed_base_live_execution.py`：真实Base源码、普通live来源、真实完成MOVE、V2详情200、无索引表。
+- 最终`base-live-empty-catalog-reopen.log/json`及`verify_base_live_reopen.py`：候选支持版本重开，普通详情400
+  与四reader失败，原source documents保持；exit0证明反例，不能算产品PASS。
+- 首次Base探针cwd误用了当前源码，后修正；首次候选断言误要求所有包装错误都包含fileId，
+  实际intent/preview把底层错误包装为Unavailable。早期日志/命令保留，已计全部探索耗时；
+  另一次禁止Base所有索引方法的探测命中了可选历史默认读取，最终改用真实空catalog完成
+  旅程且索引来源保持0条。最终证据明确Base import路径、原API200与当前API400，原始
+  探索日志保持，不把探针错误当产品缺陷。
 
-B在同一修正候选独立验证精确路径和失效不回退，继续原Base..Head审查和既定完整Python/
-Web/E2E/原生与视觉/wheel隔离安装CLI/API/Worker/固定候选Docker/fresh/reopen/支持版本与
-失败原子性门禁。上述中断结果不复用为完整通过，不将这些门禁交回Developer。
+原Base..Head manifest及本轮delta保留；本轮审查进一步覆盖SQLite/schema/持久reader、
+来源模型/手动整理/计划/扫描/稳定与恢复消费者，独立发现上述必需P1后按workflow§6提前
+FIX REQUIRED，不宣称整个范围审完或完整T4完成。没有新Web产品输入，前轮原生定位修正
+事实保留；Developer报告中“该原生用例仍失败”的旧说法不替代B上一轮实际已通过结果，
+也不冒充当前完整原生门禁。未启动完整Web/E2E/wheel/Docker/视觉门禁，继续pending B。
 
-本轮所有测试、探索和检查累计保守上限210秒；记录时本轮总耗时530.3秒，验证上限
-占比39.6%，低于50%，详细记录见review-timing.json，无等待凑时。
-治理及git diff --check通过，用户预存变化保持。
-RO-7未通过、RO-8尚未实现，不规划下一Task、不提交Closure Packet、不关闭Slice。
+B在修正候选独立验证普通工作持久读取/恢复、安全不重放和本轮精确目录修正，继续原始
+Base..Head全部审查及Required Tests既定完整Python/Web/E2E/原生视觉/wheel安装消费者/
+固定候选Docker/fresh/reopen/支持版本与失败原子性门禁。执行输入变更后的完整门禁需刷新，
+匹配结果才能复用；不机械重跑Final、不把未跑门禁交回Developer，不把跳过项算执行通过。
+
+本轮所有测试/探索/重复检查保守上限300秒；记录时总耗时822.1秒，验证上限占比
+36.5%，低于50%，详见review-timing.json，无等待凑时。治理及git diff --check通过，
+预存用户变化保持；RO-7未通过、RO-8尚未实现，
+不规划下一Task，不提交Closure Packet，不自行关闭Slice。
