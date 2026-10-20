@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER FIXES EXACT PREPARATION READ FAILURE / GET RECOVERY IN THIS TASK; B RETAINS FULL ACCEPTANCE
+Next Action: DEVELOPER BOUNDS REMAINING-SCOPE ADMISSION PROBE IN THIS TASK; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -155,9 +155,11 @@ B执行 [共享全量门禁](docs/development-workflow.md#shared-full-regression
 Python/Web/示例/依赖/禁止依赖/编译/完整E2E/wheel/安装消费者/安全覆盖，另执行：
 
 ```bash
-# cwd web/；先完成production build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts tests/e2e/operations-inventory.python.spec.ts tests/e2e/operations-task-center-visual.python.spec.ts
-npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts
+# cwd web/；先完成production build。各spec独立harness，output不共用。
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/live-files
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/inventory
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/visual
+npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/unicode
 ```
 
 B独立关键复现，不能以源码检索或Developer测试标签替代：
@@ -287,99 +289,112 @@ cwd `web/`：
 ## B Review Result
 
 ```text
-Reviewed candidate: 39f132ba0b698d18bedba1666871704efcad28f9
-Product implementation: 7381a1ff9d917cbe5a39bf57e89b2ca52be4d409
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..39f132ba0b698d18bedba1666871704efcad28f9
-Decision: FIX REQUIRED — remaining-scope preparation read failure has no truthful GET recovery
-Previous Web lint / formatting blocker: FIXED; full assigned checks pass on this candidate
+Reviewed candidate: cbe1d1bde5e789181f827b83748bf5b929e2a943
+Product implementation: dd9ec5f4d8698eaff48a0b13b8b009e52b96839b
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..cbe1d1bde5e789181f827b83748bf5b929e2a943
+Decision: FIX REQUIRED — remaining-scope admission performs an unbounded synchronous Storage probe
+Previous preparation-read / explicit GET recovery blocker: FIXED on this candidate
 Slice outcomes/surfaces all satisfied: NO — RO-7 acceptance / RO-8 implementation pending
 Next: DEVELOPER FIXES THIS TASK; B RETAINS REMAINING FULL ACCEPTANCE
 ```
 
-### 独立复现的 P1 与修正
+### P1：恢复准入前的候选探测不受完整发现边界约束
 
-真实 production build + 隔离 Python/API/SQLite fixture，不改产品代码、不手改数据库，不使用用户媒体：
+操作者打开可恢复的暂停运行，点击“在当前界面生成剩余范围摘要”。真实 API 经
+`admit_recovery_preparation` 在写入耐久准备之前同步调用
+`MediaDiscoveryService._scope_has_remaining_candidate`。该函数直接遍历目录/分页，仅计数
+返回条目，未执行页数、游标进展/循环、目录数、深度及活动时间边界，也未复用完整 Worker
+发现的 provider-entry 校验。空页不增加条目计数，所以持续非空 next_cursor 可一直占住
+请求；还未创建准备，Worker 的边界、进度与协作控制无法保护这段工作。
 
-1. 以具备权限的操作者打开真实暂停运行 Authority，明确点击“在当前界面生成剩余范围摘要”。
-   后端成功持久准入一个零变更 discovery，整个复现只有这一次 POST。
-2. 只拦截该 discovery 的 GET 返回503。`fetchOrganizeDiscovery` 正确返回失败结果，但
-   `OperationsLanding.tsx:1574–1591` 将失败等同于没有 preparation，并停止轮询；
-   `:1621–1628` 随后不显示任何准备状态/读取失败/下一步。面板仍显示原生成摘要按钮。
-3. 去掉故障，点击任务中心实际 Refresh，再等待一个轮询区间：仍只有最初一次 discovery GET，
-   没有恢复读取该已受理准备。独立认证 GET 同一ID返回200/queued/zeroMutation=true；
-   因而不是准备未受理、权限拒绝或服务持续故障，而是同页缺少明确的读取失败恢复路径。
-   未执行媒体，不声称产生媒体损坏。不得要求操作者猜测再次点击生成按钮来重复POST。
+B 独立证明（临时 Managed Active / SQLite / Local fixture，只有 Storage 分页为 fake，
+仍经过实际 ReadOnlyStorageGuard 和真实 API；不改产品/数据库内容、不读用户媒体）：
 
-这是既定 Goal/AC 中“失败→恢复”和 RO-3/RO-5 保留旅程的缺口，不是新功能或可选提示。
-在**同一45.5**修正，Base/Goal/High/T4不变：
+- 同一游标重复返回空页；另一例为不同游标连续返回空页。
+- 配置 `max_page_fetches=2000`，两例都同步调用 **2005** 次 list_page 后才返回 **202**。
+  fake 在第2005次提供真实候选，只为让反例有限结束；持续空页没有自身停止条件。
+- 两例读取守卫全部 mutation 计数为0，媒体 fixture 字节保持。没有运行 Worker/执行确认。
+  这是既定有界准备及失败恢复缺口，不声称已经造成媒体损害。
+- 同一探测另经真实API证明：原范围为 `Media/Allowed`，fake列举返回错误父目录的
+  `Media/Sibling` 后，探测实际stat/list了该兄弟目录并返回202。完整Worker已有精确子条目
+  校验，这段探测却绕过它；同一修正须一并保留精确范围，不另开Task。
 
-1. 从精确 remainingPreparationQuery 的读取状态派生 loading、已受理进行中和读取失败；
-   不把transport/503/403/401/畸形响应当空态或完成，不抹去已受理ID/已知持久状态，
-   不伪称后台工作失败或Storage发生/未发生本次执行效果。
-2. 同页显示故障阶段、准备已经受理（不是执行已受理）、最后已知状态/未知新状态和下一步；
-   提供明确的“重新读取本次准备”动作，仅refetch同一ID的GET。恢复成功后继续既有轮询/
-   同页精确摘要，失败时保留可读原因；鉴权失效沿用共享认证恢复。不要新增队列、生命周期、
-   schema或缓存，不靠重复POST、自动mutation重试或effect复制状态修复。
-3. 保留精确摘要版本/就绪子集/覆盖清理授权/未知确认先核对/受理后抑制重复执行。
-   扩展现有旅程测试覆盖首次GET失败及轮询中失败→故障解除→明确GET恢复→同一摘要；
-   断言准备POST始终1次，确认前execute POST为0，失败不显示为“未创建工作”或空态。
-   不能弱化已有断言、扩大超时、关闭lint规则。
-4. Developer运行下面受影响验证，提交连贯checkpoint及实际结果；全量仍由B负责。
+保持 Task45.5 的 ID/Base/Goal/High/T4，按下列步骤修正：
+
+1. 移除准入前的无界遍历，复用现有有界 discovery/Worker 能力和校验。若保留有限存在性探测，
+   必须同样执行实际页数/条目/目录/时间/深度边界、游标类型/长度/循环/进展与精确子条目/
+   范围校验；空页也消耗页数与时间预算。不要复制另一套不受控遍历器或新增队列/引擎。
+2. 只有在合法边界内确实完整查完且没有候选，才可断言 `no_remaining_scope`。
+   未完整探明、循环、越界、故障或预算耗尽不能冒充空目录/无剩余工作；给出有界、可解释的
+   拒绝和下一步，或交现有耐久准备记录真实未完整原因。保持无可执行first-N、零媒体变更/
+   执行权、精确原pin、原预算、已决定/未知效果不重放与请求去重。
+3. 在现有 `test_scope_continuation` / `test_media_discovery` 中补真实 API 回归：重复游标
+   空页、不同游标空页耗尽、无进展/目录循环及适用深度/时间边界均有限停止；安全空范围、
+   合法候选、Storage故障、重复准入和已完成兄弟排除仍正确。复用小预算/假时钟，不增加
+   真实等待、重试或超时；不弱化断言。只测试实际保留的探测/准入边界。
+4. Developer只运行下列新增/修改/直接受影响组及known failing cases，交连贯checkpoint；
+   若改直接消费者再补其精确受影响命令。不得把全量/产物证据交回Developer。
 
 ```bash
-# cwd web/
-npx eslint src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx
-npx prettier --check src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx
-npm run typecheck
-npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx
-npm run build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a mutation-authorized paused run without live authority is refused natively'
 # cwd repository root
 python3 scripts/check_governance.py
+PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_media_discovery test_organize_preparation
+# 对本轮实际新增/修改的Python文件执行，<files>替换为确切路径
+.venv/bin/ruff check <files>
+.venv/bin/ruff format --check <files>
 git diff --check
 ```
 
-若修改直接消费者，追加其精确测试/changed-file检查；新失败恢复用例可加入同一real-Python
-spec并运行该用例。不要让Developer跑全Python/Web/E2E、wheel或Docker矩阵。
+仅若改变Web/API契约：运行实际受影响的Web单测/静态检查，并运行下列相关原生用例；
+纯后端边界修正不要求Developer重复整个Web或原生套件。
 
-### 本轮实际结果与证据
+```bash
+# cwd web/，仅在入口/契约实际受影响时
+npm run typecheck
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a mutation-authorized paused run without live authority is refused natively' --output ../.git/validation-evidence/task45.5-affected
+```
 
-本地稳定ignored证据根：
-`.git/validation-evidence/39f132ba0b698d18bedba1666871704efcad28f9/task45.5/b-review/`。
-独立复现脚本/命令/时间/输出为 `remaining-read-proof.cjs`、
-`remaining-read-independent.log/json`、`remaining-read-proof.json` 和
-`remaining-read-503.png`；脚本exit0表示反例成立，不表示产品通过。
+### 固定候选实际门禁与证据
 
-- governance与Task Base..Head whitespace通过；全仓ruff check/format通过（389 files）。
-- 复用B此前完整Python：**2725 tests，OK，skipped=7，264.772s**；精确空白目录完整执行/
-  重开及缺失时拒绝反例复用。`reuse-inputs.json`/`prior-input-diff.txt`证明349ca47→候选
-  只变TASK及两个Web文件，非Web/非TASK tracked tree hash一致；本轮无依赖/配置安装变化。
-  不复用/恢复已被用户排除的旧版本升级调查结论。
-- cwd web/ 实际：lint、format:check、typecheck、build通过；unit **81 files /1177 tests PASS**；
-  完整普通E2E **240 PASS**。首个unit运行未捕获最终退出结果，不计PASS，计入测试用时；
-  第二次有明确1177/exit0结果。以上完整控制台证据在本轮工具会话，当前目录README仅摘要，
-  未伪称已有逐条raw log文件或远程CI可访问。
-- real-Python合并命令出现共享可变fixture跨spec干扰：11 passed、4 failed、1 interrupted、
-  32 did not run（51.9s），原始 `real-python.log` 保留，不作为产品失败或完整通过。
-  独立新harness首个inventory用例通过；随后单独完整inventory **41 PASS，87.390s**。
-  独立visual **2 PASS，11.093s**，截图已立即复制至`visual/`；检查窄屏和本P1截图，
-  其余截图尚未逐张完成视觉验收，不声称完整visual PASS。live-files在合并运行中5项通过，
-  独立完整刷新尚未执行。
-- 发现上述真实P1后提前FIX REQUIRED。完整132文件Base..Head内容审查尚未结束；Unicode
-  原生、其余共享门禁、wheel/离开源码安装消费者、固定候选Docker/常驻Worker/安全证明
-  均pending，由B在修正候选继续；不把缺证据当产品错误返给Developer。
-- 更改执行输入后刷新相应Web/原生/产物验收；Python及其他匹配证据需重新核对后复用。
-  real-Python各共享可变spec必须独立harness运行，不机械复制已证实会互扰的合并命令，
-  不删除断言/加重试来掩盖。匹配最终证据可满足Slice Final，不机械重跑。
+本地稳定ignored根：
+`.git/validation-evidence/cbe1d1bde5e789181f827b83748bf5b929e2a943/task45.5/b-review/`。
+`run_gate.py` 记录命令/cwd/exit/秒数，原始日志为同名 `.log`，结果元数据为 `.json`。
+`recovery-probe-bounds.py` / `recovery-probe-bounds-proof.json` 为上述独立反例；脚本exit0表示
+反例成立，不表示产品通过。精确范围反例为 `recovery-probe-scope.py` /
+`recovery-probe-scope-proof.json`。证据只在本机，不伪称远程CI可访问。
 
-### 范围与时间
+- governance通过；Task Base..候选的范围/manifest已核对。已检查live列表/只读配置/游标密钥、
+  来源证据/稳定性、恢复准入/链级非重放、执行、装配和本轮Web修正；完整135文件内容审查
+  尚未全部结束，随同一Task修正候选继续，不据manifest或检索宣称全量审查完成。
+- 复用此前B完整Python：**2725 tests，OK，skipped=7，264.772s**。`reuse-inputs.json`
+  证明349ca47→本候选仅TASK和6个Web文件变更，非Web/非TASK tracked tree hash均为
+  `91871a0d68c5a5d2f245f2182425eaf9e247d0db90fb3834201c4710120632f3`；本轮未安装/变更依赖。
+  不复用被用户排除的旧版/A版升级兼容结论。
+- cwd web/：typecheck、lint、format:check、build通过；完整unit **81 files /1181 tests PASS**。
+- 完整普通E2E：**239 passed /1 failed，125.626s**。失败为B并行普通/real-Python运行共用
+  默认产物目录，context关闭时trace ENOENT；该用例独立`--output`复跑 **1 PASS，2.0s**。
+  不是Developer产品缺陷，不把单项通过合并成完整240 PASS；B保留完整门禁pending。
+  后续每次Playwright执行必须使用独立output，且共享可变real-Python spec独立harness。
+- 独立harness完整real-Python inventory：**41 PASS，99.564s**。原始log/json已保存。
+- 上轮P1独立浏览器复现：503失败明确可见→故障解除→“重新读取本次准备”GET恢复原摘要；
+  准备POST恒1、执行POST=0。`remaining-read-proof.cjs` / `remaining-read-proof.json` 与
+  503/恢复截图保存；已实际查看恢复截图，不据此宣称九页/窄屏完整视觉验收。
+  首次脚本只推进一次Worker便等待摘要，15s后失败（19.562s总耗时），保留其失败日志；
+  修正验证驱动以按真实Worker阶段推进后 **PASS，6.368s**，未改产品/断言/超时掩盖失败。
+- 原先Docker未启动；B启动现有Colima后，固定候选镜像
+  `mediaflow:task45-5-cbe1d1bde5e789181f827b83748bf5b929e2a943` **build PASS，21.209s**。
+  镜像构建不等于运行验收。发现本P1后不再启动其余昂贵门禁。
+- 当前候选其他共享检查、独立live-files/Unicode/完整视觉、wheel/离开源码消费者、Docker
+  Scan-stability/recovery/restart/security与无索引消费者证据仍pending，由B承担。
+  Python/真实入口/产物输入因修正改变时刷新相应门禁；可证明输入未变的Web/其他结果按workflow
+  精确复用。最终完整匹配证据可覆盖Slice-final，不机械重跑Final。
 
-用户明确排除旧版/A版升级兼容：不跑Base/旧数据库升级、历史来源字段兼容及升级回滚矩阵，
-不要求compatibility decoder，不自动清空媒体/运行库。只验fresh、当前版本重开/重启/
-失败原子性与来源/pin/权限/非重放。A-owned Slice/Roadmap/Progress和冻结43未修改。
-RO-8尚未交付；本Task未PASS，不规划下个Task、不提交Closure Packet、不宣称Slice ready。
+用户预存21条dirty/untracked保持；只修改B-owned TASK.md，不改A-owned Slice/Roadmap/Progress、
+冻结43或私有配置。本轮沿用已记录的旧版/A版升级兼容排除，只验fresh/当前版本重开重启与
+失败原子性。RO-8尚未交付；本Task不是PASS，不规划下一Task、不提交Closure Packet、不关闭Slice。
 
-本轮测试含首个未捕获unit、重复unit、失败合并浏览器及独立复现；前半段部分命令只有
-会话时间，非秒级完整计时。保守约8–10分钟，复核自约14:17–14:19至本轮收尾，已超过
-30分钟；按10分钟/30分钟保守计不超过33.4%，低于用户50%。未用等待凑比例。
-预存21条用户dirty/untracked记录保持，私有配置不读取/暂存。更详细过程保留Git/ignored证据。
+本轮自2026-10-20 14:30:36 UTC开始。全部测试/构建/质量命令逐次累加 **362.041秒**
+（包含失败与重跑，重叠命令仍累加）；另为环境启动及短检查保守计入25秒，总上界 **387.1秒**。
+收尾复核已超过13分钟，测试上界低于本轮50%；未等待凑比例。精确运行记录在
+`review-timing.json`，其并行区间合并值仅用于辅助说明，不用于放宽累计时间口径。
