@@ -42,16 +42,7 @@ import {
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 
-const STATUS_LABELS: Readonly<Record<string, string>> = {
-  queued: "排队中",
-  running: "发现中",
-  paused: "已暂停",
-  waiting_stability: "等待稳定",
-  completed: "发现完成",
-  partial_success: "部分完成",
-  failed: "失败",
-  cancelled: "已取消",
-};
+import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
 
 const FINDING_LABELS: Readonly<Record<string, string>> = {
   primary: "可整理",
@@ -257,7 +248,7 @@ export function OrganizeDiscoveryPage() {
                       ? "warning"
                       : "info"
                 }
-                title={label(STATUS_LABELS, model.status)}
+                title={label(DISCOVERY_STATUS_LABELS, model.status)}
               >
                 <p>{model.nextAction}</p>
                 {model.progress.message !== "" ? (

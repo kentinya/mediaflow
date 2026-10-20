@@ -35,29 +35,20 @@ export interface AuthorizedReadBoundaryProps<T> {
 }
 
 /**
- * Feature-independent route/read lifecycle boundary for one authenticated,
- * read-only API query.
+ * Shared 401 authority recovery for one authenticated read query.
  *
- * It owns the whole connection/permission/cache-clearing contract once so a
- * later API-backed feature never duplicates it:
- *
- * - No token: renders the shared not-connected boundary.
- * - A backend 401: clears the rejected in-memory principal and the
- *   authenticated Query cache (no automatic replay) and presents the shared
- *   unauthorized boundary until a fresh credential is explicitly entered.
- * - A backend 403: keeps the authenticated identity and renders the shared
- *   forbidden boundary.
- * - Any other rejected/unavailable/malformed read result: renders an explicit
- *   bounded retry that repeats only the same read-only query.
- *
- * Feature content (loading/empty/success) is delegated to `children` only when
- * none of the auth/read boundaries apply.
+ * A backend 401 clears only the rejected in-memory principal first, so the
+ * failing read is disabled before any cache clearing, and then removes the
+ * authenticated Query cache once the rejected principal is gone. No read is
+ * replayed automatically; a fresh credential continues from the preserved
+ * route. The route boundary and feature-owned sub-reads (such as the
+ * remaining-scope preparation read in the operations landing) both call this
+ * hook, so one rejected principal follows the same authority transition
+ * everywhere instead of the feature copying the recovery itself.
  */
-export function AuthorizedReadBoundary<T>({
-  query,
-  unavailableTitle = "Service unavailable",
-  children,
-}: AuthorizedReadBoundaryProps<T>) {
+export function useAuthorizedReadAuthorityRecovery<T>(
+  query: AuthorizedReadQuery<T>,
+): void {
   const token = useAuthToken();
   const rejected = useRejected();
   const queryClient = useQueryClient();
@@ -89,6 +80,38 @@ export function AuthorizedReadBoundary<T>({
       queryClient.clear();
     }
   }, [token, rejected, queryClient]);
+}
+
+/**
+ * Feature-independent route/read lifecycle boundary for one authenticated,
+ * read-only API query.
+ *
+ * It owns the whole connection/permission/cache-clearing contract once so a
+ * later API-backed feature never duplicates it:
+ *
+ * - No token: renders the shared not-connected boundary.
+ * - A backend 401: clears the rejected in-memory principal and the
+ *   authenticated Query cache (no automatic replay) and presents the shared
+ *   unauthorized boundary until a fresh credential is explicitly entered.
+ * - A backend 403: keeps the authenticated identity and renders the shared
+ *   forbidden boundary.
+ * - Any other rejected/unavailable/malformed read result: renders an explicit
+ *   bounded retry that repeats only the same read-only query.
+ *
+ * Feature content (loading/empty/success) is delegated to `children` only when
+ * none of the auth/read boundaries apply.
+ */
+export function AuthorizedReadBoundary<T>({
+  query,
+  unavailableTitle = "Service unavailable",
+  children,
+}: AuthorizedReadBoundaryProps<T>) {
+  const token = useAuthToken();
+  const rejected = useRejected();
+
+  // The authority/cache transition on a rejected 401 is the shared recovery;
+  // this boundary only decides which bounded banner renders afterwards.
+  useAuthorizedReadAuthorityRecovery(query);
 
   if (token === null) {
     if (rejected) {

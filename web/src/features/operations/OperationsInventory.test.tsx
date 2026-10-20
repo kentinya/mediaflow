@@ -1674,7 +1674,14 @@ function stubLifecycleJourney(options: {
     attempt: number,
   ) => Response;
   readonly posts: { readonly url: string; readonly body: unknown }[];
-  readonly extraGet?: (url: string) => Response | null;
+  /**
+   * Optional bounded extra GET handler.  It may answer synchronously or
+   * asynchronously, so a test can keep one read in flight long enough to
+   * observe the derived loading state before its outcome lands.
+   */
+  readonly extraGet?: (
+    url: string,
+  ) => Response | null | Promise<Response | null>;
 }): {
   readonly fetchMock: ReturnType<typeof vi.fn>;
   readonly overviewReads: () => number;
@@ -1720,13 +1727,39 @@ function stubLifecycleJourney(options: {
     if (url.startsWith("/api/v1/operations/manual-actions")) {
       return jsonResponse(manualActionsPayload());
     }
-    const extra = options.extraGet?.(url);
+    const extra = await options.extraGet?.(url);
     if (extra !== undefined && extra !== null) {
       return extra;
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
   return { fetchMock, overviewReads: () => overviewReads };
+}
+
+/** The exact remaining-scope Preview document the panel confirms against. */
+function remainingScopePreviewFixture(): Record<string, unknown> {
+  const preview = JSON.parse(
+    JSON.stringify(
+      (manualOperationsFixture as Record<string, unknown>)[
+        "organizePreviewDetail"
+      ],
+    ),
+  ) as Record<string, unknown>;
+  preview["previewId"] = "preview-remaining";
+  preview["intentId"] = "intent-remaining";
+  preview["intentVersion"] = 3;
+  preview["executionCandidateItemIds"] = ["item-1"];
+  const items = preview["items"] as Record<string, unknown>[];
+  items[0]!["itemId"] = "item-1";
+  items[0]!["previewItemId"] = "preview-item-1";
+  (preview["selection"] as Record<string, unknown>)["selectedItemIds"] = [
+    "item-1",
+  ];
+  (preview["selection"] as Record<string, unknown>)["unselectedItemIds"] = [];
+  const actions = preview["actions"] as Record<string, Record<string, unknown>>;
+  actions["execute"]!["path"] =
+    "/api/v1/operations/organize/previews/preview-remaining/execute";
+  return preview;
 }
 
 describe("selected run lifecycle controls", () => {
@@ -2352,5 +2385,384 @@ describe("selected run lifecycle controls", () => {
     await screen.findByRole("region", { name: "运行详情" });
     expect(screen.queryByRole("region", { name: "新计划摘要" })).toBeNull();
     expect(posts).toHaveLength(0);
+  });
+
+  it("recovers a failed first preparation read with one explicit re-read, not another POST", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = remainingScopePreviewFixture();
+    let discoveryReads = 0;
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction(
+            "resume",
+            false,
+            "authority required",
+            AUTHORITY_PREVIEW,
+          ),
+        ],
+      }),
+      extraGet: async (url) => {
+        if (url.endsWith("/discoveries/discovery-remaining")) {
+          discoveryReads += 1;
+          if (discoveryReads === 1) {
+            // Keep the first read in flight briefly so the derived loading
+            // notice is observable, then fail it with a bounded 503.
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            return jsonResponse(
+              { error: { code: "service_unavailable" } },
+              503,
+            );
+          }
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({
+              previewId: "preview-remaining",
+            }),
+          );
+        }
+        if (url.endsWith("/preview-remaining")) {
+          return jsonResponse(preview);
+        }
+        return null;
+      },
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
+        }
+        if (url.endsWith("/execute")) {
+          return jsonResponse(
+            {
+              executionId: "execution-remaining",
+              taskId: "task-remaining",
+              status: "admitted",
+              selectedItemIds: ["item-1"],
+              nextAction: "track the durable Worker execution",
+            },
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    // The first read is an explicit loading state of an already admitted
+    // preparation — never an empty panel and never a second POST.
+    expect(
+      await screen.findByRole("heading", { name: "正在读取剩余范围准备" }),
+    ).toBeVisible();
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+
+    // The failed read is a truthful, recoverable state: the stage, the
+    // admitted-but-not-executed fact, the unknown durable state and the
+    // explicit re-read next step are visible; it is not shown as an empty
+    // state, as "no work was created", or as a finished/failed preparation.
+    expect(
+      await screen.findByRole("heading", {
+        name: "剩余范围准备状态读取失败",
+      }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/阶段：读取本页已受理的剩余范围准备状态/),
+    ).toBeVisible();
+    expect(screen.getByText(/这是准备受理，不是执行受理/)).toBeVisible();
+    expect(screen.getByText(/尚未成功读到该准备的持久状态/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "新计划摘要" })).toBeNull();
+    expect(screen.queryByText(/没有创建执行/)).toBeNull();
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+
+    // Fault cleared: the explicit action repeats only the same GET of this
+    // discovery id, and the same exact summary reappears on this page.
+    await user.click(screen.getByRole("button", { name: "重新读取本次准备" }));
+    expect(
+      await screen.findByRole("region", { name: "新计划摘要" }),
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("heading", {
+        name: "剩余范围计划摘要（零变更）",
+      }),
+    ).toBeVisible();
+    expect(discoveryReads).toBe(2);
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+  });
+
+  it("keeps the last known preparation state through a failed poll and recovers on the explicit re-read", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const preview = remainingScopePreviewFixture();
+    let discoveryReads = 0;
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction(
+            "resume",
+            false,
+            "authority required",
+            AUTHORITY_PREVIEW,
+          ),
+        ],
+      }),
+      extraGet: (url) => {
+        if (url.endsWith("/discoveries/discovery-remaining")) {
+          discoveryReads += 1;
+          if (discoveryReads === 1) {
+            return jsonResponse(
+              remainingScopeDiscoveryDocument({ previewId: null }),
+            );
+          }
+          if (discoveryReads === 2) {
+            return jsonResponse(
+              { error: { code: "service_unavailable" } },
+              503,
+            );
+          }
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({
+              previewId: "preview-remaining",
+            }),
+          );
+        }
+        if (url.endsWith("/preview-remaining")) {
+          return jsonResponse(preview);
+        }
+        return null;
+      },
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
+        }
+        if (url.endsWith("/execute")) {
+          return jsonResponse(
+            {
+              executionId: "execution-remaining",
+              taskId: "task-remaining",
+              status: "admitted",
+              selectedItemIds: ["item-1"],
+              nextAction: "track the durable Worker execution",
+            },
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    // The first successful durable read derives the admitted-in-progress
+    // notice; no read failure and no summary exist yet.
+    expect(
+      await screen.findByText(
+        /常驻 Worker 将在配置的稳定区间满足后生成计划摘要/,
+      ),
+    ).toBeVisible();
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+
+    // The next bounded poll fails: the panel switches to the read-failure
+    // state with the last known durable state preserved, states that the new
+    // state is unknown, and stops polling by itself.
+    expect(
+      await screen.findByRole(
+        "heading",
+        { name: "剩余范围准备状态读取失败" },
+        { timeout: 5000 },
+      ),
+    ).toBeVisible();
+    expect(screen.getByText(/最后已知状态：排队中/)).toBeVisible();
+    expect(
+      screen.getByText(/失败原因：服务当前不可读取该准备状态/),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "新计划摘要" })).toBeNull();
+    expect(discoveryReads).toBe(2);
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+
+    // Fault cleared: the explicit re-read GETs the same discovery id, the
+    // polling resumes its ordinary life cycle, and the same exact summary is
+    // restored — still exactly one preparation POST and no execution.
+    await user.click(screen.getByRole("button", { name: "重新读取本次准备" }));
+    expect(
+      await screen.findByRole("region", { name: "新计划摘要" }),
+    ).toBeVisible();
+    expect(discoveryReads).toBe(3);
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+  });
+
+  it("keeps the shared auth boundary copy for a forbidden preparation read", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction(
+            "resume",
+            false,
+            "authority required",
+            AUTHORITY_PREVIEW,
+          ),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/discoveries/discovery-remaining")
+          ? jsonResponse({ error: { code: "forbidden" } }, 403)
+          : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    // The 403 reuses the shared auth boundary's bounded recovery copy, while
+    // the admitted preparation facts and the re-read action stay visible on
+    // this page; nothing is treated as an empty state.
+    expect(
+      await screen.findByText("Connect a principal with read permission"),
+    ).toBeVisible();
+    expect(screen.getByText(/这是准备受理，不是执行受理/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "重新读取本次准备" }),
+    ).toBeVisible();
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
+  });
+
+  it("follows the shared authority recovery when the preparation read is rejected with 401", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction(
+            "resume",
+            false,
+            "authority required",
+            AUTHORITY_PREVIEW,
+          ),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/discoveries/discovery-remaining")
+          ? jsonResponse({ error: { code: "unauthorized" } }, 401)
+          : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    // This is the only 401 in the journey: the shared authority recovery
+    // clears the rejected principal, the route stays behind the shared
+    // "new credentials required" state, and the local failure notice hands
+    // over to it instead of keeping its own copy.
+    await waitFor(() => {
+      expect(authStore.isRejected()).toBe(true);
+      expect(
+        screen.queryByRole("heading", {
+          name: "剩余范围准备状态读取失败",
+        }),
+      ).toBeNull();
+    });
+    expect(
+      (
+        await screen.findAllByText(
+          "The API token was rejected. Enter a valid API principal token to continue.",
+        )
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      posts.filter((post) => post.url.endsWith("/remaining-scope-previews")),
+    ).toHaveLength(1);
+    expect(posts.filter((post) => post.url.endsWith("/execute"))).toHaveLength(
+      0,
+    );
   });
 });

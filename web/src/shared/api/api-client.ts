@@ -3989,19 +3989,37 @@ export async function finalizeOrganizeDiscovery(
   }
 }
 
+/**
+ * A tolerant record reader for a bounded error envelope: an absent, non-object
+ * or array field is absence, never an exception, so reading a failure response
+ * can never destroy the HTTP status that classifies it.
+ */
+function optionalRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function discoveryErrorResult(status: number, payload: unknown) {
-  const record = readRecord(payload, "discoveryError");
-  const error = readRecord(record["error"], "discoveryError.error");
-  const details = readRecord(error["details"], "discoveryError.details");
+  // The bounded error envelope may omit `details` (the backend does so for
+  // 401/403 and other auth errors) or arrive as a non-envelope body from a
+  // proxy. Reading it must never throw the HTTP status away: that status is
+  // the truthful, bounded classification the read consumer needs to explain
+  // the failure and offer its explicit recovery.
+  const record = optionalRecord(payload);
+  const error = optionalRecord(record?.["error"]);
+  const details = optionalRecord(error?.["details"]);
   return {
     ok: false as const,
     status,
     code:
-      typeof error["code"] === "string" ? error["code"] : "discovery_rejected",
+      typeof error?.["code"] === "string"
+        ? error["code"]
+        : "discovery_rejected",
     nextAction:
-      typeof details["nextAction"] === "string"
+      typeof details?.["nextAction"] === "string"
         ? details["nextAction"]
-        : typeof error["nextAction"] === "string"
+        : typeof error?.["nextAction"] === "string"
           ? error["nextAction"]
           : null,
   };

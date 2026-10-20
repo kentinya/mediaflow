@@ -38,7 +38,15 @@ import {
   type OrganizeDiscoveryListResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
-import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import {
+  ApiReadError,
+  type ApiReadErrorCategory,
+} from "../../shared/api/api-errors";
+import {
+  AuthorizedReadBoundary,
+  useAuthorizedReadAuthorityRecovery,
+} from "../../shared/auth/AuthorizedReadBoundary";
+import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
 import { isSafeOperationsSourceScope } from "../../shared/navigation/operations-return";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -65,6 +73,7 @@ import {
   runOverviewQueryOptions,
 } from "./run-query";
 import { organizeDiscoveriesQueryOptions } from "./discoveries-query";
+import { DISCOVERY_STATUS_LABELS } from "./discovery-status";
 import { RunDetailTabs } from "./RunDetailTabs";
 import { SamePagePlanSummary } from "./SamePagePlanSummary";
 import { ProblemFilePanel } from "./ProblemFilePanel";
@@ -1562,16 +1571,35 @@ function RunDetailPanel({
 
   // The bounded read of the exact admitted preparation.  It polls only while
   // the preparation is still active and settles once it links its Preview or
-  // reaches a terminal state; it never repeats the admission POST.
+  // reaches a terminal state; it never repeats the admission POST.  A failed
+  // read (transport, 5xx, 401/403 or a malformed body) throws a bounded typed
+  // error instead of resolving: React Query then keeps the last successful
+  // durable read in `data` and exposes the failure in `error`, so a read
+  // failure can never masquerade as an empty state, a finished preparation or
+  // a lost admission.  Polling stops on the failure; recovery is exactly one
+  // explicit GET of the same discovery id (the re-read action below), never
+  // another preparation POST and never an automatic mutation retry.
   const remainingPreparationQuery = useQuery({
     queryKey: ["operations.remaining-scope-preparation", remainingDiscoveryId],
-    queryFn: () => fetchOrganizeDiscovery(token, remainingDiscoveryId ?? ""),
+    queryFn: async () => {
+      const read = await fetchOrganizeDiscovery(
+        token,
+        remainingDiscoveryId ?? "",
+      );
+      if (!read.ok) {
+        throw remainingPreparationReadError(read);
+      }
+      return read;
+    },
     enabled: token !== null && remainingDiscoveryId !== null,
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 2_000,
     refetchInterval: (query) => {
+      // A failed read never keeps polling on its own: the explicit re-read
+      // action restarts this bounded interval once a GET succeeds again.
+      if (query.state.status === "error") return false;
       const read = query.state.data;
       if (read === undefined || !read.ok) return false;
       const model = read.model;
@@ -1585,10 +1613,28 @@ function RunDetailPanel({
     refetchIntervalInBackground: false,
   });
 
+  // A rejected 401 on this sub-read follows the shared auth recovery exactly
+  // as the panel's overview read does (clear the rejected principal, then the
+  // authenticated cache, with no automatic replay of any request).
+  useAuthorizedReadAuthorityRecovery(remainingPreparationQuery);
+
   const remainingPreparation =
     remainingPreparationQuery.data?.ok === true
       ? remainingPreparationQuery.data.model
       : undefined;
+
+  // The admitted preparation read has three explicit operator-visible states
+  // derived straight from the query itself: the first read is still in
+  // flight, a read failed, or a durable state is known.  The first two render
+  // their own notices below, so neither can appear as an empty panel that
+  // hides the admitted preparation.
+  const remainingPreparationLoading =
+    remainingDiscoveryId !== null &&
+    !remainingPreparationQuery.isError &&
+    remainingPreparation === undefined;
+  const remainingReadFailure = remainingPreparationQuery.isError
+    ? remainingPreparationQuery.error
+    : null;
 
   // Derive every ordinary remaining-scope state from the durable reads plus
   // the local admission state.  No effect copies server state into component
@@ -1616,11 +1662,44 @@ function RunDetailPanel({
       : null;
   const admittedRemainingExecutionId =
     remainingAdmitted?.executionId ?? durableRecoveryExecutionId;
+  // Bounded, secret-free content for one failed preparation read: which stage
+  // failed, that the preparation (not an execution) was admitted, the last
+  // known durable state or that the new state is unknown, and the one
+  // explicit next step.  It never claims the preparation failed, and never
+  // claims that any Storage effect did or did not occur for an execution.
+  const readFailureCategory: ApiReadErrorCategory =
+    remainingReadFailure instanceof ApiReadError
+      ? remainingReadFailure.category
+      : "unavailable";
+  const readFailureIsAuth =
+    readFailureCategory === "unauthorized" ||
+    readFailureCategory === "forbidden";
+  const readFailureBackendNextAction =
+    remainingReadFailure instanceof RemainingPreparationReadError
+      ? remainingReadFailure.backendNextAction
+      : null;
+  const lastKnownStatus =
+    remainingPreparation === undefined
+      ? null
+      : (DISCOVERY_STATUS_LABELS[remainingPreparation.status] ??
+        remainingPreparation.status);
+  const lastKnownNextAction = remainingPreparation?.nextAction ?? "";
+  const remainingLastKnownLine =
+    lastKnownStatus === null
+      ? "尚未成功读到该准备的持久状态；当前状态是否变化未知。"
+      : `最后已知状态：${lastKnownStatus}` +
+        (lastKnownNextAction === "" ? "" : `（${lastKnownNextAction}）`) +
+        "；读取失败期间是否出现新状态未知。";
   // The operator-action outcome always wins; otherwise the current durable
-  // preparation read supplies the visible lifecycle notice.
+  // preparation read supplies the visible lifecycle notice.  A failed read
+  // supplies no lifecycle notice of its own: the read-failure notice below is
+  // the honest state, so a transport/503 failure is never shown as ordinary
+  // progress or as an empty state.
   const remainingMessage =
     remainingMessageState ??
-    (remainingPreparation === undefined || effectiveRemainingScope !== null
+    (remainingPreparation === undefined ||
+    remainingReadFailure !== null ||
+    effectiveRemainingScope !== null
       ? null
       : remainingPreparationTerminal
         ? remainingPreparation.nextAction ||
@@ -1820,6 +1899,89 @@ function RunDetailPanel({
                   }
                 />
               )}
+              {/* The admitted preparation's first read and a failed read are
+                  explicit states, never an empty panel: the loading notice
+                  says the preparation is admitted while its durable state is
+                  being read, and the failure notice carries the stage, the
+                  admitted-but-not-executed fact, the last known state (or
+                  that the new state is unknown) and one explicit re-read
+                  action — a GET of this same discovery id, never another
+                  preparation POST. */}
+              {remainingPreparationLoading && (
+                <StatusBanner variant="info" title="正在读取剩余范围准备">
+                  <p>
+                    该剩余范围准备已受理；正在读取其持久状态（只读
+                    GET，不会重复生成准备或执行）。
+                  </p>
+                </StatusBanner>
+              )}
+              {remainingReadFailure !== null && (
+                <>
+                  {/* An auth read failure reuses the shared auth boundary
+                      copy, so 401/403 recovery stays identical to the
+                      overview read's shared recovery. */}
+                  {readFailureIsAuth && (
+                    <AuthStateBanner
+                      variant={
+                        readFailureCategory === "unauthorized"
+                          ? "unauthorized"
+                          : "forbidden"
+                      }
+                      title={
+                        readFailureCategory === "unauthorized"
+                          ? "Not authorized"
+                          : "Forbidden"
+                      }
+                      message={
+                        readFailureCategory === "unauthorized"
+                          ? "The API token was rejected. Enter a valid API principal token to continue."
+                          : "The connected API principal does not have permission to view this area."
+                      }
+                    />
+                  )}
+                  <StatusBanner
+                    variant="error"
+                    title="剩余范围准备状态读取失败"
+                  >
+                    <p>
+                      阶段：读取本页已受理的剩余范围准备状态；这是只读
+                      GET，本轮未重发准备或执行请求。
+                    </p>
+                    <p>
+                      该剩余范围准备已受理；这是准备受理，不是执行受理。
+                      {admittedRemainingExecutionId !== null
+                        ? "该准备此前已确认过一次执行；执行状态以关联执行读取为准，本次读取失败不改变其持久状态。"
+                        : " 尚未确认执行；读取失败不代表准备失败，也不代表任何整理效果已发生或未发生。"}
+                    </p>
+                    <p>{remainingLastKnownLine}</p>
+                    {!readFailureIsAuth && (
+                      <p>
+                        失败原因：{READ_FAILURE_REASONS[readFailureCategory]}
+                        {readFailureBackendNextAction !== null
+                          ? ` 服务指引：${readFailureBackendNextAction}`
+                          : ""}
+                      </p>
+                    )}
+                    <p>
+                      下一步：重新读取本次准备的持久状态（同一 discovery 的只读
+                      GET；不会重复生成准备，也不会执行任何整理）。
+                    </p>
+                    <div className="mf-actions">
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        disabled={remainingPreparationQuery.isFetching}
+                        aria-busy={remainingPreparationQuery.isFetching}
+                        onClick={() => void remainingPreparationQuery.refetch()}
+                      >
+                        {remainingPreparationQuery.isFetching
+                          ? "正在重新读取…"
+                          : "重新读取本次准备"}
+                      </button>
+                    </div>
+                  </StatusBanner>
+                </>
+              )}
               {effectiveRemainingScope !== null && (
                 <div className="mf-count-section">
                   <h4>暂停运行的剩余范围</h4>
@@ -1909,6 +2071,63 @@ function RunDetailPanel({
       </AuthorizedReadBoundary>
     </section>
   );
+}
+
+/**
+ * Bounded, secret-free copy for one failed preparation read.  Auth outcomes
+ * are deliberately absent: they reuse the shared auth boundary copy so a
+ * rejected or forbidden read follows the shared recovery everywhere.
+ */
+const READ_FAILURE_REASONS: Readonly<Record<ApiReadErrorCategory, string>> = {
+  unauthorized: "API 主体令牌被拒绝。",
+  forbidden: "当前主体没有读取该准备状态的权限。",
+  unavailable: "服务当前不可读取该准备状态。",
+  rejected: "读取请求被服务拒绝。",
+  malformed: "读取响应无法解析为该准备的持久状态。",
+};
+
+/**
+ * Typed read error for one failed preparation read.  It extends the shared
+ * `ApiReadError`, so the shared 401 authority recovery recognizes it exactly
+ * as it does any other authenticated read, while keeping the feature's own
+ * bounded backend guidance for the operator-facing notice.
+ */
+class RemainingPreparationReadError extends ApiReadError {
+  readonly backendNextAction: string | null;
+
+  constructor(
+    category: ApiReadErrorCategory,
+    backendNextAction: string | null,
+  ) {
+    super(category);
+    this.name = "RemainingPreparationReadError";
+    this.backendNextAction = backendNextAction;
+  }
+}
+
+/**
+ * Map one bounded failed discovery read to its shared category: transport and
+ * 5xx outages are unavailable, 401/403 keep the shared auth categories, an
+ * unparsable body is malformed and any other rejection stays rejected.  The
+ * HTTP status and bounded code decide; nothing else is inferred.
+ */
+function remainingPreparationReadError(read: {
+  readonly ok: false;
+  readonly status: number;
+  readonly code: string;
+  readonly nextAction: string | null;
+}): RemainingPreparationReadError {
+  const category: ApiReadErrorCategory =
+    read.status === 401
+      ? "unauthorized"
+      : read.status === 403
+        ? "forbidden"
+        : read.status === 0 || read.status >= 500
+          ? "unavailable"
+          : read.code === "malformed_response"
+            ? "malformed"
+            : "rejected";
+  return new RemainingPreparationReadError(category, read.nextAction);
 }
 
 /** Bounded Chinese label for one continuation status token. */
