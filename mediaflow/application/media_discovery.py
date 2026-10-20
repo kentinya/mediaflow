@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from uuid import UUID, uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery
@@ -135,6 +136,22 @@ _TEMPORARY_SUFFIXES = (".part", ".tmp", ".download", ".crdownload", ".!qb")
 #: pass continues.  It never spins on a live lock and never overwrites a
 #: successor's ownership.
 _CONTROL_RECONCILE_ATTEMPTS = 4
+
+
+class _RemainingScopeProbe(StrEnum):
+    """The three truthful outcomes of the bounded pre-admission existence probe.
+
+    Only :attr:`NONE` proves the admitted scope is empty of candidates; it is the
+    single state that may answer ``no_remaining_scope`` at admission.
+    :attr:`INCOMPLETE` means the probe stopped inside a real budget, safety or
+    provider boundary without proving emptiness, so the request is admitted as an
+    ordinary durable preparation and the bounded Worker records the real,
+    explainable reason instead.
+    """
+
+    REMAINING = "remaining"
+    NONE = "none"
+    INCOMPLETE = "incomplete"
 
 
 class MediaDiscoveryService:
@@ -792,12 +809,17 @@ class MediaDiscoveryService:
                 ),
                 details={"limit": self._budgets.max_scope_paths},
             )
-        if not self._scope_has_remaining_candidate(
+        probe = self._probe_remaining_scope(
             storage, library, scope_entries, excluded, directory_entry
-        ):
+        )
+        if probe is _RemainingScopeProbe.NONE:
             # The whole admitted scope is already decided: refusing here keeps
             # the same truthful refusal the inline boundary produced instead of
             # admitting a durable preparation that can only discover nothing.
+            # Only a probe that really completed inside the admitted bounds may
+            # make this claim; an incomplete probe is admitted below so the
+            # bounded Worker records the real reason rather than this request
+            # inventing an empty scope.
             raise DiscoveryError(
                 "this run has no remaining eligible item to review; every admitted item already "
                 "has a decided outcome",
@@ -934,21 +956,33 @@ class MediaDiscoveryService:
             return value[len(root) + 1 :]
         return None
 
-    def _scope_has_remaining_candidate(
+    def _probe_remaining_scope(
         self,
         storage: Storage,
         library,
         scope_entries: tuple[DiscoveryScopeEntry, ...],
         excluded,
         directory_entry: DiscoveryScopeEntry,
-    ) -> bool:
+    ) -> _RemainingScopeProbe:
         """Whether the admitted scope still holds one undecided candidate.
 
-        This is a bounded, read-only existence probe: it lists the scope and
-        applies the same pure include/exclude/extension policy the walk does,
-        but proves no stability and calls no Provider.  It exists only so the
-        truthful ``no_remaining_scope`` refusal is decided at admission instead
-        of admitting a durable preparation that could only discover nothing.
+        This is a bounded, read-only existence probe: it lists the scope through
+        the exact same ``_list_page``/``_admit_provider_entry`` boundaries and
+        applies the same pure include/exclude/extension policy the durable walk
+        does, but proves no stability and calls no Provider.  It exists only so
+        the truthful ``no_remaining_scope`` refusal can be decided at admission
+        instead of admitting a durable preparation that could only discover
+        nothing.
+
+        The probe is *not* a second uncontrolled traversal.  Every real bound of
+        the admitted budgets is enforced here exactly as the Worker enforces it:
+        page fetches, visited entries, visited directories, safety depth, active
+        time, cursor type/length/repeat and exact provider-entry admission.  Any
+        bound, cycle, read failure, unsafe entry or path that escapes the exact
+        ResourceLibrary scope stops the probe as :attr:`INCOMPLETE` -- it never
+        masquerades as an empty scope.  An empty page still consumes the page and
+        time budget, so a provider that never advances its cursor cannot hold the
+        request open.
 
         The observable shape follows the admitted preparation: a directory walk
         probes the admitted directory, while a fully recorded admission probes
@@ -961,6 +995,8 @@ class MediaDiscoveryService:
             entry.path for entry in scope_entries if entry.kind is DiscoveryEntryKind.FILE
         )
         if files:
+            # A fully recorded admission names at most ``max_scope_paths`` exact
+            # sources, so the file probe is bounded by the admitted scope itself.
             for relative in files:
                 if relative in excluded_paths:
                     continue
@@ -968,55 +1004,61 @@ class MediaDiscoveryService:
                 try:
                     entry = storage.stat(path)
                 except (StorageError, OSError, ValueError, KeyError):
-                    return True
+                    return _RemainingScopeProbe.INCOMPLETE
                 if not isinstance(entry, StorageEntry):
-                    continue
+                    return _RemainingScopeProbe.INCOMPLETE
+                if self._admit_stat_entry(entry, relative, library) is None:
+                    # A provider that answers for a different path than the one
+                    # requested is never normalized into an empty scope.
+                    return _RemainingScopeProbe.INCOMPLETE
                 if entry.entry_type is not StorageEntryType.FILE:
                     continue
                 if classify_entry(library, relative, entry) is ScanEntryVerdict.CANDIDATE:
-                    return True
-            return False
+                    return _RemainingScopeProbe.REMAINING
+            return _RemainingScopeProbe.NONE
+        started = self._monotonic()
+        visited_entries = 0
+        visited_directories = 0
+        page_fetches = 0
         pending = [directory_entry.path]
-        visited = 0
-        while pending and visited <= self._budgets.max_visited_entries:
+        while pending:
+            if self._monotonic() - started >= self._budgets.max_active_seconds:
+                return _RemainingScopeProbe.INCOMPLETE
+            if visited_directories >= self._budgets.max_visited_directories:
+                return _RemainingScopeProbe.INCOMPLETE
             relative = pending.pop(0)
-            path = self._join(library.root_path, relative)
-            try:
-                entry = storage.stat(path)
-            except (StorageError, OSError, ValueError, KeyError):
-                return True
-            if not isinstance(entry, StorageEntry):
-                continue
-            if entry.entry_type is StorageEntryType.FILE:
-                if relative in excluded_paths:
-                    continue
-                if classify_entry(library, relative, entry) is ScanEntryVerdict.CANDIDATE:
-                    return True
-                continue
-            if entry.entry_type is not StorageEntryType.DIRECTORY:
-                continue
+            visited_directories += 1
+            depth = relative.count("/") + 1 if relative else 0
             cursor = None
+            seen_cursors: list[str] = []
             while True:
-                try:
-                    page = storage.list_page(
-                        path, limit=min(100, self._budgets.page_limit), cursor=cursor
-                    )
-                except (StorageError, OSError, ValueError, KeyError):
-                    return True
+                if self._monotonic() - started >= self._budgets.max_active_seconds:
+                    return _RemainingScopeProbe.INCOMPLETE
+                if page_fetches >= self._budgets.max_page_fetches:
+                    return _RemainingScopeProbe.INCOMPLETE
+                page, failure, cursor_problem = self._list_page(storage, library, relative, cursor)
+                page_fetches += 1
+                if failure is not None or cursor_problem is not None:
+                    return _RemainingScopeProbe.INCOMPLETE
                 for raw in tuple(getattr(page, "entries", ())):
-                    visited += 1
-                    if visited > self._budgets.max_visited_entries:
-                        return True
-                    if not isinstance(raw, StorageEntry):
-                        continue
-                    child = self._relative(raw.path, library.root_path)
+                    if visited_entries >= self._budgets.max_visited_entries:
+                        return _RemainingScopeProbe.INCOMPLETE
+                    visited_entries += 1
+                    child = self._admit_provider_entry(raw, relative, library)
                     if child is None:
-                        continue
+                        # A provider entry that is not exactly one ordinary
+                        # child of the requested directory is never normalized
+                        # into authority and never traversed.
+                        return _RemainingScopeProbe.INCOMPLETE
                     if raw.entry_type is StorageEntryType.DIRECTORY:
                         if excluded_directory(library, child, raw):
                             continue
                         if not directory_may_match(library.include_rules, child):
                             continue
+                        if library.max_depth is not None and depth >= library.max_depth:
+                            continue
+                        if depth + 1 > self._budgets.max_depth:
+                            return _RemainingScopeProbe.INCOMPLETE
                         pending.append(child)
                         continue
                     if raw.entry_type is not StorageEntryType.FILE:
@@ -1024,11 +1066,15 @@ class MediaDiscoveryService:
                     if child in excluded_paths:
                         continue
                     if classify_entry(library, child, raw) is ScanEntryVerdict.CANDIDATE:
-                        return True
-                cursor = getattr(page, "next_cursor", None)
-                if not cursor:
+                        return _RemainingScopeProbe.REMAINING
+                next_cursor = getattr(page, "next_cursor", None)
+                if not next_cursor:
                     break
-        return False
+                if next_cursor in seen_cursors:
+                    return _RemainingScopeProbe.INCOMPLETE
+                seen_cursors.append(next_cursor)
+                cursor = next_cursor
+        return _RemainingScopeProbe.NONE
 
     def _assert_reconciliation_binding(
         self,

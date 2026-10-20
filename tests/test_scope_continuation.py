@@ -35,6 +35,7 @@ from unittest import mock
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.metadata import MetadataProviderRegistry
+from mediaflow.application.read_only_storage import ReadOnlyStorageGuard
 from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
     ScopeContinuationWorkerService,
@@ -60,6 +61,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
 )
+from mediaflow.domain.media_discovery import DiscoveryBudgets
 from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.scope_continuation import (
     ScopeContinuationError,
@@ -68,6 +70,13 @@ from mediaflow.domain.scope_continuation import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.source_evidence import occurrence_id_for, source_fingerprint
+from mediaflow.domain.storage import (
+    StorageEntry,
+    StorageEntryType,
+    StorageError,
+    StorageErrorCode,
+    StoragePage,
+)
 from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTask,
@@ -4622,6 +4631,448 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         )
         self.assertEqual((sibling / "Right.2006.mkv").read_bytes(), b"not in original scope")
         self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    # -- the pre-admission existence probe is itself bounded --------------
+
+    def _probe_task(self, active, *, scope: str = "Incoming"):
+        """One paused mutation-authorized run over ``scope`` for probe cases."""
+
+        return self._paused_mutation_scan(active)
+
+    def _paged_storage(self, *, pages, max_page_fetches: int):
+        """A read-only guard whose ``list_page`` serves the exact supplied pages.
+
+        ``pages`` maps a ResourceLibrary-relative directory to a callable
+        ``(call_number, storage_path) -> StoragePage`` so a case can repeat a
+        cursor, vary cursors forever or fail on a chosen fetch.  Every mutation is
+        counted by the real shared guard.
+        """
+
+        real = LocalStorage("source-storage", self.root)
+        state = {"calls": 0}
+
+        class _Paged:
+            storage_id = "source-storage"
+            name = "paged"
+            read_only = True
+
+            def stat(self, path):
+                return real.stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                state["calls"] += 1
+                if state["calls"] > max_page_fetches + 50:
+                    # A hard stop so a runaway probe cannot hang the suite; the
+                    # case's own bound assertion proves the product stopped well
+                    # before this safety stop.
+                    raise AssertionError("probe exceeded the safety stop")
+                return pages[path](state["calls"], path)
+
+        return ReadOnlyStorageGuard(_Paged()), state
+
+    def test_the_admission_probe_stops_at_the_page_budget_instead_of_hanging(self) -> None:
+        """B P1: a provider that never advances its cursor cannot hold the request.
+
+        The pre-admission existence probe used to iterate ``next_cursor`` without
+        any page, entry, directory, depth or time bound.  A fake provider that
+        kept returning a fresh empty page made the synchronous POST perform more
+        fetches than ``max_page_fetches`` and still admit.  The probe must now
+        stop at the real bound and admit an ordinary durable preparation so the
+        bounded Worker records the truthful reason.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        task = self._probe_task(active)
+        api = self._api(config)
+
+        def endless_empty(_call: int, _path: str) -> StoragePage:
+            return StoragePage((), f"cursor-{_call}")
+
+        guard, state = self._paged_storage(pages={"Incoming": endless_empty}, max_page_fetches=3)
+        # The configured discovery budget itself is what must stop the probe.
+        api._media_discovery._budgets = DiscoveryBudgets(max_page_fetches=3)
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # The request returns an ordinary durable preparation, not a hang and
+        # not a fabricated ``no_remaining_scope``.
+        self.assertEqual(status, 202, body)
+        self.assertIsNotNone(body.get("discoveryId"))
+        # The probe never consumed more than the configured page budget (plus at
+        # most the bounded file-probe page), so it is a real bound.
+        self.assertLessEqual(state["calls"], 3)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertEqual((self.root / "Incoming" / "Left.2005.mkv").read_bytes(), b"left")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_the_admission_probe_refuses_a_provider_entry_outside_the_exact_scope(self) -> None:
+        """B P1: the probe must never traverse a directory the task never admitted.
+
+        The old probe followed the raw ``StorageEntry.path`` of whatever the
+        provider returned, so a misbehaving adapter could hand back a sibling
+        directory that was then ``stat``-ed and listed.  The bounded probe now
+        admits each entry through the exact same ``_admit_provider_entry``
+        boundary the Worker uses, so a wrong-parent entry stops it as incomplete
+        and the sibling is never read.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        allowed = self.root / "Incoming" / "Allowed"
+        allowed.mkdir()
+        sibling = self.root / "Incoming" / "Sibling"
+        sibling.mkdir()
+        (sibling / "Proof.2001.mkv").write_bytes(b"outside")
+        task = self._paused_mutation_scan(active)
+        self.repository.update_task(replace(task, scope_path="Incoming/Allowed"))
+        task = self.repository.get_task(task.task_id)
+        api = self._api(config)
+
+        reads: list[tuple[str, str]] = []
+        self_root = self.root
+
+        class _WrongParent:
+            storage_id = "source-storage"
+            name = "wrong-parent"
+            read_only = True
+
+            def stat(self, path):
+                reads.append(("stat", path))
+                return LocalStorage("source-storage", self_root).stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                reads.append(("list_page", path))
+                if path == "Incoming/Allowed":
+                    return StoragePage(
+                        (
+                            StorageEntry(
+                                "Sibling",
+                                "Incoming/Sibling",
+                                StorageEntryType.DIRECTORY,
+                                0,
+                                datetime(2026, 1, 1, tzinfo=UTC),
+                            ),
+                        )
+                    )
+                return LocalStorage("source-storage", self_root).list_page(
+                    path, limit=limit, cursor=cursor
+                )
+
+        guard = ReadOnlyStorageGuard(_WrongParent())
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # The preparation is admitted (incomplete probe), but the sibling was
+        # never stat-ed or listed: the exact-scope admission stopped the probe.
+        self.assertEqual(status, 202, body)
+        self.assertNotIn(("list_page", "Incoming/Sibling"), reads)
+        self.assertNotIn(("stat", "Incoming/Sibling"), reads)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertEqual((sibling / "Proof.2001.mkv").read_bytes(), b"outside")
+
+    def test_the_admission_probe_refuses_a_repeated_cursor(self) -> None:
+        """A repeated non-empty cursor stops the probe as incomplete, never empty."""
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        task = self._probe_task(active)
+        api = self._api(config)
+
+        def repeated(_call: int, _path: str) -> StoragePage:
+            # The same non-empty cursor forever, with an empty page each time.
+            return StoragePage((), "same-cursor")
+
+        guard, state = self._paged_storage(pages={"Incoming": repeated}, max_page_fetches=10)
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        self.assertEqual(status, 202, body)
+        self.assertIsNotNone(body.get("discoveryId"))
+        # The probe stops on the first repeated cursor, not on the page budget.
+        self.assertLessEqual(state["calls"], 2)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_the_admission_probe_honours_the_entry_budget(self) -> None:
+        """More entries than ``max_visited_entries`` stops the probe bounded.
+
+        The probe must enforce the same per-entry bound the Worker does.  Each
+        page here carries exactly one excluded (non-media) entry, so the page
+        count is the entry count and a tiny entry budget proves the stop without
+        ever reaching the page budget.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        for index in range(10):
+            (self.root / "Incoming" / f"Bulk.{index:03d}.txt").write_bytes(b"x")
+        task = self._probe_task(active)
+        api = self._api(config)
+        api._media_discovery._budgets = DiscoveryBudgets(
+            max_visited_entries=2, max_page_fetches=1000
+        )
+        real = LocalStorage("source-storage", self.root)
+        state = {"calls": 0}
+
+        class _OneEntryPerPage:
+            storage_id = "source-storage"
+            name = "one-entry"
+            read_only = True
+
+            def stat(self, path):
+                return real.stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                state["calls"] += 1
+                entries = tuple(real.list(path))
+                start = int(cursor) if cursor else 0
+                if start >= len(entries):
+                    return StoragePage(())
+                next_cursor = str(start + 1) if start + 1 < len(entries) else None
+                return StoragePage((entries[start],), next_cursor)
+
+        guard = ReadOnlyStorageGuard(_OneEntryPerPage())
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # An exhausted entry budget without a candidate is an incomplete probe:
+        # the request is admitted for the Worker to record the real reason.
+        self.assertEqual(status, 202, body)
+        self.assertLessEqual(state["calls"], 3)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_the_admission_probe_refuses_a_storage_failure_instead_of_claiming_empty(self) -> None:
+        """A read failure during the probe is incomplete, never ``no_remaining_scope``.
+
+        The old probe returned ``True`` on any ``stat``/``list_page`` failure,
+        which admitted a preparation whose emptiness was never actually proven.
+        The bounded probe must treat a failure as an incomplete probe so the
+        Worker records the real reason; a fully decided scope still refuses
+        truthfully because it is proven by the exact undecided file set.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        task = self._probe_task(active)
+        api = self._api(config)
+        real = LocalStorage("source-storage", self.root)
+
+        class _Failing:
+            storage_id = "source-storage"
+            name = "failing"
+            read_only = True
+
+            def stat(self, path):
+                return real.stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                raise StorageError(
+                    StorageErrorCode.CONNECTION_LOST,
+                    "list_page",
+                    path,
+                    "injected provider failure",
+                )
+
+        guard = ReadOnlyStorageGuard(_Failing())
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # A genuine failure is not an empty scope: the request is admitted so the
+        # Worker records the real read failure rather than fabricating "nothing
+        # to do".
+        self.assertEqual(status, 202, body)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_the_admission_probe_still_refuses_a_safely_empty_scope(self) -> None:
+        """A really empty scope keeps the truthful ``no_remaining_scope`` refusal.
+
+        Bounding the probe must not lose the safe-empty answer: a scope whose
+        listing completes inside every bound and holds no candidate is proven
+        empty, so admission refuses exactly like the inline boundary did, with
+        zero durable work and zero Storage mutation.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        # Only excluded, non-media entries: the walk can finish with no candidate.
+        (self.root / "Incoming" / "notes.txt").write_text("not media")
+        (self.root / "Incoming" / "partial.part").write_bytes(b"downloading")
+        task = self._probe_task(active)
+        api = self._api(config)
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["code"], "no_remaining_scope")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
+        )
+        self.assertEqual((self.root / "Incoming" / "notes.txt").read_text(), "not media")
+        self.assertFalse(list((self.root / "Target").rglob("*.mkv")))
+
+    def test_the_admission_probe_stops_at_the_safety_depth_boundary(self) -> None:
+        """The probe honours the Task's own safety depth bound, like the Worker."""
+
+        config, active = self._activate(scope="Incoming")
+        deep = self.root / "Incoming" / "Deep"
+        deep.mkdir()
+        (deep / "Candidate.2001.mkv").write_bytes(b"deep")
+        task = self._probe_task(active)
+        api = self._api(config)
+        # The safety bound is measured from the ResourceLibrary root exactly as
+        # the Worker measures it, so a zero bound cuts the walk off before the
+        # first-level child is ever entered.
+        api._media_discovery._budgets = DiscoveryBudgets(max_depth=0)
+        real = LocalStorage("source-storage", self.root)
+        reads: list[tuple[str, str]] = []
+
+        class _Recording:
+            storage_id = "source-storage"
+            name = "recording"
+            read_only = True
+
+            def stat(self, path):
+                reads.append(("stat", path))
+                return real.stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                reads.append(("list_page", path))
+                return real.list_page(path, limit=limit, cursor=cursor)
+
+        guard = ReadOnlyStorageGuard(_Recording())
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # The subtree below the safety depth is never entered; the probe stops
+        # as incomplete and the ordinary Worker records the real depth reason.
+        self.assertEqual(status, 202, body)
+        self.assertFalse(any("Deep" in path for _, path in reads))
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertEqual((deep / "Candidate.2001.mkv").read_bytes(), b"deep")
+
+    def test_the_admission_probe_refuses_a_provider_directory_cycle(self) -> None:
+        """A listing that points back at an ancestor stops the probe, never loops."""
+
+        config, active = self._activate(scope="Incoming")
+        loop = self.root / "Incoming" / "Loop"
+        loop.mkdir()
+        (loop / "Candidate.2001.mkv").write_bytes(b"loop")
+        task = self._probe_task(active)
+        api = self._api(config)
+        real = LocalStorage("source-storage", self.root)
+        reads: list[tuple[str, str]] = []
+
+        class _Cycling:
+            storage_id = "source-storage"
+            name = "cycling"
+            read_only = True
+
+            def stat(self, path):
+                reads.append(("stat", path))
+                return real.stat(path)
+
+            def list_page(self, path, *, limit, cursor=None):
+                reads.append(("list_page", path))
+                if path == "Incoming/Loop":
+                    # The provider claims an entry back at the ancestor: not one
+                    # ordinary child, so the exact admission must refuse it.
+                    return StoragePage(
+                        (
+                            StorageEntry(
+                                "Incoming",
+                                "Incoming",
+                                StorageEntryType.DIRECTORY,
+                                0,
+                                datetime(2026, 1, 1, tzinfo=UTC),
+                            ),
+                        )
+                    )
+                return real.list_page(path, limit=limit, cursor=cursor)
+
+        guard = ReadOnlyStorageGuard(_Cycling())
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        self.assertEqual(status, 202, body)
+        # Only the two real directories were ever read; the ancestor never
+        # became a traversal target and no path outside the scope was listed.
+        listed = [path for kind, path in reads if kind == "list_page"]
+        self.assertEqual(listed, ["Incoming", "Incoming/Loop"])
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertEqual((loop / "Candidate.2001.mkv").read_bytes(), b"loop")
+
+    def test_the_admission_probe_honours_the_active_time_boundary(self) -> None:
+        """Elapsed work is cut off at ``max_active_seconds``, not by a page cap."""
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        task = self._probe_task(active)
+        api = self._api(config)
+        ticks = {"now": 0.0}
+
+        def fake_monotonic() -> float:
+            ticks["now"] += 400.0
+            return ticks["now"]
+
+        guard, state = self._paged_storage(
+            pages={"Incoming": lambda call, _path: StoragePage((), f"cursor-{call}")},
+            max_page_fetches=10_000,
+        )
+        api._media_discovery._monotonic = fake_monotonic
+        with mock.patch.object(api._media_discovery, "_guarded_storage", return_value=guard):
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                method="POST",
+                body=None,
+                token="admin-token",
+            )
+        # Two 400-second ticks already exceed the 600-second bound, so the probe
+        # admits after at most two page fetches instead of walking pages forever.
+        self.assertEqual(status, 202, body)
+        self.assertLessEqual(state["calls"], 2)
+        self.assertEqual(guard.mutation_calls, {key: 0 for key in guard.mutation_calls})
+        self.assertEqual((self.root / "Incoming" / "Left.2005.mkv").read_bytes(), b"left")
 
     def _drive_recovery(self, api, discovery_id: str) -> dict:
         """Drive one admitted remaining-scope preparation through its Worker.
