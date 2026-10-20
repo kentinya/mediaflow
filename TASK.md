@@ -206,73 +206,73 @@ B另在该镜像真实CLI/API/常驻Worker复现第1–2项及普通维护、仍
 
 READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
 T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's latest
-finding was **FIX REQUIRED — recovery trims the admitted directory and reviews a different
-sibling** (P1). This round fixes only that root cause, its shared resolver, the missing-scope
-refusal and its tests; the previous per-source eligibility fix remains in place.
+finding was **FIX REQUIRED — assigned Web lint / formatting gates fail on Task changes**. This
+round fixes only that root cause (the effect state sync), its derived state and the missing
+journey assertions; the previous exact-directory recovery fix remains in place.
 
 ### 先复现（本轮修复前）
 
-B 的精确时序：同一资源库有两个真实目录 `Folder `（末尾一个空格）与 `Folder`，前者只有
-`Left.2005.mkv`，后者只有 `Right.2006.mkv`。真实 CLI `organize '<库>/Folder ' --limit 1` 创建 Task 后
-由真实 pause API 暂停（exit75），持久 `scope_path` 逐字保留末尾空格且无任何已发现项。真实
-`POST /remaining-scope-previews` 返回202 并完成分析，摘要却列出 `Incoming/Folder/Right.2006.mkv`
-而非原范围 `Incoming/Folder /Left.2005.mkv`。
-
-用 B 的独立探针在修复前复现：`reproduce-b-p1-before.log`（`offered_wrong_sibling=true`）。
+B 在候选 `2a19b89154947184ba093c1f11b0fa164e8e08e3` 上实际执行 `npm run lint` 与
+`npm run format:check`：前者在 `web/src/features/operations/OperationsLanding.tsx:1604` 报
+`react-hooks/set-state-in-effect`；后者对同一生产文件及
+`web/src/features/operations/OperationsInventory.test.tsx` 报 Prettier 不一致。本轮已在本机
+复现同一 lint 报错（`setRemainingScope` 在 effect 中同步 setState）与 Prettier 警告，确认后再修。
 
 ### 根因与修正
 
-`mediaflow/application/task_scope.py` 的共享 `resolve_resource_library_scope` 对持久 scope 调用
-`.strip()`，并把纯空白字符串当成“未指定范围”，于是目录名末尾空格被删除，解析落到近似邻目录
-`Folder`。修正只改共享解析，不在输出端补名字：
+原实现用 `useEffect` 把 `remainingPreparationQuery` 的服务器状态复制到 `remainingScope`、
+`remainingDiscoveryId`、`remainingMessage`，既触发 `set-state-in-effect`，也依赖
+`setRemainingDiscoveryId(null)` 停止轮询。修正只改前端状态推导，不新建生命周期/缓存：
 
-- 只有 `None` 或确切空串表示未指定范围（保留原“恰好一个 enabled ResourceLibrary”语义）。
-- 真实路径逐字保留，不再 `.strip()`；`PurePath` 分量、绝对 display-root 映射、分隔符/越界校验
-  均保持原样。目录名首/尾空格、纯空白组件、Unicode/长名不再被改写或误判为整库。
+- 删除该同步 effect。链接的精确 Preview、终结准备提示与“已受理即抑制”规则全部在渲染时
+  从持久读取（`remainingPreparationQuery` 与 overview 的 durable recovery）加本地准入状态派生。
+- 本地只保留显式用户事件的结果：`remainingMessageState`（确认被拒/响应未知/核对结果）
+  与 `remainingAdmitted`（本页已受理的精确 `previewId` + `executionId`）。
+- `effectiveRemainingScope` 仅在链接的 Preview 不等于已受理 Preview 时可确认；同一 discovery
+  的缓存 GET 不再重新开放执行，其他运行的历史执行也不会被当成当前受理。
+- `remainingDiscoveryId` 保留供精确读取，轮询继续由既有 `refetchInterval` 终止（有 preview
+  或已终结即停），不靠 effect 清空 ID。读取/刷新/重连只 GET，绝不重发准备或执行 POST。
+- 确认成功或核对为 known 时写入 `remainingAdmitted`，绑定该精确恢复上下文；提交失败/未知
+  仍由用户事件回调优先显示。
 
-原精确目录缺失/不可读时，`_resolve_entry_kind` 仍以既有 `source_missing`（404，
-`sideEffects=none`，`relativePath` 逐字）拒绝并保留原 Task，不回退到 trim 目录、父目录或整库。
+### 新增/调整测试
 
-### 新增真实旅程与聚焦测试
+`tests/...` 无改动。`OperationsInventory.test.tsx` 扩展 fixture 支持终结状态/nextAction，并新增：
 
-- `tests/test_scope_continuation.py` 新增
-  `test_a_paused_run_reviews_its_exact_space_suffixed_directory`：真实 CLI 创建 + 真实 pause API +
-  真实恢复 Worker，断言摘要恰为 `Incoming/Folder /Left.2005.mkv`，邻目录不被观察/变更，源字节
-  不变、零目标 mutation。去掉修正后该用例明确错选 `Right`。
-- 新增 `test_a_missing_exact_scope_directory_never_falls_back_to_its_sibling`：原精确目录缺失时
-  以 `source_missing` 拒绝，原 Task/兄弟文件保持、零 mutation。
-- 新增 `tests/test_task_scope.py`（14 个聚焦用例）：未指定范围、首/尾空格与纯空白组件、Unicode/
-  长名、绝对 display 路径及其同名兄弟、库根、越界与多库歧义/停用库。
+- `surfaces a terminal remaining-scope preparation failure without a summary`：准备 `failed` 时显示
+  持久 `nextAction`，不渲染“新计划摘要”，零 `/execute` POST。
+- `does not reopen a confirmed summary when the overview carries its admitted execution`：overview 已带
+  同一 `recoveryPreviewId` + `executionId` 时不再展示可确认摘要，且零 POST。
+- 既有“同页准备+确认”“丢响应核对”“持久摘要恢复”旅程断言全部保留并通过。
 
-### 实际受影响命令/结果（仓库根，`PYTHONPATH=tests`）
+### 实际受影响命令/结果
 
-- `test_task_scope test_scope_continuation test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **232 OK**
-- `test_manual_organize_preview test_manual_organize_execution test_recovery_continuation test_task_center_recovery_lineage test_recovery_batch test_task_persistence test_sqlite_backup test_sqlite_restore test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **320 OK**
-- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_v2_manual_organize test_manual_organize_intent test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser test_scanner test_resource_library_pipeline test_scan_retirement_stability test_direct_file_operations test_manual_operations_contract test_operations_task_center` → **286 OK**
-- 独立复现：B 探针修复前 `offered_wrong_sibling=true`（`reproduce-b-p1-before.log`）；修正后同一真实旅程
-  摘要恰为 `Incoming/Folder /Left.2005.mkv`（`verify-exact-scope.log`，`offered_exact_intended=true`）。
-- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
-  `python -m compileall -q mediaflow tests scripts` OK；`ruff check` / `ruff format --check` 覆盖
-  3 个改动 Python 文件 → passed / formatted。
+B 指定门禁（cwd `web/`）：
 
-证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix7/`：
-`reproduce-b-p1-before.log`、`verify_exact_scope_fixed.py`、`verify-exact-scope.log`、`README.md`。
+- `npx prettier --check src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx`
+  → **All matched files use Prettier code style!**
+- `npx eslint <两文件>` → **0 problems**（原 `set-state-in-effect` 已消除）
+- `npm run typecheck` → **PASS**
+- `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx`
+  → **2 files, 40 tests passed**（OperationsInventory 27，其中 2 个为新增）
+- `npm run build` → **PASS**（仅既有 bundle-size 警告）
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a paused run continues only its remaining scope through the real Worker'`
+  → **1 passed**（2.2s）
+
+仓库根：`python3 scripts/check_governance.py` → **PASS**；`git diff --check` → 干净。
 
 ### 已知风险/边界
 
-- 共享解析只改“未指定范围”判定与去 `.strip()`；未触碰 `final_cli.py` 的 display-root 映射、
-  `scope_continuation` 的 ancestry 逐字比较或既有 pin/锁/准入语义。
-- runtime schema 仍为 49（无新列/表）；wheel/隔离安装、生产 Docker、fresh/reopen 与支持版本迁移、
-  完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
-- 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在上一轮基线上
-  即失败，本轮未改变其范围；留给 B 判定。
-- 本轮测试执行（上述所有 unittest 套件加真实探针）合计约 3 分钟，占本开发轮次总时长约 16%，
-  低于 30% 上限。
-
-预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
-`docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
-`output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
-私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
+- 仅前端状态推导；未触碰后端、共享解析、pin/锁/准入/非重放语义。分析仍零 mutation，
+  读取/刷新/重连只 GET。
+- 完整 Python/Web/E2E/视觉、wheel、生产 Docker 仍由 B 的 T4 门禁执行，本轮未运行也未声称通过。
+  本机无远程 CI。
+- 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
+  `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
+  `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
+  私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
+- 本轮测试执行（typecheck/eslint/prettier/2 组 unit/build/E2E）合计约 5–6 分钟，占本开发轮次
+  总时长约 22%，低于 30% 上限。
 
 ## B Review Result
 
