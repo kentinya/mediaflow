@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: SAME TASK — RESTORE RETAINED SAFETY ASSERTIONS; B OWNS REMAINING ACCEPTANCE
+Next Action: B CONTINUES FIXED-CANDIDATE ACCEPTANCE AFTER AUTHORIZED TEST RESTORATION
 ```
 
 ## Goal
@@ -395,3 +395,13 @@ harness/Web差异仍由B在修正后续审，不能把全量通过当作整个ra
 Slice/Roadmap/Progress、冻结43或私有配置；无push。已停止本轮自启harness。
 本轮累计测试/build/quality含失败与并行逐次累加、短检查保守预算及实际总时间比例，
 记录于当前证据根 `review-timing.json`，小于50%；未等待凑比例。
+
+### 用户授权的测试恢复 checkpoint
+
+用户明确要求 B 直接补回并继续验收，本次仅例外兼任这4项测试恢复的实施；不修改产品，
+不代替 A Final Review。上述4个方法的原断言已恢复；`test_operator_ui` 52 tests OK、
+该文件ruff check/format及diff check PASS。首次format检查因插入后的空行失败，已格式化
+后重跑通过，原失败日志保留。详细日志位于
+`.git/validation-evidence/298abc3ca2a1e2e47c5deab7c633ab1d165e53fc/task45.5/b-restored-acceptance/`。
+状态恢复READY FOR B REVIEW；此前测试覆盖阻塞已修正，B继续剩余range审查及当前候选
+受影响门禁，本段不是最终PASS。

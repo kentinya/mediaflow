@@ -1279,10 +1279,103 @@ class CurrentSourcePreviewWebTests(unittest.TestCase):
     def test_persisted_preview_detail_renders_scope_occurrence_and_mutation_state(self) -> None:
         script = APP_JS.decode("utf-8")
         detail = _js_function_body(script, "showManualPreview")
+        self.assertIn(
+            "await api('/api/v1/manual-previews/' + encodeURIComponent(previewId));", detail
+        )
         self.assertIn("field(summary, 'Preview scope', scope.kind ?", detail)
-        self.assertIn("field(summary, 'Storage mutation', data.zeroMutation ? 'NONE'", detail)
-        self.assertIn("'Current occurrence: ' + (source.occurrenceId || '-')", detail)
+        self.assertIn(
+            "`${scope.kind}:${scope.id} (${scope.itemCount || 0} item(s))` : 'intent selection');",
+            detail,
+        )
+        self.assertIn(
+            "field(summary, 'Storage mutation', data.zeroMutation ? 'NONE' : 'INVALID');", detail
+        )
+        self.assertIn(
+            "field(summary, 'Execution state', data.executionState || "
+            "'not available in this Task');",
+            detail,
+        )
+        self.assertIn("field(summary, 'Next action', data.nextAction || '-');", detail)
+        self.assertIn(
+            "item.itemId + ' - ' + item.status + ' (' +\n"
+            "          (item.stage || 'analysis') + ')'",
+            detail,
+        )
+        self.assertIn("'Current occurrence: ' + (source.occurrenceId || '-') +", detail)
+        self.assertIn("'; state: ' + (source.occurrenceState || 'unverified')));", detail)
+        self.assertIn("'RecognitionType: ' + (plan.recognitionType ||", detail)
+        self.assertIn("'; NamingPolicy: ' + (policies.namingPolicyId || '-') +", detail)
+        self.assertIn(
+            "'Target: ' + (destination.storageId || '-') + ' / ' + (destination.path || '-') +",
+            detail,
+        )
+        self.assertIn(
+            "'; Required capabilities: ' + ((capabilities.required || []).join(', ') || 'none') +",
+            detail,
+        )
+        self.assertIn("'; Recognition explanation: ' +", detail)
         self.assertIn("'Zero mutation: ' + (item.zeroMutation ? 'YES' : 'INVALID') +", detail)
+
+    def test_persisted_preview_blockers_and_stale_items_expose_recovery_without_authority(
+        self,
+    ) -> None:
+        script = APP_JS.decode("utf-8")
+        detail = _js_function_body(script, "showManualPreview")
+        self.assertIn(
+            "if (item.error) section.append(text('p', 'Blocker/failure: ' + item.error, 'error'));",
+            detail,
+        )
+        self.assertIn(
+            "if (item.nextAction) section.append(text('p', 'Recovery: ' + item.nextAction, "
+            "'warning'));",
+            detail,
+        )
+        stale_start = detail.index(
+            "if (item.status === 'stale' || data.status === 'stale' || data.current === false) {"
+        )
+        stale_branch = _js_braced_body(detail, detail.index("{", stale_start))
+        self.assertIn(
+            "section.append(actionButton('Request fresh Preview',\n"
+            "            () => showManualIntent(data.intentId)));",
+            stale_branch,
+        )
+        self.assertIn(
+            "const executable = items.filter(item => item.status === 'previewed' && "
+            "item.current &&\n        item.plan && item.plan.executionPlan && "
+            "(!selectedIds.size || selectedIds.has(item.itemId)));",
+            detail,
+        )
+
+    def test_manual_execution_blocker_section_and_resolution_are_served(self) -> None:
+        script = APP_JS.decode("utf-8")
+        execution_body = _js_function_body(script, "showManualExecution")
+        self.assertIn("Review / conflict blockers", execution_body)
+        self.assertIn(
+            "${blocker.kind}: ${blocker.blocker_id || blocker.id} (${blocker.status})",
+            execution_body,
+        )
+        self.assertIn("Open blocker resolution", execution_body)
+        self.assertIn("showCheckpointBlocker(blocker.resolution_path)", execution_body)
+
+    def test_manual_recovery_link_controls_are_served_and_bounded(self) -> None:
+        script = APP_JS.decode("utf-8")
+        item_body = _js_function_body(script, "showTaskItem")
+        self.assertIn("Continued manual Organize authority", item_body)
+        self.assertIn("recoveryLink.status === 'authorized'", item_body)
+        self.assertIn("confirmManualRecoveryExecute(taskId, itemId, recoveryLink)", item_body)
+        self.assertIn("continuation.status === 'completed'", item_body)
+        self.assertIn(
+            "confirmManualRecoveryAuthorize(taskId, itemId, data.checkpoint_version)", item_body
+        )
+        authorize = _js_function_body(script, "confirmManualRecoveryAuthorize")
+        self.assertIn("`/api/v1/tasks/${encodeURIComponent(taskId)}/items/` +", authorize)
+        self.assertIn("`${encodeURIComponent(itemId)}/recovery/authorize-organize`", authorize)
+        self.assertIn("confirmation: true", authorize)
+        execute = _js_function_body(script, "confirmManualRecoveryExecute")
+        self.assertIn("/api/v1/manual-recovery-links/", execute)
+        self.assertIn("encodeURIComponent(link.link_id)", execute)
+        self.assertIn("confirmation: true", execute)
+        self.assertIn("actionButton('Do not execute', () => confirmation.remove())", execute)
 
 
 class ProcessingWorkersWebTests(unittest.TestCase):
