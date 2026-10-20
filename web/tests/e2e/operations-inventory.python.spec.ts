@@ -1999,9 +1999,7 @@ test("a paused run continues only its remaining scope through the real Worker", 
   // Other completed previews may already exist. Follow this source run's
   // durable continuation link and inspect the exact admitted child instead of
   // counting every completed preview in the shared inventory.
-  await detail
-    .getByRole("button", { name: "打开链接的继续运行" })
-    .click();
+  await detail.getByRole("button", { name: "打开链接的继续运行" }).click();
   await expect(page).toHaveURL(
     (url) => url.searchParams.get("run") === continuedTaskId,
   );
