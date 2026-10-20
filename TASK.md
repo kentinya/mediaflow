@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER BOUNDS REMAINING-SCOPE ADMISSION PROBE IN THIS TASK; B RETAINS FULL ACCEPTANCE
+Next Action: DEVELOPER REFRESHES RECOVERY ELIGIBILITY AT EACH ITEM MUTATION; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -306,112 +306,108 @@ b-review/recovery-probe-bounds.py`、`recovery-probe-scope.py`）：
 ## B Review Result
 
 ```text
-Reviewed candidate: cbe1d1bde5e789181f827b83748bf5b929e2a943
-Product implementation: dd9ec5f4d8698eaff48a0b13b8b009e52b96839b
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..cbe1d1bde5e789181f827b83748bf5b929e2a943
-Decision: FIX REQUIRED — remaining-scope admission performs an unbounded synchronous Storage probe
-Previous preparation-read / explicit GET recovery blocker: FIXED on this candidate
+Reviewed candidate: 056ac8501109eb5f4acacc2903e2ff403ad5631a
+Product implementation: f155522fefaaca0d34cbb5d322c55c2ef4cb0ee6
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..056ac8501109eb5f4acacc2903e2ff403ad5631a
+Decision: FIX REQUIRED — stale per-batch recovery qualification permits a newly decided sibling to mutate
+Previous bounded admission / exact-scope probe blocker: FIXED
 Slice outcomes/surfaces all satisfied: NO — RO-7 acceptance / RO-8 implementation pending
 Next: DEVELOPER FIXES THIS TASK; B RETAINS REMAINING FULL ACCEPTANCE
 ```
 
-### P1：恢复准入前的候选探测不受完整发现边界约束
+### P1：逐项变更沿用了批次开始时的恢复资格
 
-操作者打开可恢复的暂停运行，点击“在当前界面生成剩余范围摘要”。真实 API 经
-`admit_recovery_preparation` 在写入耐久准备之前同步调用
-`MediaDiscoveryService._scope_has_remaining_candidate`。该函数直接遍历目录/分页，仅计数
-返回条目，未执行页数、游标进展/循环、目录数、深度及活动时间边界，也未复用完整 Worker
-发现的 provider-entry 校验。空页不增加条目计数，所以持续非空 next_cursor 可一直占住
-请求；还未创建准备，Worker 的边界、进度与协作控制无法保护这段工作。
+`ManualOrganizeExecutionService._run_worker_items` 在 `for preview_item in selected` 之前
+只读取一次 `recovery_eligibility`，随后所有兄弟项沿用其 `may_offer`。首项执行期间或完成后，
+另一来源出现持久 ignore/已决定或未知效果时，后续项仍可能执行。现有回归只在 Worker
+启动前写入决定，没有覆盖批次内部交错；注释声称逐项即时判断，实际资格却是旧快照。
 
-B 独立证明（临时 Managed Active / SQLite / Local fixture，只有 Storage 分页为 fake，
-仍经过实际 ReadOnlyStorageGuard 和真实 API；不改产品/数据库内容、不读用户媒体）：
+B 独立反例（临时 checked Managed Active、SQLite、真实 API 准备/确认、Worker、锁及
+OrganizerExecutor；COPY+Rename，来源保持不变）：
 
-- 同一游标重复返回空页；另一例为不同游标连续返回空页。
-- 配置 `max_page_fetches=2000`，两例都同步调用 **2005** 次 list_page 后才返回 **202**。
-  fake 在第2005次提供真实候选，只为让反例有限结束；持续空页没有自身停止条件。
-- 两例读取守卫全部 mutation 计数为0，媒体 fixture 字节保持。没有运行 Worker/执行确认。
-  这是既定有界准备及失败恢复缺口，不声称已经造成媒体损害。
-- 同一探测另经真实API证明：原范围为 `Media/Allowed`，fake列举返回错误父目录的
-  `Media/Sibling` 后，探测实际stat/list了该兄弟目录并返回202。完整Worker已有精确子条目
-  校验，这段探测却绕过它；同一修正须一并保留精确范围，不另开Task。
+- 两来源都合法确认，API202；首项真实 COPY 完成后，在交错点将原次项持久记录为 ignored。
+- 同时重新调用共享资格服务，次项 `may_offer=False`、整链 `eligible=False`。
+- Worker 仍真实 COPY 次项，最终 Completed、两条 SUCCESS/verified_complete、两个目标。
+  第一项成功不能因这个问题被撤回或重放；第二项本应在变更前独立拒绝。
+- 基础证明通过 repository 注入决定；补充证明在该交错点注入新识别阻塞，经真实
+  RecognitionReviewService / ManualIgnoreService（原 pin 校验及原子审计准入）完成 ignore，
+  结果相同。阻塞生产者的到达时间由 seam 注入，不声称已证明其自然并发调度或原生UI点击。
+  exit0 表示反例成立，不是产品PASS。
 
-保持 Task45.5 的 ID/Base/Goal/High/T4，按下列步骤修正：
+保持 Task45.5 的 ID/Base/Goal/High/T4，修正步骤：
 
-1. 移除准入前的无界遍历，复用现有有界 discovery/Worker 能力和校验。若保留有限存在性探测，
-   必须同样执行实际页数/条目/目录/时间/深度边界、游标类型/长度/循环/进展与精确子条目/
-   范围校验；空页也消耗页数与时间预算。不要复制另一套不受控遍历器或新增队列/引擎。
-2. 只有在合法边界内确实完整查完且没有候选，才可断言 `no_remaining_scope`。
-   未完整探明、循环、越界、故障或预算耗尽不能冒充空目录/无剩余工作；给出有界、可解释的
-   拒绝和下一步，或交现有耐久准备记录真实未完整原因。保持无可执行first-N、零媒体变更/
-   执行权、精确原pin、原预算、已决定/未知效果不重放与请求去重。
-3. 在现有 `test_scope_continuation` / `test_media_discovery` 中补真实 API 回归：重复游标
-   空页、不同游标空页耗尽、无进展/目录循环及适用深度/时间边界均有限停止；安全空范围、
-   合法候选、Storage故障、重复准入和已完成兄弟排除仍正确。复用小预算/假时钟，不增加
-   真实等待、重试或超时；不弱化断言。只测试实际保留的探测/准入边界。
-4. Developer只运行下列新增/修改/直接受影响组及known failing cases，交连贯checkpoint；
-   若改直接消费者再补其精确受影响命令。不得把全量/产物证据交回Developer。
+1. 在每个尚未结束的恢复项即将进入自身 mutation 前，重新读取共享恢复契约及该精确来源
+   的当前判定，不能把循环外资格缓存当成后续项的许可。保留既有 claim/lease/Storage fence、
+   精确计划/原 pin/来源校验；不引入另一套恢复规则、队列或全局目录。
+2. 当前项已被 ignore、已完成或效果未知时，只将该未执行项持久拒绝为零新效果，显示原因、
+   已知状态及核查记录的下一步。独立合法兄弟继续，已成功项及未知效果不重放。
+   普通非恢复准备不受此契约影响。必需资格/耐久准备读取失败不能经
+   `except ManualExecutionError: recovery_eligibility=None` 冒充普通准备绕过检查；按现有
+   有界失败路径闭合未变更项，不产生新效果或无限待运行。
+3. 在现有 scope/execution 集成测试增加批次内部交错：首项真实执行后、次项 mutation 前
+   到达的 ignore 和未知效果应阻止次项；首项结果/目标保持，零效果拒绝及合法兄弟独立性
+   可观察。覆盖必需资格读取故障与普通非恢复准备。复用真实应用/SQLite/Worker 边界和
+   小型fixture，不只断言调用次数，不删除旧断言、不加重试/等待/放宽超时。
+4. Developer 运行新增/修改、known failing 及下列直接受影响组后交连贯checkpoint；
+   若改其他消费者，再追加精确受影响组。全量/产物证据仍由 B 执行。
 
 ```bash
 # cwd repository root
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_media_discovery test_organize_preparation
-# 对本轮实际新增/修改的Python文件执行，<files>替换为确切路径
+PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_manual_organize_execution test_task_center_recovery_lineage
+# 仅当ignore准入或共享恢复投影实现也改变时追加
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_ignore test_recovery_continuation
+# <files>替换为本轮确切新增/修改Python路径
 .venv/bin/ruff check <files>
 .venv/bin/ruff format --check <files>
 git diff --check
 ```
 
-仅若改变Web/API契约：运行实际受影响的Web单测/静态检查，并运行下列相关原生用例；
-纯后端边界修正不要求Developer重复整个Web或原生套件。
+纯后端逐项资格修正不要求 Developer 跑整个 Web/原生套件；若 API/Web 契约实际改变，
+追加相关静态检查、精确单测及受影响 real-Python 用例。不得把 T4 或整个发布矩阵转交 Developer。
 
-```bash
-# cwd web/，仅在入口/契约实际受影响时
-npm run typecheck
-npm run build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a mutation-authorized paused run without live authority is refused natively' --output ../.git/validation-evidence/task45.5-affected
-```
+### 固定候选实际门禁与复用
 
-### 固定候选实际门禁与证据
+本地稳定 ignored 根：
+`.git/validation-evidence/056ac8501109eb5f4acacc2903e2ff403ad5631a/task45.5/b-review/`。
+`run_gate.py` / 同名 `.json`、`.log` 记录精确命令/cwd/开始/退出/耗时；证据仅在本机，
+不声称远程CI可达。脚本/媒体均为隔离fixture，不读用户媒体/数据库/私有配置。
 
-本地稳定ignored根：
-`.git/validation-evidence/cbe1d1bde5e789181f827b83748bf5b929e2a943/task45.5/b-review/`。
-`run_gate.py` 记录命令/cwd/exit/秒数，原始日志为同名 `.log`，结果元数据为 `.json`。
-`recovery-probe-bounds.py` / `recovery-probe-bounds-proof.json` 为上述独立反例；脚本exit0表示
-反例成立，不表示产品通过。精确范围反例为 `recovery-probe-scope.py` /
-`recovery-probe-scope-proof.json`。证据只在本机，不伪称远程CI可访问。
+| B 门禁 | 实际结果 / 证据 |
+|---|---|
+| 前次P1独立复核 | `probe-bounds`：重复空游标2页停止，不同空游标2000页预算停止；`probe-scope`：不再stat/list错误父目录的兄弟项。API202、守卫零mutation、字节不变 |
+| 完整Python | `python-full`：2734 tests OK / skipped=7，289.394s；有ResourceWarning，原样保留 |
+| Python质量 | `python-quality`：governance、全仓ruff format/check、compileall、pip check、两示例validate、禁止依赖无匹配、diff check通过 |
+| Web静态/单测/build复用 | 上一B候选cbe1d1b的typecheck/lint/format/build及81 files /1181 tests PASS；`web-reuse-inputs.json`证明两候选仅TASK、media_discovery、test_scope_continuation改变，Web树均079741b421b92ee2df9dcb0a9126f121782d5dcd，依赖未安装/变更，现有四项build资产hash逐项一致 |
+| 完整普通E2E | `web-e2e`：240 PASS；独立output，无上轮trace目录冲突；不把上轮239+单例结果拼成全通过 |
+| 真实Python入口 | `real-live-files`：5 PASS；`real-inventory`：41 PASS；独立harness/output，完整实际API/SQLite/Worker |
+| wheel | `wheel-build`、`wheel-smoke` PASS；离开源码的安装导入/已有消费者通过；wheel与Web产物digest见`artifact-digests.json`。不据此宣称全部无索引CLI/API/Worker消费者已验证 |
+| 固定候选Docker | `docker-build` PASS；image ID sha256:064793181c7799ea789fd3f87ef398485352b759026458d0a62a3f29d50293db |
+| Docker真实行为 | `docker-scan-stability-mounted` PASS：变化重置/明确确认/Worker真实效果/重启不重放；`docker-recovery` PASS：6项浏览器场景及实际Worker执行，原始evidence/matrix/截图保留 |
+| 本轮新P1独立证明 | `between-item-decision-correct-fixture`、`between-item-real-ignore-arriving-blocker`：反例成立，见同名脚本及proof.json |
 
-- governance通过；Task Base..候选的范围/manifest已核对。已检查live列表/只读配置/游标密钥、
-  来源证据/稳定性、恢复准入/链级非重放、执行、装配和本轮Web修正；完整135文件内容审查
-  尚未全部结束，随同一Task修正候选继续，不据manifest或检索宣称全量审查完成。
-- 复用此前B完整Python：**2725 tests，OK，skipped=7，264.772s**。`reuse-inputs.json`
-  证明349ca47→本候选仅TASK和6个Web文件变更，非Web/非TASK tracked tree hash均为
-  `91871a0d68c5a5d2f245f2182425eaf9e247d0db90fb3834201c4710120632f3`；本轮未安装/变更依赖。
-  不复用被用户排除的旧版/A版升级兼容结论。
-- cwd web/：typecheck、lint、format:check、build通过；完整unit **81 files /1181 tests PASS**。
-- 完整普通E2E：**239 passed /1 failed，125.626s**。失败为B并行普通/real-Python运行共用
-  默认产物目录，context关闭时trace ENOENT；该用例独立`--output`复跑 **1 PASS，2.0s**。
-  不是Developer产品缺陷，不把单项通过合并成完整240 PASS；B保留完整门禁pending。
-  后续每次Playwright执行必须使用独立output，且共享可变real-Python spec独立harness。
-- 独立harness完整real-Python inventory：**41 PASS，99.564s**。原始log/json已保存。
-- 上轮P1独立浏览器复现：503失败明确可见→故障解除→“重新读取本次准备”GET恢复原摘要；
-  准备POST恒1、执行POST=0。`remaining-read-proof.cjs` / `remaining-read-proof.json` 与
-  503/恢复截图保存；已实际查看恢复截图，不据此宣称九页/窄屏完整视觉验收。
-  首次脚本只推进一次Worker便等待摘要，15s后失败（19.562s总耗时），保留其失败日志；
-  修正验证驱动以按真实Worker阶段推进后 **PASS，6.368s**，未改产品/断言/超时掩盖失败。
-- 原先Docker未启动；B启动现有Colima后，固定候选镜像
-  `mediaflow:task45-5-cbe1d1bde5e789181f827b83748bf5b929e2a943` **build PASS，21.209s**。
-  镜像构建不等于运行验收。发现本P1后不再启动其余昂贵门禁。
-- 当前候选其他共享检查、独立live-files/Unicode/完整视觉、wheel/离开源码消费者、Docker
-  Scan-stability/recovery/restart/security与无索引消费者证据仍pending，由B承担。
-  Python/真实入口/产物输入因修正改变时刷新相应门禁；可证明输入未变的Web/其他结果按workflow
-  精确复用。最终完整匹配证据可覆盖Slice-final，不机械重跑Final。
+初次 `docker-scan-stability` 因Colima不挂载系统临时目录失败，B用既有
+`MEDIAFLOW_SMOKE_TEMP_DIR` 指向本机可挂载的ignored临时根后通过，非产品缺陷。
+初次交错脚本使用错误fixture类失败，已更正；补充ignore脚本的诊断失败（源项未处于
+processing、初始waiting项被正确排除）日志全部保留，最终注入到达时机的证明才成立。
+这些失败/重跑均计入测试耗时，不改变产品代码/断言/超时。
 
-用户预存21条dirty/untracked保持；只修改B-owned TASK.md，不改A-owned Slice/Roadmap/Progress、
-冻结43或私有配置。本轮沿用已记录的旧版/A版升级兼容排除，只验fresh/当前版本重开重启与
-失败原子性。RO-8尚未交付；本Task不是PASS，不规划下一Task、不提交Closure Packet、不关闭Slice。
+已核对 Task Base..候选135文件manifest，并审查 live列表/只读配置/游标、来源证据/稳定性、
+恢复准入/执行/链级非重放、SQLite关键事务、消费者装配及相关Web失败恢复。完整135文件
+内容审查尚未全部结束；已证实P1允许提前FIX REQUIRED，不据manifest或测试数量宣称全审完成。
+独立Unicode/完整九页桌面与窄屏视觉、其余wheel/Docker无索引真实消费者、Docker
+restart-fault/release-security及剩余Base..Head审查仍pending，由 B 承担。已有Docker截图
+产物不等于完整视觉验收；已查看摘要/附件等3张桌面图，名为worker-completed的图仍显示
+已准入，不把文件标签视为完成态证据，详见`code-review-notes.json`。发现P1后停止启动昂贵门禁；修正改变执行输入则刷新所分配验收，
+仅匹配输入/产物复用，满足全部Slice-final覆盖后不机械重跑Final。
 
-本轮自2026-10-20 14:30:36 UTC开始。全部测试/构建/质量命令逐次累加 **362.041秒**
-（包含失败与重跑，重叠命令仍累加）；另为环境启动及短检查保守计入25秒，总上界 **387.1秒**。
-收尾复核已超过13分钟，测试上界低于本轮50%；未等待凑比例。精确运行记录在
-`review-timing.json`，其并行区间合并值仅用于辅助说明，不用于放宽累计时间口径。
+预存21条dirty/untracked完整保留；仅修改B-owned TASK.md，不改A-owned Slice/Roadmap/Progress、
+冻结43或私有配置。不把旧版/A版升级兼容作为本次验收目标，也不复用该兼容结论；
+本Task的持久性门禁按fresh/当前版本重开重启与失败原子性验收。
+RO-7未获验收，RO-8未交付；不规划下一Task、不提交Closure Packet、不自行关闭Slice。
+
+本轮测试/构建/质量累计（含失败/重跑、并行仍逐次累加）实测616.669秒；另保守计入
+30秒未包装短检查及收尾检查预算，共646.669秒（约10.78分钟）。从首个留存计时门禁
+2026-10-20T15:38:17.183210+00:00到2026-10-20T16:00:14.352900+00:00共21.95分钟，比例
+49.10% <50%；更早读文档/预检时间未猜测、未计入分母，未等待凑比例。
+逐命令原始计时及预算说明见本地`review-timing.json`。
