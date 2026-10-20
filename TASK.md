@@ -204,133 +204,122 @@ fresh无索引、同版本重开/重启、受影响支持版本迁移和失败�
 
 READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
 T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's finding
-was **FIX REQUIRED — a completed linked recovery can execute the same source again** (P1). This
-round fixes only that root cause, its boundaries and its tests.
+was **FIX REQUIRED — an already-admitted preparation still replays a completed recovery source**
+(P1). This round fixes only that root cause, its boundaries and its tests.
 
 ### 先复现（修复前）
 
-B's own script, unchanged candidate and unchanged assertions, reproduced the P1 end to end:
+A recovery preparation is admitted while its exact source is still undecided. Its discovery /
+freeze / analysis then run later in the resident Worker, and the deciding effect of an *earlier*
+preparation is recorded on a **descendant** Task/Result. Nothing on the preparation's own Task row,
+Preview, intent, versions or pin changes, so the fixed admission snapshot kept offering the source.
 
-- `recovery_scope_plan()` still returned the ancestor `Left` item as `Pending` even though the
-  linked recovery execution had a real `SUCCESS`/`verified_complete` Result, so the exclusion set
-  held only `Kept`;
-- the surviving native overview still advertised the recovery summary action, and a second real
-  `POST .../remaining-scope-previews` + explicit confirm + `ManualOrganizeExecutionWorker` produced
-  a **second** destination file `Left (2005) (1).mkv`; both sources stayed intact (COPY).
+I reproduced B's exact sequential shape with the real managed Active revision, real SQLite runtime,
+real LocalStorage, real API and the real `ManualOrganizeExecutionWorker`
+(`.git/validation-evidence/task45.5-developer-fix5/before-fix/reproduce_without_fences.py`, each new
+boundary neutralized only in memory):
 
-Two independent defects were proven by that reproduction:
+1. summary A published for `Left`; 2. preparation B admitted (202) while `Left` was undecided and
+deliberately **not** driven; 3. A explicitly confirmed and really COPY-executed → `Left (2005).mkv`;
+4. B driven → it published a **second** summary for the same `Left`; 5. B confirmed (202) → real
+Worker completed again → `Left (2005) (1).mkv`. Both sources stayed intact and all three attempts
+shared one fingerprint. Raw result: `before-fix/reproduced.json` (`targets_after_second` has two
+files).
 
-1. **Domain-coding mismatch.** The manual-Organize executor persists the organizer's own
-   `ExecutionStatus` spelling (`SUCCESS`), while `remaining_scope()` compared only the lowercase
-   `TaskItemStatus` values, so a really successful recovery Result was invisible as a decision.
-2. **Identity mismatch.** `remaining_scope()` retired only the *same* `item_id`. A recovery attempt
-   records its own TaskItem/Result under its own item ID, so an ancestor `pending` item of the same
-   exact source stayed "undecided" forever, and `already_recorded - undecided` then removed that
-   source from the replay exclusion set.
+### 修正：把"已受理准备是否仍可提供其来源"收敛成一个共享权威，并在四个边界重问
 
-### 修正：按显式来源把已完成效果归并回它承接的原工作来源
+`application/scope_continuation.py` 新增 `recovery_preparation_eligibility()` +
+`RecoveryPreparationEligibility.may_offer()`：只读地重算源 Task 仍暂停/同 pin、整条显式链仍
+有未决来源或无记录预算，并给出逐来源的 `may_offer`（未决=可，已决/未知效果=不可，从未记录的
+来源仅在原准入仍有预算时可）。已决、忽略、主项已完成、未知效果都使来源退休；可证明零效果
+失败（`effect_certainty == "none"`）仍是未决工作；同路径被替换的新文件保留自己的未决状态；
+普通 Files/定义准入 `applies=False` 完全不受治理。
 
-1. **共享边界按操作/来源判定，不再只看 item 身份** (`application/scope_continuation.py`):
-   `remaining_scope()` 沿既有 `continuation_chain()`（queued continuation 链接 + 精确 Preview
-   恢复链接）收集整条链的 items/Results，然后用 *显式来源* 决定终态：
-   - 新增 `_result_is_decided()`：状态比较大小写不敏感（同时覆盖 `success`/`SUCCESS`），
-     `attempted_unverified` 与执行域 `unknown` 都视为已决（只核查），且 `primary_completed=True`
-     的裁决即使状态是 `PARTIAL` 也算主文件已完成（附件警告不重放主项）。
-   - 新增 `_decided_source_observations()`：只要 Result 已决，或 TaskItem 自己落在非未决状态，
-     它就成为该来源的一条已决观察（`item_id` 仍按身份消除）。
-   - 新增 `_SourceObservation.is_the_same_file_as()`：必须 Storage + 精确相对路径一致；当两侧都
-     有指纹时指纹也必须相等。因此**同路径被替换的新文件**保留自己的未决状态，不同 Storage/
-     路径的成功不会误伤本来源；无指纹的旧行按同一来源保守处理（拒绝重复 mutation 优于重放）。
-   结果：完成/忽略/未知效果会退休链上**所有**指向同一来源的 item，`replay_excluded` 因此包含
-   该来源，满额链给出 `unrecorded_budget == 0`、无未决项。
-2. **预算按去重来源计费**: `remaining_limit` 用 `{(storage_id, path)}` 的去重数量，而不是
-   item 行数；`recovery_scope_plan()` 的 `undecided_items` 也按来源去重（同一来源只提出一次）。
-   多一条恢复尝试既不重复扣减也不放宽原准入。
-3. **动作/摘要/准入消费同一结论**: `_remaining_scope_obstacle()` 与
-   `admit_recovery_preparation()` 都走同一个 `recovery_scope_plan()`，因此原生 lifecycle
-   `preview` 入口、真实 `POST` 与 Worker 观察不可能互相不一致：全已决的满额链不发布入口、
-   直接请求 409 `no_remaining_scope`、零 preparation/零 Job/零 Provider。
-4. **不受影响的行为保持**: 可证明零效果（`effect_certainty == "none"`）的失败仍是未决工作，
-   仍可再次摘要与确认，且同一来源只出现一次；"未知效果"只核查、绝不转为可重试。
+四个独立边界都重问同一结论：
 
-### 新增/修改的真实旅程测试（`tests/test_scope_continuation.py`）
+1. **Worker 推进/冻结/分析** (`application/media_discovery.py`)：`run_claimed` 在 observe/
+   freeze/analyse 前、`_begin_preparation_analysis` 冻结前、`_analyze` 发布摘要前调用
+   `_stale_recovery_preparation()`，以 `CANCELLED` + `phase="stale"` + 有界原因/下一步结清；
+   清空 manifest 与 `preview_id`，不发布 intent/Preview、不授予权限、零 mutation。
+2. **逐来源 walk 过滤**：`_advance` 用 `may_offer(library.storage_id, storage_path)` 在
+   `observe()` 与目录条目两处丢弃"准入后已决"的来源，即使 `recovery_excluded_paths` 是准入时
+   的固定集合。
+3. **授权/执行应用边界** (`application/manual_organize_execution.py`)：`authorize`、
+   `execute`/`admit`、Worker 的 `_reconstruct_reviewed_scope` 都调用
+   `_assert_recovery_preparation_live()`；已决来源返回 409 及真实 code（如
+   `recovery_scope_decided`）。
+4. **确认的原子边界** (`infrastructure/sqlite_runtime.py`)：`admit_manual_execution` 在
+   `BEGIN IMMEDIATE` 事务内（消费一次性授权、创建执行、取得来源所有权同一事务）调用
+   `_assert_recovery_preparation_live_locked()`，HTTP 预检之后才发生的完成事实也无法准入。
 
-固定 COPY+Rename（真实 managed Active）与真实 API/SQLite/LocalStorage/fake Provider/持久
-Worker，新增 8 个用例：
+### 新增真实旅程测试（`tests/test_scope_continuation.py`，10 个）
 
-- `test_a_completed_recovery_never_offers_its_source_again`：原 Pending→恢复摘要→显式 execute
-  API→真实 Worker COPY 成功（断言真实 `SUCCESS`/`verified_complete` 与同指纹、不同 item ID）→
-  新连接重开仍为全已决→原生 overview 不再提供 preview→再次 POST 409 且不新增 Preview→
-  目标只有 1 份 `Left (2005).mkv`，两个来源字节不变。
-- `test_a_completed_move_recovery_is_terminal_for_the_original_pending`：MOVE 成功同样终态
-  （不因源文件消失而误判为可重放）。
-- `test_an_attachment_warning_keeps_the_verified_primary_terminal`：`PARTIAL` +
-  `primary_completed` + 附件原因不被重放。
-- `test_an_ignored_attempt_never_resurrects_the_pending_ancestor`：只有 TaskItem 变更、无 Result
-  的显式 ignore 也退休来源。
-- `test_an_uncertain_effect_never_resurrects_the_pending_ancestor`：执行域 `unknown` 只核查。
-- `test_a_zero_effect_failure_stays_safely_recoverable`：`none` 失败仍可恢复，且同一来源只提
-  交一次、预算不放宽。
-- `test_a_replaced_file_at_the_same_path_keeps_its_own_undecided_state`：同路径新指纹是新工作。
-- `test_a_new_independent_run_is_never_suppressed_by_an_old_success`：不同 Task 链不受旧成功压制
-  （无全局路径黑名单）。
+- `test_an_already_admitted_preparation_cannot_replay_a_completed_source`：B P1 的确定性时序；
+  修复前第二次准备仍发布摘要，修复后 B 结清、无 Preview、目标恰一份。
+- `test_a_queued_preparation_never_offers_a_source_decided_by_an_ignore`：显式忽略只改 TaskItem、
+  无 Result，B 仍必须停止提供；已发布 A 摘要的确认被原子边界拒绝。
+- `test_a_recovery_preparation_is_refused_once_its_source_is_unknown`：执行域 `unknown` 只核查。
+- `test_a_zero_effect_failure_keeps_every_preparation_and_confirmation_legal`：`none` 失败后
+  同一来源仍是合法工作，新摘要可确认并真实执行一次。
+- `test_a_source_decided_while_the_execution_waits_in_the_queue_is_refused`：A 执行完成时 B 的
+  摘要已发布但未确认，确认被原子边界拒绝、目标保持一份。
+- `test_the_worker_refuses_a_source_decided_after_its_own_admission`：执行已受理并持有自己的
+  Storage fence 后来源被忽略，Worker 在调用 `OrganizerExecutor` 前以 `effect_certainty=none`
+  结清，零新效果。
+- `test_a_pre_authorized_confirmation_is_refused_at_the_atomic_admission`：一次性授权仍 live 时
+  来源被决定；关闭应用层预检后仅靠仓库事务拒绝，证明原子边界独立成立。
+- `test_a_walk_skips_a_source_decided_after_admission_with_budget_left`：仍有未记录预算、按目录
+  观察时，准入后已决来源由 walk 逐来源规则丢弃，新文件保留自己的合法单位。
+- `test_a_reopened_database_keeps_the_same_admitted_preparation_refusal`：新连接同结论。
+- `test_an_ordinary_files_preparation_is_never_governed_by_recovery_eligibility`：普通 Files
+  准入不受治理，仍能发布并执行。
 
-修复前先跑新用例（application 文件未改）失败于 `plan.undecided_items != ()`，证明用例真实捕获
-该 P1，而不是事后补写。
+四个边界分别用"仅禁用该边界"验证过独立必要性（walk、run_claimed、Worker、SQLite 事务各使至少
+一个用例失败）。
 
 ### Harness / 原生浏览器旅程
 
-- `scripts/operations_inventory_harness.py`：新增真实 `copy-fixture` COPY+Rename 策略与
-  `copy-fixture-library` 识别规则（仅 `FullBudget` 目录）；`seed_full_budget_recovery` 追加一次
-  **可证明零效果** 的早期独立尝试（决定默认选择为 COPY，且仍不改变来源未决性）；
-  `authority_execution_state` 对该 scope 报告本 fixture 自己的目标副本。
-- `web/tests/e2e/operations-inventory.python.spec.ts` 的 full-budget 旅程现在真实完成
-  `摘要→确认→Worker COPY`，随后 `restart` 重开、断言原生 overview 不再提供 preview、
-  再次 POST 409 `no_remaining_scope`，且目标副本数量保持 1。
+- `scripts/operations_inventory_harness.py`：新增 `run_discovery_worker_for()` 与
+  `GET/POST /__harness__/run-discovery-worker?discoveryId=`，可只推进指定 discovery，使浏览器
+  旅程能真实"先受理 B、再驱动 A、最后驱动 B"。
+- `web/tests/e2e/operations-inventory.python.spec.ts` 新增
+  `an already-admitted recovery preparation never replays a completed source`：真实 production
+  build + 真实 Python API/Worker，深链到精确 run；断言 B 驱动后无 `previewId`、`sourceCount=0`、
+  目标副本数只增加一次且源文件不变。禁用修复后该旅程失败（`sourceCount` 为 1）。
 
 ### 实际受影响命令/结果（仓库根，`PYTHONPATH=tests`）
 
-- `test_scope_continuation` → **73 OK**（含 8 个新增用例）
-- `test_recovery_continuation test_task_center_recovery_lineage test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **199 OK**
-- `test_manual_organize_execution test_recovery_batch test_recovery_continuation test_task_center_recovery_lineage` → **178 OK**
-- `test_media_discovery test_media_discovery_provider_manifest test_organize_preparation test_v2_manual_organize test_manual_organize_preview test_manual_organize_intent` → **192 OK**
-- `test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **100 OK**
-- `test_task_persistence test_sqlite_backup test_sqlite_restore test_direct_file_operations test_manual_operations_contract` → **98 OK**
-- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation` → **72 OK**
-- `test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser test_scanner test_scan_retirement_stability` → **65 OK**
-- Web (`cwd web/`): `npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx` → **35 passed**；
-  `npx prettier --check` / `npx eslint` 覆盖改动 spec → 干净；`npx tsc --noEmit` 无该文件错误。
-- 原生：`npx playwright test --config=playwright.python.config.ts
-  tests/e2e/operations-inventory.python.spec.ts -g "fully recorded budget still recovers"`
-  → **1 passed**（真实 production build + 真实 Python API/Worker + restart）；
-  同文件 `-g "mutation-authorized paused run|missing configuration pin"` → **2 passed**。
-- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；
-  `python -m compileall -q mediaflow scripts tests` OK；
-  `ruff check` 与 `ruff format --check` 覆盖 4 个改动 Python 文件 → passed / formatted。
+- `test_scope_continuation` → **83 OK**（含 10 个新增用例）
+- `test_media_discovery test_media_discovery_provider_manifest test_organize_preparation` → **127 OK**
+- `test_manual_organize_preview test_manual_organize_execution test_recovery_continuation test_task_center_recovery_lineage test_recovery_batch` → **191 OK**
+- `test_task_persistence test_sqlite_backup test_sqlite_restore test_operations_run_inventory test_operations_run_detail test_operations_task_center` → **129 OK**
+- `test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize test_metadata_correction_continuation test_v2_manual_organize test_manual_organize_intent` → **124 OK**
+- Web（`cwd web/`）：`npm run typecheck` 干净；`npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx` → **35 passed**；`npx eslint`/`npx prettier --check` 改动 spec 干净；`npm run build` 成功。
+- 原生：`npx playwright test --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g "already-admitted recovery preparation|fully recorded budget still recovers|mutation-authorized paused run|missing configuration pin"` → **4 passed**（真实 production build + Python API/Worker）。
+- 静态/治理：`python3 scripts/check_governance.py` PASS；`git diff --check` 干净；`python -m compileall -q mediaflow scripts tests` OK；`ruff check` / `ruff format --check` 覆盖 6 个改动 Python 文件 → passed / formatted。
 
-证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix4/`
-包含本轮的复现/验证脚本与 JSON（修复前 `remaining_after_success` 含 `Left`、第二次 execute 202
-且生成两份目标；修复后 `remaining_after_success` 为空、第二次 409、目标 1 份）。
+证据（本机 ignored 存储，非远程 CI）：`.git/validation-evidence/task45.5-developer-fix5/`：
+`verify-fences.json`（修复后：B `cancelled`、`previewId=null`、`sources=[]`、目标一份）、
+`before-fix/reproduced.json`（修复前：B `completed`、第二份目标）、`unittests.log`、`web.log`、
+`quality.log`、`e2e.log`、`README.md`。
 
 ### 已知风险/边界
 
-- 已决来源的归并是**读时投影**：旧 Task/Result 行不被改写，链内历史保持可独立检查。归并只沿
-  既有 `scope_continuations` 与 `manual_previews.recovery_source_task_id` 显式链接，不按标题、
-  时间或路径跨任务猜测；无法证明承接关系时不归并（保守拒绝重复）。
-- 无指纹的旧行在同一 Storage+路径上视为同一来源（拒绝重复 mutation 优先）。真实执行产生的
-  Result 都带指纹，因此正常路径是精确指纹比较。
-- 恢复仍要求同来源在链内只被提出一次；因此**满额**恢复后新出现的文件需通过新的有界运行处理
-  （既有 B 已确认语义，未改变）。
+- 重新校验是**读时投影**，不改写任何 Task/Result/Intent/Preview 行；结清只清空该 preparation
+  自己的 manifest/preview 链接，原观察、计数器、findings、refusals 与 intent 历史仍可独立检查。
+- 普通 Files/定义准入完全不受影响（`applies=False`），独立新意图/新 occurrence 不被旧成功永久
+  压制；跨任务批量 mutation 仍不在本 Task。
 - runtime schema 仍为 49（无新列/表）；wheel/隔离安装、生产 Docker、fresh/reopen 与支持版本
   迁移、完整 Python/Web/E2E/视觉矩阵仍是 B 的 T4 门禁，本轮未运行也未声称通过。
-- 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在本轮
-  基线上**同样失败**（已用 `git stash` 在未修改 HEAD 上复现），非本 Task 引入，留给 B 判定。
-- 本轮测试执行合计约 1.5 分钟，占本开发轮次总时长（约 55 分钟）约 2.7%，低于 30% 上限。
+- 同文件既有 `a paused run continues only its remaining scope through the real Worker` 在上一轮
+  基线上即失败，本轮未改变其范围；留给 B 判定。
+- 本轮测试执行合计约 2 分钟，占本开发轮次总时长约 6%，低于 30% 上限。
 
 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
 `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
 `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
 私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
+
 
 ## B Review Result
 

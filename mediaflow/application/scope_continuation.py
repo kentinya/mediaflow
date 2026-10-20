@@ -24,6 +24,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import uuid4
 
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
@@ -805,6 +806,190 @@ def recovery_scope_plan(
     )
 
 
+class RecoveryPreparationState(StrEnum):
+    """Whether an admitted recovery preparation may still offer its scope."""
+
+    ELIGIBLE = "eligible"
+    STALE = "stale"
+
+
+@dataclass(frozen=True)
+class RecoveryPreparationEligibility:
+    """The exact live qualification of one already-admitted preparation.
+
+    ``state`` is ``ELIGIBLE`` while the preparation may still observe and
+    publish its scope.  ``STALE`` is a terminal, explainable outcome: the
+    original paused admission, its immutable pin or the classification of the
+    remaining sources changed after admission, so the preparation may no longer
+    publish a summary, authorize or execute.  ``code``/``message``/``next_action``
+    are bounded, secret-free operator text; nothing here mutates media.
+    """
+
+    state: RecoveryPreparationState
+    #: ``False`` for an ordinary Files/definition admission: the recovery
+    #: contract does not govern it at all, so every source stays offerable.
+    applies: bool = True
+    code: str | None = None
+    message: str | None = None
+    next_action: str | None = None
+    undecided_sources: frozenset[tuple[str, str]] = frozenset()
+    decided_sources: frozenset[tuple[str, str]] = frozenset()
+    #: Whether the original admission still holds unrecorded discovery budget,
+    #: i.e. whether a source that no attempt has recorded yet may legitimately
+    #: be observed by this preparation.
+    allow_new_sources: bool = False
+
+    @property
+    def eligible(self) -> bool:
+        return self.state is RecoveryPreparationState.ELIGIBLE
+
+    def may_offer(self, storage_id: str, path: str) -> bool:
+        """Whether one observed source may still appear in this preparation.
+
+        A recorded-but-undecided source is the preparation's actual remaining
+        work.  A source the chain already decided (success, ignore, unknown
+        effect, or a verified primary with attachment warnings) may never be
+        re-offered, even though it was still undecided when this preparation was
+        admitted.  A source no attempt has recorded is only legitimate while the
+        original admission really has unrecorded discovery budget left.
+        """
+
+        if not self.applies:
+            return True
+        source = (storage_id, path)
+        if source in self.undecided_sources:
+            return True
+        if source in self.decided_sources:
+            return False
+        return self.allow_new_sources
+
+
+def recovery_preparation_eligibility(
+    repository,
+    *,
+    recovery_source_task_id: str | None,
+    snapshot_id: str | None = None,
+    snapshot_digest: str | None = None,
+) -> RecoveryPreparationEligibility:
+    """Revalidate one already-admitted recovery preparation against live truth.
+
+    A preparation is admitted while its exact source is still undecided, but its
+    discovery, freeze and analysis happen later, in the resident Worker, and the
+    operator can legitimately confirm and execute an *earlier* preparation in
+    between.  Persisting the admission is therefore not a licence to publish a
+    summary much later: every publication boundary (and the execution admission
+    itself) re-asks this one function instead of comparing the original
+    ``Task.updated_at`` — the deciding evidence lives in a *descendant* Task and
+    changes while the original Task row does not.
+
+    The revalidation reads only durable evidence:
+
+    * the source Task must still be a paused, continuable admission with the
+      same immutable pin that was admitted;
+    * the whole explicit continuation chain must still hold at least one
+      undecided source (a completed, ignored or uncertain attempt retires it);
+    * wherever the caller supplies its own pin, that pin must equal the source
+      Task's pin, so a preparation can never observe one revision and publish a
+      summary bound to another.
+
+    A repository that cannot answer the chain reads as ineligible: refusing a
+    duplicate mutation is always preferable to replaying one.
+    """
+
+    if not isinstance(recovery_source_task_id, str) or not recovery_source_task_id.strip():
+        # Not a recovery preparation: an ordinary Files/definition admission is
+        # untouched by the recovery contract.
+        return RecoveryPreparationEligibility(RecoveryPreparationState.ELIGIBLE, applies=False)
+    reader = getattr(repository, "get_task", None)
+    task = reader(recovery_source_task_id) if callable(reader) else None
+    if task is None:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_source_unavailable",
+            message="the run this preparation belongs to no longer exists",
+            next_action=(
+                "the original paused run is unavailable, so its remaining scope cannot be "
+                "reviewed; start a new bounded run from 操作与任务"
+            ),
+        )
+    if task.status is not PersistentTaskStatus.PAUSED:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_source_not_paused",
+            message=(
+                "the run this preparation belongs to is no longer paused; it is "
+                f"{task.status.value}"
+            ),
+            next_action=("review the run's recorded per-item outcomes, or start a new bounded run"),
+        )
+    if (
+        not is_continuable_task_command(task.command)
+        or not task.configuration_snapshot_id
+        or not task.configuration_snapshot_digest
+    ):
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_pin_unavailable",
+            message=(
+                "the run's original admitted scope or immutable configuration pin is no longer "
+                "available"
+            ),
+            next_action="start a new bounded run under the current Active configuration",
+        )
+    if snapshot_id is not None and snapshot_id != task.configuration_snapshot_id:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_pin_mismatch",
+            message=(
+                "this preparation was admitted under a different configuration revision than "
+                "the run it belongs to"
+            ),
+            next_action="open the run again and request a fresh plan summary under its own pin",
+        )
+    if snapshot_digest is not None and snapshot_digest != task.configuration_snapshot_digest:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_pin_mismatch",
+            message=(
+                "this preparation's configuration digest no longer matches the run it belongs to"
+            ),
+            next_action="open the run again and request a fresh plan summary under its own pin",
+        )
+    try:
+        plan = recovery_scope_plan(repository, task)
+    except Exception:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_scope_unresolved",
+            message="the run's recorded remaining scope can no longer be resolved",
+            next_action=(
+                "inspecting the run's recorded per-item outcomes is the only safe next step"
+            ),
+        )
+    undecided = frozenset((item.storage_id, item.source_path) for item in plan.undecided_items)
+    decided = frozenset(plan.replay_excluded)
+    allow_new = plan.new_source_budget != 0
+    if not undecided and not allow_new:
+        return RecoveryPreparationEligibility(
+            RecoveryPreparationState.STALE,
+            code="recovery_scope_decided",
+            message=(
+                "every source this preparation was admitted for now has a decided outcome, so "
+                "nothing remains to review or confirm"
+            ),
+            next_action=(
+                "open the run and review its recorded per-item outcomes; a decided or uncertain "
+                "effect is never repeated"
+            ),
+        )
+    return RecoveryPreparationEligibility(
+        RecoveryPreparationState.ELIGIBLE,
+        undecided_sources=undecided,
+        decided_sources=decided,
+        allow_new_sources=allow_new,
+    )
+
+
 class ScopeContinuationService:
     """Shared API/Web admission of exactly one paused-scope continuation."""
 
@@ -1204,11 +1389,14 @@ class ScopeContinuationWorkerService:
 
 __all__ = [
     "PreparedScopeContinuation",
+    "RecoveryPreparationEligibility",
+    "RecoveryPreparationState",
     "RecoveryScopePlan",
     "ScopeContinuationService",
     "ScopeContinuationSubmission",
     "ScopeContinuationWorkerService",
     "is_continuable_task_command",
+    "recovery_preparation_eligibility",
     "recovery_scope",
     "recovery_scope_plan",
     "remaining_scope",

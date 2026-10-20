@@ -10411,6 +10411,48 @@ class SQLiteTaskRepository:
                 raise
         return True
 
+    def _assert_recovery_preparation_live_locked(self, recovery_source_task_id: object) -> None:
+        """Refuse an atomic admission whose recovery sources were decided.
+
+        The application boundary has already asked the shared remaining-scope
+        contract, but a source can be decided between that read and this write.
+        The atomic admission is therefore the final fence: it re-reads the exact
+        chain and every recorded outcome inside the same ``BEGIN IMMEDIATE``
+        transaction that consumes the one-shot authority, so an already-decided
+        source can never acquire a second execution, no matter how the two
+        attempts interleave.
+
+        A source already recorded as undecided (a zero-effect failure) stays
+        legitimately recoverable, and this execution's own items do not exist yet
+        at this point, so a legal attempt never refuses itself.
+        """
+
+        if recovery_source_task_id is None:
+            return
+        if not isinstance(recovery_source_task_id, str) or not recovery_source_task_id:
+            raise ManualExecutionError(
+                "the recovery summary's source run is invalid",
+                code="recovery_scope_stale",
+                next_action="reload the run and request a fresh plan summary",
+            )
+        from mediaflow.application.scope_continuation import (
+            recovery_preparation_eligibility,
+        )
+
+        eligibility = recovery_preparation_eligibility(
+            self, recovery_source_task_id=recovery_source_task_id
+        )
+        if eligibility.eligible:
+            return
+        raise ManualExecutionError(
+            eligibility.message or "the recovery summary's remaining scope changed",
+            code=getattr(eligibility, "code", None) or "recovery_scope_stale",
+            next_action=(
+                eligibility.next_action
+                or "request a fresh plan summary for the still-undecided sources"
+            ),
+        )
+
     def admit_manual_execution(
         self,
         authorization: ManualExecutionAuthorization,
@@ -10517,6 +10559,11 @@ class SQLiteTaskRepository:
                         code="preview_stale",
                         next_action="reload the manual intent and request a fresh Preview",
                     )
+                self._assert_recovery_preparation_live_locked(
+                    preview["recovery_source_task_id"]
+                    if "recovery_source_task_id" in preview.keys()
+                    else None
+                )
                 intent = self._connection.execute(
                     "SELECT status, version, configuration_snapshot_id, "
                     "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",

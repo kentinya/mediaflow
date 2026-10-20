@@ -2478,6 +2478,124 @@ test("a fully recorded budget still recovers its one undecided item natively", a
   expect(afterRefusal.destinationFiles).toEqual(firstCopies);
 });
 
+test("an already-admitted recovery preparation never replays a completed source", async ({
+  page,
+  request,
+}) => {
+  mkdirSync(TASK45_RECOVERY_EVIDENCE, { recursive: true });
+  const created = await (
+    await request.post(`${BASE}/__harness__/seed-full-budget-recovery`)
+  ).json();
+  const taskId = created.taskId as string;
+  expect(taskId).toBeTruthy();
+  expect(created.undecidedSource).toBe("FullBudget/FullBudgetLeft.2005.mkv");
+  // The destination root is shared with every other FullBudget fixture in the
+  // same harness run, so the proof is a *delta*: exactly one new copy for this
+  // execution and none for the already-admitted preparation.
+  const before = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  const copiesBefore = before.destinationFiles as readonly string[];
+
+  await connect(page, ADMIN_TOKEN);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openInventory(page);
+  // Deep-link to this exact run so the journey is independent of how many
+  // other FullBudget fixtures an earlier test in the same run left behind.
+  await page.goto(`${BASE}/ui-v2/operations?run=${taskId}`);
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${taskId}`));
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(controls).toBeVisible();
+
+  // The operator asks for a plan summary and the resident Worker really
+  // publishes it for the one undecided source.
+  await controls
+    .getByRole("button", { name: "在当前界面生成剩余范围摘要" })
+    .click();
+  let summaryPrepared = false;
+  for (let step = 0; step < 20; step += 1) {
+    const advanced = await request.post(
+      `${BASE}/__harness__/run-discovery-worker`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced: boolean;
+      readonly previewId?: string | null;
+    };
+    if (body.advanced && body.previewId != null) {
+      summaryPrepared = true;
+      break;
+    }
+  }
+  expect(summaryPrepared).toBe(true);
+  const summary = detail.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible({ timeout: 30_000 });
+  await expect(summary).toContainText("FullBudgetLeft.2005.mkv");
+
+  // A second, legitimate request is admitted while the source is still
+  // undecided, and it is deliberately *not* driven yet.  This is the exact
+  // sequential shape that used to publish and execute the same source twice.
+  const secondAdmission = await request.post(
+    `${BASE}/api/v1/tasks/${taskId}/remaining-scope-previews`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(secondAdmission.status()).toBe(202);
+  const secondBody = await secondAdmission.json();
+  expect(secondBody.recoverySourceTaskId).toBe(taskId);
+
+  // The first summary is explicitly confirmed through the real UI and really
+  // executes under the fixture's COPY+Rename policy.
+  await summary.getByRole("button", { name: /确认继续整理剩余 1 项/ }).click();
+  let executed = false;
+  for (let step = 0; step < 20; step += 1) {
+    const workerRun = await request.post(
+      `${BASE}/__harness__/run-manual-worker`,
+    );
+    expect(workerRun.ok()).toBeTruthy();
+    const body = await workerRun.json();
+    if (body.completed === true) {
+      executed = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(executed).toBe(true);
+  const afterFirst = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  const firstCopies = afterFirst.destinationFiles as readonly string[];
+  expect(firstCopies).toHaveLength(copiesBefore.length + 1);
+
+  // Driving the earlier-admitted preparation now must not publish a plan
+  // summary at all: its only admitted source has a decided outcome.
+  const driven = await request.post(
+    `${BASE}/__harness__/run-discovery-worker?discoveryId=${secondBody.discoveryId}`,
+  );
+  const drivenBody = (await driven.json()) as {
+    readonly status?: string;
+    readonly previewId?: string | null;
+    readonly sourceCount?: number;
+  };
+  expect(drivenBody.previewId ?? null).toBeNull();
+  expect(drivenBody.sourceCount ?? 0).toBe(0);
+  const afterSecond = await (
+    await request.get(`${BASE}/__harness__/authority-state?taskId=${taskId}`)
+  ).json();
+  // Exactly one destination copy remains: the same source was not replayed.
+  expect(afterSecond.destinationFiles).toEqual(firstCopies);
+  expect(afterSecond.sourceFiles).toEqual({
+    "FullBudgetKept.2006.mkv": true,
+    "FullBudgetLeft.2005.mkv": true,
+    "FullBudgetNew.2020.mkv": true,
+  });
+  await page.screenshot({
+    path: `${TASK45_RECOVERY_EVIDENCE}/admitted-preparation-terminal-1536x1024.png`,
+    fullPage: false,
+  });
+});
+
 test("a paused run with a missing configuration pin cannot create a remaining-scope Preview", async ({
   page,
   request,

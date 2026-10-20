@@ -43,6 +43,10 @@ from mediaflow.application.scan_filters import (
     stability_verdict,
     stability_wait_seconds,
 )
+from mediaflow.application.scope_continuation import (
+    RecoveryPreparationEligibility,
+    recovery_preparation_eligibility,
+)
 from mediaflow.application.scope_continuation import recovery_scope_plan as _recovery_scope_plan
 from mediaflow.application.task_scope import (
     ScopeResolutionError,
@@ -1869,6 +1873,70 @@ class MediaDiscoveryService:
             stopped.set()
             keeper.join(timeout=1)
 
+    def _recovery_eligibility(self, discovery: MediaDiscovery) -> RecoveryPreparationEligibility:
+        """The live qualification of one admitted recovery preparation."""
+
+        return recovery_preparation_eligibility(
+            self._repository,
+            recovery_source_task_id=discovery.recovery_source_task_id,
+            snapshot_id=discovery.snapshot_id,
+            snapshot_digest=discovery.snapshot_digest,
+        )
+
+    def _stale_recovery_preparation(
+        self, discovery: MediaDiscovery, claim_token: str | None
+    ) -> MediaDiscovery | None:
+        """Settle one preparation whose admitted scope was decided elsewhere.
+
+        The outcome is durable and explainable: the preparation stops as
+        ``CANCELLED`` with the shared boundary's bounded message and next action,
+        releases its claim, publishes no intent/Preview, and keeps no source that
+        could be confirmed and executed.  Nothing is mutated and no authority is
+        granted; the earlier attempt's own results stay untouched.
+
+        ``claim_token`` fences the settlement against the exact live claim when
+        the caller still holds one; a caller that already published and released
+        its claim (the freeze/analysis boundary) passes ``None`` and relies on
+        the version CAS alone.
+        """
+
+        eligibility = self._recovery_eligibility(discovery)
+        if eligibility.eligible:
+            return None
+        now = self._clock()
+        settled = replace(
+            discovery,
+            status=DiscoveryStatus.CANCELLED,
+            version=discovery.version + 1,
+            # The frozen manifest is the only part of this preparation that could
+            # ever be confirmed and executed, so it is cleared.  The exact
+            # observations, counters, findings, refusals and the linked intent
+            # remain durable history; nothing is rewritten or erased.
+            sources=(),
+            preview_id=None,
+            next_observation_at=None,
+            updated_at=now,
+            error=(eligibility.message or "the preparation's remaining scope changed")[
+                :MAX_DISCOVERY_TEXT_LENGTH
+            ],
+            progress=replace(
+                discovery.progress,
+                phase="stale",
+                pending_files=(),
+                pending_directories=(),
+                active_directory=None,
+                active_cursor=None,
+                active_cursors_seen=(),
+                message=(
+                    eligibility.next_action
+                    or "request a fresh plan summary for the still-undecided sources"
+                )[:MAX_DISCOVERY_TEXT_LENGTH],
+            ),
+        )
+        return self._settle_control(
+            settled, expected_version=discovery.version, claim_token=claim_token
+        )
+
     def run_claimed(
         self,
         discovery_id: str,
@@ -1895,6 +1963,18 @@ class MediaDiscoveryService:
             return self._cancel(discovery, claim_token)
         if discovery.pause_requested:
             return self._publish_paused(discovery, claim_token)
+        if discovery.recovery_source_task_id is not None:
+            # An already-admitted recovery preparation is not a standing licence
+            # to publish a summary later.  The operator can legitimately confirm
+            # and execute an *earlier* preparation while this one waits in the
+            # queue, and the deciding effect is recorded on a descendant Task
+            # that never changes this preparation's own admission.  Re-ask the
+            # shared remaining-scope boundary before this Worker observes,
+            # freezes or analyses anything, so a decision made in the meantime
+            # cannot resurrect the same source.
+            stale = self._stale_recovery_preparation(discovery, claim_token)
+            if stale is not None:
+                return stale
         if discovery.auto_prepare and discovery.status is DiscoveryStatus.ANALYZING:
             # The bounded walk already froze its reviewed sources into a
             # durable intent.  The Worker now runs the complete production
@@ -2135,6 +2215,33 @@ class MediaDiscoveryService:
         # is exactly the *remaining* scope, so a recorded sibling can neither be
         # re-offered nor displace a genuinely remaining source.
         recovery_excluded = frozenset(discovery.recovery_excluded_paths)
+        # The live qualification of an already-admitted recovery preparation.
+        # Its admission happened while its sources were still undecided; another
+        # attempt of the same chain may have decided one of them since.  The
+        # durable exclusion set above is fixed at admission, so this per-source
+        # rule is the only boundary that can notice that change while the walk
+        # runs.  An ordinary (non-recovery) admission keeps ``None`` and is
+        # therefore completely unaffected.
+        recovery_eligibility = (
+            self._recovery_eligibility(discovery)
+            if discovery.recovery_source_task_id is not None
+            else None
+        )
+
+        def recovery_excludes(relative: str) -> bool:
+            """Whether one observed source may no longer be offered at all.
+
+            The walk names sources ResourceLibrary-relatively while the durable
+            chain records Storage paths, so the exact source identity is the
+            Storage path this walk would produce for that entry.
+            """
+
+            if recovery_eligibility is None:
+                return False
+            return not recovery_eligibility.may_offer(
+                library.storage_id, self._join(library.root_path, relative)
+            )
+
         # The candidate paths this pass actually observed, so a fully completed
         # pass can drop a previously eligible source that disappeared.
         observed_candidates: set[str] = set()
@@ -2218,10 +2325,11 @@ class MediaDiscoveryService:
             """Observe one candidate and return its exact file entry for association."""
 
             nonlocal counters, observation_degraded
-            if relative in recovery_excluded:
-                # A recorded sibling of this recovery chain is never observed,
-                # listed or counted again.  The walk skips it entirely, exactly
-                # as if it did not exist in the remaining scope.
+            if relative in recovery_excluded or recovery_excludes(relative):
+                # A recorded or since-decided source of this recovery chain is
+                # never observed, listed or counted again.  The walk skips it
+                # entirely, exactly as if it did not exist in the remaining
+                # scope.
                 return None
             observed_candidates.add(relative)
             if entry is None:
@@ -2605,8 +2713,9 @@ class MediaDiscoveryService:
                 # A recorded sibling of this recovery chain is never observed
                 # again.  It is dropped before attachment association and before
                 # the primary bound so it can never be re-offered or inflate the
-                # remaining manifest.
-                if relative in recovery_excluded:
+                # remaining manifest.  A source the chain decided *after* this
+                # preparation was admitted is dropped by the same rule.
+                if relative in recovery_excluded or recovery_excludes(relative):
                     directory_entries.pop()
                     observed_file_entries.pop(relative, None)
                     continue
@@ -2786,8 +2895,19 @@ class MediaDiscoveryService:
         intent) as the explicit Finalize path, then advances the record to the
         ``analyzing`` stage.  A repository that cannot offer the atomic linkage
         fails the preparation closed instead of leaving an orphan intent.
+
+        A recovery preparation re-validates its live remaining scope here, at the
+        last point before its frozen source list becomes a durable intent.  A
+        source another attempt decided while this preparation waited is refused
+        as a stale preparation instead of being frozen and analysed again.
         """
 
+        if discovery.recovery_source_task_id is not None:
+            # The claim was released with this pass's publication, so the
+            # settlement is fenced by the version CAS alone.
+            stale = self._stale_recovery_preparation(discovery, None)
+            if stale is not None:
+                return stale
         try:
             frozen = self._finalize(discovery, None)
         except DiscoveryError as error:
@@ -2837,6 +2957,15 @@ class MediaDiscoveryService:
             return self._fail(discovery, claim_token, "preview_unavailable")
         if discovery.intent_id is None:
             return self._fail(discovery, claim_token, "intent_unavailable")
+        if discovery.recovery_source_task_id is not None:
+            # The very last zero-mutation boundary: the source list is already
+            # frozen, so the plan analysis is the only remaining chance to
+            # notice that this preparation's admitted sources were decided by
+            # another attempt.  Publishing a summary here would hand the
+            # operator a confirmable plan for an already-completed source.
+            stale = self._stale_recovery_preparation(discovery, claim_token)
+            if stale is not None:
+                return stale
         try:
             intent = self._intent_service.get(discovery.intent_id)
         except Exception:  # noqa: BLE001 - a missing intent is a truthful failure

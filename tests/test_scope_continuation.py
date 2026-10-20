@@ -3103,6 +3103,570 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual((self.root / "Incoming" / "Sub" / "Left.2005.mkv").read_bytes(), b"left")
         self.assertEqual((self.root / "Incoming" / "Sub" / "Kept.2006.mkv").read_bytes(), b"kept")
 
+    def test_an_already_admitted_preparation_cannot_replay_a_completed_source(self):
+        """B P1: an earlier-admitted preparation never replays decided work.
+
+        Two legitimate sequential requests are the exact shape B reproduced: the
+        first summary (A) is published, a second preparation (B) is admitted but
+        not driven, A is then explicitly confirmed and really COPYs `Left`, and
+        only afterwards is B driven. B was admitted while `Left` was still
+        undecided, so its admission is legal history — but by the time it
+        discovers/freezes/analyses, the only source it was admitted for has a
+        decided outcome. It must therefore not publish a summary, not authorize
+        and not execute, and the destination must keep exactly one file.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        endpoint = f"/api/v1/tasks/{task.task_id}/remaining-scope-previews"
+
+        status, first = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, first)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        self.assertEqual(
+            [value.source.path for value in first_preview.items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+
+        # The second legitimate request is admitted *before* the first is
+        # confirmed. Its discovery stays queued: nothing is driven yet.
+        status, second = request(api, endpoint, method="POST", body=None, token="admin-token")
+        self.assertEqual(status, 202, second)
+        self.assertNotEqual(second["discoveryId"], first["discoveryId"])
+        self.assertIsNone(api._media_discovery.get(second["discoveryId"]).preview_id)
+
+        status, execution = request(
+            api,
+            f"/api/v1/operations/organize/previews/{first_preview.preview_id}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": [value.item_id for value in first_preview.items],
+                "expectedIntentVersion": first_preview.intent_version,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, execution)
+        from mediaflow.application.manual_organize_worker import (
+            ManualOrganizeExecutionWorker,
+        )
+
+        result = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status.value, "completed")
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Target").rglob("*.mkv")),
+            ["Left (2005).mkv"],
+        )
+
+        # The already-admitted preparation B is now driven. Its only source was
+        # decided in the meantime, so it must settle truthfully instead of
+        # publishing a second summary for the exact same source.
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNone(document["previewId"])
+        self.assertEqual(
+            api._media_discovery.get(second["discoveryId"]).preview_id,
+            None,
+        )
+        self.assertFalse(list(api._media_discovery.get(second["discoveryId"]).sources))
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Target").rglob("*.mkv")),
+            ["Left (2005).mkv"],
+        )
+
+    # -- an already-admitted preparation across the same timing matrix ----
+
+    def _admit_second_preparation(self, api, task):
+        """Admit (but never drive) a second preparation of the same paused run."""
+
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        return admission
+
+    def _confirm(self, api, preview, *, item_ids=None):
+        """Serve one real explicit Execute confirmation for one summary."""
+
+        return request(
+            api,
+            f"/api/v1/operations/organize/previews/{preview.preview_id}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": (
+                    [value.item_id for value in preview.items]
+                    if item_ids is None
+                    else list(item_ids)
+                ),
+                "expectedIntentVersion": preview.intent_version,
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+            token="admin-token",
+        )
+
+    def _drive_once(self, api):
+        from mediaflow.application.manual_organize_worker import (
+            ManualOrganizeExecutionWorker,
+        )
+
+        result = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        self.assertIsNotNone(result)
+        return result
+
+    def _target_files(self):
+        return sorted(path.name for path in (self.root / "Target").rglob("*.mkv"))
+
+    def test_a_queued_preparation_never_offers_a_source_decided_by_an_ignore(self):
+        """An explicit operator ignore of an earlier attempt retires the source.
+
+        The decision is recorded on the attempt's own TaskItem and writes no
+        Result, so nothing about the other preparation's admission, Preview or
+        pin changes. The second preparation must still stop offering it.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        first = self._admit_second_preparation(api, task)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        second = self._admit_second_preparation(api, task)
+        self.assertNotEqual(first["discoveryId"], second["discoveryId"])
+
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        # The operator explicitly ignores the exact source through the only
+        # recording shape a real ignore writes: its own TaskItem, no Result.
+        self.repository.upsert_item(
+            replace(original_item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+        )
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNone(document["previewId"])
+        self.assertFalse(list(api._media_discovery.get(second["discoveryId"]).sources))
+        self.assertEqual(self._target_files(), [])
+
+        # The first summary was published before the ignore, so confirming it is
+        # a genuinely different timing: the atomic admission refuses it.
+        status, execution = self._confirm(api, first_preview)
+        self.assertEqual(status, 409, execution)
+        self.assertEqual(execution["error"]["code"], "recovery_scope_decided")
+        self.assertEqual(self._target_files(), [])
+
+    def test_a_recovery_preparation_is_refused_once_its_source_is_unknown(self):
+        """An uncertain effect is investigation-only across attempts.
+
+        `unknown` means MediaFlow cannot prove the interrupted mutation did not
+        happen, so a summary published before it must never be confirmed and a
+        queued preparation must never publish.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        first = self._admit_second_preparation(api, task)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        second = self._admit_second_preparation(api, task)
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                f"{original_item.item_id}:uncertain",
+                task.task_id,
+                original_item.item_id,
+                "source-storage",
+                "Incoming/Sub/Left.2005.mkv",
+                "media-target",
+                "Movies/Left (2005).mkv",
+                "C",
+                "tmdb",
+                "100",
+                "C",
+                "A",
+                "A",
+                "A",
+                "COPY",
+                "PARTIAL",
+                NOW,
+                title="Left",
+                effect_certainty="unknown",
+                uncertain_effects=("executor_invocation",),
+                source_occurrence_id=original_item.source_occurrence_id,
+                source_fingerprint=original_item.source_fingerprint,
+            )
+        )
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNone(document["previewId"])
+        self.assertFalse(list(api._media_discovery.get(second["discoveryId"]).sources))
+        status, execution = self._confirm(api, first_preview)
+        self.assertEqual(status, 409, execution)
+        self.assertEqual(execution["error"]["code"], "recovery_scope_decided")
+        # An uncertain effect never produces a destination file by itself.
+        self.assertEqual(self._target_files(), [])
+
+    def test_a_zero_effect_failure_keeps_every_preparation_and_confirmation_legal(self):
+        """The fence must not over-correct: provable zero effect stays work.
+
+        A `none` certainty means the executor never crossed the mutation
+        boundary, so the source is still undecided work. A preparation admitted
+        before that attempt, and a summary published before it, must both remain
+        legal, and the confirm must really run.
+        """
+
+        from mediaflow.domain.organizer import (
+            ExecutionEffectCertainty,
+            ExecutionResult,
+            ExecutionStatus,
+        )
+
+        class _ZeroEffectExecutor:
+            def execute(self, plan, _storages, **_kwargs):
+                return ExecutionResult(
+                    ExecutionStatus.FAILED,
+                    plan.operation,
+                    plan.source,
+                    plan.target,
+                    plan_id=plan.plan_id,
+                    resolved_destination=plan.target,
+                    errors=("injected pre-mutation failure",),
+                    effect_certainty=ExecutionEffectCertainty.NONE,
+                )
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        first = self._admit_second_preparation(api, task)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        # A real zero-effect attempt happens in between.
+        second = self._admit_second_preparation(api, task)
+        second_document = self._drive_recovery(api, second["discoveryId"])
+        second_preview = self.repository.get_manual_preview(second_document["previewId"])
+        status, execution = self._confirm(api, second_preview)
+        self.assertEqual(status, 202, execution)
+        from mediaflow.application.manual_organize_worker import (
+            ManualOrganizeExecutionWorker,
+        )
+
+        with mock.patch.object(api._manual_execution, "_executor", _ZeroEffectExecutor()):
+            failed = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        self.assertIsNotNone(failed)
+        self.assertEqual(failed.status.value, "failed")
+        self.assertEqual(self._target_files(), [])
+
+        # Provable zero effect never retires the source, so the exact same
+        # remaining work is still offered by a fresh preparation.
+        from mediaflow.application.scope_continuation import (
+            recovery_preparation_eligibility,
+        )
+
+        eligibility = recovery_preparation_eligibility(
+            self.repository, recovery_source_task_id=task.task_id
+        )
+        self.assertTrue(eligibility.eligible)
+        self.assertTrue(eligibility.may_offer("source-storage", "Incoming/Sub/Left.2005.mkv"))
+        third = self._admit_second_preparation(api, task)
+        third_document = self._drive_recovery(api, third["discoveryId"])
+        self.assertTrue(third_document["prepared"])
+        third_preview = self.repository.get_manual_preview(third_document["previewId"])
+        self.assertEqual(
+            [value.source.path for value in third_preview.items],
+            ["Incoming/Sub/Left.2005.mkv"],
+        )
+        # The summary published before the failed attempt is itself a stale
+        # reviewed input (a sibling Result now exists), which is the ordinary
+        # Preview contract and not a duplicate-mutation risk.
+        status, refused = self._confirm(api, first_preview)
+        self.assertEqual(status, 409, refused)
+        self.assertEqual(self._target_files(), [])
+        # The newest summary still really executes the remaining work once.
+        status, execution = self._confirm(api, third_preview)
+        self.assertEqual(status, 202, execution)
+        succeeded = self._drive_once(api)
+        self.assertEqual(succeeded.status.value, "completed")
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+    def test_a_source_decided_while_the_execution_waits_in_the_queue_is_refused(self):
+        """The Worker boundary refuses a decided source before any new effect.
+
+        The authorization and the durable execution admission both happened while
+        the source was still undecided, so neither can prove the truth any more.
+        The resident Worker re-asks the shared contract immediately before it
+        reconstructs the reviewed work and closes the item as a truthful
+        pre-mutation failure with zero new effect.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        # B is admitted and really publishes its own summary while A's execution
+        # is only admitted, so every request is legal at the moment it is made.
+        first = self._admit_second_preparation(api, task)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        second = self._admit_second_preparation(api, task)
+        status, first_execution = self._confirm(api, first_preview)
+        self.assertEqual(status, 202, first_execution)
+        second_document = self._drive_recovery(api, second["discoveryId"])
+        second_preview = self.repository.get_manual_preview(second_document["previewId"])
+        self.assertIsNotNone(second_preview)
+
+        # A's execution really completes and releases its fence; the source now
+        # has a decided outcome that no reviewed document of B records.
+        first_result = self._drive_once(api)
+        self.assertEqual(first_result.execution_id, first_execution["executionId"])
+        self.assertEqual(first_result.status.value, "completed")
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+        # Confirming B is refused with zero new execution and zero new effect.
+        status, refused = self._confirm(api, second_preview)
+        self.assertEqual(status, 409, refused)
+        self.assertIn(
+            refused["error"]["code"],
+            {"recovery_scope_decided", "preview_stale"},
+        )
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+        for name in ("Kept.2006.mkv", "Left.2005.mkv"):
+            self.assertTrue((self.root / "Incoming" / "Sub" / name).is_file(), name)
+
+    def test_the_worker_refuses_a_source_decided_after_its_own_admission(self):
+        """The mutation boundary itself re-asks the shared contract.
+
+        A second execution was legitimately admitted and holds its own Storage
+        fence, so nothing about admission can be re-proved by reading the Task,
+        the Preview or the lock.  The deciding evidence arrives afterwards as an
+        explicit operator ignore recorded on the source's own TaskItem.  The
+        Worker must notice that before it invokes ``OrganizerExecutor`` and close
+        the item as one truthful pre-mutation failure with zero new effect.
+        """
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        admission = self._admit_second_preparation(api, task)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        status, execution = self._confirm(api, preview)
+        self.assertEqual(status, 202, execution)
+
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.upsert_item(
+            replace(original_item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+        )
+        result = self._drive_once(api)
+        self.assertEqual(result.execution_id, execution["executionId"])
+        self.assertEqual(result.status.value, "failed")
+        results = self.repository.list_results(execution["taskId"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].effect_certainty, "none")
+        self.assertEqual(self._target_files(), [])
+        for name in ("Kept.2006.mkv", "Left.2005.mkv"):
+            self.assertTrue((self.root / "Incoming" / "Sub" / name).is_file(), name)
+
+    def test_a_pre_authorized_confirmation_is_refused_at_the_atomic_admission(self):
+        """The one-shot authority is not a licence to skip the live fence.
+
+        A lost-response / interleaved client can hold a still-live authorization
+        that was created before another attempt decided the source.  The consumed
+        authority, the Preview, the intent and the Storage fence are all still
+        individually valid, so only the atomic admission transaction can refuse
+        it — and it must do so without creating an execution.
+        """
+
+        from mediaflow.application.manual_organize_execution import (
+            ManualOrganizeExecutionService,
+        )
+        from mediaflow.domain.manual_execution import ManualExecutionError
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        admission = self._admit_second_preparation(api, task)
+        document = self._drive_recovery(api, admission["discoveryId"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        service: ManualOrganizeExecutionService = api._manual_execution
+        authority = service.authorize(
+            preview.preview_id,
+            [value.item_id for value in preview.items],
+            expected_intent_version=preview.intent_version,
+            actor="admin",
+            confirmation=True,
+        )
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.upsert_item(
+            replace(original_item, status=TaskItemStatus.IGNORED, stage="ignored_by_operator")
+        )
+        # The application preflight is disabled for this call so that only the
+        # repository's own atomic admission transaction can refuse it: the
+        # guarantee must not depend on a check that runs before the write.
+        with mock.patch.object(ManualOrganizeExecutionService, "_assert_recovery_preparation_live"):
+            with self.assertRaises(ManualExecutionError) as raised:
+                service.admit(authority.authorization_id, actor="admin", confirmation=True)
+        self.assertEqual(raised.exception.code, "recovery_scope_decided")
+        self.assertEqual(self._target_files(), [])
+        # No execution row was created by the refused admission, and the
+        # one-shot authority was not consumed by it.
+        self.assertEqual(self.repository.list_manual_executions_for_preview(preview.preview_id), ())
+
+    def test_a_walk_skips_a_source_decided_after_admission_with_budget_left(self):
+        """The walk itself drops a since-decided source, not only the fixed set.
+
+        Here the original admission still holds unrecorded discovery budget, so
+        the preparation observes the admitted *directory* rather than its exact
+        recorded files. The durable exclusion set was fixed at admission and
+        cannot change, so a source this chain decided afterwards can only be
+        dropped by the per-source revalidation inside the walk.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        sub = self.root / "Incoming" / "Sub"
+        sub.mkdir()
+        (sub / "Kept.2006.mkv").write_bytes(b"kept")
+        (sub / "Left.2005.mkv").write_bytes(b"left")
+        (sub / "New.2020.mkv").write_bytes(b"new")
+        task = replace(
+            self._paused_mutation_scan(
+                active, discovered="Incoming/Sub/Kept.2006.mkv", item_limit=4
+            ),
+            command="organize",
+            scope_path="Incoming/Sub",
+        )
+        self.repository.update_task(task)
+        self._record_pending_source(task, "Incoming/Sub/Left.2005.mkv")
+        api = self._api(config)
+        status, admission = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        # The admission still holds unrecorded budget, so the preparation walks
+        # the whole admitted directory.
+        queued = api._media_discovery.get(admission["discoveryId"])
+        self.assertEqual(
+            [(item.path, item.kind.value) for item in queued.progress.scope_entries],
+            [("Sub", "directory")],
+        )
+        # The previously-undecided source is decided after this admission, and
+        # the durable exclusion set cannot record that change.
+        original_item = next(
+            value
+            for value in self.repository.list_items(task.task_id)
+            if value.source_path == "Incoming/Sub/Left.2005.mkv"
+        )
+        self.repository.upsert_item(
+            replace(
+                original_item,
+                status=TaskItemStatus.SUCCESS,
+                stage="success",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertTrue(document["prepared"], document)
+        preview = self.repository.get_manual_preview(document["previewId"])
+        # The decided source is never re-offered; the newcomer keeps its legal
+        # unrecorded unit.
+        self.assertEqual(
+            [value.source.path for value in preview.items],
+            ["Incoming/Sub/New.2020.mkv"],
+        )
+        self.assertEqual(self._target_files(), [])
+
+    def test_a_reopened_database_keeps_the_same_admitted_preparation_refusal(self):
+        """The fence is durable: a restart cannot resurrect a decided source."""
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        first = self._admit_second_preparation(api, task)
+        first_document = self._drive_recovery(api, first["discoveryId"])
+        first_preview = self.repository.get_manual_preview(first_document["previewId"])
+        second = self._admit_second_preparation(api, task)
+        status, execution = self._confirm(api, first_preview)
+        self.assertEqual(status, 202, execution)
+        self.assertEqual(self._drive_once(api).status.value, "completed")
+
+        # A fresh connection to the same file must report the exact same truth,
+        # so the restart cannot be the way a queued preparation gets replayed.
+        from mediaflow.application.scope_continuation import (
+            recovery_preparation_eligibility,
+        )
+
+        with SQLiteTaskRepository(self.database) as reopened:
+            source = reopened.get_task(task.task_id)
+            self.assertIsNotNone(source)
+            eligibility = recovery_preparation_eligibility(
+                reopened,
+                recovery_source_task_id=source.task_id,
+            )
+            self.assertFalse(eligibility.eligible)
+            self.assertEqual(eligibility.code, "recovery_scope_decided")
+        document = self._drive_recovery(api, second["discoveryId"])
+        self.assertIsNone(document["previewId"])
+        self.assertEqual(self._target_files(), ["Left (2005).mkv"])
+
+    def test_an_ordinary_files_preparation_is_never_governed_by_recovery_eligibility(self):
+        """A non-recovery preparation keeps its own independent lifecycle.
+
+        The recovery fence is keyed on an explicit recovery origin only, so an
+        ordinary Files preparation over the same directory still publishes and
+        executes even though the paused run's chain is fully decided.
+        """
+
+        from mediaflow.application.scope_continuation import (
+            recovery_preparation_eligibility,
+        )
+
+        config, active = self._copy_journey_active()
+        task = self._recorded_budget_two(active)
+        api = self._api(config)
+        self._recovery_executed_once(api, task)
+        ordinary = recovery_preparation_eligibility(self.repository, recovery_source_task_id=None)
+        self.assertTrue(ordinary.eligible)
+        self.assertTrue(ordinary.may_offer("source-storage", "Incoming/Sub/Left.2005.mkv"))
+        # The same directory still prepares as ordinary Files work.
+        status, admission = request(
+            api,
+            "/api/v1/resource-libraries/source/files/discoveries",
+            method="POST",
+            body={"paths": ["Sub"], "autoPrepare": True},
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admission)
+        self.assertIsNone(admission.get("recoverySourceTaskId"))
+        document = self._drive_recovery(api, admission["discoveryId"])
+        self.assertTrue(document["prepared"])
+        preview = self.repository.get_manual_preview(document["previewId"])
+        self.assertIsNotNone(preview)
+        self.assertIsNone(preview.recovery_source_task_id)
+
     def test_a_completed_move_recovery_is_terminal_for_the_original_pending(self):
         """A verified MOVE is equally terminal, so its source is never replayed.
 

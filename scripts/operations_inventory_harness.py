@@ -1410,6 +1410,52 @@ def run_discovery_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
+def run_discovery_worker_for(state: AppState, *, discovery_id: str) -> dict[str, object]:
+    """Advance exactly one named admitted discovery through the real Worker.
+
+    The generic Worker route claims whichever record is next; this one advances
+    the record the browser actually asked about, so a journey can hold one
+    admitted preparation back while another one is driven.  It still goes
+    through the real ``MediaDiscoveryWorker`` claim/lease/publication boundary
+    and never fabricates a stage.
+    """
+
+    from mediaflow.application.media_discovery_worker import MediaDiscoveryWorker
+
+    service = getattr(state.api, "_media_discovery", None)
+    if service is None:
+        return {"advanced": False, "reason": "no media discovery service"}
+    with state._manual_lock:
+        worker = MediaDiscoveryWorker(
+            service, worker_id="harness-discovery-worker", notice=lambda _line: None
+        )
+        for _ in range(16):
+            advanced = worker.run_next()
+            if advanced is None:
+                break
+            if advanced.discovery_id == discovery_id:
+                durable = state.repository.get_media_discovery(discovery_id)
+                if durable is None:
+                    raise RuntimeError("discovery Worker lost its durable record")
+                return {
+                    "advanced": True,
+                    "discoveryId": durable.discovery_id,
+                    "status": durable.status.value,
+                    "previewId": durable.preview_id,
+                    "intentId": durable.intent_id,
+                    "frozen": durable.frozen,
+                    "sourceCount": len(durable.sources),
+                }
+        durable = state.repository.get_media_discovery(discovery_id)
+        return {
+            "advanced": False,
+            "discoveryId": discovery_id,
+            "status": durable.status.value if durable is not None else None,
+            "previewId": durable.preview_id if durable is not None else None,
+            "sourceCount": len(durable.sources) if durable is not None else 0,
+        }
+
+
 def run_manual_worker_once(state: AppState) -> dict[str, object]:
     """Claim one UI-admitted execution and complete it with the real Worker."""
 
@@ -4645,7 +4691,13 @@ def application(environ, start_response):
             STATE.fail_next_manual_execution = (query.get("failBeforeMutation") or ["0"])[0] == "1"
             document = run_manual_worker_once(STATE)
         elif path == "/__harness__/run-discovery-worker" and method == "POST":
-            document = run_discovery_worker_once(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            requested_discovery = (query.get("discoveryId") or [""])[0]
+            document = (
+                run_discovery_worker_for(STATE, discovery_id=requested_discovery)
+                if requested_discovery
+                else run_discovery_worker_once(STATE)
+            )
         elif path == "/__harness__/seed-task-center-problems" and method == "POST":
             document = seed_task_center_problem_journey(STATE)
         elif path == "/__harness__/seed-task-center-problem-page" and method == "POST":

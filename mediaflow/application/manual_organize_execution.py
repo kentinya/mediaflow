@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.scope_continuation import recovery_preparation_eligibility
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
     MAX_MANUAL_EXECUTION_ITEMS,
@@ -232,6 +233,10 @@ class ManualOrganizeExecutionService:
         ):
             raise ManualExecutionError("execution note is invalid", code="invalid_note")
         preview = self._preview(preview_id)
+        # The recovery qualification is asked *before* the generic
+        # current-Preview projection: a source another attempt decided is the
+        # specific, actionable reason, and it is the one the operator can act on.
+        self._assert_recovery_preparation_live(preview)
         self._validate_preview_parent(preview, snapshot_id, snapshot_digest)
         intent = self._intent(preview.intent_id)
         if getattr(intent.status, "value", intent.status) != "open":
@@ -512,6 +517,45 @@ class ManualOrganizeExecutionService:
             return None
         return authorization
 
+    def _assert_recovery_preparation_live(self, preview) -> None:
+        """Refuse a recovery Preview whose admitted sources were decided elsewhere.
+
+        A remaining-scope recovery preparation is admitted while its sources are
+        still undecided, but the operator can legitimately confirm and execute an
+        *earlier* preparation before this one is authorized.  Its own Preview and
+        intent stay perfectly valid records, so nothing about the reviewed
+        document, versions or pin can reveal the change: the deciding effect is
+        recorded on a different attempt of the same source.  Both the
+        authorization boundary and the Worker's pre-mutation boundary therefore
+        re-ask the shared remaining-scope contract before any execution is
+        admitted.
+
+        An ordinary Files/definition Preview has no recovery origin, so this is a
+        no-op for it and none of its existing behavior changes.
+        """
+
+        source_task_id = getattr(preview, "recovery_source_task_id", None)
+        if source_task_id is None:
+            return
+        eligibility = recovery_preparation_eligibility(
+            self._repository,
+            recovery_source_task_id=source_task_id,
+            snapshot_id=getattr(preview, "configuration_snapshot_id", None),
+            snapshot_digest=getattr(preview, "configuration_snapshot_digest", None),
+        )
+        if eligibility.eligible:
+            return
+        raise ManualExecutionError(
+            eligibility.message or "the recovery summary's remaining scope changed",
+            code=getattr(eligibility, "code", None) or "recovery_scope_stale",
+            next_action=(
+                eligibility.next_action
+                or "request a fresh plan summary for the still-undecided sources; a decided "
+                "or uncertain effect is never repeated"
+            ),
+            status=409,
+        )
+
     def _revoke_unused_authority(
         self, authority: ManualExecutionAuthorization, error: ManualExecutionError
     ) -> None:
@@ -755,6 +799,10 @@ class ManualOrganizeExecutionService:
                 next_action="request a fresh exact Preview and authorization",
             )
         preview = self._preview(authority.preview_id)
+        # Asked before the generic current-Preview projection so a decided
+        # recovery source reports its own exact reason rather than a generic
+        # staleness code.
+        self._assert_recovery_preparation_live(preview)
         self._validate_preview_parent(
             preview,
             authority.configuration_snapshot_id,
@@ -1405,6 +1453,13 @@ class ManualOrganizeExecutionService:
         self._validate_preview_parent(
             preview, authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
+        # The Worker re-asks the shared remaining-scope contract immediately
+        # before it reconstructs the reviewed work.  A preparation whose sources
+        # were decided by another attempt while this execution waited in the
+        # queue is closed with one truthful pre-mutation failure instead of
+        # producing a new effect; the execution's own pending item is part of
+        # the undecided set, so a legal attempt never refuses itself.
+        self._assert_recovery_preparation_live(preview)
         selected = self._selected_authorized_items(preview, authority)
         runtime = self._load_runtime(
             authority.configuration_snapshot_id, authority.configuration_snapshot_digest
