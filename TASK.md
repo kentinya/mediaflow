@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: DEVELOPER REFRESHES RECOVERY ELIGIBILITY AT EACH ITEM MUTATION; B RETAINS FULL ACCEPTANCE
+Next Action: B CONTINUES FIXED-CANDIDATE ACCEPTANCE; PRIOR INJECTED-STATE P1 WITHDRAWN
 ```
 
 ## Goal
@@ -309,62 +309,43 @@ b-review/recovery-probe-bounds.py`、`recovery-probe-scope.py`）：
 Reviewed candidate: 056ac8501109eb5f4acacc2903e2ff403ad5631a
 Product implementation: f155522fefaaca0d34cbb5d322c55c2ef4cb0ee6
 Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..056ac8501109eb5f4acacc2903e2ff403ad5631a
-Decision: FIX REQUIRED — stale per-batch recovery qualification permits a newly decided sibling to mutate
+Decision: REVIEW PENDING — prior injected-state P1 withdrawn; required B acceptance remains incomplete
 Previous bounded admission / exact-scope probe blocker: FIXED
 Slice outcomes/surfaces all satisfied: NO — RO-7 acceptance / RO-8 implementation pending
-Next: DEVELOPER FIXES THIS TASK; B RETAINS REMAINING FULL ACCEPTANCE
+Next: B CONTINUES REMAINING FULL ACCEPTANCE; NO DEVELOPER FIX ASSIGNED
 ```
 
-### P1：逐项变更沿用了批次开始时的恢复资格
+### 场景复核：撤回前次逐项资格P1，不要求Developer返工
 
-`ManualOrganizeExecutionService._run_worker_items` 在 `for preview_item in selected` 之前
-只读取一次 `recovery_eligibility`，随后所有兄弟项沿用其 `may_offer`。首项执行期间或完成后，
-另一来源出现持久 ignore/已决定或未知效果时，后续项仍可能执行。现有回归只在 Worker
-启动前写入决定，没有覆盖批次内部交错；注释声称逐项即时判断，实际资格却是旧快照。
+用户追问“执行首项期间，系统是否实际会接受次项忽略”后，B复查生产准入、状态生产者和
+原证明。前次脚本先直接把原任务次项由pending写为processing，再调用
+RecognitionReviewService创建识别阻塞，最后真实ManualIgnoreService才可接受ignore。
+这不只是控制线程交错：它注入了尚未证明可由生产流程合法产生的业务状态。
+原始基础脚本更是直接写入ignored，二者都不能单独证明正常用户流程可触发该缺陷。
 
-B 独立反例（临时 checked Managed Active、SQLite、真实 API 准备/确认、Worker、锁及
-OrganizerExecutor；COPY+Rename，来源保持不变）：
+B新增独立边界验证：同样经过真实API准备/确认、SQLite、Worker/锁/OrganizerExecutor，
+在首项真实COPY完成后尝试忽略原任务次项，但不改任何业务状态、不创建人工阻塞。
+实际次项仍为pending、无blocker，checkpoint只允许investigate；真实忽略服务以
+`invalid_action`拒绝，次项保持pending。随后两个已确认项正常完成。
 
-- 两来源都合法确认，API202；首项真实 COPY 完成后，在交错点将原次项持久记录为 ignored。
-- 同时重新调用共享资格服务，次项 `may_offer=False`、整链 `eligible=False`。
-- Worker 仍真实 COPY 次项，最终 Completed、两条 SUCCESS/verified_complete、两个目标。
-  第一项成功不能因这个问题被撤回或重放；第二项本应在变更前独立拒绝。
-- 基础证明通过 repository 注入决定；补充证明在该交错点注入新识别阻塞，经真实
-  RecognitionReviewService / ManualIgnoreService（原 pin 校验及原子审计准入）完成 ignore，
-  结果相同。阻塞生产者的到达时间由 seam 注入，不声称已证明其自然并发调度或原生UI点击。
-  exit0 表示反例成立，不是产品PASS。
+生产规则也相符：ProcessingCheckpoint仅为适用的待决定识别/元数据阻塞提供ignore；
+RecoveryAdmissionService拒绝未提供的动作；识别阻塞入库要求源项处于processing。
+正常TaskCoordinator.begin_item要求任务running并取得来源锁；不能用脚本绕过这些前提
+把已暂停原任务的pending项改为processing，再将其结果当成合法生产并发证据。
+此验证不证明任意其他交错都不可能，只证明上一轮声称的用户触发链尚未成立。
 
-保持 Task45.5 的 ID/Base/Goal/High/T4，修正步骤：
+因此撤回前次P1及对应逐项刷新/读取故障/未知效果回归的Developer修正要求；未知效果
+分支也未独立复现，不据其假设阻塞验收。循环外读取是代码事实，但缺少可达触发与需求
+违背的完整证据时，不能仅凭注释、注入状态或防御性推测判FIX REQUIRED。
+需求仍要求成功/忽略/未知效果不重放；后续若有正常入口与合法状态转换的完整反例，
+B再据实际影响判定，不要求Developer实现“运行中任意忽略”新能力。
 
-1. 在每个尚未结束的恢复项即将进入自身 mutation 前，重新读取共享恢复契约及该精确来源
-   的当前判定，不能把循环外资格缓存当成后续项的许可。保留既有 claim/lease/Storage fence、
-   精确计划/原 pin/来源校验；不引入另一套恢复规则、队列或全局目录。
-2. 当前项已被 ignore、已完成或效果未知时，只将该未执行项持久拒绝为零新效果，显示原因、
-   已知状态及核查记录的下一步。独立合法兄弟继续，已成功项及未知效果不重放。
-   普通非恢复准备不受此契约影响。必需资格/耐久准备读取失败不能经
-   `except ManualExecutionError: recovery_eligibility=None` 冒充普通准备绕过检查；按现有
-   有界失败路径闭合未变更项，不产生新效果或无限待运行。
-3. 在现有 scope/execution 集成测试增加批次内部交错：首项真实执行后、次项 mutation 前
-   到达的 ignore 和未知效果应阻止次项；首项结果/目标保持，零效果拒绝及合法兄弟独立性
-   可观察。覆盖必需资格读取故障与普通非恢复准备。复用真实应用/SQLite/Worker 边界和
-   小型fixture，不只断言调用次数，不删除旧断言、不加重试/等待/放宽超时。
-4. Developer 运行新增/修改、known failing 及下列直接受影响组后交连贯checkpoint；
-   若改其他消费者，再追加精确受影响组。全量/产物证据仍由 B 执行。
-
-```bash
-# cwd repository root
-python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_manual_organize_execution test_task_center_recovery_lineage
-# 仅当ignore准入或共享恢复投影实现也改变时追加
-PYTHONPATH=tests .venv/bin/python -m unittest test_manual_ignore test_recovery_continuation
-# <files>替换为本轮确切新增/修改Python路径
-.venv/bin/ruff check <files>
-.venv/bin/ruff format --check <files>
-git diff --check
-```
-
-纯后端逐项资格修正不要求 Developer 跑整个 Web/原生套件；若 API/Web 契约实际改变，
-追加相关静态检查、精确单测及受影响 real-Python 用例。不得把 T4 或整个发布矩阵转交 Developer。
+复核证据仅在本机ignored目录：
+`.git/validation-evidence/2cf7efab4daf70547138ce8e36a99bb8ac3c63c6/task45.5/b-scenario-audit/`。
+`normal-ignore-boundary.py`及同名log/json、`normal-ignore-boundary-proof.json`保留实际
+输入/结果；脚本exit0表示上述正常拒绝边界通过。原反例日志不删除，但不再是有效P1证明。
+本轮产品代码未变，Task仍为High/T4、原ID/Base/Goal不变；状态恢复READY FOR B REVIEW。
+尚未完成的B门禁及Base..Head审查继续由B负责，不将未完成验收冒充PASS。
 
 ### 固定候选实际门禁与复用
 
@@ -384,21 +365,21 @@ git diff --check
 | wheel | `wheel-build`、`wheel-smoke` PASS；离开源码的安装导入/已有消费者通过；wheel与Web产物digest见`artifact-digests.json`。不据此宣称全部无索引CLI/API/Worker消费者已验证 |
 | 固定候选Docker | `docker-build` PASS；image ID sha256:064793181c7799ea789fd3f87ef398485352b759026458d0a62a3f29d50293db |
 | Docker真实行为 | `docker-scan-stability-mounted` PASS：变化重置/明确确认/Worker真实效果/重启不重放；`docker-recovery` PASS：6项浏览器场景及实际Worker执行，原始evidence/matrix/截图保留 |
-| 本轮新P1独立证明 | `between-item-decision-correct-fixture`、`between-item-real-ignore-arriving-blocker`：反例成立，见同名脚本及proof.json |
+| 已撤回的注入状态反例 | `between-item-decision-correct-fixture`、`between-item-real-ignore-arriving-blocker`仅证明人为注入状态后的行为，不证明生产可达，不作为P1 |
 
 初次 `docker-scan-stability` 因Colima不挂载系统临时目录失败，B用既有
 `MEDIAFLOW_SMOKE_TEMP_DIR` 指向本机可挂载的ignored临时根后通过，非产品缺陷。
 初次交错脚本使用错误fixture类失败，已更正；补充ignore脚本的诊断失败（源项未处于
-processing、初始waiting项被正确排除）日志全部保留，最终注入到达时机的证明才成立。
+processing、初始waiting项被正确排除）日志全部保留；最终脚本包含业务状态注入，不能视为生产可达性证明。
 这些失败/重跑均计入测试耗时，不改变产品代码/断言/超时。
 
 已核对 Task Base..候选135文件manifest，并审查 live列表/只读配置/游标、来源证据/稳定性、
 恢复准入/执行/链级非重放、SQLite关键事务、消费者装配及相关Web失败恢复。完整135文件
-内容审查尚未全部结束；已证实P1允许提前FIX REQUIRED，不据manifest或测试数量宣称全审完成。
+内容审查尚未全部结束；前次P1已撤回，剩余验收继续由B完成，不据manifest或测试数量宣称全审完成。
 独立Unicode/完整九页桌面与窄屏视觉、其余wheel/Docker无索引真实消费者、Docker
 restart-fault/release-security及剩余Base..Head审查仍pending，由 B 承担。已有Docker截图
 产物不等于完整视觉验收；已查看摘要/附件等3张桌面图，名为worker-completed的图仍显示
-已准入，不把文件标签视为完成态证据，详见`code-review-notes.json`。发现P1后停止启动昂贵门禁；修正改变执行输入则刷新所分配验收，
+已准入，不把文件标签视为完成态证据，详见`code-review-notes.json`。前次因已撤回判定停止的门禁仍待B完成；执行输入改变则刷新所分配验收，
 仅匹配输入/产物复用，满足全部Slice-final覆盖后不机械重跑Final。
 
 预存21条dirty/untracked完整保留；仅修改B-owned TASK.md，不改A-owned Slice/Roadmap/Progress、
@@ -406,8 +387,12 @@ restart-fault/release-security及剩余Base..Head审查仍pending，由 B 承担
 本Task的持久性门禁按fresh/当前版本重开重启与失败原子性验收。
 RO-7未获验收，RO-8未交付；不规划下一Task、不提交Closure Packet、不自行关闭Slice。
 
-本轮测试/构建/质量累计（含失败/重跑、并行仍逐次累加）实测616.669秒；另保守计入
+上一轮测试/构建/质量累计（含失败/重跑、并行仍逐次累加）实测616.669秒；另保守计入
 30秒未包装短检查及收尾检查预算，共646.669秒（约10.78分钟）。从首个留存计时门禁
 2026-10-20T15:38:17.183210+00:00到2026-10-20T16:00:14.352900+00:00共21.95分钟，比例
 49.10% <50%；更早读文档/预检时间未猜测、未计入分母，未等待凑比例。
 逐命令原始计时及预算说明见本地`review-timing.json`。
+
+本次场景复核实测验证/质量检查共0.646秒，另计2秒短检查及提交预算；
+从首个计时验证起的保守区间87.07秒，占比3.04% <50%。
+未重跑匹配全量，原始计时见场景复核目录的`review-timing.json`。
