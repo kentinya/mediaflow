@@ -207,84 +207,101 @@ B另在该镜像真实CLI/API/常驻Worker复现第1–2项及普通维护、仍
 ## Developer Completion Report
 
 READY FOR B REVIEW. 同一 Task，Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
-T4 不变；实现代码 SHA `dd9ec5f4d8698eaff48a0b13b8b009e52b96839b`，本报告所在 docs 提交为交接
-HEAD（完整 SHA 见交接响应）。B 上一轮判定 **FIX REQUIRED — remaining-scope preparation read
-failure has no truthful GET recovery**；本轮仅修该阻断，留在同一 45.5。
+T4 不变；实现代码 SHA `f155522fefaaca0d34cbb5d322c55c2ef4cb0ee6`（本报告随后单独 docs 提交，
+交接 HEAD 以交接响应完整 SHA 为准）。B 上一轮判定 **FIX REQUIRED — remaining-scope admission
+performs an unbounded synchronous Storage probe**；本轮仅修该阻断，留在同一 45.5。上一轮的
+preparation-read / explicit GET recovery 修复保持有效，未回退。
 
 ### 先复现（修复前，实际确认）
 
-B 反例：准备 POST 成功受理后拦截该 discovery 的 GET 返回503，页面停止轮询且不显示任何准备状态/
-读取失败/下一步，操作者只能猜测重复点击生成按钮。修复前代码确认：queryFn 把 `ok:false` 结果当
-成功 resolve（`data` 被失败结果覆盖、最后已知状态丢失），`refetchInterval` 遇 `!ok` 返回 false
-后永不恢复（focus/reconnect refetch 也关闭），`remainingMessage` 对 undefined 派生 null → 面板
-空态；且真实后端401/403 envelope 无 `details`，`discoveryErrorResult` 内 `readRecord` 直接抛错、
-HTTP status 被销毁，鉴权分类与共享恢复不可达。
+按 B 提供的独立反例脚本在修复前代码上实跑（`.git/validation-evidence/cbe1d1b…/task45.5/
+b-review/recovery-probe-bounds.py`、`recovery-probe-scope.py`）：
 
-### 根因与修正（只读派生/共享复用；无新队列、生命周期、schema、缓存、effect 状态复制）
+- 游标类反例（重复游标空页、不同游标连续空页）：配置 `max_page_fetches=2000`，两例都同步
+  **2005** 次 `list_page` 后返回 **202**，探测无自身停止条件；
+- 精确范围反例：任务范围 `Media/Allowed`，provider 对该目录返回错误父目录的
+  `Media/Sibling` 条目，探测实际 `stat`+`list_page` 了 `Media/Sibling` 后 202；
+- 两例守卫 mutation 计数全 0、媒体 fixture 字节不变——与 B 结论一致，是边界缺口，非媒体损害。
 
-- `web/src/features/operations/OperationsLanding.tsx`：queryFn 对 `ok:false` 抛出本地
-  `RemainingPreparationReadError extends ApiReadError`（401/403/transport+5xx/malformed/其余 →
-  共享 category），React Query 保留最后成功读取于 `data`、失败暴露于 `error`；`refetchInterval`
-  在 error 态返回 false，成功 re-read 后按原条件恢复轮询。从查询状态派生三态并同页渲染：loading
-  （已受理、首读进行中）、已受理进行中（原消息）、读取失败（阶段=只读 GET、准备已受理非执行受理、
-  最后已知状态或“新状态未知”、有界原因/服务指引、下一步），失败态提供「重新读取本次准备」按钮，
-  仅 refetch 同一 discovery GET；失败时 `remainingMessage` 不再冒充正常进度；鉴权 category 渲染
-  共享 `AuthStateBanner` 文案。
-- `web/src/shared/auth/AuthorizedReadBoundary.tsx`：两条401 authority 恢复 effect 原样提取为
-  `useAuthorizedReadAuthorityRecovery(query)`，boundary 与该子读共用，鉴权失效沿用共享恢复。
-- `web/src/shared/api/api-client.ts` `discoveryErrorResult`：改 `optionalRecord` 容错读取
-  envelope（缺失/非对象/数组视为缺失，永不抛错），status/code/nextAction 保持真实；成功路径与
-  其余调用点的 `!ok` 消费者分支不变（OrganizeDiscoveryPage 本就有 `!ok` 错误横幅）。
-- `web/src/features/operations/discovery-status.ts`（新）：`DISCOVERY_STATUS_LABELS` 从
-  OrganizeDiscoveryPage 抽出复用，「最后已知状态」行与发现页用词一致。
-- 测试：`stubLifecycleJourney.extraGet` 允许异步应答（观察 loading 态）；新增4个旅程，不改弱
-  任何既有断言、不加超时重试、不关 lint 规则。
+### 根因与修正（`mediaflow/application/media_discovery.py`）
 
-### 新增测试（`OperationsInventory.test.tsx`，4个）
+`admit_recovery_preparation` 的准入前存在性探测 `_scope_has_remaining_candidate` 直接遍历：
+不消耗页数/条目数/目录数/深度/活动时间预算、不检测游标重复/无进展、跟随 provider 原始
+`StorageEntry.path` 而不验证精确子条目；空页不增加条目计数，`max_visited_entries` 无法约束
+纯空页游标。改为 `_probe_remaining_scope`，返回三态 `_RemainingScopeProbe`
+（`REMAINING` / `NONE` / `INCOMPLETE`）：
 
-1. 首次GET失败→恢复：in-flight loading 可见 → 503 失败态（阶段/“准备受理，不是执行受理”/
-   “尚未成功读到该准备的持久状态”/re-read 按钮），无空态、无“没有创建执行”、准备POST=1、
-   execute=0；故障解除后点「重新读取本次准备」→ 同页同一摘要（剩余范围计划摘要（零变更）），
-   discovery GET 恰=2、准备POST仍=1、execute=0。
-2. 轮询中失败→恢复：首读成功显示已受理进行中 → 第2次 GET 503 → 失败态保留「最后已知状态：
-   排队中」与有界原因、轮询自停（GET=2）、准备POST=1、execute=0；re-read → 同一摘要、GET=3、
-   准备POST仍=1、execute=0。
-3. 403：共享 auth 文案「Connect a principal with read permission」+ 已受理事实与 re-read 按钮保留。
-4. 401（本旅程唯一401）：共享 authority 恢复触发（`authStore.isRejected()===true`、本地失败标题
-   移交共享“token rejected”文案）、准备POST=1、execute=0。
+- 探测完全复用 Worker 遍历的同一边界：`_list_page`（游标类型/长度校验）、
+  `_admit_provider_entry`（精确子条目/父目录/库内校验）、纯 include/exclude/depth 策略，以及
+  全部 `DiscoveryBudgets`——页数、条目数、目录数、safety depth、`max_active_seconds`
+  （空页同样消耗页数与时间预算，用注入的 monotonic 时钟，不新增真实等待）；
+- 任一边界耗尽、游标循环/无进展、读取失败、unsafe entry、目录循环 → `INCOMPLETE`：不冒充
+  空范围，正常受理该耐久准备，由有界 Worker 记录真实未完整原因（既有 durable preparation
+  机制，无新队列/引擎/状态复制）；
+- 只有探测在边界内真正走完且无候选才返回 `NONE`，此时保留原有真实
+  `no_remaining_scope` 409（与 inline boundary 同一拒绝，零 durable 工作）；
+- 全程只读：零媒体 mutation、零执行权、精确原 pin/预算/排除集、重复准入收敛
+  （`_reconcile_recovery`）与已完成/未知效果非重放均不变。
+
+### 新增测试（`tests/test_scope_continuation.py`，9 个真实 API 用例）
+
+均经 `mock.patch.object(api._media_discovery, "_guarded_storage", …)` 注入真实
+`ReadOnlyStorageGuard` 包装的 fake 分页 storage（stat 委托真实 LocalStorage），走真实 API
+`POST /api/v1/tasks/{id}/remaining-scope-previews`；不改产品超时/重试，不弱化断言：
+
+1. `…_stops_at_the_page_budget_instead_of_hanging`：游标永不推进的空页 provider，探测受
+   `max_page_fetches=3` 约束（实测 ≤3 次 `list_page`），202 受理、守卫零 mutation、媒体不变。
+2. `…_refuses_a_provider_entry_outside_the_exact_scope`：范围 `Incoming/Allowed`，provider 返回
+   错误父目录 `Incoming/Sibling`；探测不再 stat/list 兄弟目录，202 受理（不完整→Worker 记录）。
+3. `…_refuses_a_repeated_cursor`：同一非空游标重复，≤2 次 `list_page` 停止。
+4. `…_honours_the_entry_budget`：每页 1 条目 + `max_visited_entries=2`，≤3 次分页停止。
+5. `…_refuses_a_storage_failure_instead_of_claiming_empty`：list_page 抛真实
+   `StorageError(CONNECTION_LOST)` → 202 受理（不冒充 `no_remaining_scope`），零 mutation。
+6. `…_still_refuses_a_safely_empty_scope`：仅非媒体/临时文件的真实空范围仍 409
+   `no_remaining_scope` + `sideEffects=none`，无 Preview、无媒体变更。
+7. `…_stops_at_the_safety_depth_boundary`：`max_depth=0` 时深层子树从未被读取。
+8. `…_refuses_a_provider_directory_cycle`：子目录列表指回祖先条目 → 精确校验拒绝，
+   `list_page` 只发生在两个真实目录上。
+9. `…_honours_the_active_time_boundary`：注入假 monotonic（每 tick +400s），
+   `max_active_seconds=600` 内 ≤2 次分页停止。
+
+**修复前基线验证**：把生产文件回退到父版本重跑 9 例 → **6 FAILED**（1/2/3/7/8/9），证明是
+真实回归覆盖；4/5/6 为 B 要求的边界保持检查（修复前后都必须成立）。修复后 9/9 通过。
 
 ### 实际受影响命令/结果（本轮全部实际执行）
 
-仓库根：`python3 scripts/check_governance.py` → **PASS**；`git diff --check` → 干净。
+仓库根：
+- `python3 scripts/check_governance.py` → **PASS**（实施前与收尾各一次）
+- B 反例脚本 `recovery-probe-bounds.py` / `recovery-probe-scope.py`：修复前确认缺陷（见上）；
+  修复后重跑 → 两脚本的旧断言（缺陷成立）不再成立（页预算耗尽→202 受理但
+  `list_page` 从 2005 降为受预算约束；兄弟目录不再被 stat/list），即缺陷消失
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_media_discovery
+  test_organize_preparation` → 修复前基线 **216 tests OK**；修复后（含 9 个新用例）
+  → **225 tests OK，15.321s**
+- `test_scope_continuation` 单独：**100 tests OK，7.44s**
+- `.venv/bin/ruff check` / `.venv/bin/ruff format --check`（`media_discovery.py`、
+  `test_scope_continuation.py`）→ 全部通过（初版 format 报 1 处，`ruff format` 修正）
+- `.venv/bin/python -m compileall -q`（两个改动文件）→ 通过
+- `git diff --check` → 干净
 
-cwd `web/`：
-- `npx prettier --check`（6个改动文件）→ **All matched files use Prettier code style**
-- `npx eslint`（同6文件）→ **0 problems**
-- `npm run typecheck` → **PASS**（初版与收尾各一次）
-- `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx`
-  首次 → **2 failed / 50 passed**（403/401 分类被 `details` 抛错销毁，已定位根因并如实保留）；
-  修复后重跑同批 + `OrganizeDiscoveryPage.test.tsx` `OrganizeCreationPage.test.tsx`
-  `api-client.test.ts` → **6 files / 74 tests passed**；automation 受影响批
-  （`AutomationRouter.test.tsx` `PreviewAnalysisPage.test.tsx` `run-once.test.ts`
-  `operations-api.test.ts`）→ **4 files / 56 passed**；收尾复验（boundary 注释归位后）
-  → **2 files / 39 passed**
-- `npm run build` → **PASS**（仅既有 bundle-size 警告）
-- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a mutation-authorized paused run without live authority is refused natively'`
-  → **1 passed**（5.2s）
+未运行 Web/E2E：本轮为纯后端边界修正，API/Web 契约未变（202/409 语义、响应字段不变），
+按 B 指示不要求重复 Web/原生套件。
 
 ### 已知风险/边界
 
-- 完整 Python/Web/视觉 E2E、Unicode principal、wheel、生产 Docker 等 T4 门禁本轮未运行也未声称
-  通过，仍由 B 执行；本机无远程 CI。
-- `discoveryErrorResult` 容错化是本修复必要组成：不改则真实401/403无法分类、共享鉴权恢复无法
-  触发；仅触及错误 envelope 解析，未改任何成功路径。
+- 完整 Python/Web/E2E、Unicode principal、视觉、wheel、生产 Docker 等 T4 门禁本轮未运行也未
+  声称通过，仍由 B 执行；本机无远程 CI。
+- `INCOMPLETE` 探测沿用既有受理路径：操作者会看到准备被受理、随后 Worker 记录真实的
+  budget/cursor/depth/read-failure 未完整原因；与“探测证明空范围→409”是两种不同真实结果。
+- 探测的读放大仍存在但已受全部既定预算约束（至多一次预算内的同步预检读）；未新增异步预检
+  任务或第二套遍历器，符合“不另开 Task / 不新增队列”的要求。
 - 预存修改保留、未纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪 `.DS_Store`、
   `.t*.log`/`.mgmt.log`、`docs/pics/自动化页*.png`、`output/imagegen/slice45-task-center-v1.zip`、
   `web/test-results-*`。私有 ignored 配置不读取、不暂存。
 - RO-8 未交付，本 Task 不宣称 Slice ready，不自判 PASS，不规划后续 Task。
-- 时间：测试命令实际执行累计约 4–5 分钟（含1次失败复现与两轮受影响批），本开发轮次总时长约
-  35–40 分钟（读 AGENTS/工作流/SLICE/TASK/规格与代码+实现+报告），测试占比约 12–14%，低于
-  30% 上限；未用等待凑比例。
+- 时间：测试命令实际执行累计约 3–4 分钟（2 次反例复现、3 轮受影响批、1 次修复前基线回退
+  验证、若干单例验证），本开发轮次总时长约 45 分钟（读文档/代码、实现、调试测试 fixture、
+  报告），测试占比约 7–9%，低于 30% 上限；未用等待凑比例。
 
 ## B Review Result
 
