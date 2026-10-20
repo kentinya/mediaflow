@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B COMPLETES FIRST-DEPLOYMENT AND SAME-VERSION ACCEPTANCE; NO UPGRADE-COMPATIBILITY FIX
+Next Action: DEVELOPER FIXES REMAINING-SCOPE QUERY STATE / CHANGED-FILE FORMATTING IN THIS TASK; B RETAINS FULL ACCEPTANCE
 ```
 
 ## Goal
@@ -277,54 +277,94 @@ B 的精确时序：同一资源库有两个真实目录 `Folder `（末尾一�
 ## B Review Result
 
 ```text
-Reviewed product candidate: 349ca47be64e00db6c17e4d793b227e0ccae7609
+Reviewed candidate: 2a19b89154947184ba093c1f11b0fa164e8e08e3
 Product implementation: 7bc370cc24c534123b694cd752b81041ac67c411
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..349ca47be64e00db6c17e4d793b227e0ccae7609
-Decision: NOT PASS — upgrade-compatibility FIX withdrawn by explicit user scope correction; B gates pending
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..2a19b89154947184ba093c1f11b0fa164e8e08e3
+Decision: FIX REQUIRED — assigned Web lint / formatting gates fail on Task changes
 Previous exact-directory blocker: independently fixed through confirmation/execution/reopen and missing-source refusal
-Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
-Next: B FINISHES ORIGINAL BASE..HEAD REVIEW AND FIRST-DEPLOYMENT / SAME-VERSION ACCEPTANCE
+Slice outcomes/surfaces all satisfied: NO — RO-7 acceptance / RO-8 implementation pending
+Next: DEVELOPER CORRECTS THIS TASK; B RESUMES REMAINING FIRST-DEPLOYMENT / SAME-VERSION GATES
 ```
 
-### 用户本轮范围修订与Developer动作
+### 本轮阻断及明确修正步骤
 
-用户明确“不涉及a版升级兼容”。按该最新指示，本轮不验旧版/A版升级兼容，包括Base/旧版
-数据库升级、旧来源字段兼容和升级回滚；上轮47→49样本的读取失败属于该排除范围。
-撤回其P1分类、FIX REQUIRED及全部兼容decoder/旧格式fixture/迁移修复要求，Developer
-不为此返工，也不另建Task。不要因此移除现有通用代码或改动产品实现。
+必需质量门禁失败，不据此宣称已发生媒体错误或运行时恢复失败：
 
-原始Task Base..Head仍用于代码审查，不再用于制造旧数据升级验收；首次部署、当前版本
-创建→分析→确认→执行→当前版本重开/重启/恢复、持久结果/来源/pin/权限/非重放及失败
-原子性保持。只读列表不创建/升级数据库的行为约束也保持，不把“不做升级兼容”解释成
-允许浏览写库或允许清空已有媒体/运行库。
+- `npm run lint`：`web/src/features/operations/OperationsLanding.tsx:1604`，
+  `react-hooks/set-state-in-effect`。新增 effect 将 `remainingPreparationQuery` 返回的
+  `previewId`/状态同步复制到 `remainingScope`、`remainingDiscoveryId`、`remainingMessage`。
+- `npm run format:check`：同一生产文件及
+  `web/src/features/operations/OperationsInventory.test.tsx` 不符合 Prettier。
 
-本指示优先于先前文档中一般性的“支持版本迁移”验收文字。B在当前用户授权下按新范围
-继续，不等待Developer兼容修复；A后续对齐父Contract及最终文档，不把文档对齐当开发阻塞。
-原Base/Goal/High/T4与RO-7功能范围不变，不改变A-owned文件或冻结43。
+仍在45.5修正，Base/Goal/High/T4不变；不要新建Task、关闭lint规则、加eslint-disable、用
+setTimeout/microtask包住setState，或通过改检查脚本绕过失败。推荐最小实现如下：
 
-### 可保留的当前候选证据
+1. 删除该查询结果同步 effect。将 `remainingPreparation` 和同页摘要的有效值计算安排在
+   query声明之后，直接从成功读取的精确 discovery 推导已链接摘要；复用已有的本地提交状态/
+   overview中持久 recovery，不在effect里复制服务器状态。不新建生命周期或第二套缓存。
+2. 已受理的 `remainingDiscoveryId` 保留供精确读取，沿用现有 refetchInterval：有preview或
+   已终结就停止轮询，不必靠effect清空ID。新的一次明确准备成功时，在现有mutation回调内
+   重置该次选择/权限/本地状态并保存新ID。读取/刷新/重连只GET，绝不重发准备或执行POST。
+3. 准备进行中、已生成摘要、失败/取消/partial_success无摘要的提示，从query状态推导；
+   确认失败、响应未知及核对结果仍由用户事件回调管理并优先显示，不能被准备成功提示覆盖。
+   保留精确Preview版本读取、就绪子集、覆盖/清理许可、未知响应先核对和已受理执行链接。
+   确认受理或核对为已受理后，不因仍缓存着同一discovery的preview而再次展示可确认摘要；
+   抑制逻辑须绑定该精确恢复/执行上下文，不把其他历史执行当成当前已受理。
+4. 保留已有同页确认、丢响应核对、持久摘要/执行恢复测试；针对这次状态改写，补充或调整
+   现有 `OperationsInventory.test.tsx` 的旅程断言，覆盖准备中→摘要、终结失败提示，以及
+   确认后/未知响应期间不会由重复GET重新开放执行。断言用户可见状态和POST次数/精确body，
+   不测试hook内部结构，不弱化已有断言。对两个改动文件运行Prettier。
+5. Developer只跑下面受影响验证，报告实际结果并提交连贯checkpoint，再交B；不跑全量矩阵。
 
-候选之后仅TASK.md报告变化，产品/测试/harness/依赖未变；核对实际diff后复用匹配证据：
+```bash
+# cwd web/
+npx prettier --write src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx
+npx eslint src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx
+npx prettier --check src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx
+npm run typecheck
+npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx
+npm run build
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a paused run continues only its remaining scope through the real Worker'
+# cwd repository root
+python3 scripts/check_governance.py
+git diff --check
+```
 
-- 真实CLI暂停`Folder `、恢复摘要只含原目录Left，明确确认后实际Worker只完成Left；邻目录
-  Right保持。新连接重开保留原scope/Result，完成后新准备409，不重放成功项。
-- 真实暂停后移走原精确目录：404/source_missing，原路径空格及sideEffects=none保持，
-  不回退邻目录/父目录/整库。这两项验证属于当前版本，继续有效。
-- 完整Python：2725 tests，OK (skipped=7)，264.772s；全仓ruff check/format --check通过。
-  本机证据：`.git/validation-evidence/349ca47be64e00db6c17e4d793b227e0ccae7609/task45.5/b-review/`。
-  其中`exact-scope-fixed`、`missing-exact-scope`、`python-full`及`ruff-*`日志/JSON仍可匹配复用。
-- Base47→49的原始探针/日志仅保留调查事实，不再作为本Task阻塞、必需门禁或兼容开发计划。
-  上轮所有实际测试时间保留，不追溯删除已发生测试或更改历史耗时。
+若确实修改其他直接消费者，追加其受影响测试/changed-file检查；无需重跑未变的Python全量。
+完整Web/E2E/真实Python浏览器/视觉、wheel及Docker仍由B完成。
 
-上轮测试保守上限300秒、总耗时822.1秒、36.5%的记录保留于该轮review-timing.json。
-本次范围文档修正不重跑已匹配Python，不把额外兼容工作交给Developer。
+### 用户范围修订保持有效
 
-### B继续负责
+用户明确“不涉及a版升级兼容”。不验旧版/A版升级，包括Base/旧版数据库升级、历史来源
+字段兼容和升级回滚；已撤回47→49读取问题的P1分类及兼容decoder/旧格式fixture/迁移修复
+要求。Developer不为此返工，不删除现有通用代码，不恢复已排除的升级门禁。
 
-完成原始Base..Head全部diff/消费者/死代码与范围审查；当前候选首次部署的完整Web/E2E、
-真实Python浏览器/视觉、wheel隔离安装CLI/API/Worker、固定候选生产Docker、fresh无索引、
-当前版本重开/重启/失败原子性及安全门禁仍由B执行。复用符合源码/测试/harness/依赖/
-配置/产物身份的结果，缺失门禁补齐；不机械重跑Final，不把全量交给Developer。
+原始Task Base..Head仍用于代码审查。首次部署、当前版本创建→分析→确认→执行→重开/
+重启/恢复、来源/pin/权限/非重放及失败原子性继续验收。只读列表不建库/升级；不得清空
+媒体/运行库。用户指示优先于旧文档的一般迁移文字，A后续对齐Contract不构成开发阻塞。
+不修改A-owned文件或冻结43。
 
-尚未给Task PASS，不提交Closure Packet；RO-7验收和RO-8独立Preview退役未全部完成，
-不自行关闭Slice。治理及git diff --check通过，用户预存变化保留。
+### 本轮实际结果、复用与待验
+
+候选349ca47之后到本次固定HEAD只改TASK.md，执行输入未变；实际diff已核对。
+
+- 匹配复用：完整Python **2725 tests，OK (skipped=7)，264.772s**，全仓ruff check/
+  format通过；真实CLI精确空白目录→同页摘要→明确确认→实际Worker只完成Left→新连接
+  重开及完成后拒绝重放；精确目录缺失时404/source_missing、不回退邻目录/父目录/整库。
+  证据：`.git/validation-evidence/349ca47be64e00db6c17e4d793b227e0ccae7609/task45.5/b-review/`。
+- 本轮实际执行（cwd web/）：typecheck PASS；lint FAIL（上述1项）；format:check FAIL
+  （上述2文件）；unit **1175 passed**；production build PASS（含既有bundle-size警告）。
+  五项进程耗时分别6.321s、8.821s、3.688s、56.261s、0.342s，共75.433s。
+  证据：`.git/validation-evidence/2a19b89154947184ba093c1f11b0fa164e8e08e3/task45.5/b-review/`，
+  `web-*.log/json`及`web-gates-summary.json`。本机ignored存储，不声称远程CI可访问。
+- 原生continuation测试曾由B修正全局行数误判后在1e965c0实际通过，不能把Developer报告的
+  旧失败推定为Base产品失败；此次前端修正后仍由B跑相应原生验收。
+- 本轮尚未给PASS。已确认必需门禁失败，按workflow §6提前FIX REQUIRED，停止后续昂贵
+  门禁；完整Base..Head审查、其余共享检查、完整E2E、真实浏览器/截图、wheel安装及固定
+  候选生产Docker当前均pending，由B在修正候选上继续。不得沿用build/unit PASS推定完整T4。
+- 后续前端可执行输入改变，刷新相应Web/浏览器/产物验收；Python结果须再次核对全部相关
+  输入后复用。匹配的最终结果可供Slice Final使用，不机械重跑，也不交回Developer。
+
+RO-8尚未交付，不造额外修复Task，不提交Closure Packet，不宣称Slice ready或自行关闭。
+预存用户修改与私有配置保留。本轮时间详见同目录 `review-timing.json`；先前已发生的
+测试时间及被用户排除的升级调查历史不回溯删除。
