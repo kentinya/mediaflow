@@ -1996,15 +1996,16 @@ test("a paused run continues only its remaining scope through the real Worker", 
   await expect(page.getByRole("row").filter({ hasText: "已暂停" })).toHaveCount(
     1,
   );
-  // The continuation is its own visible run. Its durable Job/Task identities
-  // remain available to support reads while the row is selected by its
-  // operator-visible completed Scan state.
-  await expect(
-    page
-      .getByRole("row")
-      .filter({ hasText: "预览" })
-      .filter({ hasText: "已完成" }),
-  ).toHaveCount(1);
+  // Other completed previews may already exist. Follow this source run's
+  // durable continuation link and inspect the exact admitted child instead of
+  // counting every completed preview in the shared inventory.
+  await detail
+    .getByRole("button", { name: "打开链接的继续运行" })
+    .click();
+  await expect(page).toHaveURL(
+    (url) => url.searchParams.get("run") === continuedTaskId,
+  );
+  await expect(detail).toContainText("已完成");
   const afterRestart = await (
     await request.get(`${BASE}/__harness__/continuation-state`)
   ).json();
