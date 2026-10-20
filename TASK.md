@@ -1,377 +1,220 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task45.6 — 独立 Preview 完整退出与整理分析/固定计划统一
 
-Task45.5 已完成 B Review PASS；下方保留该结果供本地 checkpoint 审查。
-下一步 B 在已提交 Slice45 内规划 RO-8，不宣称 Slice ready 或关闭。
-
-# Task45.5 — FileIndex 完全退出与 CLI/Web 库级实时列表统一
-
-Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/development-workflow.md)。
+Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
+[Preview 退役设计](docs/preview-retirement-spec.md) 与
+[Development Workflow](docs/development-workflow.md)。
 角色经验：[B](docs/agent-experience/task-planner-reviewer.md) /
 [Developer](docs/agent-experience/developer-implementation-role.md)。
 
 ```text
-Task ID: 45.5
+Task ID: 45.6
 Parent Slice: 45
-Status: PASS
-Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
+Status: PLANNED
+Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
-Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B PLANS ONE COHERENT RO-8 TASK
+Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
+Next Action: DEVELOPER IMPLEMENTS THIS TASK AND HANDS OFF A FIXED CANDIDATE
 ```
 
 ## Goal
 
-操作者通过 `mediaflow files list`、资源库文件页和媒体库页读取同一精确 Active 库/目录的
-真实 Storage 条目；打开、刷新、翻页只读，不保存文件目录或产生工作。明确发起整理后，
-无 FileIndex 装配仍完成真实稳定观察→分析→同页摘要→就绪子集确认→Worker 执行→结果/
-安全恢复。失败说明阶段、持久状态、已知效果及修复/重新读取/安全重新检查的下一步。
+操作者从任务中心/Files的新建整理或原任务恢复入口显式分析，在当前界面查看完整固定
+计划的摘要、主文件/附件、冲突与未就绪原因，选择合法就绪子集后明确确认，再跟踪
+Worker执行和独立结果。CLI `organize` 不带 `--execute` 保留同义完整零媒体变更分析。
+不再存在可独立创建、调度、查询、控制或续跑的 Preview 产品；Rules/配置检查及
+Automation授权前校验仍使用原候选/定义/权限的共享分析。失败说明阶段、持久状态、
+效果和原界面的补正/重读/重新分析动作；成功与未知效果不重放。
 
-完整旅程和退出边界见 [FileIndex 退役设计](docs/file-index-retirement-spec.md) 第1–7节、
-V2-FILES-005/006、REQ-SCAN-002/003/005/006、REQ-ORG-012、REQ-WEB-003、REQ-SAFE-009
-的当前修订；整理/恢复遵循 [任务中心规范](docs/task-center-page-spec.md) 第3–5节。
+完整适用旅程：Preview退役设计第1–5节、任务中心规范第3–5节、Product Experience
+的Manual organize/Tasks与TARGET独立Preview旅程；稳定ID为V2-OPS-010/012/013、
+V2-RULES-006、REQ-SAFE-001–008及REQ-RECOVERY-006/007/009。
 
-Task Base 规划时的实际缺口：`final_cli.py` 的 files list/show/stats 仍装配 FileCatalog/SQLiteFileIndex；
-StorageScanner 仍 upsert/reconcile 全局目录；CLI/API/Worker、部分恢复和 Automation 基础
-消费者仍注入或要求索引；SQLite Result 自动同步、整理结果 DTO/Web 同步修复动作仍存在。
-`RuntimeFilesBrowserService` 已有两种库的实时列表和隔离游标，应复用。
+真实缺口（Base）：final_cli注册 `preview` / `batch preview` / `jobs submit preview`，
+AutomationCommand.PREVIEW、Preview-only Interval/Cron Schedule及可续跑Task支持集合仍在。
+V2 router仍装配PreviewNew/Detail、OrganizePreview、AutomationPreview、PreviewAnalysis页面；
+service_api保留独立路由/aliases和PreviewAnalysisService/Worker装配。SQLite fresh仍创建
+preview_analyses、manual_previews/items和automation_task_definition_previews/items。
+后两组同时承载真实整理计划/确认/恢复证据，不能盲删。CLI DryRun主要走
+MediaOrganizerService，Web计划还由ManualOrganizePreviewService/StrategyTestRunner编排；
+`_analysis_only_preview`只覆盖特定后台Preview，直接organize分析仍需统一finding语义。
+
+前项45.5已由B在 `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..d9a1f429fddeaf7f2c82fa6fc1ebf8e6b7631d44`
+判PASS，结果在Task Base的TASK.md；用户授权B恢复4项测试的角色例外到此结束。
+本Task不改写前项结论，不把它当RO-8或整个Slice通过。
 
 ## Implementation Scope
 
-一个完整 RO-7 行为单元，覆盖必要 domain/application/infrastructure/CLI/API/V1/V2、
-schema、Worker 和安装/测试消费者，不按模块拆 Task。按以下顺序实施：
+一个完整跨层行为单元，不按路由/表/测试拆Task。按以下顺序实施：
 
-1. 沿真实调用列出索引产品/消费者及去向，区分全局目录与显式工作的来源、观察、pin、
-   计划、锁、Result。检查 `file_catalog`、`file_index_lifecycle`、`scanner`、
-   `manual_organize*`、`manual_source_validation`、各 continuation、
-   `automation_task_definition_preview`、`automation_definition_execution`、
-   `final_cli.py` / `cli.py`、`service_api.py` / `operator_ui.py` 和 SQLite 装配。
-   交接简述实际移除/承接位置，不另建索引抽象、内存替身或 no-op 仓储。
-2. files list 直接复用现有 `RuntimeFilesBrowserService` 库级行为：必须互斥选择
-   `--resource-library ID` 或 `--media-library ID`，支持 `--path`、`--limit`、
-   `--cursor`。CLI/Web 读取同一 Managed Active；不从竞争 JSON 快照列举、不复制遍历器、
-   不经 shell/API 绕行。分离只读配置解析与运行库初始化：列表不创建/升级数据库，不装配
-   Task/索引写仓储；缺 Active、配置损坏及缺库给出修复路径。保留精确名称、类型、
-   大小/mtime、有界分页/截断和未知总量。移除旧索引筛选/时间/FileID 游标，非法输入不改义。
-3. 移除 FileIndex list/detail/stats/reprocess 产品、V1/V2/API/CLI 链接、DTO/状态/
-   Dashboard 索引指标、Result/普通维护同步与修复动作。旧索引入口删除或按设计薄拒绝并
-   指向库级浏览/任务中心；无兼容查询引擎。移除 RuntimeFilesBrowser 无用索引参数。
-   两库页现有普通维护、返回、错误/空态与任务结果保持，不制造整库统计。
-4. 所有支持的处理消费者改用工作内精确来源与 live Storage 校验，复用现有有界 discovery/
-   持久观察、纯过滤及 ManualSourceValidator 等能力。来源/计划受原固定配置约束，
-   来源替换/缺失在变更前拒绝。无全局 New/Modified/Unchanged/Missing 对账或长期
-   occurrence/disposition 目录；同路径新文件不被旧结果永久压住。stable-size 必须跨真实
-   区间，不能用旧mtime/首次stat替代；大小/mtime/有效指纹变化重置区间。重开保留合法观察，
-   丢证据需重新观察。保留 scope/条目/时间边界、协作控制、claim/lease/fence、原子准入、
-   重复/丢响应核对、精确就绪子集和主文件/附件独立结果。
-5. 删除 domain 索引模型/协议、FileCatalog/lifecycle、SQLite/内存索引实现、专用 schema/
-   初始化/后台写入和死代码。`file_lifecycle.py` / `file_index_schema.py` 中仍被 Task/计划
-   使用的纯来源证据或 Task 字段迁到真实所属职责，不盲删安全证据、不保留更名全局目录。
-   fresh 无索引表；受支持工作重开/重启/失败原子性保持。按未上线边界验收，不建设旧索引
-   生产迁移/双写；不自动 DROP/清空/重建任何现存运行库或媒体。不支持的开发旧 schema
-   明确拒绝并指向隔离新数据目录。
-6. 更新索引播种 tests/fixture、wheel/Docker/Worker harness，从临时 live Storage 与显式
-   工作证据出发，保留等义安全断言，不删断言/扩大重试超时/隐藏skip。必要说明仅陈述候选
-   事实，不将未验收退役标为已交付 CURRENT；全 Slice 文档闭合由 A 处理。
-   受影响验证后提交连贯实现 checkpoint，交 B 固定候选验收。
-
-RO-8 独立 Preview 完整退出不在本 Task；清理其必要索引耦合，不新建索引兼容/修复服务，
-不要求保留废弃 FileID 入口。共享分析/固定计划/Rules/配置/授权检查必须无索引可运行。
-不得借此实施整个 Preview 生命周期重构，或冻结 Slice43 页面/Run once/指标/设置重设计。
-若必须改变父 Contract，交 B→A，不自行放宽范围或安全语义。
+1. 沿CLI/API/V1/V2→应用→既有Task/Worker→仓储列出可运行Preview及共享消费者。
+   检查final_cli、service_api/operator_ui、routes/router、operations DTO/API client、
+   domain automation/task_persistence/scope_continuation、preview_analysis、
+   manual_organize_preview、automation_task_definition_preview、恢复与Automation
+   grant/execution/run_once、RulesObjectAnalysis/ConfigurationObjectService。
+   简述每项删除或真实职责承接位置；对象局部试算/历史结果用词不等于独立产品。
+2. 将Web创建/Files/恢复与CLI不执行模式统一到Organize DryRun共享应用分析/计划行为。
+   复用Scanner/真实有界稳定观察、策略/Provider/Planner/附件/冲突与已有Task/Worker；
+   API直接调用应用服务，不启动CLI，不另造分析引擎/队列。保持真实scope、合法历史pin、
+   当前候选配置与策略选择。仅分析的识别/Metadata/分类/冲突未就绪保留findings及补正入口，
+   不写正式执行WAITING_CONFIRM/Review/Conflict/Recovery待办，不取得单次/无人值守权限；
+   分析失败/取消不冒充整理成功。真正执行及其恢复的阻塞仍保留原职责。
+3. 在整理职责下持久保存完整固定计划和逐项来源/配置/版本/附件/能力/冲突/effect证据，
+   再投影当前页摘要。承接现Preview记录及确认/恢复关联，移除独立产品生命周期和专属schema；
+   不以只改名继续暴露独立产品。精确子集确认后原子绑定该份计划、实际权限和破坏性范围，
+   重验来源/计划/许可后由既有Worker/OrganizerExecutor执行；实质变化先更新摘要再确认。
+   保留去重、丢响应核对、claim/lease/fence、结果/audit、主文件/附件独立性、原pin与非重放。
+4. 删除独立Preview全部CLI注册/帮助、V1/V2路由/导航/按钮/深链、API及aliases、
+   Job/Task/command/定时配置/调度/Worker dispatch/retry/resume/continue/readiness/action，
+   专用服务/模型/仓储/回调/装配和死代码。diagnostic/scheduled/definition-bound无独立保留例外。
+   旧输入经正常auth和共享支持类型校验走普通not-found/参数/不支持类型错误，必须在
+   Storage发现/Provider/Task或Job准入/许可前停止；不自动转成organize，不新增410/退役页/
+   提示/专用拒绝guard/隐藏executor。旧Preview-only schedule不可因默认值删除变成执行。
+5. Rules对象局部测试、完整流程检查、Naming/Classification等纯试算与配置发布边界保持；
+   需要完整规划的消费者复用共享链，不能强迫局部测试解析无关策略/访问Provider。
+   Automation授权前分析继续绑定精确定义/范围/候选配置，分析不授权，Run once/已授权
+   自动整理仅替换必需耦合，不重做冻结43页面、指标/设置或调度引擎。
+6. 更新测试/fixture、wheel/Docker/Worker/browser harness，使其从合法整理分析/计划或
+   显式受支持工作构造证据；保留等义零变更/权限/来源变化/pin/并发/混合结果和非重放断言，
+   只删除独立产品专属覆盖，不扩大重试/超时或隐藏skip。fresh不建独立产品schema；
+   支持的整理数据重开/重启和失败原子性保持。不DROP/清空/重建现有运行库，不建设旧
+   Preview迁移/停止/接管/历史兼容。必要CURRENT/TARGET事实准确，A负责最终文档闭合。
 
 ## Acceptance Criteria
 
-- [x] CLI 两种库选择与对应 Web/API 同源；混合媒体/非媒体/目录、Unicode、长名/边界
-  空白逐项一致，不套用整理过滤。游标绑定库种类/ID/root/配置/目录；同名跨种类库不混淆，
-  非法/过期/跨目录游标与越界可恢复拒绝，不承诺无快照跨页静态一致性。
-- [x] 无/冲突库选择、旧参数、无Active、停用/不存在库、Storage故障/权限失败可解释，
-  不显示为空、不回退JSON/索引；CLI只读不创建数据库或升级schema。
-- [x] 列举/导航/刷新/翻页前后无目录/观察/Task/Job/Result/许可写入，Provider/Hash/
-  媒体mutation为零；允许配置读取及普通访问日志。fresh无索引专用表/索引。
-- [x] 生产源码/装配/包无可运行FileIndex产品、仓储、内存/no-op替身、全局目录/
-  occurrence/disposition、同步/reprocess/修复与死代码；其他支持工作不因缺索引拒绝。
-  按职责审查残余引用，不要求历史文本/否定断言字符串零匹配。
-- [x] 无预扫描/索引完成真实稳定观察、变化重置、同页摘要、精确子集确认、Worker执行、
-  结果及安全恢复/重开；直接选择与目录遍历同约束，实质边界不完整不执行first-N。
-  分析零mutation/零执行权；结果保存/显示失败不重放效果。
-- [x] 源变化、合法旧pin/缺pin、并发/重复准入/丢响应、stale owner和混合成功/失败/
-  未知效果保持拒绝及恢复安全；成功兄弟和已完成主文件不因附件异常重放，附件原因/
-  目标/按策略指引可见，未知效果只核查。C用NamingA/ClassificationA仍为C。
-- [x] 普通维护/传输、任务历史/详情/控制/导出、共享分析/检查及仍支持的Automation
-  基础授权/执行消费者不装配索引仍可用；不强制恢复已合并43专属UI。
-- [x] 受影响验证与B指定T4/真实入口/产物门禁有实际结果；未提供门禁pending，
-  不由旧PASS或Task45.4历史例外推定通过。
+- [ ] Web/V1/API/CLI/Job/定时/Worker/重试/继续/包内装配均无可运行独立Preview产品、
+  专用schema或退役兼容层；逐入口旧输入普通拒绝且零发现/Provider/准入/许可/媒体变更。
+- [ ] 真实临时Storage及fake Provider完成直接文件/有界目录→真实稳定观察→完整生产
+  分析→持久完整计划→同页摘要；CLI不执行模式与Web对同输入/pin/策略有等义计划、附件、
+  目标、冲突/未就绪解释。Web直接应用服务，不从CLI输出或摘要文本重建执行计划。
+- [ ] 未确认零媒体mutation/执行许可；各类未就绪只留准备findings、不制造正式执行待办。
+  原界面补正并重新分析，成功兄弟独立；取消/失败/不完整不显示无警告成功或执行first-N。
+- [ ] 确认合法就绪子集才执行固定计划；未选/未就绪项保留，实质来源/计划变化需新摘要/
+  新确认。重复/丢响应、并发准入、stale owner、权限/来源/pin缺失均安全且可恢复。
+- [ ] 合法旧pin不随Active改绑；真正执行的等待决定及五类恢复仍可用。主文件验证完成
+  不因附件异常重放，附件原因/目标/策略指引可见；未知效果只核查，结果保存失败不重放。
+- [ ] 无独立Preview装配仍完成Rules局部/完整检查、配置分析发布、Automation授权前校验
+  与受支持执行；保持C用NamingA/ClassificationA仍为C及候选配置/定义/权限边界。
+- [ ] fresh及支持整理数据重开/重启/失败原子性、普通维护/传输/任务历史/结果均保持；
+  清洁wheel/源码外消费者/生产Docker/常驻Worker/served assets实际匹配候选。
+- [ ] Developer受影响检查已交接；B固定候选完整range、独立关键复现及适用T4门禁有实际
+  结果。未提供必需门禁pending，不由旧Task PASS推定。全部Slice RO完成才交A，B不关闭。
 
 ## Required Tests
 
-分工/复用遵循 [workflow §6](docs/development-workflow.md#6-test-levels)。
-使用临时根/fake/local-server Provider，不读用户库、私有配置或真实媒体。
+分工、复用与耗时规则以[workflow §6](docs/development-workflow.md#6-test-levels)及用户要求为准。
+每轮测试/build/quality耗时（失败及并行逐项累加）必须小于该轮实际工作时间50%；
+先读代码/修复已知阻塞，再做必要检查，不等待凑比例。仅用隔离临时根/fakes/local server，
+不读用户运行库/私有配置/媒体。被退役测试模块改为等义整理测试后更新下列精确命令，
+不得为了命令继续保留独立产品；删除与断言迁移在交接中简述。
 
 ### Developer — affected tests
 
-仓库根执行；`PYTHONPATH=tests` 仅提供测试模块导入路径：
+仓库根，先governance；新增 `tests/test_preview_retirement.py` 覆盖旧输入拒绝、fresh无
+独立schema、共享analysis-only的零工作/权限、合法整理入口和生产装配，不只查字符串。
+按实际修改执行下列受影响组；核心新模块及直接失败用例必跑：
 
 ```bash
 python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_file_index_retirement test_runtime_files_browser test_media_library_browser test_storage_browser
-PYTHONPATH=tests .venv/bin/python -m unittest test_scanner test_resource_library_pipeline test_media_discovery test_scan_retirement_stability test_organize_preparation
-PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_recovery_continuation test_task_center_recovery_lineage
-git diff --check
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement test_scan_retirement test_file_index_retirement
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_organize_preparation
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_scope_continuation test_task_center_recovery_lineage test_metadata_correction_continuation
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_task_definition_preview test_automation_preview_grant_gate test_automation_definition_execution test_automation_authorized_execution_matrix
+PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_organize test_v2_rules_workspace_previews test_task_persistence
 ```
 
-新增 `tests/test_file_index_retirement.py` 覆盖CLI/API live parity、旧索引输入退出、只读
-无建库/升级、副作用计数及fresh/重开无索引事实。scanner/fixture随职责调整，不要求
-保留索引专属测试，但保留其过滤、稳定性与安全等义覆盖。
+若修改调度/队列/普通CLI分析/持久控制，追加其直接受影响模块（例如
+`test_automation_admission`、`test_automation_job_fencing`、`test_manual_operations_contract`）；
+如原Preview专属模块退役，将其中仍适用安全断言迁入上述新模块并运行，不保留失效生命周期。
+Python只对changed files运行ruff check/format。`git diff --check`必跑。
 
-若修改下列消费者，追加对应直接受影响组；已知失败修复必须重跑失败用例：
+Web在web/运行本轮实际修改测试，最低覆盖路由退出、同页创建与恢复、共享客户端；
+以下为当前真实文件，删除产品专用页面测试时迁移保留断言：
 
 ```bash
-PYTHONPATH=tests .venv/bin/python -m unittest test_task_persistence test_sqlite_backup test_sqlite_restore
-PYTHONPATH=tests .venv/bin/python -m unittest test_direct_file_operations test_manual_operations_contract test_operations_task_center
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_task_definition_preview test_automation_definition_execution test_automation_authorized_execution_matrix test_configuration_organize
-PYTHONPATH=tests .venv/bin/python -m unittest test_metadata_correction_continuation test_recovery_batch
+npm run test -- run src/routes/router.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
+npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx src/features/operations/AutomationRouter.test.tsx
 ```
 
-对实际新增/修改Python文件运行 `.venv/bin/ruff check <files>`、
-`.venv/bin/ruff format --check <files>`，报告实际路径/结果，不跑全仓替代受影响检查。
-Web在 `web/`：
-
-```bash
-npm run typecheck
-npm run test -- run src/entities/operations/organize.test.ts src/features/operations/OrganizeRouter.test.tsx src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryFilesPage.test.tsx
-npm run build
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts
-```
-
-新增 `live-files.python.spec.ts`，复用/调整现有real-Python harness，在production build上
-验证两库列表/分页/错误恢复/只读；同一隔离fixture调用真实CLI对照条目，不播种索引、
-不用mock API。其他前端测试有修改则追加精确路径，changed files运行 `npx eslint <files>` /
-`npx prettier --check <files>`。Developer不跑全Python/Web/E2E或Docker/release matrix，
-不准备B的全量证据包；受影响检查后即可交接。
+对修改的Web文件运行 `npx eslint <changed-files>` / `npx prettier --check <changed-files>`；
+对DTO连线执行 `npm run typecheck`。需要真实集成验证时只跑修改场景：
+`npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts -g '<changed-scenario-title>'`。
+Developer不跑全Python/Web/E2E、wheel或Docker/release矩阵，不准备全量证据包；
+完成受影响检查即提交连贯checkpoint并交READY FOR B REVIEW。
 
 ### B — acceptance and full regression
 
-在READY FOR B REVIEW明确SHA上检查 **Task Base..Head全部diff**、消费者/死代码与文档，
-核对用户脏文件及frozen43/RO-8边界；先独立复现已知P0/P1，可提前FIX REQUIRED，修正留45.5。
+B在明确提交SHA上审查 **Task Base..Head完整diff**，核对scope/消费者/专属删除/安全断言及
+预存dirty；先独立复现阻塞，修正继续45.6，范围问题交A。B执行workflow
+[共享全量门禁](docs/development-workflow.md#shared-full-regression-commands)的Python/Web/
+示例/依赖/禁止依赖/compile/full E2E/清洁wheel/安装消费者/安全覆盖，不交回Developer。
 
-B执行 [共享全量门禁](docs/development-workflow.md#shared-full-regression-commands) 的全部
-Python/Web/示例/依赖/禁止依赖/编译/完整E2E/wheel/安装消费者/安全覆盖，另执行：
-
-```bash
-# cwd web/；先完成production build。各spec独立harness，output不共用。
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/live-files
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/inventory
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/visual
-npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.5/unicode
-```
-
-B独立关键复现，不能以源码检索或Developer测试标签替代：
-
-1. 隔离Managed Active、同ID/Storage/root两种库、混合非媒体/目录/Unicode/长名/空白名与
-   多页条目，真实CLI/Web/API比对；跨种类/目录/配置游标拒绝，无Active/403/Storage故障→
-   修复→重读。前后核对媒体、工作/观察/许可记录、Provider/Hash/mutation计数；库不存在/
-   数据库缺失/旧schema只读不建库不升级。检查生产源码/包/fresh schema无索引/替身。
-2. 新来源零预扫描：直接文件和文件夹分别真实stable-size等待/替换重置→同页摘要，
-   未确认零效果，子集确认后实际Worker执行。独立核对来源变化、重复/丢响应、旧pin/
-   新Active、混合失败/附件/未知效果及重启/重开，不能重放成功或未知效果。
-3. wheel隔离安装、离开源码运行真实CLI/API/Worker和无索引整理/恢复，核对import路径、
-   wheel hash、served assets与fresh/重开。B编写/保存必要独立脚本，不把证据补齐交回Developer。
-
-生产Docker使用固定候选新建镜像；`<candidate-sha>`替换为实际完整SHA，不误用同名旧镜像。
-B执行现有harness，实施中的必要索引fixture改动应纳入本Task：
+生产build后，web/逐spec使用独立harness/output：
 
 ```bash
-docker build -t mediaflow:task45-5-<candidate-sha> .
-.venv/bin/python scripts/docker_scan_retirement_browser_proof.py --image mediaflow:task45-5-<candidate-sha> --artifacts .git/validation-evidence/<candidate-sha>/task45.5/scan-stability
-.venv/bin/python scripts/docker_task_center_recovery_browser_proof.py --image mediaflow:task45-5-<candidate-sha>
-.venv/bin/python scripts/docker_restart_fault_smoke_test.py --image mediaflow:task45-5-<candidate-sha>
-.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task45-5-<candidate-sha>
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.6/inventory
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.6/live-files
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.6/visual
+npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts --output ../.git/validation-evidence/<candidate-sha>/task45.6/unicode
 ```
 
-B另在该镜像真实CLI/API/常驻Worker复现第1–2项及普通维护、仍支持的Automation基础消费者。
-按本轮用户明确修订，不涉及旧版/A版升级兼容；只验fresh无索引、当前版本重开/重启和
-当前版本失败原子性，不跑Base/旧版数据升级、历史字段兼容或升级回滚矩阵。
-实际检查1536×1024及380×720截图、键盘、深链/返回/重连。日志/截图/脚本/产物digest保存于
-`.git/validation-evidence/<candidate-sha>/task45.5/`，报告cwd/命令/结果/数量/skip/不可用。
-必需环境不可用由B保留pending，不判完整T4 PASS，不冒充产品缺陷返工。
+B独立脚本/真实入口逐项核验，不能用源码检索/fixture标签替代：
 
-执行输入改变则刷新分配的验收；仅报告变更证明源码/测试/harness/依赖/配置/产物不变，
-跑受影响文档检查。匹配结果可复用到Slice-final，缺失覆盖由B补齐，不机械重跑Final。
+1. 枚举旧CLI/API/URL/通用Job/定时/定义绑定/重试继续入口，真实auth/参数解析及支持类型
+   边界拒绝；前后核对工作/许可/Provider/Storage计数及媒体bytes，未创建替代organize。
+2. 同配置/来源的CLI不执行与真实API/Web整理计划对照，检查完整持久计划而非摘要。
+   四类识别/Metadata/分类/冲突未就绪仅为findings，零正式执行待办；补正→同页新摘要→
+   精确子集确认→真实Worker/Executor/结果/重开，直接文件/目录/附件及实质范围边界覆盖。
+3. 原pin/新Active、来源/计划变化、重复/丢响应、准入事务竞态、stale lease、混合结果/
+   附件警告/未知效果核查；核对原链和目标bytes，成功/忽略/未知不重放。人工upsert仅可
+   验证存储契约，不把未证明的状态组合宣称生产可达P1。
+4. 无独立服务/仓储的Rules局部/完整检查、配置候选/发布、Automation授权前分析及
+   已授权执行；候选不变成Active、分析不授予权、删除旧scheduled Preview不改变执行权限。
+
+wheel用固定提交git archive隔离清洁构建（含当前production assets），避免本机ignored
+build/lib残留；smoke及离开源码的独立支持Python venv运行真实CLI/API/Worker/共享消费者。
+固定候选生产镜像执行：
+
+```bash
+docker build -t mediaflow:task45-6-<candidate-sha> .
+.venv/bin/python scripts/docker_scan_retirement_browser_proof.py --image mediaflow:task45-6-<candidate-sha> --artifacts .git/validation-evidence/<candidate-sha>/task45.6/scan-stability
+.venv/bin/python scripts/docker_task_center_recovery_browser_proof.py --image mediaflow:task45-6-<candidate-sha>
+.venv/bin/python scripts/docker_restart_fault_smoke_test.py --image mediaflow:task45-6-<candidate-sha>
+.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task45-6-<candidate-sha>
+```
+
+容器fixture须已迁移合法整理分析/工作，不能通过保留旧Preview入口让脚本通过。
+B另在镜像实际CLI/API/常驻Worker重复上方1–4关键消费者，检查fresh/schema、已安装模块/
+import路径、wheel/image digest及实际HTTP served assets hash一致。检查1536×1024与380×720
+的九列表、创建/恢复/未就绪/确认/结果截图、键盘/深链/返回/重连。只验当前支持整理数据
+fresh/reopen/restart/失败原子性，不跑旧Preview/Scan/FileIndex迁移、历史或V1 parity矩阵。
+
+命令cwd/实际数量/skip/失败与原始日志、独立脚本/截图/digests保存在本机稳定ignored
+`.git/validation-evidence/<candidate-sha>/task45.6/`。未知或不可用门禁由B标pending；
+执行输入相同可复用，变化则刷新对应验收。满足全部RO后只补缺失Slice-final证据并提交
+Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自行关闭。
 
 ## Non-goals
 
-- RO-8独立Preview完整退出尚未交付，本Task不因此宣称Slice ready。
-- 旧版/A版升级、旧数据/字段兼容、跨版本迁移及升级回滚验证（用户本轮明确排除）；
-  旧FileIndex迁移/双写/FileID兼容/同步恢复，无用户数据清空/删除。
-- Slice43工作区重设计、MediaLibrary Organize、新Provider/引擎、附件-only自动恢复、
-  未知效果重放、无限遍历或跨任务批量mutation。
-- 改A-owned Slice/Roadmap/Progress边界、重开45.4或补记其历史全量PASS、自行关闭Slice。
+- 不实施冻结Slice43工作区/Run once/指标/设置重新设计、新Provider/队列/执行引擎。
+- 不删除共享DryRun、局部Naming/Classification试算、真实发现/稳定性或必要计划/结果证据。
+- 不建设旧Preview停止/接管/迁移/历史/V1 parity/别名/退役guard，不清空数据库或媒体。
+- 不新增附件-only恢复、跨任务批量mutation、任意历史Reprocess、未知效果重放或自动回滚。
+- 不因文案/视觉P2另造Task，不改父Slice/Roadmap边界，不push，不自判Slice关闭。
 
 ## Developer Completion Report
 
-READY FOR B REVIEW. 同一 Task，Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
-T4 不变；实现代码 SHA `f155522fefaaca0d34cbb5d322c55c2ef4cb0ee6`（本报告随后单独 docs 提交，
-交接 HEAD 以交接响应完整 SHA 为准）。B 上一轮判定 **FIX REQUIRED — remaining-scope admission
-performs an unbounded synchronous Storage probe**；本轮仅修该阻断，留在同一 45.5。上一轮的
-preparation-read / explicit GET recovery 修复保持有效，未回退。
-
-### 先复现（修复前，实际确认）
-
-按 B 提供的独立反例脚本在修复前代码上实跑（`.git/validation-evidence/cbe1d1b…/task45.5/
-b-review/recovery-probe-bounds.py`、`recovery-probe-scope.py`）：
-
-- 游标类反例（重复游标空页、不同游标连续空页）：配置 `max_page_fetches=2000`，两例都同步
-  **2005** 次 `list_page` 后返回 **202**，探测无自身停止条件；
-- 精确范围反例：任务范围 `Media/Allowed`，provider 对该目录返回错误父目录的
-  `Media/Sibling` 条目，探测实际 `stat`+`list_page` 了 `Media/Sibling` 后 202；
-- 两例守卫 mutation 计数全 0、媒体 fixture 字节不变——与 B 结论一致，是边界缺口，非媒体损害。
-
-### 根因与修正（`mediaflow/application/media_discovery.py`）
-
-`admit_recovery_preparation` 的准入前存在性探测 `_scope_has_remaining_candidate` 直接遍历：
-不消耗页数/条目数/目录数/深度/活动时间预算、不检测游标重复/无进展、跟随 provider 原始
-`StorageEntry.path` 而不验证精确子条目；空页不增加条目计数，`max_visited_entries` 无法约束
-纯空页游标。改为 `_probe_remaining_scope`，返回三态 `_RemainingScopeProbe`
-（`REMAINING` / `NONE` / `INCOMPLETE`）：
-
-- 探测完全复用 Worker 遍历的同一边界：`_list_page`（游标类型/长度校验）、
-  `_admit_provider_entry`（精确子条目/父目录/库内校验）、纯 include/exclude/depth 策略，以及
-  全部 `DiscoveryBudgets`——页数、条目数、目录数、safety depth、`max_active_seconds`
-  （空页同样消耗页数与时间预算，用注入的 monotonic 时钟，不新增真实等待）；
-- 任一边界耗尽、游标循环/无进展、读取失败、unsafe entry、目录循环 → `INCOMPLETE`：不冒充
-  空范围，正常受理该耐久准备，由有界 Worker 记录真实未完整原因（既有 durable preparation
-  机制，无新队列/引擎/状态复制）；
-- 只有探测在边界内真正走完且无候选才返回 `NONE`，此时保留原有真实
-  `no_remaining_scope` 409（与 inline boundary 同一拒绝，零 durable 工作）；
-- 全程只读：零媒体 mutation、零执行权、精确原 pin/预算/排除集、重复准入收敛
-  （`_reconcile_recovery`）与已完成/未知效果非重放均不变。
-
-### 新增测试（`tests/test_scope_continuation.py`，9 个真实 API 用例）
-
-均经 `mock.patch.object(api._media_discovery, "_guarded_storage", …)` 注入真实
-`ReadOnlyStorageGuard` 包装的 fake 分页 storage（stat 委托真实 LocalStorage），走真实 API
-`POST /api/v1/tasks/{id}/remaining-scope-previews`；不改产品超时/重试，不弱化断言：
-
-1. `…_stops_at_the_page_budget_instead_of_hanging`：游标永不推进的空页 provider，探测受
-   `max_page_fetches=3` 约束（实测 ≤3 次 `list_page`），202 受理、守卫零 mutation、媒体不变。
-2. `…_refuses_a_provider_entry_outside_the_exact_scope`：范围 `Incoming/Allowed`，provider 返回
-   错误父目录 `Incoming/Sibling`；探测不再 stat/list 兄弟目录，202 受理（不完整→Worker 记录）。
-3. `…_refuses_a_repeated_cursor`：同一非空游标重复，≤2 次 `list_page` 停止。
-4. `…_honours_the_entry_budget`：每页 1 条目 + `max_visited_entries=2`，≤3 次分页停止。
-5. `…_refuses_a_storage_failure_instead_of_claiming_empty`：list_page 抛真实
-   `StorageError(CONNECTION_LOST)` → 202 受理（不冒充 `no_remaining_scope`），零 mutation。
-6. `…_still_refuses_a_safely_empty_scope`：仅非媒体/临时文件的真实空范围仍 409
-   `no_remaining_scope` + `sideEffects=none`，无 Preview、无媒体变更。
-7. `…_stops_at_the_safety_depth_boundary`：`max_depth=0` 时深层子树从未被读取。
-8. `…_refuses_a_provider_directory_cycle`：子目录列表指回祖先条目 → 精确校验拒绝，
-   `list_page` 只发生在两个真实目录上。
-9. `…_honours_the_active_time_boundary`：注入假 monotonic（每 tick +400s），
-   `max_active_seconds=600` 内 ≤2 次分页停止。
-
-**修复前基线验证**：把生产文件回退到父版本重跑 9 例 → **6 FAILED**（1/2/3/7/8/9），证明是
-真实回归覆盖；4/5/6 为 B 要求的边界保持检查（修复前后都必须成立）。修复后 9/9 通过。
-
-### 实际受影响命令/结果（本轮全部实际执行）
-
-仓库根：
-- `python3 scripts/check_governance.py` → **PASS**（实施前与收尾各一次）
-- B 反例脚本 `recovery-probe-bounds.py` / `recovery-probe-scope.py`：修复前确认缺陷（见上）；
-  修复后重跑 → 两脚本的旧断言（缺陷成立）不再成立（页预算耗尽→202 受理但
-  `list_page` 从 2005 降为受预算约束；兄弟目录不再被 stat/list），即缺陷消失
-- `PYTHONPATH=tests .venv/bin/python -m unittest test_scope_continuation test_media_discovery
-  test_organize_preparation` → 修复前基线 **216 tests OK**；修复后（含 9 个新用例）
-  → **225 tests OK，15.321s**
-- `test_scope_continuation` 单独：**100 tests OK，7.44s**
-- `.venv/bin/ruff check` / `.venv/bin/ruff format --check`（`media_discovery.py`、
-  `test_scope_continuation.py`）→ 全部通过（初版 format 报 1 处，`ruff format` 修正）
-- `.venv/bin/python -m compileall -q`（两个改动文件）→ 通过
-- `git diff --check` → 干净
-
-未运行 Web/E2E：本轮为纯后端边界修正，API/Web 契约未变（202/409 语义、响应字段不变），
-按 B 指示不要求重复 Web/原生套件。
-
-### 已知风险/边界
-
-- 完整 Python/Web/E2E、Unicode principal、视觉、wheel、生产 Docker 等 T4 门禁本轮未运行也未
-  声称通过，仍由 B 执行；本机无远程 CI。
-- `INCOMPLETE` 探测沿用既有受理路径：操作者会看到准备被受理、随后 Worker 记录真实的
-  budget/cursor/depth/read-failure 未完整原因；与“探测证明空范围→409”是两种不同真实结果。
-- 探测的读放大仍存在但已受全部既定预算约束（至多一次预算内的同步预检读）；未新增异步预检
-  任务或第二套遍历器，符合“不另开 Task / 不新增队列”的要求。
-- 预存修改保留、未纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪 `.DS_Store`、
-  `.t*.log`/`.mgmt.log`、`docs/pics/自动化页*.png`、`output/imagegen/slice45-task-center-v1.zip`、
-  `web/test-results-*`。私有 ignored 配置不读取、不暂存。
-- RO-8 未交付，本 Task 不宣称 Slice ready，不自判 PASS，不规划后续 Task。
-- 时间：测试命令实际执行累计约 3–4 分钟（2 次反例复现、3 轮受影响批、1 次修复前基线回退
-  验证、若干单例验证），本开发轮次总时长约 45 分钟（读文档/代码、实现、调试测试 fixture、
-  报告），测试占比约 7–9%，低于 30% 上限；未用等待凑比例。
+Pending implementation. 报告固定SHA、实际行为/主要取舍、受影响命令/结果及剩余风险；
+不自判PASS，不规划下一Task，不等待B全量门禁。
 
 ## B Review Result
 
 ```text
-Reviewed candidate: d9a1f429fddeaf7f2c82fa6fc1ebf8e6b7631d44
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..d9a1f429fddeaf7f2c82fa6fc1ebf8e6b7631d44
-Decision: PASS
-Task blockers: NONE
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 not delivered
-Next: NEXT TASK — B plans complete standalone Preview retirement; Slice stays ACTIVE
+Reviewed: NOT YET
+Decision: PENDING
+Acceptance runs: pending B fixed-candidate review
+Task blockers: not assessed
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 implementation pending
+Next: DEVELOPER IMPLEMENTS TASK45.6
 ```
-
-用户明确授权 B 直接补回测试并继续验收。本次角色例外仅恢复4项测试，不改产品、不代替
-A Final Review。提交 `d9a1f429fddeaf7f2c82fa6fc1ebf8e6b7631d44` 恢复了3个删除方法和1个
-缩减方法；4项 AST 与 Task Base 完全相同。`test_operator_ui` 实际 **43 tests OK**（恢复
-checkpoint说明的52为笔误，本结果更正）；初次格式失败及修正后通过日志均保留。
-
-### 实际门禁与复用
-
-本机稳定 ignored 证据根（不声称远程可达）：
-
-- 当前：`.git/validation-evidence/298abc3ca2a1e2e47c5deab7c633ab1d165e53fc/task45.5/b-restored-acceptance/`
-- 匹配：`.git/validation-evidence/056ac8501109eb5f4acacc2903e2ff403ad5631a/task45.5/b-review/`
-- 补齐：`.git/validation-evidence/4d1556c12c1a895501897f21ffef62eaac7ce61d/task45.5/b-acceptance/`
-
-`candidate-reuse.json` 证明前候选到当前仅 TASK 和上述测试变化，产品/Web/harness/依赖/
-示例/容器输入相同；Python全量因测试变化已刷新，其他匹配门禁复用，不机械重跑。
-
-| 门禁 | 实际结果 |
-|---|---|
-| 当前 Python 全量 | **2737 tests OK / skipped=7**，suite 257.389秒，命令wall 257.775秒；原ResourceWarning保留。既有隔离真实Storage/endurance环境未配置的skip，不声称这些外部矩阵通过 |
-| 当前受影响/质量 | UI43 PASS；全仓ruff check/format、compileall、pip check、governance、diff check PASS |
-| 示例/禁止依赖 | 复用两示例配置验证及FFmpeg/FFprobe零匹配 |
-| Web | 静态/build PASS，81 files /1181 tests PASS；普通E2E240、real live-files5、real inventory41 PASS |
-| 原生视觉/Unicode | 2+1 PASS；16张九标签/桌面/窄屏及6张滚动后问题面板/真实计划确认图已检查。补图未点击执行，不凭截图名宣称执行完成 |
-| 独立关键复现 | 重复空游标2页停止、不同游标2000页预算停止、错误父目录兄弟不stat/list；API202、零mutation、字节不变；真实稳定区间/变化重置/精确确认/重启非重放由Docker隔离链覆盖 |
-| wheel/安装消费者 | git archive清洁构建/smoke PASS；源码外Python3.13环境12个CLI/API/Manual/Automation Worker消费者PASS；无8个退役模块 |
-| Docker | 安装消费者12 PASS；稳定性mounted/recovery、release-security、restart-fault PASS，覆盖四常驻服务、离线Provider、fence、未知效果非重放 |
-| 产物一致性 | 容器164个已安装模块、wheel模块与清洁源码逐项hash相同；真实API HTTP的4项Web资源与容器/本机build bytes一致 |
-
-旧增量wheel因ignored build/lib残留包含已删除模块，其退役证明已撤销；未清理用户build，
-以清洁隔离wheel替代，SHA256 `eff181a4870de8895d53ae17dce028e8b933382cc3b0e997e5418fafaa1d3860`。
-先前wheel消费者失败、Python3.14不满足包版本、Docker挂载/runner错误保留，不掩盖失败。
-安全镜像ID `sha256:70d54e9c54794e13b6082d57ddbdde672fdf28775c04dff39f822b06f8f222f5`。
-
-135文件完整range按风险审查完成：生产安全/来源/稳定性/恢复/原子准入及各入口连线；
-退役文件核对消费者与产物不存在；机械fixture替换按结构/断言核对，长新增测试结合
-assertion投影、setup及关键场景正文审查，并非声称每个测试逐字符阅读。当前补审记录与
-manifest见 `code-review-completion.json` / `review-manifest.txt`，无新P0/P1。
-窄屏长路径截断、按钮对比度、混用英文及harness旧注释为P2，不另造Task。
-
-“运行首项时原pending次项可合法忽略”的旧P1保持撤回：原脚本人工upsert状态不证明
-生产可达，正常入口无blocker且仅investigate，ignore返回invalid_action且状态不变。
-不据此要求逐项刷新或新增运行中任意忽略功能；撤回证据保留于
-`.git/validation-evidence/2cf7efab4daf70547138ce8e36a99bb8ac3c63c6/task45.5/b-scenario-audit/`。
-
-### Slice 结果复核
-
-RO-1–4 / S-1–6：保留已交付任务中心、同页确认、恢复、详情/结果与控制；本Task真实
-回归覆盖其受影响链。RO-5：45.4原PASS及当时披露的验收例外不改写，本Task已补有适用
-真实稳定性/容器回归。RO-6：共享权威和安全保持，最终文档闭合仍由A。RO-7 / S-8–9：
-本Task PASS。RO-8 / S-10：实际仍有CLI注册、独立路由/Job/Worker及Preview专用schema，
-不是P2，可在已提交范围内规划一个完整45.6。全部RO尚未满足，不交Closure Packet，
-不宣称SLICE READY FOR A REVIEW，不自行关闭或改Slice/Roadmap/Progress。
-
-预存21项dirty/untracked保留；本轮仅授权测试及B-owned TASK checkpoint，无push。
-本轮测试/build/quality（含失败逐项累加）与实际总时长见当前证据根 `review-timing.json`；
-必须小于50%，不等待凑比例。后继仅文档变动用输入一致性证明及治理/diff检查衔接。
