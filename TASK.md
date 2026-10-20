@@ -204,75 +204,85 @@ B另在该镜像真实CLI/API/常驻Worker复现第1–2项及普通维护、仍
 
 ## Developer Completion Report
 
-READY FOR B REVIEW. Same Task, Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
-T4 unchanged; implementation HEAD is this checkpoint's SHA (recorded in the B handoff). B's latest
-finding was **FIX REQUIRED — assigned Web lint / formatting gates fail on Task changes**. This
-round fixes only that root cause (the effect state sync), its derived state and the missing
-journey assertions; the previous exact-directory recovery fix remains in place.
+READY FOR B REVIEW. 同一 Task，Base `3e2cb31aca211a7dcb7fa7c4ba4883d55b951974` / Goal / High /
+T4 不变；实现代码 SHA `dd9ec5f4d8698eaff48a0b13b8b009e52b96839b`，本报告所在 docs 提交为交接
+HEAD（完整 SHA 见交接响应）。B 上一轮判定 **FIX REQUIRED — remaining-scope preparation read
+failure has no truthful GET recovery**；本轮仅修该阻断，留在同一 45.5。
 
-### 先复现（本轮修复前）
+### 先复现（修复前，实际确认）
 
-B 在候选 `2a19b89154947184ba093c1f11b0fa164e8e08e3` 上实际执行 `npm run lint` 与
-`npm run format:check`：前者在 `web/src/features/operations/OperationsLanding.tsx:1604` 报
-`react-hooks/set-state-in-effect`；后者对同一生产文件及
-`web/src/features/operations/OperationsInventory.test.tsx` 报 Prettier 不一致。本轮已在本机
-复现同一 lint 报错（`setRemainingScope` 在 effect 中同步 setState）与 Prettier 警告，确认后再修。
+B 反例：准备 POST 成功受理后拦截该 discovery 的 GET 返回503，页面停止轮询且不显示任何准备状态/
+读取失败/下一步，操作者只能猜测重复点击生成按钮。修复前代码确认：queryFn 把 `ok:false` 结果当
+成功 resolve（`data` 被失败结果覆盖、最后已知状态丢失），`refetchInterval` 遇 `!ok` 返回 false
+后永不恢复（focus/reconnect refetch 也关闭），`remainingMessage` 对 undefined 派生 null → 面板
+空态；且真实后端401/403 envelope 无 `details`，`discoveryErrorResult` 内 `readRecord` 直接抛错、
+HTTP status 被销毁，鉴权分类与共享恢复不可达。
 
-### 根因与修正
+### 根因与修正（只读派生/共享复用；无新队列、生命周期、schema、缓存、effect 状态复制）
 
-原实现用 `useEffect` 把 `remainingPreparationQuery` 的服务器状态复制到 `remainingScope`、
-`remainingDiscoveryId`、`remainingMessage`，既触发 `set-state-in-effect`，也依赖
-`setRemainingDiscoveryId(null)` 停止轮询。修正只改前端状态推导，不新建生命周期/缓存：
+- `web/src/features/operations/OperationsLanding.tsx`：queryFn 对 `ok:false` 抛出本地
+  `RemainingPreparationReadError extends ApiReadError`（401/403/transport+5xx/malformed/其余 →
+  共享 category），React Query 保留最后成功读取于 `data`、失败暴露于 `error`；`refetchInterval`
+  在 error 态返回 false，成功 re-read 后按原条件恢复轮询。从查询状态派生三态并同页渲染：loading
+  （已受理、首读进行中）、已受理进行中（原消息）、读取失败（阶段=只读 GET、准备已受理非执行受理、
+  最后已知状态或“新状态未知”、有界原因/服务指引、下一步），失败态提供「重新读取本次准备」按钮，
+  仅 refetch 同一 discovery GET；失败时 `remainingMessage` 不再冒充正常进度；鉴权 category 渲染
+  共享 `AuthStateBanner` 文案。
+- `web/src/shared/auth/AuthorizedReadBoundary.tsx`：两条401 authority 恢复 effect 原样提取为
+  `useAuthorizedReadAuthorityRecovery(query)`，boundary 与该子读共用，鉴权失效沿用共享恢复。
+- `web/src/shared/api/api-client.ts` `discoveryErrorResult`：改 `optionalRecord` 容错读取
+  envelope（缺失/非对象/数组视为缺失，永不抛错），status/code/nextAction 保持真实；成功路径与
+  其余调用点的 `!ok` 消费者分支不变（OrganizeDiscoveryPage 本就有 `!ok` 错误横幅）。
+- `web/src/features/operations/discovery-status.ts`（新）：`DISCOVERY_STATUS_LABELS` 从
+  OrganizeDiscoveryPage 抽出复用，「最后已知状态」行与发现页用词一致。
+- 测试：`stubLifecycleJourney.extraGet` 允许异步应答（观察 loading 态）；新增4个旅程，不改弱
+  任何既有断言、不加超时重试、不关 lint 规则。
 
-- 删除该同步 effect。链接的精确 Preview、终结准备提示与“已受理即抑制”规则全部在渲染时
-  从持久读取（`remainingPreparationQuery` 与 overview 的 durable recovery）加本地准入状态派生。
-- 本地只保留显式用户事件的结果：`remainingMessageState`（确认被拒/响应未知/核对结果）
-  与 `remainingAdmitted`（本页已受理的精确 `previewId` + `executionId`）。
-- `effectiveRemainingScope` 仅在链接的 Preview 不等于已受理 Preview 时可确认；同一 discovery
-  的缓存 GET 不再重新开放执行，其他运行的历史执行也不会被当成当前受理。
-- `remainingDiscoveryId` 保留供精确读取，轮询继续由既有 `refetchInterval` 终止（有 preview
-  或已终结即停），不靠 effect 清空 ID。读取/刷新/重连只 GET，绝不重发准备或执行 POST。
-- 确认成功或核对为 known 时写入 `remainingAdmitted`，绑定该精确恢复上下文；提交失败/未知
-  仍由用户事件回调优先显示。
+### 新增测试（`OperationsInventory.test.tsx`，4个）
 
-### 新增/调整测试
+1. 首次GET失败→恢复：in-flight loading 可见 → 503 失败态（阶段/“准备受理，不是执行受理”/
+   “尚未成功读到该准备的持久状态”/re-read 按钮），无空态、无“没有创建执行”、准备POST=1、
+   execute=0；故障解除后点「重新读取本次准备」→ 同页同一摘要（剩余范围计划摘要（零变更）），
+   discovery GET 恰=2、准备POST仍=1、execute=0。
+2. 轮询中失败→恢复：首读成功显示已受理进行中 → 第2次 GET 503 → 失败态保留「最后已知状态：
+   排队中」与有界原因、轮询自停（GET=2）、准备POST=1、execute=0；re-read → 同一摘要、GET=3、
+   准备POST仍=1、execute=0。
+3. 403：共享 auth 文案「Connect a principal with read permission」+ 已受理事实与 re-read 按钮保留。
+4. 401（本旅程唯一401）：共享 authority 恢复触发（`authStore.isRejected()===true`、本地失败标题
+   移交共享“token rejected”文案）、准备POST=1、execute=0。
 
-`tests/...` 无改动。`OperationsInventory.test.tsx` 扩展 fixture 支持终结状态/nextAction，并新增：
-
-- `surfaces a terminal remaining-scope preparation failure without a summary`：准备 `failed` 时显示
-  持久 `nextAction`，不渲染“新计划摘要”，零 `/execute` POST。
-- `does not reopen a confirmed summary when the overview carries its admitted execution`：overview 已带
-  同一 `recoveryPreviewId` + `executionId` 时不再展示可确认摘要，且零 POST。
-- 既有“同页准备+确认”“丢响应核对”“持久摘要恢复”旅程断言全部保留并通过。
-
-### 实际受影响命令/结果
-
-B 指定门禁（cwd `web/`）：
-
-- `npx prettier --check src/features/operations/OperationsLanding.tsx src/features/operations/OperationsInventory.test.tsx`
-  → **All matched files use Prettier code style!**
-- `npx eslint <两文件>` → **0 problems**（原 `set-state-in-effect` 已消除）
-- `npm run typecheck` → **PASS**
-- `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx`
-  → **2 files, 40 tests passed**（OperationsInventory 27，其中 2 个为新增）
-- `npm run build` → **PASS**（仅既有 bundle-size 警告）
-- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a paused run continues only its remaining scope through the real Worker'`
-  → **1 passed**（2.2s）
+### 实际受影响命令/结果（本轮全部实际执行）
 
 仓库根：`python3 scripts/check_governance.py` → **PASS**；`git diff --check` → 干净。
 
+cwd `web/`：
+- `npx prettier --check`（6个改动文件）→ **All matched files use Prettier code style**
+- `npx eslint`（同6文件）→ **0 problems**
+- `npm run typecheck` → **PASS**（初版与收尾各一次）
+- `npm run test -- run src/features/operations/OperationsInventory.test.tsx src/features/operations/RunLifecycleControls.test.tsx src/shared/auth/AuthorizedReadBoundary.test.tsx`
+  首次 → **2 failed / 50 passed**（403/401 分类被 `details` 抛错销毁，已定位根因并如实保留）；
+  修复后重跑同批 + `OrganizeDiscoveryPage.test.tsx` `OrganizeCreationPage.test.tsx`
+  `api-client.test.ts` → **6 files / 74 tests passed**；automation 受影响批
+  （`AutomationRouter.test.tsx` `PreviewAnalysisPage.test.tsx` `run-once.test.ts`
+  `operations-api.test.ts`）→ **4 files / 56 passed**；收尾复验（boundary 注释归位后）
+  → **2 files / 39 passed**
+- `npm run build` → **PASS**（仅既有 bundle-size 警告）
+- `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts --grep 'a mutation-authorized paused run without live authority is refused natively'`
+  → **1 passed**（5.2s）
+
 ### 已知风险/边界
 
-- 仅前端状态推导；未触碰后端、共享解析、pin/锁/准入/非重放语义。分析仍零 mutation，
-  读取/刷新/重连只 GET。
-- 完整 Python/Web/E2E/视觉、wheel、生产 Docker 仍由 B 的 T4 门禁执行，本轮未运行也未声称通过。
-  本机无远程 CI。
-- 预存修改保留且不纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪
-  `docs/pics/自动化页-全局设置.png`、`docs/pics/自动化页.png`、各处 `.DS_Store`、
-  `output/imagegen/slice45-task-center-v1.zip`、`web/test-results-*` 及开发 `.log` 文件。
-  私有 ignored 配置不读取、不暂存。RO-8 未交付，本 Task 不宣称 Slice ready，也不自判 PASS。
-- 本轮测试执行（typecheck/eslint/prettier/2 组 unit/build/E2E）合计约 5–6 分钟，占本开发轮次
-  总时长约 22%，低于 30% 上限。
+- 完整 Python/Web/视觉 E2E、Unicode principal、wheel、生产 Docker 等 T4 门禁本轮未运行也未声称
+  通过，仍由 B 执行；本机无远程 CI。
+- `discoveryErrorResult` 容错化是本修复必要组成：不改则真实401/403无法分类、共享鉴权恢复无法
+  触发；仅触及错误 envelope 解析，未改任何成功路径。
+- 预存修改保留、未纳入 checkpoint：删除 `docs/pics/操作与任务.png`；未跟踪 `.DS_Store`、
+  `.t*.log`/`.mgmt.log`、`docs/pics/自动化页*.png`、`output/imagegen/slice45-task-center-v1.zip`、
+  `web/test-results-*`。私有 ignored 配置不读取、不暂存。
+- RO-8 未交付，本 Task 不宣称 Slice ready，不自判 PASS，不规划后续 Task。
+- 时间：测试命令实际执行累计约 4–5 分钟（含1次失败复现与两轮受影响批），本开发轮次总时长约
+  35–40 分钟（读 AGENTS/工作流/SLICE/TASK/规格与代码+实现+报告），测试占比约 12–14%，低于
+  30% 上限；未用等待凑比例。
 
 ## B Review Result
 
