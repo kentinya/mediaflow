@@ -7,13 +7,13 @@ Authority：已提交 [SLICE.md](SLICE.md) 与 [Development Workflow](docs/devel
 ```text
 Task ID: 45.5
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B CONTINUES FIXED-CANDIDATE ACCEPTANCE; PRIOR INJECTED-STATE P1 WITHDRAWN
+Next Action: SAME TASK — RESTORE RETAINED SAFETY ASSERTIONS; B OWNS REMAINING ACCEPTANCE
 ```
 
 ## Goal
@@ -306,93 +306,92 @@ b-review/recovery-probe-bounds.py`、`recovery-probe-scope.py`）：
 ## B Review Result
 
 ```text
-Reviewed candidate: 056ac8501109eb5f4acacc2903e2ff403ad5631a
-Product implementation: f155522fefaaca0d34cbb5d322c55c2ef4cb0ee6
-Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..056ac8501109eb5f4acacc2903e2ff403ad5631a
-Decision: REVIEW PENDING — prior injected-state P1 withdrawn; required B acceptance remains incomplete
-Previous bounded admission / exact-scope probe blocker: FIXED
-Slice outcomes/surfaces all satisfied: NO — RO-7 acceptance / RO-8 implementation pending
-Next: B CONTINUES REMAINING FULL ACCEPTANCE; NO DEVELOPER FIX ASSIGNED
+Reviewed candidate: 4d1556c12c1a895501897f21ffef62eaac7ce61d
+Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..4d1556c12c1a895501897f21ffef62eaac7ce61d
+Decision: FIX REQUIRED — retained safety regression assertions removed/weakened
+Task blockers: tests/test_operator_ui.py; mandatory test-preservation requirement
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-7 acceptance pending; RO-8 not delivered
+Next: SAME TASK FIX LOOP; no next Task / Closure Packet / Slice closure
 ```
 
-### 场景复核：撤回前次逐项资格P1，不要求Developer返工
+### 同一 Task 的精确修正
 
-用户追问“执行首项期间，系统是否实际会接受次项忽略”后，B复查生产准入、状态生产者和
-原证明。前次脚本先直接把原任务次项由pending写为processing，再调用
-RecognitionReviewService创建识别阻塞，最后真实ManualIgnoreService才可接受ignore。
-这不只是控制线程交错：它注入了尚未证明可由生产流程合法产生的业务状态。
-原始基础脚本更是直接写入ignored，二者都不能单独证明正常用户流程可触发该缺陷。
+本 Task Implementation Scope 第6步要求保留等义安全断言，允许删除索引专属测试；当前
+`tests/test_operator_ui.py` 却删除了仍保留行为的3个测试，并缩减了另1个测试。它们不读取
+FileIndex，覆盖计划详情、未就绪/过期项恢复、执行阻塞入口和独立显式授权，不能作为
+FileIndex 专属退出内容删除。独立 Preview 的 RO-8 完整退出不在45.5范围，不能提前据此
+豁免其仍保留行为。本结论是验收覆盖退化，不声称当前产品功能已发生运行时故障。
 
-B新增独立边界验证：同样经过真实API准备/确认、SQLite、Worker/锁/OrganizerExecutor，
-在首项真实COPY完成后尝试忽略原任务次项，但不改任何业务状态、不创建人工阻塞。
-实际次项仍为pending、无blocker，checkpoint只允许investigate；真实忽略服务以
-`invalid_action`拒绝，次项保持pending。随后两个已确认项正常完成。
+1. 对照 Task Base 的 `tests/test_operator_ui.py`，恢复以下4个方法的完整原有断言；其中
+   第1个方法仍存在但断言被缩减，后3个方法已被删除。无需修改产品或增加新功能：
+   - `test_persisted_preview_detail_renders_scope_occurrence_and_mutation_state`
+   - `test_persisted_preview_blockers_and_stale_items_expose_recovery_without_authority`
+   - `test_manual_execution_blocker_section_and_resolution_are_served`
+   - `test_manual_recovery_link_controls_are_served_and_bounded`
+2. 保持本 Task 已有索引退役断言。检查同文件的其余删减，只移除确属退役索引的断言；
+   仍保留行为的断言保留或明确迁移到等义覆盖，不用弱化断言解决失败。
+3. Developer 只运行以下直接受影响检查后提交同一45.5固定候选，报告实际结果：
 
-生产规则也相符：ProcessingCheckpoint仅为适用的待决定识别/元数据阻塞提供ignore；
-RecoveryAdmissionService拒绝未提供的动作；识别阻塞入库要求源项处于processing。
-正常TaskCoordinator.begin_item要求任务running并取得来源锁；不能用脚本绕过这些前提
-把已暂停原任务的pending项改为processing，再将其结果当成合法生产并发证据。
-此验证不证明任意其他交错都不可能，只证明上一轮声称的用户触发链尚未成立。
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest test_operator_ui
+.venv/bin/ruff check tests/test_operator_ui.py
+.venv/bin/ruff format --check tests/test_operator_ui.py
+python3 scripts/check_governance.py
+git diff --check
+```
 
-因此撤回前次P1及对应逐项刷新/读取故障/未知效果回归的Developer修正要求；未知效果
-分支也未独立复现，不据其假设阻塞验收。循环外读取是代码事实，但缺少可达触发与需求
-违背的完整证据时，不能仅凭注释、注入状态或防御性推测判FIX REQUIRED。
-需求仍要求成功/忽略/未知效果不重放；后续若有正常入口与合法状态转换的完整反例，
-B再据实际影响判定，不要求Developer实现“运行中任意忽略”新能力。
+B 已从 Base 原文提取这4个方法，在当前候选生产 `APP_JS` 上独立运行：**4 tests PASS**。
+原文件、加载器、命令、log/json保存在下方当前证据根的 `base-operator-ui-tests.py`、
+`retained-ui-assertions-proof.py`、`retained-ui-assertions.*`。因此无需假设新的用户并发或
+注入业务状态，也不要求恢复已退役索引产品。修正后 B 核对具体 delta，继续剩余
+Base..Head内容审查及受影响验收；全量门禁仍由 B 承担，不交回 Developer。
 
-复核证据仅在本机ignored目录：
-`.git/validation-evidence/2cf7efab4daf70547138ce8e36a99bb8ac3c63c6/task45.5/b-scenario-audit/`。
-`normal-ignore-boundary.py`及同名log/json、`normal-ignore-boundary-proof.json`保留实际
-输入/结果；脚本exit0表示上述正常拒绝边界通过。原反例日志不删除，但不再是有效P1证明。
-本轮产品代码未变，Task仍为High/T4、原ID/Base/Goal不变；状态恢复READY FOR B REVIEW。
-尚未完成的B门禁及Base..Head审查继续由B负责，不将未完成验收冒充PASS。
+### 已撤回的场景结论
 
-### 固定候选实际门禁与复用
+前次“运行首项时原任务pending次项可合法忽略”的P1保持撤回。原脚本人工upsert
+processing/blocker/ignored，未证明生产入口可达；正常入口独立复现为无blocker、仅允许
+investigate，ManualIgnoreService返回 `invalid_action`，状态不变。循环外读取资格是代码
+事实，但不据未成立的触发链要求逐项刷新、故障注入或实现“运行中任意忽略”。证据与
+撤回决定仍见本机 `.git/validation-evidence/2cf7efab4daf70547138ce8e36a99bb8ac3c63c6/task45.5/b-scenario-audit/`。
 
-本地稳定 ignored 根：
-`.git/validation-evidence/056ac8501109eb5f4acacc2903e2ff403ad5631a/task45.5/b-review/`。
-`run_gate.py` / 同名 `.json`、`.log` 记录精确命令/cwd/开始/退出/耗时；证据仅在本机，
-不声称远程CI可达。脚本/媒体均为隔离fixture，不读用户媒体/数据库/私有配置。
+### B 实际门禁与证据复用
 
-| B 门禁 | 实际结果 / 证据 |
+证据仅在本机稳定ignored目录，不声称远程CI可达：
+
+- 本轮：`.git/validation-evidence/4d1556c12c1a895501897f21ffef62eaac7ce61d/task45.5/b-acceptance/`
+- 匹配前轮：`.git/validation-evidence/056ac8501109eb5f4acacc2903e2ff403ad5631a/task45.5/b-review/`
+
+两候选只差 `TASK.md`；`preflight.json` 与前轮 `web-reuse-inputs.json`记录源码、测试、
+harness、配置、依赖和Web树/产物匹配。原始失败与重跑日志保留，不从PASS表中抹除。
+
+| B 门禁 | 实际结果与限制 |
 |---|---|
-| 前次P1独立复核 | `probe-bounds`：重复空游标2页停止，不同空游标2000页预算停止；`probe-scope`：不再stat/list错误父目录的兄弟项。API202、守卫零mutation、字节不变 |
-| 完整Python | `python-full`：2734 tests OK / skipped=7，289.394s；有ResourceWarning，原样保留 |
-| Python质量 | `python-quality`：governance、全仓ruff format/check、compileall、pip check、两示例validate、禁止依赖无匹配、diff check通过 |
-| Web静态/单测/build复用 | 上一B候选cbe1d1b的typecheck/lint/format/build及81 files /1181 tests PASS；`web-reuse-inputs.json`证明两候选仅TASK、media_discovery、test_scope_continuation改变，Web树均079741b421b92ee2df9dcb0a9126f121782d5dcd，依赖未安装/变更，现有四项build资产hash逐项一致 |
-| 完整普通E2E | `web-e2e`：240 PASS；独立output，无上轮trace目录冲突；不把上轮239+单例结果拼成全通过 |
-| 真实Python入口 | `real-live-files`：5 PASS；`real-inventory`：41 PASS；独立harness/output，完整实际API/SQLite/Worker |
-| wheel | `wheel-build`、`wheel-smoke` PASS；离开源码的安装导入/已有消费者通过；wheel与Web产物digest见`artifact-digests.json`。不据此宣称全部无索引CLI/API/Worker消费者已验证 |
-| 固定候选Docker | `docker-build` PASS；image ID sha256:064793181c7799ea789fd3f87ef398485352b759026458d0a62a3f29d50293db |
-| Docker真实行为 | `docker-scan-stability-mounted` PASS：变化重置/明确确认/Worker真实效果/重启不重放；`docker-recovery` PASS：6项浏览器场景及实际Worker执行，原始evidence/matrix/截图保留 |
-| 已撤回的注入状态反例 | `between-item-decision-correct-fixture`、`between-item-real-ignore-arriving-blocker`仅证明人为注入状态后的行为，不证明生产可达，不作为P1 |
+| 治理、Python质量、示例、禁止依赖 | 本轮governance PASS；复用前轮全仓ruff/compileall/pip check/两示例/禁止依赖/diff检查PASS |
+| Python全量 | 复用2734 tests OK / skipped7；ResourceWarning原样保留 |
+| Web静态、单测、build | 复用typecheck/lint/format/build，81 files /1181 tests PASS；Web树079741b421b92ee2df9dcb0a9126f121782d5dcd及四项产物hash一致 |
+| 普通与真实入口E2E | 复用普通240 PASS、real live-files 5 PASS、real inventory 41 PASS；真实API/SQLite/Worker、隔离fixture |
+| 已知边界独立复现 | 前轮重复空游标2页停止、不同游标2000页预算停止、错误父目录兄弟不stat/list；API202、零mutation、字节不变 |
+| 本轮原生视觉/Unicode | native-visual 2 PASS、native-unicode 1 PASS；16张九标签/桌面/窄屏等图已看；另6张滚动后的实际问题面板、真实创建计划/确认桌面和窄屏图已看。补图未点击执行，不以截图名替代完成态 |
+| wheel | 当前HEAD git archive清洁构建、smoke PASS；离开源码独立Python3.13 venv的12个真实CLI/API/Manual/Automation Worker消费者PASS；无8个退役模块 |
+| Docker消费者/行为 | 本轮安装消费者12 PASS；复用前轮稳定性mounted及recovery PASS，真实elapsed稳定性/变化重置/确认/Worker/当前版本重启非重放 |
+| Docker生产安全 | 当前HEAD清洁源码release-security PASS、restart-fault PASS，后者覆盖四常驻服务/离线Provider/重启/fence/未知效果非重放 |
+| 产物一致性 | 容器164个已安装模块与清洁源码逐项一致，wheel同样匹配；真实MediaFlowApi+wsgiref HTTP返回的4项Web资源bytes与容器/本机build逐项hash一致 |
+| 本轮覆盖保留反证 | Task Base四项原断言对当前生产资产4 PASS，证明这些断言仍适用，不应随索引退役删除 |
 
-初次 `docker-scan-stability` 因Colima不挂载系统临时目录失败，B用既有
-`MEDIAFLOW_SMOKE_TEMP_DIR` 指向本机可挂载的ignored临时根后通过，非产品缺陷。
-初次交错脚本使用错误fixture类失败，已更正；补充ignore脚本的诊断失败（源项未处于
-processing、初始waiting项被正确排除）日志全部保留；最终脚本包含业务状态注入，不能视为生产可达性证明。
-这些失败/重跑均计入测试耗时，不改变产品代码/断言/超时。
+旧wheel的smoke不能证明无索引包：本机ignored `build/lib`残留使旧wheel含8个已删除模块；
+该项退役证据已撤销，未清理用户build，改由git archive隔离清洁构建替代。新wheel SHA256
+`eff181a4870de8895d53ae17dce028e8b933382cc3b0e997e5418fafaa1d3860`。
+`packaging-correction.json`、`clean-wheel-identity.json`记录原因/替代；旧wheel消费者失败、
+误用Python3.14导致requires-python拒绝、Docker挂载/runner启动错误均留存并计时。
+本轮Docker安全镜像 `mediaflow:task45-5-4d1556c-security`，实际image ID
+`sha256:70d54e9c54794e13b6082d57ddbdde672fdf28775c04dff39f822b06f8f222f5`。
 
-已核对 Task Base..候选135文件manifest，并审查 live列表/只读配置/游标、来源证据/稳定性、
-恢复准入/执行/链级非重放、SQLite关键事务、消费者装配及相关Web失败恢复。完整135文件
-内容审查尚未全部结束；前次P1已撤回，剩余验收继续由B完成，不据manifest或测试数量宣称全审完成。
-独立Unicode/完整九页桌面与窄屏视觉、其余wheel/Docker无索引真实消费者、Docker
-restart-fault/release-security及剩余Base..Head审查仍pending，由 B 承担。已有Docker截图
-产物不等于完整视觉验收；已查看摘要/附件等3张桌面图，名为worker-completed的图仍显示
-已准入，不把文件标签视为完成态证据，详见`code-review-notes.json`。前次因已撤回判定停止的门禁仍待B完成；执行输入改变则刷新所分配验收，
-仅匹配输入/产物复用，满足全部Slice-final覆盖后不机械重跑Final。
+本轮已继续审查来源/稳定性、同pin恢复、Scope预算/探测、SQLite原子准入、CLI/API装配、
+纯来源证据、测试fixture替换及Web读取失败恢复；发现上述确实违反Task保留要求的删减后
+停止判PASS。135文件manifest已核对，**尚不宣称135文件所有内容审查完成**；其余测试/
+harness/Web差异仍由B在修正后续审，不能把全量通过当作整个range审查通过。
 
-预存21条dirty/untracked完整保留；仅修改B-owned TASK.md，不改A-owned Slice/Roadmap/Progress、
-冻结43或私有配置。不把旧版/A版升级兼容作为本次验收目标，也不复用该兼容结论；
-本Task的持久性门禁按fresh/当前版本重开重启与失败原子性验收。
-RO-7未获验收，RO-8未交付；不规划下一Task、不提交Closure Packet、不自行关闭Slice。
-
-上一轮测试/构建/质量累计（含失败/重跑、并行仍逐次累加）实测616.669秒；另保守计入
-30秒未包装短检查及收尾检查预算，共646.669秒（约10.78分钟）。从首个留存计时门禁
-2026-10-20T15:38:17.183210+00:00到2026-10-20T16:00:14.352900+00:00共21.95分钟，比例
-49.10% <50%；更早读文档/预检时间未猜测、未计入分母，未等待凑比例。
-逐命令原始计时及预算说明见本地`review-timing.json`。
-
-本次场景复核实测验证/质量检查共0.646秒，另计2秒短检查及提交预算；
-从首个计时验证起的保守区间87.07秒，占比3.04% <50%。
-未重跑匹配全量，原始计时见场景复核目录的`review-timing.json`。
+预存21条dirty/untracked完整保留；本轮只改B-owned TASK.md，不改产品/测试、A-owned
+Slice/Roadmap/Progress、冻结43或私有配置；无push。已停止本轮自启harness。
+本轮累计测试/build/quality含失败与并行逐次累加、短检查保守预算及实际总时间比例，
+记录于当前证据根 `review-timing.json`，小于50%；未等待凑比例。
