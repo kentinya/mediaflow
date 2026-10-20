@@ -1400,10 +1400,7 @@ function RunDetailPanel({
   // this same panel (RO-3/AC-6): a withheld Continue first admits the exact
   // zero-mutation remaining-scope Preview, and the operator then selects the
   // ready subset and explicitly confirms it.  No standalone Preview is needed.
-  const [remainingScope, setRemainingScope] = useState<{
-    readonly previewId: string;
-    readonly intentVersion: number;
-  } | null>(null);
+  //
   // The durable remaining-scope preparation the operator admitted.  The
   // bounded observation and the complete analysis run in the resident Worker,
   // so this page follows the exact discovery until its Preview is linked.  It
@@ -1418,7 +1415,13 @@ function RunDetailPanel({
   const [remainingOverwrite, setRemainingOverwrite] = useState(false);
   const [remainingCleanup, setRemainingCleanup] = useState(false);
   const [remainingBusy, setRemainingBusy] = useState(false);
-  const [remainingMessage, setRemainingMessage] = useState<string | null>(null);
+  // Only the outcome of an explicit operator action (a refused confirmation, a
+  // lost confirmation response, a reconciliation result) is stored here.  The
+  // ordinary preparation lifecycle is derived from the bounded discovery read
+  // below, so no effect copies server state into component state.
+  const [remainingMessageState, setRemainingMessage] = useState<string | null>(
+    null,
+  );
   // The exact remaining-scope admission this page submitted, so a lost
   // response can be reconciled against *this* request rather than guessed from
   // the most recent run.
@@ -1429,8 +1432,14 @@ function RunDetailPanel({
     readonly allowOverwrite: boolean;
     readonly allowSourceCleanup: boolean;
   } | null>(null);
-  const [remainingAdmittedExecutionId, setRemainingAdmittedExecutionId] =
-    useState<string | null>(null);
+  // The exact recovery context this page already admitted.  It binds the
+  // suppression of the confirmable summary to the admitted Preview so a cached
+  // discovery read cannot reopen execution, and never treats another run's
+  // historical execution as the current admission.
+  const [remainingAdmitted, setRemainingAdmitted] = useState<{
+    readonly previewId: string;
+    readonly executionId: string;
+  } | null>(null);
   // The durable exact-Preview recovery the run overview already exposes is the
   // read authority for a paused remaining-scope confirmation.  A refresh,
   // reconnect or restart restores the same summary (no execution yet) or the
@@ -1445,17 +1454,6 @@ function RunDetailPanel({
     durableRecovery?.recoveryKind === "exact_preview"
       ? durableRecovery.executionId
       : null;
-  // Derive the effective summary from the durable overview plus the local
-  // submission state; no effect or state sync is needed, and the exact intent
-  // version is resolved from the Preview itself at confirmation time.  A
-  // restored summary therefore never admits or executes anything.
-  const effectiveRemainingScope =
-    remainingScope ??
-    (durableRecoveryPreviewId !== null && remainingAdmittedExecutionId === null
-      ? { previewId: durableRecoveryPreviewId, intentVersion: 0 }
-      : null);
-  const admittedRemainingExecutionId =
-    remainingAdmittedExecutionId ?? durableRecoveryExecutionId;
 
   useEffect(() => {
     const opener =
@@ -1557,11 +1555,8 @@ function RunDetailPanel({
       setRemainingSelection(null);
       setRemainingOverwrite(false);
       setRemainingCleanup(false);
-      setRemainingMessage(
-        "已受理剩余范围的零变更观察。常驻 Worker 将在配置的稳定区间满足后生成计划摘要。",
-      );
+      setRemainingMessage(null);
       setRemainingDiscoveryId(result.model.discoveryId);
-      setRemainingScope(null);
     },
   });
 
@@ -1570,8 +1565,7 @@ function RunDetailPanel({
   // reaches a terminal state; it never repeats the admission POST.
   const remainingPreparationQuery = useQuery({
     queryKey: ["operations.remaining-scope-preparation", remainingDiscoveryId],
-    queryFn: () =>
-      fetchOrganizeDiscovery(token, remainingDiscoveryId ?? ""),
+    queryFn: () => fetchOrganizeDiscovery(token, remainingDiscoveryId ?? ""),
     enabled: token !== null && remainingDiscoveryId !== null,
     retry: false,
     refetchOnWindowFocus: false,
@@ -1596,32 +1590,42 @@ function RunDetailPanel({
       ? remainingPreparationQuery.data.model
       : undefined;
 
-  useEffect(() => {
-    if (remainingPreparation === undefined) return;
-    if (remainingPreparation.previewId !== null) {
-      // The preparation linked its exact zero-mutation Preview: review it in
-      // this same panel and confirm the ready subset.
-      setRemainingScope({
-        previewId: remainingPreparation.previewId,
-        intentVersion: 0,
-      });
-      setRemainingDiscoveryId(null);
-      setRemainingMessage(
-        "已在当前界面生成剩余范围的零变更计划摘要。检查后选择就绪子集并明确确认继续。",
-      );
-      return;
-    }
-    if (
-      ["failed", "cancelled"].includes(remainingPreparation.status) ||
-      (remainingPreparation.status === "partial_success" &&
-        !remainingPreparation.previewId)
-    ) {
-      setRemainingMessage(
-        remainingPreparation.nextAction ||
-          "剩余范围准备未能完成；请按提示修复后重新发起。",
-      );
-    }
-  }, [remainingPreparation]);
+  // Derive every ordinary remaining-scope state from the durable reads plus
+  // the local admission state.  No effect copies server state into component
+  // state: the linked Preview, the terminal-preparation notice and the
+  // suppress-while-admitted rule are all computed here on each render.
+  const remainingPreparationTerminal =
+    remainingPreparation !== undefined &&
+    remainingPreparation.previewId === null &&
+    (["failed", "cancelled"].includes(remainingPreparation.status) ||
+      remainingPreparation.status === "partial_success");
+  const linkedRemainingPreviewId =
+    remainingPreparation?.previewId ?? durableRecoveryPreviewId;
+  const admittedRemainingPreviewId =
+    remainingAdmitted?.previewId ??
+    (durableRecoveryPreviewId !== null && durableRecoveryExecutionId !== null
+      ? durableRecoveryPreviewId
+      : null);
+  // A summary is confirmable only while its exact Preview has not yet been
+  // admitted by this page.  A cached discovery read of the same Preview never
+  // reopens execution after confirmation.
+  const effectiveRemainingScope =
+    linkedRemainingPreviewId !== null &&
+    linkedRemainingPreviewId !== admittedRemainingPreviewId
+      ? { previewId: linkedRemainingPreviewId, intentVersion: 0 }
+      : null;
+  const admittedRemainingExecutionId =
+    remainingAdmitted?.executionId ?? durableRecoveryExecutionId;
+  // The operator-action outcome always wins; otherwise the current durable
+  // preparation read supplies the visible lifecycle notice.
+  const remainingMessage =
+    remainingMessageState ??
+    (remainingPreparation === undefined || effectiveRemainingScope !== null
+      ? null
+      : remainingPreparationTerminal
+        ? remainingPreparation.nextAction ||
+          "剩余范围准备未能完成；请按提示修复后重新发起。"
+        : "已受理剩余范围的零变更观察。常驻 Worker 将在配置的稳定区间满足后生成计划摘要。");
 
   const confirmRemainingScope = async () => {
     if (
@@ -1658,10 +1662,12 @@ function RunDetailPanel({
         allowSourceCleanup: remainingCleanup,
       });
       if (result.ok) {
-        setRemainingScope(null);
         setRemainingSelection(null);
         setRemainingSubmitted(null);
-        setRemainingAdmittedExecutionId(result.model.executionId);
+        setRemainingAdmitted({
+          previewId: effectiveRemainingScope.previewId,
+          executionId: result.model.executionId,
+        });
         setRemainingMessage(
           `已受理 ${remainingSelection.length} 项；常驻 Worker 将执行已确认的剩余范围。`,
         );
@@ -1716,9 +1722,13 @@ function RunDetailPanel({
       });
       if (result.ok && result.model.outcome === "known") {
         setRemainingSubmitted(null);
-        setRemainingScope(null);
         setRemainingSelection(null);
-        setRemainingAdmittedExecutionId(result.model.executionId);
+        if (result.model.executionId !== null) {
+          setRemainingAdmitted({
+            previewId: remainingSubmitted.previewId,
+            executionId: result.model.executionId,
+          });
+        }
         setRemainingMessage(
           "已读回本次确认的持久状态：该精确子集已经受理，可打开关联执行查看逐项结果。 ",
         );

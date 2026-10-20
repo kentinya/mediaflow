@@ -1524,16 +1524,24 @@ const AUTHORITY_PREVIEW = {
 
 /** The durable remaining-scope preparation document the backend admits. */
 function remainingScopeDiscoveryDocument(
-  overrides: { readonly previewId?: string | null } = {},
+  overrides: {
+    readonly previewId?: string | null;
+    readonly status?: string;
+    readonly nextAction?: string;
+  } = {},
 ): Record<string, unknown> {
   const previewId = overrides.previewId ?? null;
+  const status =
+    overrides.status ?? (previewId === null ? "queued" : "completed");
+  const nextAction =
+    overrides.nextAction ?? "wait for the resident Processing Worker";
   return {
     journey: "discovery",
     discoveryId: "discovery-remaining",
     resourceLibraryId: "source",
     storageId: "source-storage",
     configurationSnapshotId: "snapshot-remaining",
-    status: previewId === null ? "queued" : "completed",
+    status,
     version: 1,
     selection: {
       scopeCount: 1,
@@ -1612,7 +1620,7 @@ function remainingScopeDiscoveryDocument(
       },
     },
     sources: [],
-    nextAction: "wait for the resident Processing Worker",
+    nextAction,
     failure: null,
     sideEffects: "none",
     zeroMutation: true,
@@ -2031,7 +2039,11 @@ describe("selected run lifecycle controls", () => {
       }),
       extraGet: (url) =>
         url.endsWith("/discoveries/discovery-remaining")
-          ? jsonResponse(remainingScopeDiscoveryDocument({ previewId: "preview-remaining" }))
+          ? jsonResponse(
+              remainingScopeDiscoveryDocument({
+                previewId: "preview-remaining",
+              }),
+            )
           : url.endsWith("/preview-remaining")
             ? jsonResponse(preview)
             : null,
@@ -2135,7 +2147,9 @@ describe("selected run lifecycle controls", () => {
       extraGet: (url) =>
         url.endsWith("/discoveries/discovery-remaining")
           ? jsonResponse(
-              remainingScopeDiscoveryDocument({ previewId: "preview-remaining" }),
+              remainingScopeDiscoveryDocument({
+                previewId: "preview-remaining",
+              }),
             )
           : url.endsWith("/preview-remaining")
             ? jsonResponse(preview)
@@ -2244,5 +2258,99 @@ describe("selected run lifecycle controls", () => {
     expect(
       posts.some((post) => post.url.endsWith("/remaining-scope-previews")),
     ).toBe(false);
+  });
+
+  it("surfaces a terminal remaining-scope preparation failure without a summary", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        actions: [
+          lifecycleAction("cancel", true, null),
+          lifecycleAction("resume", false, "authority required", {
+            available: true,
+            reason: null,
+            method: "POST",
+            path: "/api/v1/tasks/task-001/remaining-scope-previews",
+            requiresConfirmation: false,
+            sideEffects: "none",
+            durableOutcome: "durable exact Preview",
+            nextAction: "review then authorize",
+          }),
+        ],
+      }),
+      extraGet: (url) =>
+        url.endsWith("/discoveries/discovery-remaining")
+          ? jsonResponse(
+              remainingScopeDiscoveryDocument({
+                status: "failed",
+                nextAction: "修复来源可读性后重新发起剩余范围准备",
+              }),
+            )
+          : null,
+      respond: (url) => {
+        if (url.endsWith("/remaining-scope-previews")) {
+          return jsonResponse(
+            remainingScopeDiscoveryDocument({ previewId: null }),
+            202,
+          );
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await user.click(
+      within(controls).getByRole("button", {
+        name: "在当前界面生成剩余范围摘要",
+      }),
+    );
+
+    // The terminal preparation keeps its durable next action visible and never
+    // fabricates a confirmable summary.
+    expect(
+      await screen.findByText(/修复来源可读性后重新发起剩余范围准备/),
+    ).toBeVisible();
+    expect(screen.queryByRole("region", { name: "新计划摘要" })).toBeNull();
+    expect(posts.some((post) => post.url.endsWith("/execute"))).toBe(false);
+  });
+
+  it("does not reopen a confirmed summary when the overview carries its admitted execution", async () => {
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      overview: {
+        continuation: {
+          continuationId: "preview-recovery",
+          status: "previewed",
+          command: "preview",
+          jobId: null,
+          newTaskId: null,
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          recoveryKind: "exact_preview",
+          recoveryPreviewId: "preview-remaining",
+          executionId: "execution-remaining",
+          nextAction: "review the exact Preview",
+          sideEffects: "none",
+        },
+      },
+      respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?status=paused&run=task-001");
+
+    // The overview already proves this exact Preview was admitted: the cached
+    // summary is not reopened for another confirmation, and no POST is sent.
+    await screen.findByRole("region", { name: "运行详情" });
+    expect(screen.queryByRole("region", { name: "新计划摘要" })).toBeNull();
+    expect(posts).toHaveLength(0);
   });
 });
