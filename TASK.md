@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-7; S-8 / S-9; AC-7; affected RO-1–6 safety and journeys
-Next Action: B COMPLETES ACCEPTANCE; A RESOLVES CROSS-ATTEMPT IGNORE AUTHORITY IF REQUIRED
+Next Action: B COMPLETES ORIGINAL BASE..HEAD REVIEW AND ASSIGNED ACCEPTANCE; NO NEW DEVELOPER FIX
 ```
 
 ## Goal
@@ -306,7 +306,7 @@ Review range: 3e2cb31aca211a7dcb7fa7c4ba4883d55b951974..90b697f3b689b57d1d8a1550
 Decision: NOT PASS — prior P1 classification withdrawn; B acceptance incomplete
 Previous frozen mixed-scope blocker: independently fixed; legal Right executes without replaying Left
 Slice outcomes/surfaces all satisfied: NO — RO-7 / RO-8 pending
-Next: B FINISHES ORIGINAL BASE..HEAD REVIEW / ASSIGNED T4; AUTHORITY SCOPE QUESTION TO A
+Next: B FINISHES ORIGINAL BASE..HEAD REVIEW / ASSIGNED T4; NO PROVEN NEW PRODUCT BLOCKER HERE
 ```
 
 main固定上述候选；治理PASS、Git/workspace可写，预存图片删除、未跟踪截图/日志/ZIP/
@@ -336,24 +336,41 @@ MetadataReviewService令原Right进入等待，再通过真实原任务recovery 
 原Right持久为ignored，新读准备资格Right=False，但已准入的关联执行仍COPY Right并成功。
 
 代码原因已确认：`_run_worker_items`在循环前读取一次恢复资格，循环内复用读时集合。
-该测试通过服务/API注入并发事件，未证明普通Web操作或自然调度可到达这一完整时序。
+该测试在正常暂停之后手工把Right改回Processing，再通过服务/API注入并发事件；
+这与正常暂停将Pending/Processing改为Paused的流程不同，不能证明普通用户可到达该时序。
 更关键的是，原任务的忽略与已明确确认的关联执行属于不同TaskItem；现有需求没有明确
 规定前者会撤销后者的执行授权。准备资格变为False也不能直接等同于既有执行权限已撤销。
 
 因此撤回上轮“本应已忽略、仍执行即P1”的确定判断，以及据此强制Developer逐项刷新并
 终止第二项的修正清单。该反例证明缓存行为，不独立证明产品违反必需功能；不是候选PASS。
 
-### A范围问题与后续分工
+### 正常入口调查结论与后续分工
 
-- 现有需求要求忽略决定持久、恢复不自动重放已忽略项、逐项结果独立，以及精确确认与合法
-  已准入上下文。它们没有把任务内忽略定义成对同一路径所有已授权尝试的全局取消。
-- 若产品需要旧任务的后续忽略影响已经确认的关联执行，交A明确决定适用范围、是否拒绝
-  过时操作或撤销尚未执行项、在途效果边界及用户可见结果；B不得自行添加跨尝试撤权语义。
-  不能将这个问题延伸为永久忽略文件或影响未来扫描。
-- Developer无须按已撤回清单增加新产品行为，不为本次语义问题另造Task；若A修订Contract，
-  B在同一Task45.5调整实施与受影响验证。已有Task目标、Base、High/T4和安全约束保持。
-- B继续负责真实入口可达性、原Base..Head审查、原生失败定位及Required Tests既定完整T4；
-  不将门禁或证据工作转交Developer。现有匹配证据保留，未执行门禁仍pending，不机械重跑Final。
+对`f7a7117`独立核对，产品/测试代码与`90b697f`一致（两者间只改TASK.md）。
+正常协调器暂停、真实API、精确摘要和真实Worker/Executor COPY三组隔离场景通过：
+
+| 正常旧条目状态 | 旧条目的忽略动作 | 实际继续整理范围与结果 |
+|---|---|---|
+| Processing经真实暂停变成Paused | 不提供ignore；直接请求400；迟到MetadataReview创建被事务拒绝且无残留 | Left、Right均合法确认并各完成一次 |
+| 暂停前已有待处理MetadataReview | 提供ignore，执行期间请求200 | Right被排除在精确摘要之外；仅Left执行，Right持久忽略 |
+| MetadataReview已合法解决 | 新checkpoint无ignore，请求400；旧等待checkpoint请求409 | Left、Right均合法确认并各完成一次 |
+
+按钮显示读取后端`permittedActionIds`，只在含ignore时显示；以上为代码检查及真实接口/
+Worker验证，不冒充浏览器点击。第一组在Left真实完成后再试忽略Right仍拒绝，第三组也验证
+旧页面过期提交拒绝；第二组允许处理的旧文件根本不在新执行内，因此没有忽略与执行冲突。
+
+结论限定为这些正常状态转换：上轮注入反例不能证明用户能在旧任务忽略同一已确认来源，
+不构成本轮Developer产品返工依据。缓存事实保留，未证明的新并发语义不作为A待决阻塞，
+不增加跨尝试撤权或永久忽略功能。若以后真实入口出现矛盾决定，再按可达性及授权契约复核。
+
+Developer无须按已撤回清单增加行为；Task45.5目标、Base、High/T4及安全约束保持。
+B继续原Base..Head审查、原生失败定位及既定完整T4，不把门禁或证据工作转交Developer。
+本调查只解决该可达性疑问，不等于Task PASS，也不豁免现有原生失败和未完成门禁。
+
+本机稳定证据：`.git/validation-evidence/f7a711764f022d77934223673255088c60938ad2/task45.5/old-task-ignore/`
+中的`probe.py`、`result.json`、`README.md`。三组正常流程均通过，所有媒体为临时fixture。
+首次探测把实际400误断言为409而失败，回调导致的unknown不算产品缺陷，原stderr保留；
+两次验证连同治理/文档检查保守计2秒，本轮调查已超过120秒，验证占比低于50%。
 
 ### 本轮实际证据与原生续跑失败核查
 
@@ -382,4 +399,4 @@ MetadataReviewService令原Right进入等待，再通过真实原任务recovery 
 
 RO-7仍未通过、RO-8未实现，不新造Task，不提交Closure Packet，不关闭Slice。
 
-本次需求语义复核仅修改B-owned Task，无产品改动、无测试执行；治理与文档差异检查通过。
+本次正常入口调查仅修改B-owned Task，无产品改动；上述受控验证、治理及文档差异检查通过。
