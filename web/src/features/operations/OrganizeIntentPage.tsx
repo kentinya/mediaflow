@@ -36,6 +36,7 @@ import type {
 import {
   organizeIntentQueryKey,
   organizeIntentQueryOptions,
+  organizePreviewQueryKey,
 } from "./organize-query";
 import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -52,6 +53,10 @@ import {
   operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
+import {
+  planContextSearch,
+  readPlanContext,
+} from "../../shared/navigation/plan-context";
 
 function displayEnum(value: string): string {
   const labels: Readonly<Record<string, string>> = {
@@ -169,6 +174,12 @@ function ChoiceEditor({
         );
         void queryClient.invalidateQueries({
           queryKey: [organizeIntentQueryKey],
+        });
+        // A saved choice invalidates the earlier plan as execution evidence.
+        // Re-reading the same durable plan shows its real historical state
+        // instead of leaving a stale "current" summary on screen.
+        void queryClient.invalidateQueries({
+          queryKey: [organizePreviewQueryKey],
         });
         return;
       }
@@ -335,12 +346,15 @@ export function OrganizeIntentPage() {
   const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   // The exact plan this page's own analysis produced. It is rendered in this
   // same page; a refresh or reconnect re-reads the saved plan from its durable
   // identity instead of admitting a second analysis.
-  const [planPreviewId, setPlanPreviewId] = useState<string | null>(null);
+  const [analysisPreviewId, setAnalysisPreviewId] = useState<string | null>(
+    null,
+  );
   const intentQuery = useQuery(organizeIntentQueryOptions(token, intentId));
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) =>
@@ -349,7 +363,23 @@ export function OrganizeIntentPage() {
     onMutate: () => setPreviewError(null),
     onSuccess: (result) => {
       if (result.ok && result.model !== undefined) {
-        setPlanPreviewId(result.model.previewId);
+        setAnalysisPreviewId(result.model.previewId);
+        // The URL carries the exact plan identity so a hard reload, Back/Forward
+        // or a re-opened link restores this plan instead of running another
+        // analysis. The backend intent read is still the durable authority.
+        void navigate({
+          to: "/operations/organize/intent/$intentId",
+          params: { intentId },
+          search: {
+            ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
+            ...operationsReturnSearch(operationsReturn),
+            ...planContextSearch(result.model.previewId),
+          },
+          replace: true,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: [organizeIntentQueryKey, intentId],
+        });
         return;
       }
       const code = result.ok ? null : result.code;
@@ -394,6 +424,21 @@ export function OrganizeIntentPage() {
           );
         }
         const intent = data.model;
+        // Restore the plan this intent already produced. Precedence: the plan
+        // this visit's own analysis just created, then the URL's exact plan
+        // when it still matches the durable association (or the backend
+        // projection is absent), then the backend's durable latest plan.
+        // A stale URL plan never overrides a newer durable plan, and every
+        // candidate is re-read from its own authenticated plan route and
+        // checked against this intent before any summary or control renders.
+        const durablePlanId = intent.latestPlan?.previewId ?? null;
+        const urlPlanId = readPlanContext(searchParams);
+        const planPreviewId =
+          analysisPreviewId ??
+          (urlPlanId !== null &&
+          (durablePlanId === null || durablePlanId === urlPlanId)
+            ? urlPlanId
+            : durablePlanId);
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -486,6 +531,7 @@ export function OrganizeIntentPage() {
             {planPreviewId !== null && (
               <OrganizePlanConfirmation
                 previewId={planPreviewId}
+                expectedIntentId={intent.intentId}
                 heading="当前整理计划（零变更摘要）"
                 onAdmitted={(admitted) => {
                   if (admitted.taskId !== null && operationsReturn !== null) {

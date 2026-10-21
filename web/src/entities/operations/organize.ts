@@ -358,6 +358,14 @@ export interface OrganizeIntentModel {
   readonly failure: OrganizeFailureModel | null;
   readonly zeroMutation: boolean;
   readonly previewRequired: boolean;
+  /**
+   * The durable plan this intent already produced, projected by identity only.
+   * A reload, return or reconnect re-reads this exact plan on the same page
+   * instead of admitting a second analysis. `null` means no plan exists yet.
+   * `current === false` marks a plan that is now historical evidence and can
+   * never be executed.
+   */
+  readonly latestPlan: OrganizePlanIdentityModel | null;
   readonly options: OrganizeOptionsModel;
   readonly items: readonly OrganizeIntentItemModel[];
   readonly actions: {
@@ -366,6 +374,17 @@ export interface OrganizeIntentModel {
     readonly preview?: OrganizeActionModel;
     readonly execute: OrganizeActionModel;
   };
+}
+
+/** Bounded identity and lifecycle facts of one durable fixed plan. */
+export interface OrganizePlanIdentityModel {
+  readonly previewId: string;
+  readonly status: string;
+  readonly current: boolean;
+  readonly intentVersion: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly truncated: boolean;
 }
 
 export interface OrganizeWorkerEvidenceModel {
@@ -728,6 +747,22 @@ function normalizeAllowedIdentities(
   });
 }
 
+function normalizeLatestPlan(value: unknown): OrganizePlanIdentityModel | null {
+  const source = optionalRecord(value, "latestPlan");
+  if (source === null) {
+    return null;
+  }
+  return {
+    previewId: text(source, "previewId"),
+    status: text(source, "status"),
+    current: flag(source, "current"),
+    intentVersion: count(source, "intentVersion"),
+    createdAt: text(source, "createdAt"),
+    updatedAt: text(source, "updatedAt"),
+    truncated: flag(source, "truncated"),
+  };
+}
+
 export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
   const source = readRecord(payload, "organize_intent");
   let status: OrganizeIntentStatus;
@@ -761,6 +796,7 @@ export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
       source["previewRequired"] === undefined
         ? false
         : flag(source, "previewRequired"),
+    latestPlan: normalizeLatestPlan(source["latestPlan"]),
     options: normalizeOptions(source["options"]),
     items: rawItems.map((item) => normalizeIntentItem(item)),
     actions: {

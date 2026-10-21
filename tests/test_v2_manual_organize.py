@@ -378,6 +378,7 @@ class _JourneyFixtureMixin:
                 worker=worker,
                 worker_service=worker_service,
                 configuration=configuration,
+                provider=provider,
                 index=library_view,
                 source=source,
                 target=target,
@@ -760,6 +761,98 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual(
                 (), value.repository.list_manual_executions_for_preview(preview["previewId"])
+            )
+
+    def test_intent_exposes_its_latest_durable_plan_for_same_page_reload(self) -> None:
+        """A reload re-reads the exact plan this intent produced, without analysis.
+
+        The same-page journey only holds the plan identity in browser state, so
+        a hard reload, a return from the execution page or a reconnect must
+        recover it from the durable intent/plan association. The read is a
+        zero-mutation projection: no second analysis, Provider call, Task,
+        Preview record, execution authority or media change.
+        """
+
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            status, before = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertIsNone(before["latestPlan"])
+            self._assert_secret_free(before, "intent before analysis")
+
+            preview = self._create_preview(value, intent)
+            provider_calls = value.provider.calls
+            tasks_before = len(value.repository.list_tasks())
+            plans_before = len(value.repository.list_manual_previews(intent["intentId"]))
+            source_before = list(value.source.mutations)
+            target_before = list(value.target.mutations)
+
+            status, restored = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status)
+            latest_plan = restored["latestPlan"]
+            self.assertEqual(preview["previewId"], latest_plan["previewId"])
+            self.assertTrue(latest_plan["current"])
+            self.assertFalse(latest_plan["truncated"])
+            self.assertEqual(preview["intentVersion"], latest_plan["intentVersion"])
+            self.assertEqual(preview["status"], latest_plan["status"])
+            self._assert_secret_free(restored, "restored intent plan")
+
+            # Re-reading the same intent restores the same plan identity and
+            # starts no analysis, Provider lookup, Task, plan or mutation.
+            status, reread = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual(latest_plan, reread["latestPlan"])
+            self.assertEqual(provider_calls, value.provider.calls)
+            self.assertEqual(tasks_before, len(value.repository.list_tasks()))
+            self.assertEqual(
+                plans_before,
+                len(value.repository.list_manual_previews(intent["intentId"])),
+            )
+            self.assertEqual(source_before, value.source.mutations)
+            self.assertEqual(target_before, value.target.mutations)
+            self.assertEqual(
+                (),
+                value.repository.list_manual_executions_for_preview(preview["previewId"]),
+            )
+
+            # A saved choice makes the earlier plan historical evidence; the
+            # association still names that exact plan, so the page can explain
+            # the state instead of silently re-analysing or guessing another.
+            item = intent["items"][0]
+            status, edited = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "A",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, edited)
+            status, historical = self._request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual(preview["previewId"], historical["latestPlan"]["previewId"])
+            self.assertFalse(historical["latestPlan"]["current"])
+            self.assertEqual(
+                plans_before,
+                len(value.repository.list_manual_previews(intent["intentId"])),
             )
 
     def test_viewer_and_manager_without_execute_permission_render_no_control(self) -> None:

@@ -67,6 +67,7 @@ from mediaflow.application.operations_lifecycle import (
     manual_action_matrix_operator_document,
     manual_execution_operator_document,
     manual_execution_plan_evidence_operator,
+    manual_intent_latest_plan_document,
     manual_intent_operator_document,
     manual_preview_operator_document,
     manual_step_error_document,
@@ -11780,10 +11781,51 @@ class MediaFlowApi:
             "nextAction": readiness.get("nextAction"),
         }
 
+    def _organize_intent_latest_plan(self, intent_id: object) -> dict[str, object] | None:
+        """Bounded identity of this intent's latest durable organize plan.
+
+        A same-page plan summary is only ever projected from a durable record,
+        so a browser reload, reconnect or restart re-reads the plan this intent
+        already produced instead of admitting a second analysis.  The read is
+        the bounded, non-publishing ``latest_readonly`` projection: it never
+        marks evidence stale merely because the page was opened.  Only identity
+        and lifecycle facts are published here; the complete plan is read from
+        its own Preview detail route after normal authentication.
+        """
+
+        previews = getattr(self, "_manual_previews", None)
+        if previews is None or not isinstance(intent_id, str) or not intent_id:
+            return None
+        latest_readonly = getattr(previews, "latest_readonly", None)
+        if not callable(latest_readonly):
+            return None
+        try:
+            preview = latest_readonly(intent_id)
+        except ManualPreviewError:
+            # No plan exists yet for this intent: the supported next action is
+            # the explicit analysis the same page offers.
+            return None
+        return {
+            "previewId": preview.preview_id,
+            "status": preview.status.value,
+            "current": bool(preview.current),
+            "intentVersion": preview.intent_version,
+            "createdAt": preview.created_at.isoformat(),
+            "updatedAt": preview.updated_at.isoformat(),
+            "truncated": bool(preview.truncated),
+        }
+
     def _organize_intent_document(self, intent, principal: ResolvedApiPrincipal) -> dict:
         document = manual_intent_operator_document(intent.document(include_audit=False))
         document["journey"] = "organize"
         intent_id = document.get("intentId")
+        # The durable plan association is read-only evidence: the intent page
+        # restores the exact plan it already produced after a reload/return
+        # without re-analysing, re-authorizing or guessing a recent Task.
+        latest_plan = self._organize_intent_latest_plan(intent_id)
+        document["latestPlan"] = (
+            manual_intent_latest_plan_document(latest_plan) if latest_plan is not None else None
+        )
         items = [item for item in document.get("items") or [] if isinstance(item, dict)]
         open_intent = document.get("status") == "open"
         manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions

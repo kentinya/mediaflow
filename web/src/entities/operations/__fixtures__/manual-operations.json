@@ -371,6 +371,7 @@
       }
     ],
     "journey": "organize",
+    "latestPlan": null,
     "limits": {
       "intentMaxItems": 100
     },
@@ -568,6 +569,7 @@
       }
     ],
     "journey": "organize",
+    "latestPlan": null,
     "limits": {
       "intentMaxItems": 100
     },
@@ -701,6 +703,220 @@
       ]
     },
     "previewRequired": true,
+    "sideEffects": "none",
+    "status": "open",
+    "updatedAt": "2026-09-04T12:00:00+00:00",
+    "version": 2,
+    "zeroMutation": true
+  },
+  "organizeIntentWithPlan": {
+    "actions": {
+      "choice": {
+        "available": true,
+        "durableOutcome": "a durable optimistic choice revision is stored and every earlier Preview of this intent becomes historical evidence",
+        "method": "POST",
+        "nextAction": "edit one item choice with its current intent and item versions",
+        "path": "/api/v1/operations/organize/intents/<uuid>/items/{itemId}/choice",
+        "reason": null,
+        "sideEffects": "none"
+      },
+      "execute": {
+        "available": false,
+        "durableOutcome": null,
+        "method": null,
+        "nextAction": "generate a fresh analysis summary after the last choice change",
+        "path": null,
+        "reason": "exact execution is only offered from a current, complete fixed plan",
+        "sideEffects": "none"
+      }
+    },
+    "actor": "contract-operator",
+    "configurationSnapshotId": "active-1",
+    "createdAt": "2026-09-04T12:00:00+00:00",
+    "execution": "not_available_in_this_task",
+    "failure": null,
+    "intentId": "<uuid>",
+    "items": [
+      {
+        "allowedMetadataIdentities": [
+          {
+            "mediaType": "movie",
+            "provider": "tmdb",
+            "providerId": "129",
+            "title": "One",
+            "year": 2001
+          }
+        ],
+        "choice": {
+          "classificationPolicyId": "A",
+          "metadata": null,
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "recognitionTypeId": "A"
+        },
+        "createdAt": "2026-09-04T12:00:00+00:00",
+        "failure": null,
+        "itemId": "<uuid>",
+        "nextAction": "continue to a later manual Preview",
+        "position": 0,
+        "source": {
+          "extension": "mkv",
+          "fileId": null,
+          "filename": "One.2001.mkv",
+          "occurrenceState": "verified",
+          "path": "One.2001.mkv",
+          "resourceLibraryId": "library",
+          "scanStatus": null,
+          "size": 12,
+          "storageId": "source"
+        },
+        "status": "ready",
+        "updatedAt": "2026-09-04T12:00:00+00:00",
+        "version": 2
+      }
+    ],
+    "journey": "organize",
+    "latestPlan": {
+      "createdAt": "2026-09-04T12:00:00+00:00",
+      "current": true,
+      "intentVersion": 2,
+      "previewId": "<uuid>",
+      "status": "previewed",
+      "truncated": false,
+      "updatedAt": "2026-09-04T12:00:00+00:00"
+    },
+    "limits": {
+      "intentMaxItems": 100
+    },
+    "nextAction": "continue to a later manual Preview",
+    "optionLimit": 100,
+    "options": {
+      "classificationPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Movie classification",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "TV classification",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "configurationSnapshotId": "active-1",
+      "metadataPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "C",
+          "mediaType": "movie",
+          "name": "Special metadata",
+          "operation": null,
+          "providerId": "tmdb"
+        }
+      ],
+      "namingPolicies": [
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "A",
+          "mediaType": "movie",
+          "name": "Movie naming",
+          "operation": null,
+          "providerId": null
+        },
+        {
+          "conflictStrategy": null,
+          "enabled": true,
+          "id": "B",
+          "mediaType": "tv",
+          "name": "TV naming",
+          "operation": null,
+          "providerId": null
+        }
+      ],
+      "organizePolicies": [
+        {
+          "conflictStrategy": "manual",
+          "enabled": true,
+          "id": "A",
+          "mediaType": null,
+          "name": "Move",
+          "operation": "move",
+          "providerId": null
+        },
+        {
+          "conflictStrategy": "skip",
+          "enabled": true,
+          "id": "B",
+          "mediaType": null,
+          "name": "Copy",
+          "operation": "copy",
+          "providerId": null
+        }
+      ],
+      "recognitionTypes": [
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "A",
+          "metadataPolicyId": "A",
+          "name": "Movie",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-A"
+        },
+        {
+          "classificationPolicyId": "B",
+          "description": null,
+          "enabled": true,
+          "id": "B",
+          "metadataPolicyId": "B",
+          "name": "TV",
+          "namingPolicyId": "B",
+          "organizePolicyId": "B",
+          "policyId": "type-B"
+        },
+        {
+          "classificationPolicyId": "A",
+          "description": null,
+          "enabled": true,
+          "id": "C",
+          "metadataPolicyId": "C",
+          "name": "Special",
+          "namingPolicyId": "A",
+          "organizePolicyId": "A",
+          "policyId": "type-C"
+        }
+      ]
+    },
     "sideEffects": "none",
     "status": "open",
     "updatedAt": "2026-09-04T12:00:00+00:00",

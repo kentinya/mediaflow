@@ -325,6 +325,9 @@ class ManualOperationsContractTests(unittest.TestCase):
         )
         self.assertEqual(201, status)
         intent_item = organize_intent["items"][0]
+        # Before any analysis the intent has no durable plan association, so the
+        # same-page journey offers only the explicit analysis action.
+        self.assertIsNone(organize_intent["latestPlan"])
         status, organize_intent_choice = _request(
             api,
             f"/api/v1/operations/organize/intents/{organize_intent['intentId']}"
@@ -351,6 +354,16 @@ class ManualOperationsContractTests(unittest.TestCase):
             api, f"/api/v1/operations/organize/previews/{organize_preview['previewId']}"
         )
         self.assertEqual(200, status)
+        # The intent's durable plan association is what a hard reload, return or
+        # reconnect re-reads to restore this exact fixed plan on the same page.
+        status, organize_intent_with_plan = _request(
+            api, f"/api/v1/operations/organize/intents/{organize_intent['intentId']}"
+        )
+        self.assertEqual(200, status)
+        latest_plan = organize_intent_with_plan["latestPlan"]
+        self.assertEqual(organize_preview["previewId"], latest_plan["previewId"])
+        self.assertTrue(latest_plan["current"])
+        self.assertFalse(latest_plan["truncated"])
         # Everything up to and including the exact Preview is proven
         # zero-mutation by observation: the spy adapter raises on any write.
         self.assertEqual([], value.source.mutations)
@@ -394,6 +407,7 @@ class ManualOperationsContractTests(unittest.TestCase):
             "resourceLibrarySelected": selected_library_matrix,
             "organizeIntent": organize_intent,
             "organizeIntentChoice": organize_intent_choice,
+            "organizeIntentWithPlan": organize_intent_with_plan,
             "organizePreview": organize_preview,
             "organizePreviewDetail": organize_preview_detail,
             "organizeExecution": organize_execution,

@@ -1105,6 +1105,29 @@ def manual_intent_operator_document(document: dict[str, object]) -> dict[str, ob
     return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
 
 
+def manual_intent_latest_plan_document(document: dict[str, object]) -> dict[str, object]:
+    """Bound the identity of one intent's latest durable organize plan.
+
+    A same-page plan summary is re-read from this durable association after a
+    reload, return or reconnect, so the operator never has to re-run an
+    analysis to find the plan they already reviewed.  Only the plan identity
+    and its lifecycle facts are published; the complete fixed plan stays behind
+    its own Preview detail route and normal authorization.  The projection runs
+    through the same recursive guard as every other operator document.
+    """
+
+    bounded = {
+        "previewId": _bounded_identifier(document.get("previewId")),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
+        "current": bool(document.get("current")),
+        "intentVersion": _bounded_counter(document.get("intentVersion")),
+        "createdAt": _bounded_evidence_text(document.get("createdAt"), limit=64),
+        "updatedAt": _bounded_evidence_text(document.get("updatedAt"), limit=64),
+        "truncated": bool(document.get("truncated")),
+    }
+    return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
+
+
 def _bounded_recognition_option_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list | tuple):
         return []

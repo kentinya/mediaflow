@@ -47,6 +47,12 @@ export interface OrganizeAdmitted {
 
 export interface OrganizePlanConfirmationProps {
   readonly previewId: string;
+  /**
+   * The intent this journey owns. When set, the read plan must name exactly
+   * this intent; a plan restored from a stale or tampered hint is never shown
+   * as this intent's plan and offers no control.
+   */
+  readonly expectedIntentId?: string;
   /** Operator-facing heading of the journey that owns this summary. */
   readonly heading: string;
   /** Confirm verb bound to the exact reviewed subset size. */
@@ -378,7 +384,17 @@ export function OrganizePlanConfirmation(props: OrganizePlanConfirmationProps) {
                 </Button>
               </div>
             </StatusBanner>
-          ) : preview === undefined ? null : (
+          ) : preview === undefined ? null : props.expectedIntentId !==
+              undefined && preview.intentId !== props.expectedIntentId ? (
+            <StatusBanner variant="error" title="计划不属于此整理意图">
+              <p>
+                读取到的固定计划没有绑定到当前整理意图，可能来自其他意图或已过期的地址。没有显示该计划，也没有提供任何执行操作。
+              </p>
+              <p className="mf-dashboard-meta">
+                请返回整理意图，从当前选择重新生成分析摘要。
+              </p>
+            </StatusBanner>
+          ) : (
             <PlanBody
               preview={preview}
               previewId={props.previewId}

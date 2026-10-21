@@ -98,6 +98,26 @@ function intentDocument(): Json {
   return value;
 }
 
+/**
+ * The exact intent document the real API returns after this intent produced a
+ * plan: the same bounded intent plus its durable latest-plan association. The
+ * checked-in fixture for this shape is captured by
+ * `tests/test_manual_operations_contract.py` from a real intent GET.
+ */
+function intentDocumentWithPlan(previewId = "preview-1", current = true): Json {
+  const value = intentDocument();
+  value["latestPlan"] = {
+    previewId,
+    status: "previewed",
+    current,
+    intentVersion: 2,
+    createdAt: "2026-09-04T12:00:00+00:00",
+    updatedAt: "2026-09-04T12:00:00+00:00",
+    truncated: false,
+  };
+  return value;
+}
+
 function previewDocument(): Json {
   const value = document("organizePreviewDetail");
   value["previewId"] = "preview-1";
@@ -601,6 +621,241 @@ describe("V2 manual Organize journey", () => {
     await screen.findByRole("heading", { name: "整理执行情况" });
     expect(screen.getByText(/执行记录 execution-1/)).toBeVisible();
     expect(screen.getByText("结果记录")).toBeVisible();
+  });
+
+  it("restores the durable fixed plan after a hard reload without re-analysing", async () => {
+    // The intent document is the durable association: a reload, a return from
+    // the execution page or a reconnect reads this exact plan again instead of
+    // admitting another analysis or guessing a recent Task.
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1"
+      ) {
+        return jsonResponse(intentDocumentWithPlan());
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/previews/preview-1"
+      ) {
+        return jsonResponse(previewDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByRole("heading", {
+      name: "当前整理计划（零变更摘要）",
+    });
+    expect(screen.getByText(/计划 preview-1/)).toBeVisible();
+    expect(screen.getByText(/计划 preview-1/).textContent).toContain("当前");
+    expect(
+      await screen.findByRole("button", { name: "确认整理 1 项" }),
+    ).toBeEnabled();
+    // No analysis POST was made: the plan was re-read from its durable
+    // identity, and nothing was admitted.
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
+  it("restores the admitted execution of a reloaded plan without re-authorizing", async () => {
+    const existing = executionDocument();
+    existing["previewId"] = "preview-1";
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1"
+      ) {
+        return jsonResponse(intentDocumentWithPlan());
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/previews/preview-1"
+      ) {
+        return jsonResponse(previewDocument());
+      }
+      if (
+        call.method === "GET" &&
+        call.url.startsWith(
+          "/api/v1/operations/organize/executions?previewId=preview-1",
+        )
+      ) {
+        return jsonResponse({
+          journey: "organize",
+          items: [existing],
+          limit: 100,
+          total: 1,
+          truncated: false,
+        });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByRole("heading", {
+      name: "该计划已有持久执行记录",
+    });
+    expect(screen.getByRole("link", { name: /查看已有执行/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/operations/organize/execution/execution-1"),
+    );
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/execute"),
+      ),
+    ).toBe(false);
+  });
+
+  it("restores the same plan on the reloaded journey URL and never re-runs analysis", async () => {
+    const user = userEvent.setup();
+    let planPersisted = false;
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1"
+      ) {
+        // Before the explicit analysis the real intent has no plan; after it
+        // the durable association returns the exact plan that was created.
+        return jsonResponse(
+          planPersisted ? intentDocumentWithPlan() : intentDocument(),
+        );
+      }
+      if (
+        call.method === "POST" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1/previews"
+      ) {
+        planPersisted = true;
+        return jsonResponse(previewDocument(), 201);
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/previews/preview-1"
+      ) {
+        return jsonResponse(previewDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations/organize/intent/intent-1");
+    await screen.findByRole("heading", { name: "整理意图" });
+    await user.click(
+      await screen.findByRole("button", { name: "生成分析摘要" }),
+    );
+    await screen.findByRole("heading", {
+      name: "当前整理计划（零变更摘要）",
+    });
+    const reloadUrl = router.history.location.href;
+    expect(
+      new URLSearchParams(router.history.location.search).get("plan"),
+    ).toBe("preview-1");
+    const postsBefore = calls.filter((call) => call.method === "POST").length;
+
+    cleanup();
+    renderApp(reloadUrl);
+    await screen.findByRole("heading", { name: "整理意图" });
+    expect(
+      await screen.findByRole("heading", {
+        name: "当前整理计划（零变更摘要）",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText(/计划 preview-1/)).toBeVisible();
+    expect(calls.filter((call) => call.method === "POST")).toHaveLength(
+      postsBefore,
+    );
+    // Re-reading the plan is inert: no Execute was submitted.
+    expect(
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/execute"),
+      ),
+    ).toBe(false);
+  });
+
+  it("shows a restored historical plan truthfully without an execute control", async () => {
+    const historical = previewDocument();
+    historical["current"] = false;
+    const actions = historical["actions"] as Json;
+    (actions["execute"] as Json)["available"] = false;
+    (actions["execute"] as Json)["reason"] =
+      "this fixed plan is historical evidence and can no longer be executed";
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1"
+      ) {
+        return jsonResponse(intentDocumentWithPlan("preview-1", false));
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/previews/preview-1"
+      ) {
+        return jsonResponse(historical);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByRole("heading", {
+      name: "当前整理计划（零变更摘要）",
+    });
+    expect(screen.getByText(/计划 preview-1/).textContent).toContain("历史");
+    expect(screen.getByText(/暂不可用：/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "确认整理 1 项" }),
+    ).toBeDisabled();
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+  });
+
+  it("refuses a restored plan that belongs to another intent", async () => {
+    const foreign = previewDocument();
+    foreign["intentId"] = "intent-other";
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1"
+      ) {
+        return jsonResponse(intentDocumentWithPlan("preview-other"));
+      }
+      if (
+        call.method === "GET" &&
+        call.url === "/api/v1/operations/organize/previews/preview-other"
+      ) {
+        return jsonResponse(foreign);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByRole("heading", {
+      name: "计划不属于此整理意图",
+    });
+    expect(screen.queryByText(/计划 preview-other/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 
   it("returns an admitted plan to the preserved task-center context", async () => {
