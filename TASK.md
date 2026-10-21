@@ -15,7 +15,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER FIXES TASK45.6 SAME TASK; B RECHECKS FIXED CANDIDATE
+Next Action: DEVELOPER FIXES TASK45.6 PLAN RELOAD CONTINUITY; B RECHECKS FIXED CANDIDATE
 ```
 
 ## Goal
@@ -333,7 +333,7 @@ python3 scripts/check_governance.py
 PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement test_scan_retirement test_file_index_retirement
 PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize test_organize_preparation
 PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation test_scope_continuation test_task_center_recovery_lineage test_metadata_correction_continuation
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_task_definition_preview test_automation_preview_grant_gate test_automation_definition_execution test_automation_authorized_execution_matrix
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once test_preview_retirement test_automation_definition_execution test_automation_authorized_execution_matrix
 PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_organize test_v2_rules_workspace_previews test_task_persistence
 ```
 
@@ -517,68 +517,79 @@ cd web && npx playwright test tests/e2e/{manual-organize,automation,manual-opera
 ## B Review Result
 
 ```text
-Reviewed: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..c71ec218ca46efa7d73e53c9c82b29f3af88bd91
+Reviewed candidate: b765198f2a71fe82b7169061e162986351cdbc37
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..b765198f2a71fe82b7169061e162986351cdbc37
+Report successor: 3d6099111d95b5bcb1859a525f663bd856b2b34b — TASK.md only; executable inputs unchanged
 Decision: FIX REQUIRED
-Review stage: early proven-blocker review; full range acceptance is incomplete, not PASS
-Acceptance runs: governance PASS; test_preview_retirement 8/8; existing router/component reproduction 1 passed, 19 unselected; real public CLI and authenticated API reproductions confirm blockers; full gates NOT STARTED
-Task blockers: analysis-only CLI creates formal execution backlog; separate executable OrganizePreview journey remains; dedicated Preview retirement guards remain
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 incomplete
-Next: SAME TASK FIX LOOP — Developer affected checks; B owns fixed-candidate full T4 acceptance
+Review stage: early proven-blocker review; complete Base..Head/T4 acceptance remains pending
+Task blocker: current same-page fixed plan is lost from the intent UI on hard reload / return
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 continuity incomplete
+Next: SAME TASK FIX LOOP; B owns corrected-candidate full T4 acceptance
 ```
 
-Candidate `c71ec218ca46efa7d73e53c9c82b29f3af88bd91` matches report successor
-`c6c0824` in all executable inputs (`git diff` shows only the Candidate Head line in TASK).
-Local reproduction scripts/logs and the compact command record are under
-`.git/validation-evidence/c71ec218ca46efa7d73e53c9c82b29f3af88bd91/task45.6/b-review/`;
-these local artifacts are not claimed remotely accessible. Developer's reported full runs are
-handoff facts, not B's completed acceptance. Packaging/browser/security/restart and full diff/test
-review remain pending B after correction; no gate is waived or transferred to Developer.
-Prior Task45.5's B result at Task Base records RO-7 PASS and RO-1–6 retained/rechecked;
-that conclusion and 45.4's disclosed exception remain unchanged. The older parent progress prose
-does not erase that delivery. RO-8 is still incomplete, so no new Task or Closure Packet is created.
+### 已核实交付与证据边界
 
-### Required correction — shared analysis and first-deployment Preview absence
+- governance PASS；branch main，开工 HEAD 为上述 report successor。已记录并保留所有预存
+  图片删除、日志、截图、压缩包和 `.DS_Store`；未访问私有配置、运行库或真实媒体。
+- 上轮 CLI 冲突分析阻塞已修正：通过公共 `organize` 不带 `--execute`，真实临时根与
+  fake Provider 得到 item `dry_run`、正式 pending confirmations 0→0、无执行授权，
+  来源和目标 bytes 不变。`test_preview_retirement` 12/12 通过。
+- 上轮独立 `OrganizePreviewPage`/路由已删除，摘要改为当前 intent/Run once 内嵌。
+  现有 `OrganizeRouter.test.tsx` 与 `routes/router.test.tsx` 共24例通过，含普通旧路由拒绝；
+  这不替代生产 browser/Worker 验收。
+- 上轮 Preview 专用退役分支已删除。真实认证 WSGI 请求原 API 得到共享
+  `404 not_found / route was not found`；Jobs/Tasks新增及两侧Storage mutation均为零。
+  B 初次脚本将普通404文案误写为 `route not found` 导致自身断言失败；已按实际公共
+  not-found文案修正并复跑通过，原始失败日志保留，不记作产品失败。
+- 新独立 router/component 复现1例失败：沿现有 intent 页点击“生成分析摘要”，显示计划后
+  以同一实际URL重新挂载真实router和空query cache（模拟硬刷新），摘要消失；POST计数
+  仍1，无自动重分析。这使用既有API契约fixture/真实normalizer，不是生产浏览器或Worker证明。
+- 真实 Files→intent→choice→plan API 再读证明：原计划GET仍200且身份一致，intent GET
+  不包含该计划身份，两侧媒体零变更。结合UI复现，缺陷是计划上下文不可恢复，不是计划
+  数据丢失、已发生媒体重复执行或数据库损坏。
 
-1. Make public CLI `organize` without `--execute` use the same application-level analysis/plan
-   semantics as Web preparation. In the reproduced real target-conflict case, only findings/plans
-   may be recorded: no `WAITING_CONFIRM`, pending ConflictConfirmation or other formal execution
-   backlog. Preserve real execute/recovery blocker persistence and full plan/attachment evidence;
-   do not merely suppress the UI, mark blockers resolved, or replace the production chain with mocks.
-   Add real CLI-entry regression assertions for conflict and the other required unready branches,
-   compare meaningful plan/target/attachment/policy evidence with Web, and verify no mutation or
-   execution authority. Existing actual reproduction yields exit 0, unauthorized analysis Task,
-   item `waiting_confirm`, and pending confirmations 0→1 with both media byte sets unchanged.
-2. Remove `OrganizePreviewPage`, its `/operations/organize/preview/$previewId` route and all actual
-   navigation/deep-link producers. In particular, `OrganizeIntentPage` generates analysis then
-   navigates to it; `AutomationRunOncePage.finalize` and the API `previewPath` also point there.
-   Keep complete pinned plan storage and confirmation authority; show the summary and exact
-   confirmation in the current organize/recovery/Run once context through existing shared behavior.
-   Do not replace the old page with a redirect, retired-route guard or hidden executable alias.
-3. Follow surviving links from Operations/Execution/intent/Run once to their supported destination;
-   keep return context, unknown-admission reconciliation, exact subset/effect controls, old-pin and
-   completed/uncertain non-replay. Replace the old-page tests with same-context journey assertions
-   and an ordinary authenticated not-found assertion for the removed route.
-4. Remove the surviving explicit `preview-analyses` compatibility branches in `service_api.py`
-   (including the focused definitions handler), not just their underlying service. Unsupported old
-   input must fall through the ordinary authenticated route/type boundary, without dedicated
-   Preview-unavailable messages or guards. Retain legitimate local Rules/schedule calculations.
-5. Recheck deleted-test coverage against still-supported consumers. The retirement test module
-   currently tests absence/rejection/schema only; it does not prove its docstring's shared analysis,
-   no-execution-authority and grant claims. Cover the surviving shared analysis/plan and native
-   same-context confirmation through their real entry points; do not manufacture unreachable states.
+本机稳定证据：
+`.git/validation-evidence/b765198f2a71fe82b7169061e162986351cdbc37/task45.6/b-review/`，
+含复现源码、原始日志及简短运行记录；不声称外部可访问。
+已审候选清单、上轮修正diff及相关真实入口；完整Task Base..Head、全量Python/Web/E2E、
+production/native/wheel/installed-consumer/Docker/security/restart等T4验收尚未完成。
+依workflow §6，在已证明P1后提前返回，不机械启动昂贵全量；没有豁免，也不交回Developer。
+Developer报告的全量结果只作为交接事实，不冒充B验收；其报告的Python harness 403属于B
+后续证据/环境事项，本轮未独立重跑，不作为新的产品阻塞或要求Developer扩大工作。
 
-Developer reruns changed/new tests and directly affected groups only, including:
+### Required correction — same-context durable plan continuity
+
+1. 修复 `OrganizeIntentPage.tsx` 的计划恢复：当前计划身份只在 `useState(null)` 中，
+   仅分析POST成功后赋值；硬刷新、离开后返回或执行页“返回整理意图”都会丢失摘要入口。
+   通过既有整理计划/意图持久关联或经过后端验证的精确上下文恢复该份计划，继续内嵌展示，
+   不恢复独立Preview页，不新建队列/分析引擎，不在读取/刷新时POST重分析或调用Provider。
+2. 保留原intent/pin/版本/来源和返回筛选；当前与历史/已受理计划必须如实区分。
+   已受理/提交未知时恢复对应持久执行历史或有界核对，不猜最近任务、不自动重新授权/提交。
+   计划过期或当前账号不可读时清楚说明并给出合法动作；不能用另一次分析吞掉旧受理证据。
+   原因只是丢失UI关联，不能用清库、删除旧计划或标成功来修复。
+3. 将硬刷新/真实返回路径回归纳入现有同页旅程：先从已有来源入口生成计划，刷新后显示
+   同一计划且分析POST/Provider/执行准入计数不增加；确认后返回/刷新仍显示原执行，
+   失效及未知响应保持拒绝/核对和非重放。fixture必须对应真实API；不制造不可达组合。
+
+### Developer — 本轮受影响验证
+
+Web（cwd `web/`）：
 
 ```bash
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement test_final_integration test_v2_manual_organize test_manual_organize_execution test_organize_preparation test_v2_automation_run_once
-cd web && npm run test -- run src/routes/router.test.tsx src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/AutomationRouter.test.tsx
+npm run test -- run src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationRouter.test.tsx src/routes/router.test.tsx
+npm run typecheck
 ```
 
-Update filenames if obsolete-page tests are moved; keep equivalent safety assertions. Run changed-file
-static checks, typecheck and `git diff --check`. B retains ownership of full regression, native,
-wheel/image/security/restart gates on the next fixed candidate; none are assigned back to Developer.
+如调整后端只读关联/投影，仓库根补跑实际受影响组：
 
-B also notes a harness concern for its own later acceptance: the restart smoke's schedule command
-was changed to organize, but its fencing fixture still advertises preview and its descriptions are
-stale. No failure is claimed from strings alone; B must use the existing harness entry, establish
-an actual failure if any, and repair environment/evidence work without inventing a product blocker.
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest test_v2_manual_organize test_manual_operations_contract test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution
+```
+
+加修改文件的eslint/prettier或ruff检查、governance与`git diff --check`。如需原生验证只跑
+对应修改场景，不跑全量/构建发布矩阵，不把B的环境修复与完整证据工作交回Developer。
+B保留本Task原定固定候选完整diff、独立关键复现及T4全部适用门禁；匹配执行输入才复用。
+
+Task45.5在Task Base记录的RO-7 PASS及先前Task45.4接受/验证例外不变；父文档的旧pending
+措辞留给A事实闭合，不倒改既有结论。本轮不新造Task、不提交Closure Packet、不宣称
+SLICE READY FOR A REVIEW，不改变Slice/Roadmap/Progress边界或自行关闭。
