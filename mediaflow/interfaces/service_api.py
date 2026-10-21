@@ -2382,50 +2382,6 @@ class MediaFlowApi:
             return self._automation_run_once_detail_projection(
                 parts[5], parts[6], method, environ, start_response, principal
             )
-        if (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "operations"]
-            and parts[3] == "automation"
-            and parts[4] == "preview-analyses"
-            and method == "GET"
-        ):
-            # The independent durable exact-analysis admission product is
-            # retired; shared organize analysis runs in the ordinary prepare
-            # flow.  Old inputs get an ordinary not-found after normal auth.
-            self._require(principal, ApiPermission.READ)
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "durable preview analysis is not available",
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "preview-analyses"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "durable preview analysis is not available",
-            )
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "operations", "automation"]
-            and parts[4] == "preview-analyses"
-            and method == "POST"
-            and parts[6] in {"pause", "cancel", "resume"}
-        ):
-            self._require(principal, ApiPermission.READ)
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "durable preview analysis is not available",
-            )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -2950,22 +2906,6 @@ class MediaFlowApi:
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
             return self._response(start_response, 200, response)
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "preview-analyses"
-            and method == "POST"
-        ):
-            # The independent durable exact-analysis admission product is
-            # retired; shared organize analysis runs in the ordinary prepare
-            # flow.  Old inputs get an ordinary not-found after normal auth.
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "durable preview analysis is not available",
-            )
         if parts[:5] == [
             "api",
             "v1",
@@ -11886,7 +11826,7 @@ class MediaFlowApi:
             "execute": {
                 "available": False,
                 "reason": (
-                    "exact execution is only offered from a current, complete Preview"
+                    "exact execution is only offered from a current, complete fixed plan"
                     if execute_permitted
                     else "the connected API principal does not hold the "
                     "execute_manual_organize permission"
@@ -11895,7 +11835,7 @@ class MediaFlowApi:
                 "path": None,
                 "sideEffects": "none",
                 "durableOutcome": None,
-                "nextAction": "create a fresh exact Preview after the last choice change",
+                "nextAction": ("generate a fresh analysis summary after the last choice change"),
             },
         }
         document["limits"] = {"intentMaxItems": self._organize_intent_limit()}
@@ -11983,11 +11923,11 @@ class MediaFlowApi:
                 "execute reviewed manual work"
             )
         elif not document.get("current"):
-            reason = "this Preview is historical evidence and can no longer be executed"
+            reason = "this fixed plan is historical evidence and can no longer be executed"
         elif document.get("truncated"):
-            reason = "this Preview is truncated and cannot authorize exact work"
+            reason = "this fixed plan is truncated and cannot authorize exact work"
         elif not executable:
-            reason = "no Preview item is current, complete and executable"
+            reason = "no plan item is current, complete and executable"
         elif not worker["ready"]:
             reason = str(
                 worker.get("durableState")
@@ -13146,7 +13086,7 @@ class MediaFlowApi:
                         "sideEffects": "none",
                         "retrySafe": True,
                         "currentVersion": current.updated_at.isoformat(),
-                        "nextAction": "refresh the run and request the exact Preview again",
+                        "nextAction": "refresh the run and request a fresh plan summary again",
                     },
                 )
         repository = self._repository
@@ -14603,19 +14543,6 @@ class MediaFlowApi:
                     expected_version=expected_version,
                     expected_digest=expected_digest,
                 ),
-            )
-        if len(parts) == 7 and parts[6] == "preview-analyses":
-            # The independent durable exact-analysis admission product is
-            # retired; shared organize analysis runs in the ordinary prepare
-            # flow.  Old inputs get an ordinary not-found after normal auth.
-            if method != "GET":
-                return self._error(start_response, 405, "method_not_allowed", "GET required")
-            self._require(principal, ApiPermission.READ)
-            return self._error(
-                start_response,
-                404,
-                "not_found",
-                "durable preview analysis is not available",
             )
         if len(parts) == 7 and parts[6] == "run-once":
             # Definition-bound Run once on the focused lifecycle base.  The

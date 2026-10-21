@@ -1,17 +1,19 @@
 /**
- * Durable manual intent detail: optimistic choice editing and exact Preview.
+ * Durable manual intent detail: optimistic choice editing and the same-page
+ * fixed plan confirmation.
  *
  * Every control comes from the backend document: the enabled pinned options,
  * per-item ``version`` values and the advertised ``actions`` availability.
  * A choice edit submits the intent and item versions the operator actually
  * saw, so a concurrent change is rejected atomically instead of silently
- * overwriting another edit. Editing a choice invalidates earlier Preview
- * evidence, and the page never treats a Preview as execution authority.
+ * overwriting another edit. Editing a choice invalidates earlier analysis
+ * evidence, and the page never treats the plan summary as execution authority.
  *
- * The durable exact-Preview admission carries a client-generated request
- * identity: a lost or malformed response is an *unknown* durable outcome, so
- * the exact context is retained (principal-scoped) and reconciled by its own
- * request id before any resubmission is offered.
+ * The explicit analysis persists one complete zero-mutation plan and renders it
+ * in this page (no separate Preview destination). Only an explicitly confirmed
+ * ready subset is admitted; a lost or malformed admission response is an
+ * *unknown* durable outcome that is reconciled by its own bounded read before
+ * resubmission is offered.
  */
 
 import { useState } from "react";
@@ -35,6 +37,7 @@ import {
   organizeIntentQueryKey,
   organizeIntentQueryOptions,
 } from "./organize-query";
+import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -162,7 +165,7 @@ function ChoiceEditor({
       if (value.ok) {
         setResult(null);
         onSaved(
-          "选择已持久保存；此意图此前生成的预览已成为历史证据。执行前请生成新的预览。",
+          "选择已持久保存；此意图此前生成的计划摘要已成为历史证据。执行前请重新生成分析摘要。",
         );
         void queryClient.invalidateQueries({
           queryKey: [organizeIntentQueryKey],
@@ -334,10 +337,11 @@ export function OrganizeIntentPage() {
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // The exact plan this page's own analysis produced. It is rendered in this
+  // same page; a refresh or reconnect re-reads the saved plan from its durable
+  // identity instead of admitting a second analysis.
+  const [planPreviewId, setPlanPreviewId] = useState<string | null>(null);
   const intentQuery = useQuery(organizeIntentQueryOptions(token, intentId));
-  // The principal identity the backend confirms for this token: the retained
-  // exact-Preview intent's session key is scoped to it, so another principal's
-  // unknown outcome can never be reconciled as this one's result.
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) =>
       submitOrganizePreview(token, { intentId, expectedVersion }),
@@ -345,14 +349,7 @@ export function OrganizeIntentPage() {
     onMutate: () => setPreviewError(null),
     onSuccess: (result) => {
       if (result.ok && result.model !== undefined) {
-        void navigate({
-          to: "/operations/organize/preview/$previewId",
-          params: { previewId: result.model.previewId },
-          search: {
-            ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
-            ...operationsReturnSearch(operationsReturn),
-          },
-        });
+        setPlanPreviewId(result.model.previewId);
         return;
       }
       const code = result.ok ? null : result.code;
@@ -439,7 +436,9 @@ export function OrganizeIntentPage() {
             <section className="mf-count-section">
               <h3>整理分析</h3>
               <p className="mf-dashboard-meta">
-                生成当前选择的零变更整理分析摘要；执行前必须使用与当前选择一致的分析。
+                生成当前选择的零变更整理分析摘要；分析本身不会修改
+                Storage，也不会取得执行权限。
+                检查下方完整计划后，只有明确确认的就绪子集才会被准入执行。
               </p>
               <div className="mf-actions">
                 <Button
@@ -484,6 +483,36 @@ export function OrganizeIntentPage() {
                 </StatusBanner>
               )}
             </section>
+            {planPreviewId !== null && (
+              <OrganizePlanConfirmation
+                previewId={planPreviewId}
+                heading="当前整理计划（零变更摘要）"
+                onAdmitted={(admitted) => {
+                  if (admitted.taskId !== null && operationsReturn !== null) {
+                    // A task-center-originated journey returns to its preserved
+                    // list context with the admitted run selected.
+                    void navigate({
+                      to: "/operations",
+                      search: operationsLandingSearch(
+                        operationsReturn,
+                        admitted.taskId,
+                      ),
+                    });
+                    return;
+                  }
+                  void navigate({
+                    to: "/operations/organize/execution/$executionId",
+                    params: { executionId: admitted.executionId },
+                    search: {
+                      ...(filesReturn === null
+                        ? {}
+                        : filesReturnSearch(filesReturn)),
+                      ...operationsReturnSearch(operationsReturn),
+                    },
+                  });
+                }}
+              />
+            )}
           </div>
         );
       }}

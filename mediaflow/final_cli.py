@@ -1258,7 +1258,12 @@ def final_main(
                     or coordinator.cancellation_observed(task.task_id)
                 )
 
-            analysis_only = False
+            # Not executing is the shared zero-mutation analysis: it records the
+            # complete plan, attachments, conflicts and unready findings without
+            # creating a formal execution backlog (WAITING_CONFIRM, review or
+            # ConflictConfirmation) and without any execution authority.  A real
+            # execute/recovery run keeps its original blocker responsibilities.
+            analysis_only = not execute
             service = MediaOrganizerService(
                 strategy,
                 StorageScanner(storages, logger=operational_logger),
@@ -1436,7 +1441,7 @@ def final_main(
             else:
                 coordinator.finish(task.task_id, summary)
             stdout.write(f"Task ID: {task.task_id}\n")
-            stdout.write(render_summary(summary, execute=execute))
+            stdout.write(render_summary(summary, execute=execute, analysis_only=analysis_only))
             paused = coordinator.require(task.task_id).status is PersistentTaskStatus.PAUSED
             return 130 if cancelled else 75 if paused else 1 if summary.failed else 0
     except (OSError, ValueError, LookupError, RuntimeError) as error:
@@ -1514,21 +1519,40 @@ def _continue_paused_scope(
     )
 
 
-def render_summary(summary: MediaOrganizerBatchResult, *, execute: bool) -> str:
+def render_summary(
+    summary: MediaOrganizerBatchResult, *, execute: bool, analysis_only: bool = False
+) -> str:
     lines = ["", "SUMMARY", "", f"Mode: {'EXECUTE' if execute else 'DRY_RUN'}"]
     for item in summary.items:
-        status = (
-            item.execution.status.value
-            if item.execution
-            else "FAILED"
-            if item.error
-            else "NEED_CONFIRM"
-            if item.plan and item.plan.conflicts
-            else "SKIPPED"
-        )
+        if item.execution is not None:
+            status = item.execution.status.value
+        elif item.error:
+            status = "FAILED"
+        elif analysis_only:
+            # The analysis ran to completion and recorded its finding: no
+            # operator confirmation item exists for it, so the summary must not
+            # claim NEED_CONFIRM/SKIPPED.
+            status = "ANALYSIS"
+        elif item.plan and item.plan.conflicts:
+            status = "NEED_CONFIRM"
+        else:
+            status = "SKIPPED"
         details = []
         if item.plan and item.plan.attachment_plans:
             details.append(f"attachments={len(item.plan.attachment_plans)}")
+        if item.plan and item.plan.conflicts:
+            details.append(
+                "findings=" + ",".join(sorted({value.type.value for value in item.plan.conflicts}))
+            )
+        if analysis_only and item.evidence is not None:
+            details.append(f"outcome={item.evidence.outcome}")
+            plan_section = item.evidence.section("plan")
+            if plan_section.available and isinstance(plan_section.value, dict):
+                next_action = plan_section.value.get("nextAction")
+                if isinstance(next_action, str) and next_action:
+                    details.append(f"next={next_action}")
+            elif plan_section.unavailable_reason:
+                details.append(f"next={plan_section.unavailable_reason}")
         if item.error:
             details.append(item.error)
         elif item.execution and item.execution.errors:

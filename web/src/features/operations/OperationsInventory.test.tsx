@@ -1972,16 +1972,27 @@ describe("selected run lifecycle controls", () => {
     expect(posts).toHaveLength(0);
   });
 
-  it("opens the linked exact Preview with the selected run as its return context", async () => {
+  it("shows the linked zero-mutation plan summary in the run detail panel", async () => {
     const user = userEvent.setup();
     const posts: { url: string; body: unknown }[] = [];
+    // The run's durable continuation points at one complete zero-mutation plan.
+    // That plan is summarized and confirmed in this same panel: no separate
+    // Preview destination is opened and no navigation is produced.
+    const preview = remainingScopePreviewFixture();
+    preview["previewId"] = "preview-recovery";
+    preview["intentId"] = "intent-recovery";
+    preview["intentVersion"] = 2;
+    (preview["actions"] as Record<string, Record<string, unknown>>)["execute"]![
+      "path"
+    ] = "/api/v1/operations/organize/previews/preview-recovery/execute";
+
     stubLifecycleJourney({
       posts,
       overview: {
         continuation: {
           continuationId: "preview-recovery",
           status: "previewed",
-          command: "preview",
+          command: "organize",
           jobId: null,
           newTaskId: null,
           itemLimit: 2,
@@ -1992,11 +2003,15 @@ describe("selected run lifecycle controls", () => {
           recoveryKind: "exact_preview",
           recoveryPreviewId: "preview-recovery",
           executionId: null,
-          nextAction: "review the exact Preview",
+          nextAction: "review the exact plan",
           sideEffects: "none",
         },
       },
       respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+      extraGet: (url) =>
+        url === "/api/v1/operations/organize/previews/preview-recovery"
+          ? jsonResponse(preview)
+          : null,
     });
     authStore.setToken(TOKEN);
     const { router } = renderApp(
@@ -2004,24 +2019,30 @@ describe("selected run lifecycle controls", () => {
     );
 
     const facts = await screen.findByRole("region", { name: "运行详情" });
-    await user.click(
-      await within(facts).findByRole("button", {
-        name: "查看关联的精确预览",
-      }),
-    );
+    // The facts name the same-panel summary instead of a removed destination.
+    expect(
+      await within(facts).findByText(/完整零变更计划摘要显示在本运行详情内/),
+    ).toBeVisible();
+    expect(
+      within(facts).queryByRole("button", { name: "查看关联的精确预览" }),
+    ).toBeNull();
 
-    await waitFor(() =>
-      expect(router.history.location.pathname).toContain(
-        "/operations/organize/preview/preview-recovery",
-      ),
-    );
-    const returnOps = new URLSearchParams(router.history.location.search).get(
-      "returnOps",
-    );
-    expect(returnOps).not.toBeNull();
-    expect(returnOps).toContain("status=paused");
-    expect(returnOps).toContain("run=task-001");
+    // The same shared same-page summary component renders this run's exact
+    // plan; its heading names the remaining-scope journey.
+    const summary = await screen.findByRole("region", {
+      name: "新计划摘要",
+    });
+    expect(
+      within(summary).getByText("剩余范围计划摘要（零变更）"),
+    ).toBeVisible();
+    expect(
+      await within(summary).findByRole("button", {
+        name: /确认继续整理剩余 1 项/,
+      }),
+    ).toBeEnabled();
     expect(posts).toHaveLength(0);
+    expect(router.history.location.pathname).toBe("/ui-v2/operations");
+    expect(user).toBeDefined();
   });
 
   it("prepares and confirms the paused remaining scope in the same panel", async () => {

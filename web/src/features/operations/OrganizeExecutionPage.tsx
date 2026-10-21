@@ -243,11 +243,11 @@ export function OrganizeExecutionPage() {
                   打开复核与恢复
                 </Link>
               )}
-              {execution.previewId && (
+              {execution.intentId && (
                 <Link
                   className="mf-button mf-button-secondary"
-                  to="/operations/organize/preview/$previewId"
-                  params={{ previewId: execution.previewId }}
+                  to="/operations/organize/intent/$intentId"
+                  params={{ intentId: execution.intentId }}
                   search={{
                     ...(filesReturn === null
                       ? {}
@@ -255,7 +255,7 @@ export function OrganizeExecutionPage() {
                     ...operationsReturnSearch(operationsReturn),
                   }}
                 >
-                  返回已审阅的预览
+                  返回整理意图
                 </Link>
               )}
               {filesReturn !== null && (

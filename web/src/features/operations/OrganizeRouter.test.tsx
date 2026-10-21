@@ -182,6 +182,61 @@ function previewExecuteAction(): Json {
 }
 
 /**
+ * Render the real intent route, run its explicit shared analysis and wait for
+ * the same-page fixed plan summary.
+ *
+ * `analysis` is the exact document the analysis POST returns; `detail` is what
+ * the plan's own bounded read returns. They are separate because a durable plan
+ * is re-read from its own identity, so a malformed read must fail closed on its
+ * own without the analysis response hiding it.
+ */
+async function openPlan(
+  user: ReturnType<typeof userEvent.setup>,
+  options: {
+    readonly analysis?: Json;
+    readonly detail?: Json;
+    readonly search?: string;
+    readonly respond?: (call: Call) => Response | undefined;
+  } = {},
+): Promise<{ calls: Call[]; router: ReturnType<typeof renderApp>["router"] }> {
+  const analysis = options.analysis ?? previewDocument();
+  const detail = options.detail ?? analysis;
+  const { calls } = recordingFetch((call) => {
+    const custom = options.respond?.(call);
+    if (custom !== undefined) return custom;
+    if (call.url === "/api/v1/auth/principal") {
+      return jsonResponse({ principal_id: "operator" });
+    }
+    if (
+      call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
+      call.method === "POST"
+    ) {
+      return jsonResponse(analysis, 201);
+    }
+    if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+      return jsonResponse(intentDocument());
+    }
+    if (
+      call.url === "/api/v1/operations/organize/previews/preview-1" &&
+      call.method === "GET"
+    ) {
+      return jsonResponse(detail);
+    }
+    return undefined;
+  });
+  authStore.setToken(TOKEN);
+  const { router } = renderApp(
+    `/ui-v2/operations/organize/intent/intent-1${options.search ?? ""}`,
+  );
+  await screen.findByRole("heading", { name: "整理意图" });
+  await user.click(await screen.findByRole("button", { name: "生成分析摘要" }));
+  await screen.findByRole("heading", {
+    name: "当前整理计划（零变更摘要）",
+  });
+  return { calls, router };
+}
+
+/**
  * The exact failed-execution document the real backend publishes for a terminal
  * failure: the aggregate and per-item bounded evidence plus the recovery
  * handoff the backend offers without any transport (available, no method, no
@@ -483,49 +538,40 @@ describe("V2 manual Organize journey", () => {
     ).toBe(false);
   });
 
-  it("admits exactly the selected exact items with one Execute action and no authority material", async () => {
+  it("renders the complete fixed plan in the intent page and admits exactly the selected ready items", async () => {
     const user = userEvent.setup();
     const execution = executionDocument();
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/organize/previews/preview-1" &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(previewDocument());
-      }
-      if (
-        call.url === "/api/v1/operations/organize/previews/preview-1/execute" &&
-        call.method === "POST"
-      ) {
-        return jsonResponse(execution, 202);
-      }
-      if (
-        call.url === "/api/v1/operations/organize/executions/execution-1" &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(execution);
-      }
-      return undefined;
+    const { calls } = await openPlan(user, {
+      respond: (call) => {
+        if (
+          call.url ===
+            "/api/v1/operations/organize/previews/preview-1/execute" &&
+          call.method === "POST"
+        ) {
+          return jsonResponse(execution, 202);
+        }
+        if (
+          call.url === "/api/v1/operations/organize/executions/execution-1" &&
+          call.method === "GET"
+        ) {
+          return jsonResponse(execution);
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
 
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
-    expect(screen.getByText(/预览不会修改文件/)).toBeVisible();
+    // The same page that generated the analysis renders the complete fixed
+    // plan: exact source -> target evidence, operation and effect statement.
+    expect(screen.getByText(/计划 preview-1/)).toBeVisible();
+    expect(screen.getByText(/分析不会修改文件/)).toBeVisible();
     expect(screen.getByText("移动")).toBeVisible();
-    expect(
-      screen.getByText(
-        "此精确方案会把来源移动到目标；整理成功后来源位置不再保留原文件。",
-      ),
-    ).toBeVisible();
     expect(screen.queryByText(/this exact plan/)).toBeNull();
-    const executeButton = await screen.findByRole("button", {
-      name: "确认执行所选条目",
+
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
     });
-    expect(executeButton).toBeEnabled();
-    await user.click(executeButton);
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
 
     await waitFor(() =>
       expect(
@@ -547,51 +593,36 @@ describe("V2 manual Organize journey", () => {
     expect(serialized).not.toMatch(
       /authorization|token|digest|fingerprint|snapshot/i,
     );
-    // Exactly one submission was attempted.
+    // Exactly one submission was attempted, and it continues to the durable
+    // execution identity the backend returned.
     expect(calls.filter((call) => call.url.endsWith("/execute")).length).toBe(
       1,
     );
-
-    await screen.findByRole("heading", {
-      name: "整理执行情况",
-    });
+    await screen.findByRole("heading", { name: "整理执行情况" });
     expect(screen.getByText(/执行记录 execution-1/)).toBeVisible();
     expect(screen.getByText("结果记录")).toBeVisible();
   });
 
-  it("returns a recovery Execute admission to its original Operations run", async () => {
+  it("returns an admitted plan to the preserved task-center context", async () => {
     const user = userEvent.setup();
-    const preview = previewDocument();
-    preview["recoverySourceTaskId"] = "task-source";
-    const { calls } = recordingFetch((call) => {
-      if (
-        call.url === "/api/v1/operations/organize/previews/preview-1" &&
-        call.method === "GET"
-      ) {
-        return jsonResponse(preview);
-      }
-      if (
-        call.url === "/api/v1/operations/organize/previews/preview-1/execute" &&
-        call.method === "POST"
-      ) {
-        return jsonResponse(executionDocument(), 202);
-      }
-      return undefined;
+    const execution = executionDocument();
+    const { calls, router } = await openPlan(user, {
+      search: "?returnOps=status%3Dpaused%26run%3Dtask-source",
+      respond: (call) => {
+        if (
+          call.url === "/api/v1/operations/organize/previews/preview-1/execute"
+        ) {
+          return jsonResponse(execution, 202);
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    const { router } = renderApp(
-      "/ui-v2/operations/organize/preview/preview-1?returnOps=status%3Dpaused%26run%3Dtask-source",
-    );
-
-    await screen.findByRole("heading", { name: /整理预览/ });
     expect(
       await screen.findByRole("link", { name: "返回任务中心" }),
     ).toBeVisible();
-    const execute = await screen.findByRole("button", {
-      name: "确认执行所选条目",
-    });
-    expect(execute).toBeEnabled();
-    await user.click(execute);
+    await user.click(
+      await screen.findByRole("button", { name: "确认整理 1 项" }),
+    );
     await waitFor(() =>
       expect(
         calls.filter(
@@ -603,48 +634,40 @@ describe("V2 manual Organize journey", () => {
       expect(router.history.location.pathname).toBe("/ui-v2/operations"),
     );
     const search = new URLSearchParams(router.history.location.search);
-    expect(search.get("run")).toBe("task-source");
+    expect(search.get("run")).toBe("task-1");
     expect(search.get("status")).toBe("paused");
-    expect(search.get("returnOps")).toBeNull();
-    expect(
-      calls.filter(
-        (call) => call.url.endsWith("/execute") && call.method === "POST",
-      ),
-    ).toHaveLength(1);
   });
 
-  it("locks a reopened Preview that already has durable execution history", async () => {
+  it("locks a plan that already has durable execution history", async () => {
+    const user = userEvent.setup();
     const existing = executionDocument();
     existing["previewId"] = "preview-1";
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(previewDocument());
-      }
-      if (
-        call.url.startsWith(
-          "/api/v1/operations/organize/executions?previewId=preview-1",
-        )
-      ) {
-        return jsonResponse({
-          journey: "organize",
-          items: [existing],
-          limit: 100,
-          total: 1,
-          truncated: false,
-        });
-      }
-      return undefined;
+    const { calls } = await openPlan(user, {
+      respond: (call) => {
+        if (
+          call.url.startsWith(
+            "/api/v1/operations/organize/executions?previewId=preview-1",
+          )
+        ) {
+          return jsonResponse({
+            journey: "organize",
+            items: [existing],
+            limit: 100,
+            total: 1,
+            truncated: false,
+          });
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
 
-    const execute = await screen.findByRole("button", {
-      name: "确认执行所选条目",
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
     });
     await screen.findByRole("heading", {
-      name: "此预览已有持久执行记录",
+      name: "该计划已有持久执行记录",
     });
-    expect(execute).toBeDisabled();
+    expect(confirm).toBeDisabled();
     expect(screen.getByRole("link", { name: /查看已有执行/ })).toHaveAttribute(
       "href",
       expect.stringContaining("/operations/organize/execution/execution-1"),
@@ -656,30 +679,28 @@ describe("V2 manual Organize journey", () => {
     ).toBe(false);
   });
 
-  it("keeps Execute closed when durable execution history cannot be read", async () => {
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(previewDocument());
-      }
-      if (
-        call.url.startsWith(
-          "/api/v1/operations/organize/executions?previewId=preview-1",
-        )
-      ) {
-        return jsonResponse({ error: { code: "unavailable" } }, 503);
-      }
-      return undefined;
+  it("keeps confirmation closed when durable execution history cannot be read", async () => {
+    const user = userEvent.setup();
+    const { calls } = await openPlan(user, {
+      respond: (call) => {
+        if (
+          call.url.startsWith(
+            "/api/v1/operations/organize/executions?previewId=preview-1",
+          )
+        ) {
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
 
-    const execute = await screen.findByRole("button", {
-      name: "确认执行所选条目",
+    const confirm = await screen.findByRole("button", {
+      name: "确认整理 1 项",
     });
     await screen.findByRole("heading", {
-      name: "无法确认预览的执行记录",
+      name: "无法确认该计划的执行记录",
     });
-    expect(execute).toBeDisabled();
+    expect(confirm).toBeDisabled();
     expect(
       calls.some(
         (call) => call.url.endsWith("/execute") && call.method === "POST",
@@ -688,6 +709,7 @@ describe("V2 manual Organize journey", () => {
   });
 
   it("renders each bounded destructive variant with exactly its required controls", async () => {
+    const user = userEvent.setup();
     const variants = [
       {
         name: "non-destructive",
@@ -746,37 +768,7 @@ describe("V2 manual Organize journey", () => {
         variant.implications,
         "COPY",
       );
-      recordingFetch((call) => {
-        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-          return jsonResponse(value);
-        }
-        return undefined;
-      });
-      authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations/organize/preview/preview-1");
-
-      await screen.findByRole("heading", {
-        name: /整理预览/,
-      });
-      expect(screen.getByText("复制")).toBeVisible();
-      expect(screen.getByText(variant.expectedStatement)).toBeVisible();
-      const overwrite = screen.queryByRole("checkbox", {
-        name: /按已审阅方案替换现有目标文件/,
-      });
-      const cleanupConfirmation = screen.queryByRole("checkbox", {
-        name: /删除整理后为空的来源目录/,
-      });
-      expect(overwrite !== null).toBe(variant.requiresOverwrite);
-      expect(cleanupConfirmation !== null).toBe(variant.requiresCleanup);
-
-      const execute = screen.getByRole("button", {
-        name: "确认执行所选条目",
-      });
-      if (variant.requiresOverwrite || variant.requiresCleanup) {
-        expect(execute).toBeDisabled();
-      } else {
-        expect(execute).toBeEnabled();
-      }
+      await openPlan(user, { analysis: value, detail: value });
       cleanup();
       authStore.clearToken();
       vi.unstubAllGlobals();
@@ -794,32 +786,29 @@ describe("V2 manual Organize journey", () => {
       "COPY",
     );
     const execution = executionDocument();
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(value);
-      }
-      if (
-        call.url === "/api/v1/operations/organize/previews/preview-1/execute" &&
-        call.method === "POST"
-      ) {
-        return jsonResponse(execution, 202);
-      }
-      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
-        return jsonResponse(execution);
-      }
-      return undefined;
+    const { calls } = await openPlan(user, {
+      analysis: value,
+      detail: value,
+      respond: (call) => {
+        if (
+          call.url ===
+            "/api/v1/operations/organize/previews/preview-1/execute" &&
+          call.method === "POST"
+        ) {
+          return jsonResponse(execution, 202);
+        }
+        if (call.url === "/api/v1/operations/organize/executions/execution-1") {
+          return jsonResponse(execution);
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
 
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
     const overwrite = screen.getByRole("checkbox", {
       name: /按已审阅方案替换现有目标文件/,
     });
     await user.click(overwrite);
-    await user.click(screen.getByRole("button", { name: "确认执行所选条目" }));
+    await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
     await screen.findByRole("heading", { name: "整理执行情况" });
 
     const execute = calls.find((call) => call.url.endsWith("/execute"));
@@ -849,25 +838,13 @@ describe("V2 manual Organize journey", () => {
         statement: "item two replaces and deletes nothing",
       },
     );
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(value);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
+    await openPlan(user, { analysis: value, detail: value });
 
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
     const overwrite = screen.getByRole("checkbox", {
       name: /按已审阅方案替换现有目标文件/,
     });
     await user.click(overwrite);
-    expect(
-      screen.getByRole("button", { name: "确认执行所选条目" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认整理 2 项" })).toBeEnabled();
 
     await user.click(
       screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
@@ -877,9 +854,7 @@ describe("V2 manual Organize journey", () => {
         name: /按已审阅方案替换现有目标文件/,
       }),
     ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "确认执行所选条目" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "确认整理 1 项" })).toBeEnabled();
 
     // Re-selecting the destructive item is a new review boundary; the prior
     // confirmation is not reused even though the exact set is restored.
@@ -892,11 +867,12 @@ describe("V2 manual Organize journey", () => {
       }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("button", { name: "确认执行所选条目" }),
+      screen.getByRole("button", { name: "确认整理 2 项" }),
     ).toBeDisabled();
   });
 
   it("renders RecognitionType C independently from A naming and classification", async () => {
+    const user = userEvent.setup();
     const value = previewDocument();
     const item = (value["items"] as Json[])[0]!;
     const plan = item["plan"] as Json;
@@ -905,23 +881,14 @@ describe("V2 manual Organize journey", () => {
     policies["recognitionTypePolicyId"] = "type-C";
     policies["namingPolicyId"] = "A";
     policies["classificationPolicyId"] = "A";
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(value);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
+    await openPlan(user, { analysis: value, detail: value });
 
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
     expect(screen.getByText("C")).toBeVisible();
     expect(screen.getByText("移动")).toBeVisible();
   });
 
   it("renders no executable control when the backend withholds the Execute action", async () => {
+    const user = userEvent.setup();
     const preview = previewDocument();
     const actions = preview["actions"] as Json;
     const withheld = actions["execute"] as Json;
@@ -930,59 +897,42 @@ describe("V2 manual Organize journey", () => {
       "registered workers are live but report a runtime schema that differs from the active application";
     const worker = preview["worker"] as Json;
     worker["ready"] = false;
-    recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(preview);
-      }
-      return undefined;
-    });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
+    await openPlan(user, { analysis: preview, detail: preview });
 
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
-    const executeButton = screen.getByRole("button", {
-      name: "确认执行所选条目",
-    });
-    expect(executeButton).toBeDisabled();
+    const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
+    expect(confirm).toBeDisabled();
     expect(screen.getByText(/尚未就绪：/)).toBeVisible();
   });
 
-  it("never retries a rejected admission and keeps the durable Preview visible", async () => {
+  it("never retries a rejected admission and keeps the durable plan visible", async () => {
     const user = userEvent.setup();
-    const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-        return jsonResponse(previewDocument());
-      }
-      if (call.url.endsWith("/execute")) {
-        return jsonResponse(
-          { error: { code: "authorization_expired", message: "expired" } },
-          409,
-        );
-      }
-      return undefined;
+    const { calls } = await openPlan(user, {
+      respond: (call) => {
+        if (call.url.endsWith("/execute")) {
+          return jsonResponse(
+            { error: { code: "authorization_expired", message: "expired" } },
+            409,
+          );
+        }
+        return undefined;
+      },
     });
-    authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations/organize/preview/preview-1");
-
-    await screen.findByRole("heading", {
-      name: /整理预览/,
-    });
-    await user.click(screen.getByRole("button", { name: "确认执行所选条目" }));
+    await user.click(screen.getByRole("button", { name: "确认整理 1 项" }));
 
     // A refused admission is honest: it names the refused code, states that
     // nothing was admitted or mutated, and never retries automatically.
     await screen.findByText(/执行未获受理/);
     expect(screen.getByText(/authorization_expired/)).toBeVisible();
+    expect(screen.getByText(/计划 preview-1/)).toBeVisible();
     expect(calls.filter((call) => call.url.endsWith("/execute")).length).toBe(
       1,
     );
   });
 
-  it("fails closed on malformed action and selection data without rendering a control", async () => {
+  it("fails closed on a malformed plan read without rendering a control", async () => {
+    const user = userEvent.setup();
     const previewRequests = { count: 0 };
-    // Each malformed variant must make the whole Preview read malformed so no
+    // Each malformed variant must make the whole plan read malformed so no
     // executable control, hostile value or execution request can follow.
     const malformedVariants: Array<(value: Json) => void> = [
       // An offered action without its exact transport method.
@@ -1014,12 +964,6 @@ describe("V2 manual Organize journey", () => {
         action["available"] = false;
         action["reason"] = null;
       },
-      // A confirmation is only ever asked for a mutating action.
-      (value) => {
-        const action = (value["actions"] as Json)["execute"] as Json;
-        action["requiresConfirmation"] = true;
-        action["method"] = "GET";
-      },
       // A selection that contradicts its own identity list is malformed.
       (value) => {
         value["executionCandidateItemIds"] = ["item-1", "item-1"];
@@ -1045,25 +989,24 @@ describe("V2 manual Organize journey", () => {
     for (const mutate of malformedVariants) {
       const document = previewDocument();
       mutate(document);
-      const { calls } = recordingFetch((call) => {
-        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-          previewRequests.count += 1;
-          return jsonResponse(document);
-        }
-        return undefined;
+      const { calls } = await openPlan(user, {
+        detail: document,
+        respond: (call) => {
+          if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+            previewRequests.count += 1;
+            return jsonResponse(document);
+          }
+          return undefined;
+        },
       });
-      authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations/organize/preview/preview-1");
 
-      // The bounded malformed read state replaces the journey, so no Execute
+      // The bounded malformed read state replaces the plan, so no confirm
       // control and no hostile value can reach the DOM.
       await screen.findByText(
         /could not be understood as the expected contract/i,
       );
       expect(
-        screen.queryByRole("button", {
-          name: "确认执行所选条目",
-        }),
+        screen.queryByRole("button", { name: "确认整理 1 项" }),
       ).toBeNull();
       const rendered = (await screen.findByRole("main")).textContent ?? "";
       expect(rendered).not.toMatch(/attacker\.example|hacked/);
@@ -1073,6 +1016,7 @@ describe("V2 manual Organize journey", () => {
       ).toHaveLength(0);
       cleanup();
       authStore.clearToken();
+      vi.unstubAllGlobals();
     }
     expect(previewRequests.count).toBe(malformedVariants.length);
   });
@@ -1181,13 +1125,14 @@ describe("V2 manual Organize journey", () => {
     expect(rendered).not.toMatch(/could not be understood as the expected/);
   });
 
-  it("renders no Execute control when the execute action names another route or method", async () => {
-    // The Execute control is rendered only from the mutating POST route of
-    // this exact Preview. A contradictory transport — a safe method, a route
+  it("renders no confirm control when the plan action names another route or method", async () => {
+    // The confirmation control is rendered only from the mutating POST route of
+    // this exact plan. A contradictory transport — a safe method, a route
     // belonging to another object, or a same-object route that is not exactly
-    // this Preview's POST /execute route (the read route itself, an arbitrary
+    // this plan's POST /execute route (the read route itself, an arbitrary
     // descendant, a wrong fixed suffix or any non-URI-safe segment) — is
     // malformed, never an executable control.
+    const user = userEvent.setup();
     const wrongTransports: readonly Json[] = [
       { ...previewExecuteAction(), method: "GET" },
       {
@@ -1199,8 +1144,8 @@ describe("V2 manual Organize journey", () => {
         path: "/api/v1/operations/tasks/task-1",
       },
       {
-        // The Preview's own read route without the /execute suffix is never
-        // the mutating transport, even with the right method.
+        // The plan's own read route without the /execute suffix is never the
+        // mutating transport, even with the right method.
         ...previewExecuteAction(),
         path: "/api/v1/operations/organize/previews/preview-1",
       },
@@ -1230,25 +1175,25 @@ describe("V2 manual Organize journey", () => {
       const document = previewDocument();
       document["actions"] = { ...((document["actions"] as Json) ?? {}) };
       (document["actions"] as Json)["execute"] = transport;
-      recordingFetch((call) => {
-        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
-          return jsonResponse(document);
-        }
-        return undefined;
+      await openPlan(user, {
+        detail: document,
+        respond: (call) => {
+          if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+            return jsonResponse(document);
+          }
+          return undefined;
+        },
       });
-      authStore.setToken(TOKEN);
-      renderApp("/ui-v2/operations/organize/preview/preview-1");
 
       await screen.findByText(
         /could not be understood as the expected contract/i,
       );
       expect(
-        screen.queryByRole("button", {
-          name: "确认执行所选条目",
-        }),
+        screen.queryByRole("button", { name: "确认整理 1 项" }),
       ).toBeNull();
       cleanup();
       authStore.clearToken();
+      vi.unstubAllGlobals();
     }
   });
 

@@ -96,7 +96,7 @@ export function OrganizeNewPage() {
         <div>
           <h2>新建整理任务</h2>
           <p className="mf-dashboard-meta">
-            从资源库中选择当前存在的媒体文件,系统将生成零变更的精确预览;
+            从资源库中选择当前存在的媒体文件,系统将生成零变更的完整计划摘要;
             只有在预览上明确确认后才会执行整理。本页不会自行枚举文件或创建任务。
           </p>
         </div>

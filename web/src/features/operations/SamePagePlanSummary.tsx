@@ -102,7 +102,7 @@ export function SamePagePlanSummary(props: SamePagePlanSummaryProps) {
       ) : preview === undefined ? null : (
         <>
           <p className="mf-dashboard-meta">
-            预览 {preview.previewId} · {displayEnum(preview.status)} ·{" "}
+            计划 {preview.previewId} · {displayEnum(preview.status)} ·{" "}
             {preview.current ? "当前" : "历史"} · 不会修改 Storage
           </p>
           {preview.nextAction && (

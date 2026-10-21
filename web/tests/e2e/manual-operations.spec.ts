@@ -38,7 +38,6 @@ import { expect, test, type Page } from "@playwright/test";
 const BASE_URL = "http://127.0.0.1:4173";
 const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
-const PREVIEW_ID = "preview-e2e-001";
 /** Durable discovery items the fake seeds for the pre-admission Scan. */
 
 interface ManualRequestEvidence {
@@ -101,9 +100,13 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   await scope.selectOption("resources");
 
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "运行零变更预览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
+  // The one supported entry starts the native organize journey: the shared
+  // analysis, the fixed plan summary and the explicit confirmation all live in
+  // that journey, so no standalone Scan/Preview submit control exists.
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toBeVisible();
 
   // The chosen scope is the exact bounded scope sent to the backend.
   const matrixReads = requestsTo(
@@ -120,85 +123,40 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   ).toBe(true);
 });
 
-test("Zero-mutation Preview admission submits one exact request and lands on the detail", async ({
+test("the retired standalone Preview entry is an ordinary not-found route", async ({
   page,
 }) => {
-  // The supported Preview entry is ResourceLibrary-scoped: the backend matrix
-  // only resolves a file scope through an exact FileIndex fileId, which the
-  // current Files/Organize surfaces no longer submit. The browser sends only
-  // the ResourceLibrary identity; the server derives SourceIdentity from live
-  // Storage.
+  // The independent Preview product is gone: an old browser address is not
+  // redirected, gets no retired-page notice and starts no work. The supported
+  // zero-mutation analysis is the same-page plan summary of the organize
+  // journey, covered by manual-organize.spec.ts.
+  const apiRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/")) {
+      apiRequests.push(request.url());
+    }
+  });
+
   await page.goto(
     "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=resources",
   );
-  await connect(page, VIEWER_TOKEN);
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
 
+  // The shared connection boundary is the only action on that page; there is
+  // no retired-page notice and no plan data.
   await expect(
-    page.getByRole("heading", { name: "Run zero-mutation Preview" }),
+    page.getByRole("link", { name: "Connect API token" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Submit zero-mutation Preview" }),
-  ).toBeEnabled();
-
-  const before = (await manualEvidence(page)).length;
-  await page
-    .getByRole("button", { name: "Submit zero-mutation Preview" })
-    .click();
-
-  await expect(
-    page.getByRole("heading", { name: `Preview ${PREVIEW_ID}` }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Zero-mutation", { exact: true }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("cell", { name: "One", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Anime/One (2001)/One (2001).mkv").first(),
-  ).toBeVisible();
-  await expect(page.getByText("candidate_matcher").first()).toBeVisible();
-  await expect(
-    page.getByText("Candidate reached automatic threshold"),
-  ).toBeVisible();
-  await expect(page.getByText("Directory segments")).toBeVisible();
-  await expect(page.getByText("No warning was recorded.")).toBeVisible();
-
-  const submissions = (await manualEvidence(page))
-    .slice(before)
-    .filter(
-      (entry) => entry.method === "POST" && entry.path === "/api/v1/previews",
-    );
-  expect(submissions).toHaveLength(1);
-  expect(submissions[0]?.objectType).toBe("preview");
-  expect(submissions[0]?.objectId).toBe(PREVIEW_ID);
-  // The current server-bound contract derives SourceIdentity from live
-  // Storage: the browser submits only the ResourceLibrary identity, never an
-  // absolute path, a FileIndex identifier or Storage credential.
-  expect(submissions[0]?.body).toEqual({
-    scopeKind: "resourceLibrary",
-    resourceLibraryId: "resources",
-  });
-
-  // The exact persisted document the browser rendered stays zero-mutation and
-  // carries no executor input, fingerprint, digest, occurrence identity or
-  // absolute host path.
-  const detail = await page.request.get(
-    `${BASE_URL}/api/v1/previews/${PREVIEW_ID}`,
-    { headers: { Authorization: `Bearer ${VIEWER_TOKEN}` } },
-  );
-  expect(detail.status()).toBe(200);
-  const serialized = JSON.stringify(await detail.json());
-  for (const forbidden of [
-    "executionPlan",
-    "fingerprint",
-    "digest",
-    "occurrenceId",
-    "/home/",
-    "/private/",
-  ]) {
-    expect(serialized).not.toContain(forbidden);
-  }
+  await expect(page.getByLabel("API token")).toHaveCount(0);
+  expect(
+    apiRequests.filter((url) => url.includes("/api/v1/previews")),
+  ).toHaveLength(0);
+  expect(
+    apiRequests.filter((url) => url.includes("/api/v1/manual-actions")),
+  ).toHaveLength(0);
+  expect(apiRequests).toHaveLength(0);
 });
 
 test("removed Scan deep links render the ordinary not-found route", async ({
@@ -256,22 +214,26 @@ test("Read-only principal sees no manual action and the backend reason", async (
 test("hostile action-matrix evidence never reaches the built-artifact DOM", async ({
   page,
 }) => {
+  // The supported landing reads the bounded action matrix for a chosen scope.
+  // A matrix carrying credential-shaped values, an absolute private path or a
+  // digest must never render any of it, and it still offers no submit control
+  // for the retired Scan/Preview products.
   await page.goto(
-    "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
+    "/ui-v2/operations?scopeKind=resourceLibrary&resourceLibraryId=hostile-source",
   );
   await connect(page, VIEWER_TOKEN);
 
   await expect(
-    page.getByRole("heading", { name: "Action matrix unavailable" }),
+    page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Submit bounded Scan" }),
-  ).toHaveCount(0);
-
   const rendered = await page.locator("body").textContent();
   expect(rendered ?? "").not.toContain("hidden-token");
   expect(rendered ?? "").not.toContain("/private/");
   expect(rendered ?? "").not.toContain("a".repeat(64));
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
 });
 
 test("Files row admits one eligible file into the durable Organize journey", async ({

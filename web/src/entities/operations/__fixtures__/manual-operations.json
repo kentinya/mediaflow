@@ -327,9 +327,9 @@
         "available": false,
         "durableOutcome": null,
         "method": null,
-        "nextAction": "create a fresh exact Preview after the last choice change",
+        "nextAction": "generate a fresh analysis summary after the last choice change",
         "path": null,
-        "reason": "exact execution is only offered from a current, complete Preview",
+        "reason": "exact execution is only offered from a current, complete fixed plan",
         "sideEffects": "none"
       }
     },
@@ -524,9 +524,9 @@
         "available": false,
         "durableOutcome": null,
         "method": null,
-        "nextAction": "create a fresh exact Preview after the last choice change",
+        "nextAction": "generate a fresh analysis summary after the last choice change",
         "path": null,
-        "reason": "exact execution is only offered from a current, complete Preview",
+        "reason": "exact execution is only offered from a current, complete fixed plan",
         "sideEffects": "none"
       }
     },

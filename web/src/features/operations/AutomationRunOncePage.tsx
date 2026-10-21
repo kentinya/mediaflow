@@ -8,8 +8,8 @@
  * definition origin, both effective limits, durable progress, eligibility and
  * exclusion evidence, and the honest refusal when the walk hit a bound.  It
  * never mutates Storage, never enables the schedule and never grants scheduled
- * authority; the frozen manifest still needs its exact zero-mutation Preview
- * and a separate explicit execution confirmation.
+ * authority; the frozen manifest's complete zero-mutation plan is summarized in
+ * this same page and still needs a separate explicit execution confirmation.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -36,6 +36,7 @@ import {
   operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
+import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 
 const PHASE_LABELS: Readonly<Record<string, string>> = {
   discovering: "正在发现来源",
@@ -91,6 +92,12 @@ export function AutomationRunOncePage() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const operationsReturn = readOperationsReturnContext(searchParams);
   const [controlError, setControlError] = useState<string | null>(null);
+  // The exact fixed plan this page's own Finalize produced. Its complete
+  // zero-mutation summary and the one explicit confirmation are rendered here;
+  // there is no separate Preview destination to continue to.
+  const [admittedPlanPreviewId, setPlanPreviewId] = useState<string | null>(
+    null,
+  );
   const query = useQuery(automationRunOnceQueryOptions(token, discoveryId));
 
   const refresh = () => {
@@ -119,14 +126,10 @@ export function AutomationRunOncePage() {
     onSuccess: (result) => {
       setControlError(null);
       if (result.action === "finalize" && result.previewId !== null) {
-        // The frozen manifest's exact zero-mutation organize plan is the
-        // existing *manual* Organize plan over the frozen intent, so the
-        // operator continues there and separately confirms execution.
-        void navigate({
-          to: "/operations/organize/preview/$previewId",
-          params: { previewId: result.previewId },
-          search: { ...operationsReturnSearch(operationsReturn) },
-        });
+        // The frozen manifest's complete zero-mutation plan is summarized in
+        // this page; the operator reviews it and separately confirms execution.
+        setPlanPreviewId(result.previewId);
+        refresh();
         return;
       }
       refresh();
@@ -180,7 +183,7 @@ export function AutomationRunOncePage() {
           <p className="mf-dashboard-meta">
             定义已保存的来源范围会自动发现并冻结为完整清单，无需重新选择文件。
             这里只读取存储元数据，不会移动、复制或删除任何文件；
-            冻结后仍需在精确预览上单独确认才会执行整理。
+            冻结后会在本页显示零变更计划摘要，仍需单独确认才会执行整理。
           </p>
         </div>
         <RefreshControl onRefresh={refresh} refreshing={query.isFetching} />
@@ -202,6 +205,10 @@ export function AutomationRunOncePage() {
             );
           }
           const model: AutomationRunOnceModel = view.data.model;
+          // The plan this page produced is restored from the durable Run once
+          // record after a reload, reconnect or restart: the local identity is
+          // only the faster path to the same fixed plan.
+          const planPreviewId = admittedPlanPreviewId ?? model.previewId;
           return (
             <div className="mf-dashboard-body">
               <StatusBanner
@@ -318,7 +325,7 @@ export function AutomationRunOncePage() {
                     onClick={() => controlMutation.mutate("finalize")}
                     disabled={controlMutation.isPending}
                   >
-                    冻结清单并生成精确预览
+                    冻结清单并生成计划摘要
                   </Button>
                 ) : null}
                 {model.actions.preview.available && model.intentId !== null ? (
@@ -331,6 +338,30 @@ export function AutomationRunOncePage() {
                   </Link>
                 ) : null}{" "}
               </div>
+              {planPreviewId !== null ? (
+                <OrganizePlanConfirmation
+                  previewId={planPreviewId}
+                  heading="本次运行计划的零变更摘要"
+                  confirmLabel={(count) => `确认整理本次运行 ${count} 项`}
+                  onAdmitted={(admitted) => {
+                    if (admitted.taskId !== null && operationsReturn !== null) {
+                      void navigate({
+                        to: "/operations",
+                        search: operationsLandingSearch(
+                          operationsReturn,
+                          admitted.taskId,
+                        ),
+                      });
+                      return;
+                    }
+                    void navigate({
+                      to: "/operations/organize/execution/$executionId",
+                      params: { executionId: admitted.executionId },
+                      search: { ...operationsReturnSearch(operationsReturn) },
+                    });
+                  }}
+                />
+              ) : null}
             </div>
           );
         }}

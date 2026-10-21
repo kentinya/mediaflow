@@ -566,10 +566,14 @@ describe("V2 Automation journey", () => {
       (item) =>
         item.url === "/api/v1/automation/task-definitions/auto-task/grant",
     );
+    // The unattended authority is bound to the exact published definition
+    // revision and the principal's current permission, not to any analysis or
+    // retired Preview identity.
     expect(grant?.body).toMatchObject({
       confirmation: true,
-      previewId: "preview-1",
+      revisionId: "revision-active-1",
     });
+    expect(grant?.body).not.toHaveProperty("previewId");
     expect(JSON.stringify(grant?.body)).not.toMatch(
       /digest|fingerprint|token|secret/i,
     );

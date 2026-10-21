@@ -890,18 +890,6 @@ export function OperationsLanding() {
                     onClose={closeRun}
                     detailState={detailState}
                     onDetailStateChange={applyDetailState}
-                    onOpenPreview={(previewId) =>
-                      void navigate({
-                        to: "/operations/organize/preview/$previewId",
-                        params: { previewId },
-                        search: operationsReturnSearch(
-                          operationsReturnContextFromSearch({
-                            ...listSearch(selectedId),
-                            ...runDetailStateSearch(detailState),
-                          }),
-                        ),
-                      })
-                    }
                     onOpenLinkedAnalysis={(taskId, itemId) =>
                       void navigate({
                         to: "/operations/tasks/$taskId",
@@ -1378,7 +1366,6 @@ function RunDetailPanel({
   onClose,
   detailState,
   onDetailStateChange,
-  onOpenPreview,
   onOpenLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
@@ -1387,8 +1374,6 @@ function RunDetailPanel({
   readonly onClose: () => void;
   readonly detailState: RunDetailState;
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
-  /** Route to one freshly admitted exact organize Preview. */
-  readonly onOpenPreview: (previewId: string) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
@@ -2057,13 +2042,7 @@ function RunDetailPanel({
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
-                facts={
-                  <RunDetailFacts
-                    run={run}
-                    onSelectRun={onSelectRun}
-                    onOpenPreview={onOpenPreview}
-                  />
-                }
+                facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
               />
             </>
           );
@@ -2146,11 +2125,9 @@ function continuationStatusLabel(status: string): string {
 function RunDetailFacts({
   run,
   onSelectRun,
-  onOpenPreview,
 }: {
   readonly run: RunSummary;
   readonly onSelectRun: (runId: string) => void;
-  readonly onOpenPreview: (previewId: string) => void;
 }) {
   const detail = detailLinkOf(run);
   return (
@@ -2229,7 +2206,7 @@ function RunDetailFacts({
           <dd>
             {run.continuation.recoveryKind === "exact_preview" ? (
               <p>
-                精确预览已关联到此运行，状态为
+                零变更计划摘要已关联到此运行，状态为
                 {continuationStatusLabel(run.continuation.status)}
                 。执行任务会计入原运行的范围和条目上限。
               </p>
@@ -2241,15 +2218,10 @@ function RunDetailFacts({
               </p>
             )}
             {run.continuation.recoveryPreviewId !== null && (
-              <button
-                type="button"
-                className="mf-button mf-button-secondary"
-                onClick={() =>
-                  onOpenPreview(run.continuation!.recoveryPreviewId!)
-                }
-              >
-                查看关联的精确预览
-              </button>
+              <p>
+                该运行的完整零变更计划摘要显示在本运行详情内；请在此选择就绪子集并明确确认，
+                无需跳转到其他页面。
+              </p>
             )}
             {run.continuation.newTaskId !== null ? (
               <button
@@ -2354,7 +2326,7 @@ function DiscoveryReadbackSection({
     <section className="mf-count-section" aria-label="整理发现记录">
       <h3>整理发现</h3>
       <p className="mf-dashboard-meta">
-        此主体近期的有界整理发现。发现只读取存储元数据,冻结清单后仍需单独的精确预览和确认执行。
+        此主体近期的有界整理发现。发现只读取存储元数据,冻结清单后仍需在当前页单独确认计划摘要才会执行。
       </p>
       {read === undefined ? (
         <p className="mf-dashboard-meta">正在读取发现记录。</p>

@@ -24,7 +24,6 @@ import { JobDetailPage } from "../features/operations/JobDetailPage";
 import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
-import { OrganizePreviewPage } from "../features/operations/OrganizePreviewPage";
 import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
 import { AutomationListPage } from "../features/operations/AutomationListPage";
 import { AutomationNewPage } from "../features/operations/AutomationNewPage";
@@ -174,12 +173,6 @@ const organizeDiscoveryRoute = createRoute({
   component: OrganizeDiscoveryPage,
 });
 
-const organizePreviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/organize/preview/$previewId",
-  component: OrganizePreviewPage,
-});
-
 const organizeExecutionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/organize/execution/$executionId",
@@ -314,7 +307,6 @@ const routeTree = rootRoute.addChildren([
   jobDetailRoute,
   organizeNewRoute,
   organizeIntentRoute,
-  organizePreviewRoute,
   organizeDiscoveryRoute,
   organizeExecutionRoute,
   automationListRoute,

@@ -72,19 +72,24 @@ test("任务中心 inventory shows the run list, views and workspace links", asy
   ).toBeVisible();
   // Real data renders with Chinese business labels.
   await expect(page.getByRole("table")).toBeVisible();
-  await expect(page.getByText("预览").first()).toBeVisible();
+  await expect(page.getByText("整理").first()).toBeVisible();
   // Worker readiness and the manual scope journey stay discoverable.
   await expect(
     page.getByRole("heading", { name: "Worker 就绪" }),
   ).toBeVisible();
   await expect(page.getByText(/Worker 就绪 — 1 个活跃 Worker/)).toBeVisible();
-  // No manual action before an exact scope is chosen, then advertised links.
+  // No retired manual action exists before or after an exact scope is chosen;
+  // the supported entry is the native organize journey.
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
   await page.getByLabel("ResourceLibrary scope").selectOption("resources");
   await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "运行零变更预览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("link", { name: "新建整理任务" })).toBeVisible();
   // Existing workspace navigation stays usable from the landing.
   await expect(
     page.getByRole("link", { name: "任务列表", exact: true }),

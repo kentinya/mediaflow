@@ -32,7 +32,7 @@ _MAX_ERROR = 1000
 _MAX_ITEMS = 64
 _MAX_SCORE_COMPONENTS = 16
 
-PREVIEW_CONFLICT_NEXT_ACTION = (
+ANALYSIS_CONFLICT_NEXT_ACTION = (
     "this analysis-only finding is not execution authority; run the explicit real "
     "Organize journey under fresh one-shot authority and current-state revalidation "
     "when organization is desired"
@@ -51,7 +51,7 @@ def build_pipeline_evidence(
     storages: Mapping[str, Any] | None = None,
     captured_at: datetime | None = None,
     organize_policy: OrganizePolicy | None = None,
-    conflict_finding: bool = False,
+    finding_next_action: str | None = None,
 ) -> PipelineEvidence:
     """Capture one immutable evidence record for a TaskItem attempt.
 
@@ -74,7 +74,7 @@ def build_pipeline_evidence(
         "plan": _plan_section(
             plan,
             organize_policy=organize_policy,
-            conflict_finding=conflict_finding,
+            finding_next_action=finding_next_action,
         ),
         "operation": _operation_section(execution),
         "capabilities": _capability_section(plan, storages),
@@ -656,12 +656,15 @@ def _plan_section(
     plan: OrganizePlan | None,
     *,
     organize_policy: OrganizePolicy | None = None,
-    conflict_finding: bool = False,
+    finding_next_action: str | None = None,
 ) -> EvidenceSection:
     if plan is None:
+        unavailable = "organize plan was not reached"
+        if finding_next_action:
+            unavailable = f"{unavailable}; next action: {finding_next_action}"
         return EvidenceSection(
             False,
-            unavailable_reason="organize plan was not reached",
+            unavailable_reason=_bounded(unavailable, _MAX_ITEM_TEXT),
         )
     duplicate = plan.duplicate_comparison
     if organize_policy is not None:
@@ -671,7 +674,7 @@ def _plan_section(
         }
     else:
         policy_value = None
-    next_action = PREVIEW_CONFLICT_NEXT_ACTION if conflict_finding and plan.conflicts else None
+    next_action = finding_next_action
     value: dict[str, Any] = {
         "planId": _bounded(plan.plan_id),
         "sourceStorageId": _bounded(plan.source_storage_id),

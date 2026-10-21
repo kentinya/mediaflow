@@ -1346,7 +1346,7 @@ function FileBrowseView({
         </span>
         {selectedCount > 0 && organizeCount !== selectedCount ? (
           <span className="mf-selection-hint">
-            可进入整理预览 {organizeCount} 个；其余选择保留给文件管理操作。
+            可进入整理分析 {organizeCount} 个；其余选择保留给文件管理操作。
           </span>
         ) : null}
         <button

@@ -5553,8 +5553,10 @@ export async function createAutomationPreview(
 }
 
 export interface GrantAutomationAuthorityOptions {
+  /** The exact published revision whose definition bounds this authority. */
   readonly definitionId: string;
-  readonly previewId: string;
+  readonly revisionId?: string | null;
+  readonly expectedVersion?: number | null;
   readonly reason?: string | null;
 }
 
@@ -5563,16 +5565,19 @@ export async function grantAutomationAuthority(
   options: GrantAutomationAuthorityOptions,
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<AutomationGrantStateModel>> {
-  if (
-    !isSafeIdentifier(options.definitionId) ||
-    !isSafeIdentifier(options.previewId)
-  ) {
+  if (!isSafeIdentifier(options.definitionId)) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
-  const body: Record<string, unknown> = {
-    confirmation: true,
-    previewId: options.previewId,
-  };
+  const body: Record<string, unknown> = { confirmation: true };
+  if (options.revisionId !== null && options.revisionId !== undefined) {
+    body.revisionId = options.revisionId;
+  }
+  if (
+    options.expectedVersion !== null &&
+    options.expectedVersion !== undefined
+  ) {
+    body.expectedVersion = options.expectedVersion;
+  }
   if (options.reason) {
     body.reason = options.reason;
   }

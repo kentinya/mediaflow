@@ -67,6 +67,12 @@ export interface AutomationRunOnceModel {
   readonly frozen: boolean;
   readonly frozenAt: string | null;
   readonly intentId: string | null;
+  /**
+   * The exact durable shared-plan identity this frozen manifest produced, when
+   * one exists. It carries no authority: it only lets the same page re-read the
+   * plan it already created after a reload, reconnect or restart.
+   */
+  readonly previewId: string | null;
   readonly nextAction: string;
   readonly message: string;
   readonly error: string | null;
@@ -158,6 +164,7 @@ export function normalizeAutomationRunOnce(
     frozen: record["frozen"] === true,
     frozenAt: optionalText(record["frozenAt"]),
     intentId: optionalText(record["intentId"]),
+    previewId: optionalText(record["previewId"]),
     nextAction: boundedText(record, "nextAction"),
     message: optionalText(progress["message"]) ?? "",
     error: optionalText(record["error"]),

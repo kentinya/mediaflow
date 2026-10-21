@@ -176,16 +176,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/organize/discovery/" as const,
   },
   {
-    id: "operations-organize-preview",
-    label: "Exact organize Preview",
-    path: "/operations/organize/preview/$previewId",
-    title: "Exact organize Preview | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Exact reviewed items, destructive implications and one Execute action.",
-    dynamicPrefix: "/operations/organize/preview/" as const,
-  },
-  {
     id: "operations-organize-execution",
     label: "Organize execution",
     path: "/operations/organize/execution/$executionId",
@@ -923,15 +913,15 @@ export function allowlistedDestinationSearch(
   if (
     path === "/operations/organize/intent/$intentId" ||
     path === "/operations/organize/discovery/$discoveryId" ||
-    path === "/operations/organize/preview/$previewId" ||
     path === "/operations/organize/execution/$executionId"
   ) {
-    // The intent, durable discovery, exact Preview and execution pages of one
-    // Organize journey carry only the bounded return contexts that let them
-    // offer their two explicit back actions; nothing else survives a
-    // reconnect here. The discovery page keeps the exact admitted discovery
-    // identity in its path, so a refresh or reconnect continues the same
-    // durable record without admitting work.
+    // The intent, durable discovery and execution pages of one Organize journey
+    // carry only the bounded return contexts that let them offer their two
+    // explicit back actions; nothing else survives a reconnect here. The
+    // discovery page keeps the exact admitted discovery identity in its path,
+    // so a refresh or reconnect continues the same durable record without
+    // admitting work.  The complete plan summary is rendered in the page that
+    // produced it, so no separate plan destination carries state either.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setJourneyReturnContexts(allowed, current);

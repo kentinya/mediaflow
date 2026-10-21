@@ -3288,10 +3288,15 @@ function organizeState(session) {
       // Durable admission evidence for the bounded reconciliation read:
       // each entry is one previously admitted execution the fake stores.
       admitted: [],
+      // Which bounded plan document this session's shared analysis returns.
+      // The retired standalone plan page is gone, so a test requests its
+      // variant here and then reaches it through the real intent journey.
+      previewVariant: "default",
     };
     ORGANIZE_STATES.set(key, value);
   }
   if (value.admitted === undefined) value.admitted = [];
+  if (value.previewVariant === undefined) value.previewVariant = "default";
   return value;
 }
 
@@ -3361,6 +3366,43 @@ function organizeIntentItems(state) {
       version: state.itemVersion,
     };
   });
+}
+
+/**
+ * The bounded plan document this session's shared analysis returns.
+ *
+ * The independent plan/Preview destination is retired, so a browser test can no
+ * longer deep-link to one fixture variant. It requests the variant for its own
+ * session and reaches the document through the real intent journey instead.
+ */
+function organizeVariantPreviewDocument(state) {
+  switch (state.previewVariant) {
+    case "destructive":
+      return organizeDestructivePreviewDocument(state);
+    case "lost":
+      return organizeLostPreviewDocument(state);
+    case "lost-unadmitted":
+      return organizeLostUnadmittedPreviewDocument(state);
+    case "hostile":
+      // The analysis itself is a complete, valid fixed plan; the malformed
+      // shape belongs to the later bounded plan read of this exact identity.
+      return organizePlanPointerDocument(state, ORGANIZE_HOSTILE_PREVIEW_ID);
+    case "misbound":
+      return organizePlanPointerDocument(state, ORGANIZE_MISBOUND_PREVIEW_ID);
+    case "suffix":
+      return organizePlanPointerDocument(state, ORGANIZE_SUFFIX_PREVIEW_ID);
+    default:
+      return organizePreviewDocument(state);
+  }
+}
+
+/** One valid plan document whose exact identity is the requested plan. */
+function organizePlanPointerDocument(state, previewId) {
+  const document = organizePreviewDocument(state);
+  document["previewId"] = previewId;
+  document["actions"]["execute"]["path"] =
+    `/api/v1/operations/organize/previews/${previewId}/execute`;
+  return document;
 }
 
 function organizeDiscoveryDocument(discovery) {
@@ -3706,6 +3748,42 @@ function organizeLostPreviewDocument(state) {
   value.previewId = ORGANIZE_LOST_PREVIEW_ID;
   value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}/execute`;
   return value;
+}
+
+/** A malformed contract shape: unmodelled transport and unknown item status. */
+function organizeHostilePreviewDocument(state) {
+  const hostile = organizePreviewDocument(state);
+  hostile["previewId"] = ORGANIZE_HOSTILE_PREVIEW_ID;
+  hostile["actions"]["execute"]["available"] = true;
+  hostile["actions"]["execute"]["reason"] = null;
+  hostile["actions"]["execute"]["method"] = "DELETE";
+  hostile["actions"]["execute"]["path"] = "https://attacker.example/execute";
+  hostile["items"][0]["status"] = "hacked";
+  return hostile;
+}
+
+/** A malformed contract shape: a safe method and another object's route. */
+function organizeMisboundPreviewDocument(state) {
+  const misbound = organizePreviewDocument(state);
+  misbound["previewId"] = ORGANIZE_MISBOUND_PREVIEW_ID;
+  misbound["actions"]["execute"]["available"] = true;
+  misbound["actions"]["execute"]["reason"] = null;
+  misbound["actions"]["execute"]["method"] = "GET";
+  misbound["actions"]["execute"]["requiresConfirmation"] = true;
+  misbound["actions"]["execute"]["path"] =
+    `/api/v1/organize/previews/another-preview/execute`;
+  return misbound;
+}
+
+/** A malformed contract shape: the read route without the /execute suffix. */
+function organizeSuffixPreviewDocument(state) {
+  const suffix = organizePreviewDocument(state);
+  suffix["previewId"] = ORGANIZE_SUFFIX_PREVIEW_ID;
+  suffix["actions"]["execute"]["available"] = true;
+  suffix["actions"]["execute"]["reason"] = null;
+  suffix["actions"]["execute"]["path"] =
+    `/api/v1/operations/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}`;
+  return suffix;
 }
 
 function organizeLostUnadmittedPreviewDocument(state) {
@@ -4636,6 +4714,7 @@ function automationState(session) {
       previewStale: false,
       granted: false,
       activated: false,
+      hostileGrant: false,
       createdDefinition: null,
       copiedDefinition: null,
     };
@@ -14275,7 +14354,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 201, organizePreviewDocument(state));
+    sendJson(res, 201, organizeVariantPreviewDocument(state));
     return;
   }
 
@@ -14380,14 +14459,7 @@ const server = createServer(async (req, res) => {
       objectType: "organize_preview",
       path: "/api/v1/organize/previews/:previewId",
     });
-    const hostile = organizePreviewDocument(state);
-    hostile["previewId"] = ORGANIZE_HOSTILE_PREVIEW_ID;
-    hostile["actions"]["execute"]["available"] = true;
-    hostile["actions"]["execute"]["reason"] = null;
-    hostile["actions"]["execute"]["method"] = "DELETE";
-    hostile["actions"]["execute"]["path"] = "https://attacker.example/execute";
-    hostile["items"][0]["status"] = "hacked";
-    sendJson(res, 200, hostile);
+    sendJson(res, 200, organizeHostilePreviewDocument(state));
     return;
   }
 
@@ -14409,15 +14481,7 @@ const server = createServer(async (req, res) => {
       objectType: "organize_preview",
       path: "/api/v1/organize/previews/:previewId",
     });
-    const misbound = organizePreviewDocument(state);
-    misbound["previewId"] = ORGANIZE_MISBOUND_PREVIEW_ID;
-    misbound["actions"]["execute"]["available"] = true;
-    misbound["actions"]["execute"]["reason"] = null;
-    misbound["actions"]["execute"]["method"] = "GET";
-    misbound["actions"]["execute"]["requiresConfirmation"] = true;
-    misbound["actions"]["execute"]["path"] =
-      `/api/v1/organize/previews/another-preview/execute`;
-    sendJson(res, 200, misbound);
+    sendJson(res, 200, organizeMisboundPreviewDocument(state));
     return;
   }
 
@@ -14440,13 +14504,7 @@ const server = createServer(async (req, res) => {
       objectType: "organize_preview",
       path: "/api/v1/organize/previews/:previewId",
     });
-    const suffix = organizePreviewDocument(state);
-    suffix["previewId"] = ORGANIZE_SUFFIX_PREVIEW_ID;
-    suffix["actions"]["execute"]["available"] = true;
-    suffix["actions"]["execute"]["reason"] = null;
-    suffix["actions"]["execute"]["path"] =
-      `/api/v1/operations/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}`;
-    sendJson(res, 200, suffix);
+    sendJson(res, 200, organizeSuffixPreviewDocument(state));
     return;
   }
 
@@ -14862,9 +14920,21 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/automation/task-definitions/:definitionId",
       body: null,
     });
-    sendJson(res, 200, {
-      definition: automationDefinitionDocument(state, token),
-    });
+    const document = automationDefinitionDocument(state, token);
+    if (state.hostileGrant === true) {
+      // A contract-shaped document whose grant evidence is malformed: the
+      // built artifact must refuse the whole read, render no grant control and
+      // submit nothing.
+      document["unattendedExecutionGrant"] = {
+        status: "active",
+        active: "yes",
+        grantId: "grant-hostile",
+        definitionChangedSinceGrant: "no",
+        previewId: { nested: "hidden-token" },
+        nextAction: "/private/media/Bearer hidden-token",
+      };
+    }
+    sendJson(res, 200, { definition: document });
     return;
   }
   const automationDraftMatch = url.pathname.match(
@@ -16414,6 +16484,47 @@ const server = createServer(async (req, res) => {
       `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
     );
     sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // The supported Automation boundary owns the unattended grant: a test can
+  // request malformed grant evidence for its own session and then drive the
+  // real definition page.
+  if (
+    url.pathname === "/__test__/automation-grant-variant" &&
+    req.method === "POST"
+  ) {
+    const state = automationState(session);
+    state.hostileGrant = url.searchParams.get("variant") === "hostile";
+    sendJson(res, 200, { ok: true, hostileGrant: state.hostileGrant });
+    return;
+  }
+
+  // The retired standalone plan page is gone, so a browser test cannot deep-link
+  // to one bounded plan fixture. It selects the variant its own session's shared
+  // analysis returns and then drives the real intent journey.
+  if (
+    url.pathname === "/__test__/organize-plan-variant" &&
+    req.method === "POST"
+  ) {
+    const state = organizeState(session);
+    const variant = url.searchParams.get("variant") ?? "default";
+    if (
+      ![
+        "default",
+        "destructive",
+        "lost",
+        "lost-unadmitted",
+        "hostile",
+        "misbound",
+        "suffix",
+      ].includes(variant)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_variant" } });
+      return;
+    }
+    state.previewVariant = variant;
+    sendJson(res, 200, { ok: true, variant });
     return;
   }
 

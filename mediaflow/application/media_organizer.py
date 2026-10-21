@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
-from mediaflow.application.evidence_capture import build_pipeline_evidence
+from mediaflow.application.evidence_capture import (
+    ANALYSIS_CONFLICT_NEXT_ACTION,
+    build_pipeline_evidence,
+)
 from mediaflow.application.failure_explanation import (
     classify_failure,
     failure_explanation,
@@ -73,6 +76,23 @@ from mediaflow.domain.workflow_retry import RetryEvent, WorkflowRetryPolicy
 if TYPE_CHECKING:
     from mediaflow.application.task_runtime import PersistentTaskCoordinator
     from mediaflow.domain.task_persistence import ConflictConfirmation, PersistentTaskItem
+
+# Operator-facing, secret-free next actions for the four preparation findings the
+# shared zero-mutation analysis can record.  They name the correction the
+# operator can make before an explicit re-analysis; none of them grants
+# execution authority and none creates a formal execution backlog item.
+ANALYSIS_RECOGNITION_NEXT_ACTION = (
+    "choose a valid RecognitionType for this source, then re-run the shared analysis"
+)
+ANALYSIS_METADATA_SELECTION_NEXT_ACTION = (
+    "choose one of this source's grounded metadata candidates, then re-run the shared analysis"
+)
+ANALYSIS_METADATA_CORRECTION_NEXT_ACTION = (
+    "correct the search title/year for this source, then re-run the shared analysis"
+)
+ANALYSIS_CLASSIFICATION_NEXT_ACTION = (
+    "choose a classification destination for this source, then re-run the shared analysis"
+)
 
 
 @dataclass(frozen=True)
@@ -325,6 +345,10 @@ class MediaOrganizerService:
             if strategy.recognition.status is RecognitionStatus.UNRECOGNIZED:
                 if self._task_coordinator and tracked_item:
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    if self._analysis_only:
+                        return self._analysis_finding(
+                            item, tracked_item, ANALYSIS_RECOGNITION_NEXT_ACTION
+                        )
                     item = self._attach_evidence(item, tracked_item)
                     self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_recognition(
@@ -349,6 +373,10 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    if self._analysis_only:
+                        return self._analysis_finding(
+                            item, tracked_item, ANALYSIS_METADATA_SELECTION_NEXT_ACTION
+                        )
                     item = self._attach_evidence(item, tracked_item)
                     self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_metadata(
@@ -366,6 +394,10 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    if self._analysis_only:
+                        return self._analysis_finding(
+                            item, tracked_item, ANALYSIS_METADATA_CORRECTION_NEXT_ACTION
+                        )
                     item = self._attach_evidence(item, tracked_item)
                     self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_metadata_correction(
@@ -399,6 +431,10 @@ class MediaOrganizerService:
                     and tracked_item
                 ):
                     item = MediaOrganizerItemResult(source, strategy, retry_events=retry_events)
+                    if self._analysis_only:
+                        return self._analysis_finding(
+                            item, tracked_item, ANALYSIS_CLASSIFICATION_NEXT_ACTION
+                        )
                     item = self._attach_evidence(item, tracked_item)
                     self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_classification(
@@ -503,15 +539,20 @@ class MediaOrganizerService:
                         plan=plan,
                     )
                 item = MediaOrganizerItemResult(source, strategy, plan, retry_events=retry_events)
-                item = self._attach_evidence(item, tracked_item)
                 if self._task_coordinator and tracked_item:
                     if self._analysis_only:
-                        # An analysis-only Preview must keep the organize-plan
+                        # An analysis-only run must keep the organize-plan
                         # conflict as an inspectable durable finding.  It never
-                        # creates a PENDING ConflictConfirmation, a WAITING_CONFIRM
-                        # TaskItem or a real Conflicts backlog item; the operator
-                        # must use the explicit real Organize journey for that.
-                        return self._complete(item, tracked_item, analysis_only=True)
+                        # creates a PENDING ConflictConfirmation, a
+                        # WAITING_CONFIRM TaskItem or a real Conflicts backlog
+                        # item; the operator must use the explicit real Organize
+                        # journey for that.
+                        return self._analysis_finding(
+                            item,
+                            tracked_item,
+                            ANALYSIS_CONFLICT_NEXT_ACTION if plan.conflicts else None,
+                        )
+                    item = self._attach_evidence(item, tracked_item)
                     self._record(item, tracked_item, persist_evidence=False)
                     self._task_coordinator.wait_for_confirmation(
                         tracked_item,
@@ -1334,6 +1375,26 @@ class MediaOrganizerService:
             return safe_message[:1000]
         return "single-item DryRun analysis failed"
 
+    def _analysis_finding(
+        self,
+        item: MediaOrganizerItemResult,
+        tracked_item: PersistentTaskItem,
+        next_action: str | None,
+    ) -> MediaOrganizerItemResult:
+        """Persist one analysis-only finding with zero execution authority.
+
+        The shared zero-mutation analysis (public CLI ``organize`` without
+        ``--execute``) records the complete plan/attachment evidence and the
+        exact unready reason.  It never creates a formal execution backlog item
+        (Recognition/Metadata/Classification review or ConflictConfirmation),
+        never grants single-shot or unattended authority and never reports the
+        analysis as a completed media organize.  A real execution or recovery
+        run keeps its original blocker responsibilities.
+        """
+
+        item = self._attach_evidence(item, tracked_item, finding_next_action=next_action)
+        return self._complete(item, tracked_item, analysis_only=True)
+
     def _complete(
         self,
         item: MediaOrganizerItemResult,
@@ -1376,42 +1437,47 @@ class MediaOrganizerService:
             item.strategy.metadata.identity if item.strategy and item.strategy.metadata else None
         )
         execution = item.execution
+        if execution is not None:
+            status = execution.status.value
+        elif item.error:
+            status = "FAILED"
+        elif self._analysis_only:
+            # A shared zero-mutation analysis reports its own finding state; it is
+            # never a formal WAITING_CONFIRM/review backlog item and never a media
+            # organize success.
+            status = "DRY_RUN"
+        else:
+            status = (
+                "WAITING_METADATA"
+                if item.strategy
+                and item.strategy.metadata
+                and item.strategy.metadata.status
+                in {
+                    MetadataIdentificationStatus.NEED_CONFIRM,
+                    MetadataIdentificationStatus.AMBIGUOUS,
+                }
+                else "WAITING_METADATA_CORRECTION"
+                if item.strategy
+                and item.strategy.metadata
+                and item.strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
+                else "WAITING_CLASSIFICATION"
+                if item.strategy
+                and item.strategy.classification
+                and item.strategy.classification.status is ClassificationStatus.UNCLASSIFIED
+                else "WAITING_RECOGNITION"
+                if item.strategy
+                and item.strategy.recognition.status is RecognitionStatus.UNRECOGNIZED
+                else "WAITING_CONFIRM"
+                if item.plan and item.plan.conflicts
+                else "FAILED"
+            )
         self._history.append(
             OperationHistoryRecord.now(
                 execution.plan_id if execution else f"failed:{len(self._history.list())}",
                 item.source,
                 execution.resolved_destination if execution else "",
                 execution.operation.value if execution else "SKIP",
-                (
-                    execution.status.value
-                    if execution
-                    else "WAITING_METADATA"
-                    if item.strategy
-                    and item.strategy.metadata
-                    and item.strategy.metadata.status
-                    in {
-                        MetadataIdentificationStatus.NEED_CONFIRM,
-                        MetadataIdentificationStatus.AMBIGUOUS,
-                    }
-                    else "WAITING_METADATA_CORRECTION"
-                    if item.strategy
-                    and item.strategy.metadata
-                    and item.strategy.metadata.status is MetadataIdentificationStatus.NOT_FOUND
-                    and not item.error
-                    else "WAITING_CLASSIFICATION"
-                    if item.strategy
-                    and item.strategy.classification
-                    and item.strategy.classification.status is ClassificationStatus.UNCLASSIFIED
-                    else "WAITING_RECOGNITION"
-                    if item.strategy
-                    and item.strategy.recognition.status is RecognitionStatus.UNRECOGNIZED
-                    and not item.error
-                    else "DRY_RUN"
-                    if self._analysis_only and item.plan and item.plan.conflicts and not item.error
-                    else "WAITING_CONFIRM"
-                    if item.plan and item.plan.conflicts and not item.error
-                    else "FAILED"
-                ),
+                status,
                 provider_id=identity.provider_id if identity else None,
                 title=identity.title if identity else None,
                 error=item.error or ("; ".join(execution.errors) if execution else None),
@@ -1422,6 +1488,8 @@ class MediaOrganizerService:
         self,
         item: MediaOrganizerItemResult,
         tracked_item: PersistentTaskItem | None,
+        *,
+        finding_next_action: str | None = None,
     ) -> MediaOrganizerItemResult:
         if item.evidence is not None or tracked_item is None or self._task_coordinator is None:
             return item
@@ -1443,9 +1511,7 @@ class MediaOrganizerService:
             outcome=self._evidence_outcome(item),
             storages=self._storages,
             organize_policy=organize_policy,
-            conflict_finding=bool(
-                self._analysis_only and item.plan is not None and bool(item.plan.conflicts)
-            ),
+            finding_next_action=finding_next_action,
         )
         return replace(item, evidence=evidence)
 

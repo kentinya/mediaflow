@@ -14,23 +14,25 @@ import { expect, test, type Page } from "@playwright/test";
  * digest, fingerprint, path or authority material is recorded or asserted.
  *
  * Covered journey: durable intent with pinned options and optimistic versions,
- * a choice edit that invalidates earlier Preview evidence, the exact Preview
- * with visible findings, one meaningful Execute action, the durable admitted
- * execution and its per-item outcome, a refresh-safe outcome route and
- * unauthenticated deep-entry continuation.
+ * a choice edit that invalidates earlier plan evidence, the shared analysis with
+ * its complete fixed plan summary rendered in that same page, one meaningful
+ * Execute action, the durable admitted execution and its per-item outcome, a
+ * refresh-safe outcome route and unauthenticated deep-entry continuation.
  */
 
 const BASE_URL = "http://127.0.0.1:4173";
 const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 const INTENT_ID = "organize-intent-e2e-001";
-const PREVIEW_ID = "organize-preview-e2e-001";
-const DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
-const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
-const MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
-const SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
-const LOST_PREVIEW_ID = "organize-preview-lost-e2e-001";
-const LOST_UNADMITTED_PREVIEW_ID = "organize-preview-lost-unadmitted-e2e-001";
+/** The bounded plan variants the fake can return for one session's analysis. */
+type PlanVariant =
+  | "default"
+  | "destructive"
+  | "hostile"
+  | "misbound"
+  | "suffix"
+  | "lost"
+  | "lost-unadmitted";
 const EXECUTION_ID = "organize-execution-e2e-001";
 const FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
 
@@ -71,6 +73,34 @@ async function connect(page: Page, token: string): Promise<void> {
   await page.getByRole("button", { name: "Connect" }).click();
 }
 
+/**
+ * Reach one bounded shared plan through the real intent journey.
+ *
+ * There is no separate plan/Preview destination: the operator runs the shared
+ * analysis in the intent page and the complete fixed plan is summarized there.
+ * A test that needs a specific bounded fixture variant asks the fake for it in
+ * its own session first, so the analysis returns that exact document.
+ */
+async function openPlan(
+  page: Page,
+  token: string,
+  variant: PlanVariant = "default",
+): Promise<void> {
+  if (variant !== "default") {
+    const selected = await page.request.post(
+      `/__test__/organize-plan-variant?variant=${variant}`,
+    );
+    expect(selected.status()).toBe(200);
+  }
+  await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
+  await connect(page, token);
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+  await page.getByRole("button", { name: "生成分析摘要" }).click();
+  await expect(
+    page.getByRole("heading", { name: "当前整理计划（零变更摘要）" }),
+  ).toBeVisible();
+}
+
 test.describe("manual organize journey", () => {
   test("creates a durable intent, saves one choice and creates the exact Preview", async ({
     page,
@@ -80,7 +110,7 @@ test.describe("manual organize journey", () => {
 
     await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "生成精确预览" }),
+      page.getByRole("button", { name: "生成分析摘要" }),
     ).toBeEnabled();
 
     // The downstream policy controls only display the RecognitionType's pinned
@@ -102,7 +132,7 @@ test.describe("manual organize journey", () => {
       "A",
     );
     await page.getByRole("button", { name: "保存选择" }).click();
-    await expect(page.getByText(/预览已成为历史证据/)).toBeVisible();
+    await expect(page.getByText(/计划摘要已成为历史证据/)).toBeVisible();
 
     const afterChoice = await manualEvidence(page);
     const choice = afterChoice.filter(
@@ -122,13 +152,15 @@ test.describe("manual organize journey", () => {
     await page.getByRole("button", { name: "生成分析摘要" }).click();
 
     // The intent action runs the shared Organize analysis inline, so the
-    // operator lands directly on the same-page exact plan summary.
+    // operator stays on this same page with the complete fixed plan summary.
     await expect(page).toHaveURL(
-      new RegExp(`/ui-v2/operations/organize/preview/${PREVIEW_ID}$`),
+      new RegExp(`/ui-v2/operations/organize/intent/${INTENT_ID}$`),
     );
-    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-    await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
-    await expect(page.getByText(/预期目标/)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "当前整理计划（零变更摘要）" }),
+    ).toBeVisible();
+    await expect(page.getByText(/分析不会修改文件/)).toBeVisible();
+    await expect(page.getByText(/计划 organize-preview-e2e-001/)).toBeVisible();
 
     const afterAnalysis = await manualEvidence(page);
     const preview = afterAnalysis.filter(
@@ -150,12 +182,10 @@ test.describe("manual organize journey", () => {
   test("admits exactly one Execute action and follows the durable outcome", async ({
     page,
   }) => {
-    await page.goto(`/ui-v2/operations/organize/preview/${PREVIEW_ID}`);
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN);
 
-    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
     const execute = page.getByRole("button", {
-      name: "确认执行所选条目",
+      name: "确认整理 1 项",
     });
     await expect(execute).toBeEnabled();
     await execute.click();
@@ -191,12 +221,20 @@ test.describe("manual organize journey", () => {
   }) => {
     const returnOps = encodeURIComponent("command=manual_organize&status=all");
     await page.goto(
-      `/ui-v2/operations/organize/preview/${LOST_PREVIEW_ID}?returnOps=${returnOps}`,
+      `/ui-v2/operations/organize/intent/${INTENT_ID}?returnOps=${returnOps}`,
     );
     await connect(page, VIEWER_TOKEN);
+    const selected = await page.request.post(
+      "/__test__/organize-plan-variant?variant=lost",
+    );
+    expect(selected.status()).toBe(200);
+    await page.getByRole("button", { name: "生成分析摘要" }).click();
+    await expect(
+      page.getByRole("heading", { name: "当前整理计划（零变更摘要）" }),
+    ).toBeVisible();
 
     const execute = page.getByRole("button", {
-      name: "确认执行所选条目",
+      name: "确认整理 1 项",
     });
     await expect(execute).toBeEnabled();
     await execute.click();
@@ -246,14 +284,13 @@ test.describe("manual organize journey", () => {
     expect(page.url()).not.toMatch(/token|digest|fingerprint|authorization/i);
   });
 
-  test("a page reload cannot reopen Execute when the Preview already has an admission", async ({
+  test("a page reload cannot reopen Execute when the plan already has an admission", async ({
     page,
   }) => {
-    await page.goto(`/ui-v2/operations/organize/preview/${LOST_PREVIEW_ID}`);
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "lost");
 
     const execute = page.getByRole("button", {
-      name: "确认执行所选条目",
+      name: "确认整理 1 项",
     });
     await execute.click();
     await expect(
@@ -261,15 +298,17 @@ test.describe("manual organize journey", () => {
     ).toBeVisible();
     await expect(execute).toBeDisabled();
 
-    // Reload clears component state and the memory-only API token. The
-    // Preview's bounded durable execution read must still keep Execute closed
-    // and expose the existing record for inspection without claiming it is
-    // equivalent to a selection the reloaded page no longer holds.
+    // Reload clears component state and the memory-only API token. Re-running
+    // the shared analysis returns the same durable fixed plan, whose bounded
+    // execution read must still keep Execute closed and expose the existing
+    // record for inspection without claiming it is equivalent to a selection
+    // the reloaded page no longer holds.
     await page.reload();
     await expect(page.getByLabel("API token")).toBeVisible();
     await connect(page, VIEWER_TOKEN);
+    await page.getByRole("button", { name: "生成分析摘要" }).click();
     await expect(
-      page.getByRole("heading", { name: "此预览已有持久执行记录" }),
+      page.getByRole("heading", { name: "该计划已有持久执行记录" }),
     ).toBeVisible();
     await expect(execute).toBeDisabled();
     await expect(
@@ -288,13 +327,10 @@ test.describe("manual organize journey", () => {
   test("keeps Execute locked after a proven absence until the exact Preview is refreshed", async ({
     page,
   }) => {
-    await page.goto(
-      `/ui-v2/operations/organize/preview/${LOST_UNADMITTED_PREVIEW_ID}`,
-    );
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "lost-unadmitted");
 
     const execute = page.getByRole("button", {
-      name: "确认执行所选条目",
+      name: "确认整理 1 项",
     });
     await execute.click();
     await expect(
@@ -313,9 +349,9 @@ test.describe("manual organize journey", () => {
       ),
     ).toHaveLength(1);
 
-    await page.getByRole("button", { name: "刷新预览后再决定" }).click();
+    await page.getByRole("button", { name: "刷新计划后再决定" }).click();
     await expect(
-      page.getByRole("heading", { name: "预览已刷新，可以重新审阅" }),
+      page.getByRole("heading", { name: "计划已刷新，可以重新审阅" }),
     ).toBeVisible();
     await expect(execute).toBeEnabled();
 
@@ -336,12 +372,8 @@ test.describe("manual organize journey", () => {
   test("requires separate destructive confirmations for the exact Preview selection", async ({
     page,
   }) => {
-    await page.goto(
-      `/ui-v2/operations/organize/preview/${DESTRUCTIVE_PREVIEW_ID}`,
-    );
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "destructive");
 
-    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
     await expect(page.getByText("复制").first()).toBeVisible();
     await expect(
       page.getByText(
@@ -349,7 +381,7 @@ test.describe("manual organize journey", () => {
       ),
     ).toHaveCount(1);
     const execute = page.getByRole("button", {
-      name: "确认执行所选条目",
+      name: "确认整理 1 项",
     });
     await expect(execute).toBeDisabled();
 
@@ -440,14 +472,13 @@ test.describe("manual organize journey", () => {
     // route and an unknown item status. The built artifact must fail closed:
     // the malformed read state replaces the journey, no Execute control is
     // rendered, and no hostile value reaches the DOM.
-    await page.goto(`/ui-v2/operations/organize/preview/${HOSTILE_PREVIEW_ID}`);
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "hostile");
 
     await expect(
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "确认执行所选条目" }),
+      page.getByRole("button", { name: "确认整理 1 项" }),
     ).toHaveCount(0);
     const rendered = (await page.locator("main").textContent()) ?? "";
     expect(rendered).not.toContain("attacker.example");
@@ -467,16 +498,13 @@ test.describe("manual organize journey", () => {
     // a safe method and a route belonging to another Preview. The built
     // artifact must fail closed instead of rendering the fixed Execute control
     // from a transport that does not belong to this object.
-    await page.goto(
-      `/ui-v2/operations/organize/preview/${MISBOUND_PREVIEW_ID}`,
-    );
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "misbound");
 
     await expect(
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "确认执行所选条目" }),
+      page.getByRole("button", { name: "确认整理 1 项" }),
     ).toHaveCount(0);
     // No execute request was ever submitted for this Preview.
     const evidence = await manualEvidence(page);
@@ -493,14 +521,13 @@ test.describe("manual organize journey", () => {
     // same path without the `/execute` suffix. That route is not the action's
     // transport, so the built artifact must fail closed: no Execute control,
     // no submission, no hostile promotion of a read route into a mutation.
-    await page.goto(`/ui-v2/operations/organize/preview/${SUFFIX_PREVIEW_ID}`);
-    await connect(page, VIEWER_TOKEN);
+    await openPlan(page, VIEWER_TOKEN, "suffix");
 
     await expect(
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "确认执行所选条目" }),
+      page.getByRole("button", { name: "确认整理 1 项" }),
     ).toHaveCount(0);
     const evidence = await manualEvidence(page);
     expect(

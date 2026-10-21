@@ -174,7 +174,7 @@ test("a disabled published definition runs once without a file picker", async ({
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   await expect(page.getByText("来源清单已发现，等待冻结")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "冻结清单并生成精确预览" }),
+    page.getByRole("button", { name: "冻结清单并生成计划摘要" }),
   ).toBeVisible();
 
   const manifest = await runOnceState(page, discoveryId);
@@ -218,33 +218,38 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   );
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   await expect(
-    page.getByRole("button", { name: "冻结清单并生成精确预览" }),
+    page.getByRole("button", { name: "冻结清单并生成计划摘要" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
+  await page.getByRole("button", { name: "冻结清单并生成计划摘要" }).click();
 
-  // Freezing runs the shared Organize analysis inline, so the operator lands
-  // directly on the same-page exact plan summary that Files/create uses.
+  // Freezing runs the shared Organize analysis inline, so the complete fixed
+  // plan summary renders in this same Run once page: no separate plan
+  // destination is opened and the durable run-once route is kept.
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/preview\/[^/]+$/,
+    new RegExp(`/ui-v2/operations/automation/run-once/${discoveryId}$`),
   );
-  const previewId = new URL(page.url()).pathname.split("/").pop() ?? "";
-  expect(previewId.length).toBeGreaterThan(0);
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
+  await expect(page.getByText(/分析不会修改文件/)).toBeVisible();
 
   // Real visual evidence of the shared-analysis interaction at both a narrow
   // phone width and a wide desktop width, retained beside the run.
   const analysisPanel = page.getByRole("main");
   await page.setViewportSize({ width: 375, height: 720 });
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
   await analysisPanel.screenshot({
     path: testInfo.outputPath("run-once-analysis-narrow.png"),
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
   await analysisPanel.screenshot({
     path: testInfo.outputPath("run-once-analysis-wide.png"),
   });
-  const advancedBody = { previewId };
 
   await page.request.post("/__harness__/restart");
   const manifest = await runOnceState(page, discoveryId);
@@ -253,14 +258,15 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   expect(manifest.intentId).not.toBeNull();
   expect(manifest.primarySourceCount).toBeGreaterThan(0);
 
-  // The frozen manifest's exact zero-mutation Preview is the existing *manual*
-  // Preview over the frozen intent, and it survives the restart.
-  await connectOn(
-    page,
-    `/ui-v2/operations/organize/preview/${advancedBody.previewId}`,
-  );
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-  await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
+  // The frozen manifest's exact zero-mutation plan is the shared organize plan
+  // of its linked intent, and it survives the restart: the run-once record
+  // republishes its exact plan identity, so reconnecting restores the same
+  // summary without re-analysing the manifest.
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
+  await expect(page.getByText(/分析不会修改文件/)).toBeVisible();
   await page.getByRole("main").screenshot({
     path: testInfo.outputPath("run-once-exact-preview.png"),
   });
@@ -268,15 +274,14 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   // One separate explicit confirmation executes the exact reviewed selection
   // through the resident Worker; the resulting run carries the durable
   // definition origin so Operations reaches the same run.
-  // The resident Worker must be registered *before* the page reads the
-  // Preview, because the exact Execute action is offered only when a live
-  // Worker can actually claim the admitted work.
+  // The resident Worker must be registered *before* the page reads the plan,
+  // because the exact Execute action is offered only when a live Worker can
+  // actually claim the admitted work.
   await page.request.post("/__harness__/register-manual-worker");
-  await connectOn(
-    page,
-    `/ui-v2/operations/organize/preview/${advancedBody.previewId}`,
-  );
-  const execute = page.getByRole("button", { name: "确认执行所选条目" });
+  await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
+  const execute = page.getByRole("button", {
+    name: /确认整理本次运行 1 项/,
+  });
   await expect(execute).toBeEnabled();
   await execute.click();
   await expect(
@@ -342,19 +347,15 @@ test("Run once preserves a successful sibling while one failed item is recovered
     status: "completed",
   });
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
-  await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/organize\/preview\/[^/]+$/,
-  );
-  const previewId = new URL(page.url()).pathname.split("/").pop() ?? "";
-  expect(previewId.length).toBeGreaterThan(0);
-  const analysisBody = { previewId };
+  await page.getByRole("button", { name: "冻结清单并生成计划摘要" }).click();
+  await expect(
+    page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
+  ).toBeVisible();
 
   await page.request.post("/__harness__/register-manual-worker");
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await expect(page.getByLabel("选择 One.2001.mkv")).toBeChecked();
   await expect(page.getByLabel("选择 Two.2002.mkv")).toBeChecked();
-  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await page.getByRole("button", { name: "确认整理本次运行 2 项" }).click();
   await expect(
     page.getByRole("heading", { name: "整理执行情况" }),
   ).toBeVisible();
@@ -433,33 +434,38 @@ test("Run once preserves a successful sibling while one failed item is recovered
   });
   await recovery.getByRole("button", { name: "Refresh" }).click();
   await expect(recovery.getByText(/单项分析已完成/)).toBeVisible();
-  await recovery.getByRole("button", { name: "准备精确 Preview" }).click();
-  await expect(
-    recovery.getByText(/精确 Preview 和一次性授权已准备好/),
-  ).toBeVisible();
-  await recovery.getByRole("button", { name: "查看已审核计划" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/operations\/organize\/preview\//);
-  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
-  await expect(page.locator("body")).toContainText("Two.2002.mkv");
-  await expect(page.locator("body")).not.toContainText("One.2001.mkv");
-  await page.getByLabel("选择 Two.2002.mkv").check();
+  // The non-authorizing plan summary is produced and confirmed in this same
+  // recovery panel: no separate plan page and no internal token handling.
+  const preparation = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/recovery\/prepare-summary$/.test(new URL(response.url()).pathname),
+  );
+  await recovery
+    .getByRole("button", { name: "生成计划摘要并在此确认" })
+    .click();
+  expect((await preparation).status()).toBe(200);
+  const summary = recovery.getByRole("region", { name: "新计划摘要" });
+  await expect(summary).toBeVisible();
+  await expect(summary).toContainText("Two.2002.mkv");
+  await expect(summary).not.toContainText("One.2001.mkv");
   const recovered = page.waitForResponse(
     (response) =>
       response.request().method() === "POST" &&
-      /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(
+      /\/api\/v1\/manual-recovery-preparations\/[^/]+\/confirm$/.test(
         new URL(response.url()).pathname,
       ),
   );
-  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await summary.getByRole("button", { name: /确认继续整理 1 项/ }).click();
   expect((await recovered).status()).toBe(200);
-  await expect(page).toHaveURL(
-    new RegExp(
-      `run=${executionBody.taskId}.*item=${executionBody.failedItemId}`,
-    ),
-  );
+  await expect(recovery.getByText(/本次确认已经受理/)).toBeVisible();
 
-  await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expect(recovery.getByText(/状态：consumed/)).toBeVisible();
+  // Acceptance is admission, not success: the resident Worker executes the
+  // exact confirmed subset and only the failed item's source moves.
+  const recoveredWorker = await page.request.post(
+    "/__harness__/run-manual-worker",
+  );
+  expect((await recoveredWorker.json()).completed).toBe(true);
   state = await (
     await page.request.get("/__harness__/task-item-recovery-state")
   ).json();
@@ -503,7 +509,7 @@ test("an over-bound ceiling runs once when the actual manifest fits the bound", 
   // The complete manifest fits the effective bound, so freezing is offered and
   // both limits are shown truthfully.
   await expect(
-    page.getByRole("button", { name: "冻结清单并生成精确预览" }),
+    page.getByRole("button", { name: "冻结清单并生成计划摘要" }),
   ).toBeVisible();
   const manifest = await runOnceState(page, discoveryId);
   expect(manifest.found).toBe(true);

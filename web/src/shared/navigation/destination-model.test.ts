@@ -33,7 +33,6 @@ describe("destination model", () => {
       "Manual organize",
       "Manual intent",
       "整理发现",
-      "Exact organize Preview",
       "Organize execution",
       "Automation",
       "Create Automation definition",
@@ -425,13 +424,13 @@ describe("destination model", () => {
       // A hand-typed single-encoded context is replayed only through the
       // landing's own canonical serialization, so a reconnect cannot grow the
       // escaping or smuggle a raw character into the next URL.
-      const previewContext = allowlistedDestinationSearch(
-        "/operations/organize/preview/$previewId",
+      const intentContext = allowlistedDestinationSearch(
+        "/operations/organize/intent/$intentId",
         "returnOps=q%3D%E7%94%B5%E5%BD%B1",
       );
-      expect(previewContext).not.toBeNull();
+      expect(intentContext).not.toBeNull();
       expect(
-        new URLSearchParams(previewContext as string).get("returnOps"),
+        new URLSearchParams(intentContext as string).get("returnOps"),
       ).toBe("q=%E7%94%B5%E5%BD%B1");
       expect(
         allowlistedDestinationSearch(
@@ -450,7 +449,6 @@ describe("destination model", () => {
       for (const path of [
         "/operations/organize/new",
         "/operations/organize/intent/$intentId",
-        "/operations/organize/preview/$previewId",
         "/operations/organize/execution/$executionId",
         "/resourcelib/files",
       ] as const) {

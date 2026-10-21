@@ -68,7 +68,7 @@ export const RUN_LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
   snapshot_unavailable:
     "该运行不可变的配置快照已无法解析,无法重现其精确的原始范围。请按后端给出的下一步操作处理。",
   authority_required:
-    "继续该剩余范围会修改媒体,但原始执行授权已被消费、过期或撤销;存储的执行标志不是授权。请先查看精确预览,再重新明确授权执行。",
+    "继续该剩余范围会修改媒体,但原始执行授权已被消费、过期或撤销;存储的执行标志不是授权。请先查看零变更计划摘要,再重新明确授权执行。",
   task_not_paused:
     "只有持久暂停的任务才有可继续的剩余范围。请先刷新读取当前持久状态。",
   continuation_exists:
@@ -262,7 +262,7 @@ export function RunLifecycleControls({
                 onClick={() => onPreview(withheldResume.recovery!)}
               >
                 {previewPending
-                  ? "正在生成精确预览…"
+                  ? "正在生成计划摘要…"
                   : "在当前界面生成剩余范围摘要"}
               </button>
               <span className="mf-dashboard-meta">

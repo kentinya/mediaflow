@@ -335,9 +335,16 @@ test("a read-only principal is offered no executable Automation control", async 
   ).toBeDisabled();
 });
 
-test("a hostile grant transport renders the bounded malformed state and submits nothing", async ({
+test("malformed grant evidence renders the bounded malformed state and submits nothing", async ({
   page,
 }) => {
+  // The unattended grant is bound to this exact published definition, its
+  // scope bounds and the current permission. Malformed persisted grant evidence
+  // must fail the whole read closed: no grant control, no POST.
+  const variant = await page.request.post(
+    "/__test__/automation-grant-variant?variant=hostile",
+  );
+  expect(variant.status()).toBe(200);
   await connectOn(
     page,
     `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
@@ -369,23 +376,26 @@ test("the Automation journey is keyboard operable and responsive at narrow and w
   await expect(
     page.getByRole("heading", { name: /Automation definition/ }),
   ).toBeVisible();
-  // The keyboard journey reaches the retained Run once control, which owns the
-  // shared bounded discovery and zero-mutation organize analysis.
-  const runOnce = page.getByRole("link", { name: "Run once" });
-  await runOnce.focus();
+  // The keyboard journey reaches the retained Run once control on the
+  // lifecycle page, which owns the shared bounded discovery and the
+  // zero-mutation plan summary of the frozen manifest.
+  // The keyboard journey reaches the definition's occurrence history, which is
+  // the durable evidence for every Run once this definition emitted.
+  const occurrences = page.getByRole("link", { name: "Occurrence history" });
+  await occurrences.focus();
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("heading", { name: /Run once|运行一次/ }),
+    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 375, height: 720 });
   await expect(
-    page.getByRole("heading", { name: /Run once|运行一次/ }),
+    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(
-    page.getByRole("heading", { name: /Run once|运行一次/ }),
+    page.getByRole("heading", { name: /Occurrence|occurrence/ }).first(),
   ).toBeVisible();
 });
 

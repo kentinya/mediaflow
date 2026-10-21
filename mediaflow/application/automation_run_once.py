@@ -173,6 +173,10 @@ class AutomationRunOnceService:
             "counts": discovery.progress.counters.document(),
             "primarySourceCount": len(discovery.sources),
             "intentId": discovery.intent_id,
+            # The exact durable fixed-plan identity linked to this Run once.  It
+            # carries no authority; it lets the same page re-read the plan it
+            # already produced after a reload, reconnect or restart.
+            "previewId": discovery.preview_id,
             "frozen": discovery.frozen,
             "frozenAt": discovery.frozen_at.isoformat() if discovery.frozen_at else None,
             "zeroMutation": True,
@@ -267,10 +271,20 @@ class AutomationRunOnceService:
                 ),
             },
             "preview": {
+                # The frozen manifest's complete zero-mutation plan is the shared
+                # organize plan of its linked intent.  Its exact durable identity
+                # is published so the Run once page can restore the same plan
+                # summary after a reload, reconnect or restart instead of
+                # re-analysing the manifest.
                 "available": discovery.frozen and discovery.intent_id is not None,
                 "method": "GET",
+                "path": (
+                    f"/api/v1/operations/organize/previews/{discovery.preview_id}"
+                    if discovery.preview_id
+                    else None
+                ),
                 "sideEffects": "none",
-                "nextAction": "open the frozen manifest's exact Preview",
+                "nextAction": "review the frozen manifest's exact plan summary in this Run once",
             },
         }
 

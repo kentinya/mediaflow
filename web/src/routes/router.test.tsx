@@ -72,3 +72,21 @@ describe("retired Library routes", () => {
     expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
   });
 });
+
+describe("retired arrange-preview route", () => {
+  it("answers the removed plan destination with the ordinary not-found page", async () => {
+    // The independent plan/Preview destination is gone. An old browser address
+    // is not redirected and gets no retired-page notice, no compatibility
+    // guard and no plan data: the ordinary unknown-address page renders and no
+    // API read or execution request is produced.
+    stubJson({ error: { code: "not_found" } }, 404);
+    authStore.setToken("route-separation-token");
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    expect(
+      await screen.findByRole("heading", { name: "Route not found" }),
+    ).toBeVisible();
+    expect(document.body.textContent ?? "").not.toMatch(/整理预览|精确预览/);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});

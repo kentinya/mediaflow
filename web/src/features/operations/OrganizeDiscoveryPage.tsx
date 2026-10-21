@@ -216,7 +216,7 @@ export function OrganizeDiscoveryPage() {
           <h2>整理发现</h2>
           <p className="mf-dashboard-meta">
             这里只读取存储元数据，不会移动、复制或删除任何文件。
-            冻结来源清单后，仍需在精确预览上单独确认才会执行整理。
+            冻结来源清单后，仍需在计划摘要中单独确认才会执行整理。
           </p>
         </div>
         <RefreshControl onRefresh={refresh} refreshing={query.isFetching} />

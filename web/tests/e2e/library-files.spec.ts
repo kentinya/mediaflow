@@ -434,7 +434,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await readmeRow.getByRole("checkbox").check();
   await expect(readmeRow.getByRole("checkbox")).toBeChecked();
   await expect(page.getByText("已选择 1 个文件")).toBeVisible();
-  await expect(page.getByText(/可进入整理预览 0 个/)).toBeVisible();
+  await expect(page.getByText(/可进入整理分析 0 个/)).toBeVisible();
   await expect(page.getByRole("button", { name: "批量整理" })).toBeDisabled();
 
   // A mixed general selection stays visible, but only the backend-admitted
@@ -442,7 +442,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   const sampleRow = page.getByRole("row", { name: /sample\.mkv/ });
   await sampleRow.getByRole("checkbox").check();
   await expect(page.getByText("已选择 2 个文件")).toBeVisible();
-  await expect(page.getByText(/可进入整理预览 1 个/)).toBeVisible();
+  await expect(page.getByText(/可进入整理分析 1 个/)).toBeVisible();
   await page.getByRole("button", { name: "批量整理" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/new\?.*discoveryId=organize-discovery-e2e-001/,

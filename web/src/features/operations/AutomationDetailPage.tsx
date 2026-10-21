@@ -102,8 +102,8 @@ export function AutomationDetailPage() {
   });
 
   const grantMutation = useMutation({
-    mutationFn: (previewId: string) =>
-      grantAutomationAuthority(token, { definitionId, previewId }),
+    mutationFn: (revisionId: string) =>
+      grantAutomationAuthority(token, { definitionId, revisionId }),
     retry: false,
     onMutate: () => {
       setError(null);
@@ -292,8 +292,8 @@ export function AutomationDetailPage() {
                 <dl>
                   <dt>Grant state</dt>
                   <dd>{displayEnum(grant.status)}</dd>
-                  <dt>Bound Preview</dt>
-                  <dd>{grant.previewId ?? "unknown"}</dd>
+                  <dt>Granted by</dt>
+                  <dd>{grant.grantingPrincipal ?? "unknown"}</dd>
                   <dt>Max items per run</dt>
                   <dd>{grant.maxItemsPerRun ?? "unbounded"}</dd>
                   <dt>Definition changed since grant</dt>
@@ -315,7 +315,7 @@ export function AutomationDetailPage() {
               {eligibility !== null && (
                 <p className="mf-dashboard-meta">
                   {eligibility.eligible
-                    ? "Grant eligibility: the exact current Preview and current permission satisfy the persisted bounds."
+                    ? "Grant eligibility: this exact published definition, its scope bounds and the current permission satisfy the unattended grant."
                     : `Grant eligibility: ${eligibility.explanation}`}
                 </p>
               )}
@@ -339,16 +339,17 @@ export function AutomationDetailPage() {
                       disabled={
                         !confirmGrant ||
                         grantMutation.isPending ||
-                        (eligibility.previewId === null &&
-                          grant.previewId === null)
+                        definition.activeConfiguration === null
                       }
                       onClick={() => {
-                        const previewId =
-                          grant.status === "active"
-                            ? grant.previewId
-                            : eligibility.previewId;
-                        if (previewId) {
-                          grantMutation.mutate(previewId);
+                        // The unattended authority is bound to this exact
+                        // published definition revision, its scope bounds and
+                        // the current principal permission. No analysis or
+                        // Preview identity is an execution authority.
+                        const revisionId =
+                          definition.activeConfiguration?.revisionId;
+                        if (revisionId) {
+                          grantMutation.mutate(revisionId);
                         }
                       }}
                     >
