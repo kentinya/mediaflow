@@ -576,6 +576,8 @@ class MediaFlowApi:
             )
         self._unattended_grants = UnattendedExecutionGrantService(
             repository,
+            discovery_service=self._media_discovery,
+            preview_service=self._manual_previews,
             permission_authority=_CurrentConfiguredPermissionAuthority(
                 self._principals, configuration_service
             ),

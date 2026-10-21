@@ -3241,6 +3241,33 @@ class MediaDiscoveryService:
         discovery = self._read(discovery_id)
         return discovery.preview_id if discovery is not None else None
 
+    def latest_definition_analysis(
+        self, definition_id: str, *, snapshot_id: str, snapshot_digest: str
+    ) -> MediaDiscovery | None:
+        """The latest frozen, analyzed Run once for a definition under a config pin.
+
+        Returns the frozen ``MediaDiscovery`` for the most recent definition-bound
+        Run once that finished a complete bounded walk and internally froze its
+        reviewed manifest (the shared zero-mutation analysis).  The exact Preview
+        is linked through the durable intent identity, so the caller resolves it
+        from the returned discovery's ``intent_id``.  The lookup is bound to the
+        immutable configuration pin the admission used, so a republished Active
+        revision cannot silently legitimize a stale analysis for a new grant.
+        ``None`` means no shared analysis has been performed yet for the exact
+        current definition configuration.
+        """
+
+        if self._repository is None or not callable(
+            getattr(self._repository, "latest_frozen_definition_run_once", None)
+        ):
+            return None
+        discovery = self._repository.latest_frozen_definition_run_once(
+            definition_id, snapshot_id=snapshot_id, snapshot_digest=snapshot_digest
+        )
+        if discovery is None or not discovery.frozen or not discovery.intent_id:
+            return None
+        return discovery
+
     def _release_claim(self, discovery_id: str, claim_token: str) -> None:
         releaser = getattr(self._repository, "release_media_discovery_claim", None)
         if callable(releaser) and claim_token:

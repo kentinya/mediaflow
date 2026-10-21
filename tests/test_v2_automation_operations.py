@@ -134,6 +134,32 @@ def _assert_operator_document_clean(document: object) -> None:
             _assert_operator_document_clean(value)
 
 
+def _provider_registry_factory(*_requested):
+    """A synthetic Provider registry so exact analysis needs no external service."""
+
+    from mediaflow.application.metadata import MetadataProviderRegistry
+    from mediaflow.application.strategy_test import SyntheticMetadataProvider
+    from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+    return MetadataProviderRegistry(
+        (
+            SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "129",
+                        MediaType.MOVIE,
+                        "One",
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+            ),
+        )
+    )
+
+
 class _RecordingStorage(LocalStorage):
     """LocalStorage passthrough that records every mutating call."""
 
@@ -202,6 +228,9 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 (source_root / "Media" / "C").mkdir(parents=True)
                 (source_root / "Media" / "电影" / "One.2001.mkv").write_bytes(b"x" * 32)
                 (source_root / "Media" / "C" / "One.2001.mkv").write_bytes(b"x" * 32)
+                # The destination Storage root must exist so the shared
+                # zero-mutation analysis can stat it for conflict detection.
+                (root / "target").mkdir(parents=True)
                 document = _document(root)
                 with (
                     SQLiteConfigurationRepository(
@@ -257,6 +286,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                         ),
                         configuration_service=managed,
                         bootstrap_document=document,
+                        metadata_provider_registry_factory=_provider_registry_factory,
                     )
                     yield SimpleNamespace(
                         api=api,
@@ -271,6 +301,37 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                         target_root=target_root,
                         root=root,
                     )
+
+    def _run_shared_analysis(self, value, *, definition_id: str = _DEFINITION["id"]) -> str:
+        """Drive a definition-bound Run once to a frozen, analyzed shared plan.
+
+        Returns the linked exact Preview id: the shared zero-mutation organize
+        analysis that an unattended grant now requires for the exact definition
+        scope and bounds.  This mirrors the production Run-once journey the Web
+        and API expose; it performs only Storage reads and a zero-mutation
+        analysis, never a media mutation.
+        """
+        discovery = value.api._media_discovery.admit_definition_run_once(
+            definition_id=definition_id, actor="admin"
+        )
+        for index in range(16):
+            result = value.api._media_discovery.claim_and_run(
+                worker_id=f"analysis-worker-{index}",
+                claim_token=f"analysis-token-{index}",
+            )
+            if result is None:
+                raise AssertionError("shared analysis discovery was not claimable")
+            if result.terminal:
+                break
+        else:
+            raise AssertionError("shared analysis did not settle in the step budget")
+        current = value.api._media_discovery.get(discovery.discovery_id)
+        frozen, preview = value.api._automation_run_once.finalize(
+            discovery.discovery_id, actor="admin", expected_version=current.version
+        )
+        self.assertTrue(frozen.frozen)
+        self.assertEqual(preview.status.value, "previewed")
+        return preview.preview_id
 
     def _snapshot(self, value) -> SchedulerConfigurationSnapshot:
         active = value.managed.active()
@@ -355,6 +416,11 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             )
             self.assertIn("nextRunAt", definition)
 
+            # A shared zero-mutation analysis of the exact definition scope is now
+            # required before unattended authority is eligible.  Produce it so the
+            # eligibility projection reflects the retained authorization role.
+            self._run_shared_analysis(value)
+
             status, viewer_page = _request(value.api, OPERATIONS_ROUTE, token=VIEWER_TOKEN)
             self.assertEqual(status, 200)
             viewer_definition = viewer_page["items"][0]
@@ -375,9 +441,9 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertIn("occurrenceState", operator)
             self.assertIn("unattendedExecutionGrant", operator)
             eligibility = operator["grantEligibility"]
-            # The grant binds the exact definition, Active revision, workload
-            # bound and current permission; the retired independent Preview
-            # product is not a prerequisite.
+            # With a fresh shared analysis the exact definition bounds and current
+            # permission satisfy the persisted grant bounds; the retired
+            # independent Preview product is not a prerequisite.
             self.assertEqual(eligibility["eligible"], True)
             self.assertEqual(eligibility["status"], "eligible")
             self.assertNotIn("previewId", eligibility)
@@ -595,6 +661,23 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
 
     def test_grant_requires_confirmation_is_bound_and_revocation_is_exact(self) -> None:
         with self._journey() as value:
+            # An unattended grant now requires a shared zero-mutation analysis of
+            # the exact definition scope; without it, even a confirmed grant is
+            # refused before any grant row, audit, Task or Storage mutation.
+            no_analysis_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
+            status, refused = _request(
+                value.api,
+                no_analysis_path,
+                method="POST",
+                body={"revisionId": value.active.revision_id, "confirmation": True},
+            )
+            self.assertEqual(status, 409, refused)
+            self.assertEqual(refused["error"]["code"], "unattended_execution_analysis_required")
+            self.assertEqual(value.source.mutations, [])
+            self.assertEqual(value.target.mutations, [])
+
+            # Produce the shared analysis, then the same confirmed grant succeeds.
+            self._run_shared_analysis(value)
             grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
 
             status, _rejected = _request(
@@ -615,7 +698,7 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 value.api,
                 grant_path,
                 method="POST",
-                body={"confirmation": True},
+                body={"revisionId": value.active.revision_id, "confirmation": True},
             )
             self.assertEqual(status, 201, granted)
             grant = granted["grant"]
@@ -665,6 +748,9 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         """
 
         with self._journey() as value:
+            # The unattended grant requires a shared analysis of the exact
+            # definition scope before it can be admitted.
+            self._run_shared_analysis(value)
             grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
             status, granted = _request(
                 value.api, grant_path, method="POST", body={"confirmation": True}

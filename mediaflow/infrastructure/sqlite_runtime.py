@@ -11096,6 +11096,56 @@ class SQLiteTaskRepository:
                         matches.append(value)
             return tuple(matches)
 
+    def latest_frozen_definition_run_once(
+        self, definition_id: str, *, snapshot_id: str, snapshot_digest: str
+    ) -> MediaDiscovery | None:
+        """The most recent frozen, analyzed definition-bound Run once.
+
+        A definition's shared unattended-grant authorization requires a real,
+        persisted zero-mutation analysis of the exact published definition scope.
+        That analysis is the frozen Run-once manifest with its linked exact
+        organize Preview.  The lookup is bound to the immutable configuration pin
+        (the Active revision the analysis was admitted under), so a republished
+        Active revision never silently makes a stale analysis authoritative for a
+        new grant.  Terminal/non-frozen records and those without a linked
+        Preview are excluded.
+        """
+
+        if not isinstance(definition_id, str) or not definition_id.strip():
+            raise ValueError("definition Run once definition ID is required")
+        if not isinstance(snapshot_id, str) or not snapshot_id.strip():
+            raise ValueError("definition Run once configuration snapshot ID is required")
+        if not isinstance(snapshot_digest, str) or not snapshot_digest.strip():
+            raise ValueError("definition Run once configuration digest is required")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT discovery_id, definition_origin_json FROM media_discoveries "
+                "WHERE definition_origin_json IS NOT NULL "
+                "AND frozen_at IS NOT NULL "
+                "AND status = ? "
+                "ORDER BY frozen_at DESC, created_at DESC, discovery_id DESC LIMIT 50",
+                (DiscoveryStatus.COMPLETED.value,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    origin = json.loads(row["definition_origin_json"] or "{}")
+                except ValueError:
+                    continue
+                if not isinstance(origin, dict):
+                    continue
+                if (
+                    origin.get("definitionId") == definition_id
+                    and origin.get("configurationRevisionId") == snapshot_id
+                    and origin.get("configurationRevisionDigest") == snapshot_digest
+                ):
+                    value = self._load_media_discovery_locked(row["discovery_id"])
+                    # The frozen manifest is internally linked to its exact
+                    # organize Preview through the durable intent identity, not
+                    # through a discovery.preview_id column (which stays None).
+                    if value is not None and value.frozen and value.intent_id:
+                        return value
+        return None
+
     def update_media_discovery(
         self,
         discovery: MediaDiscovery,

@@ -8,6 +8,11 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.domain.automation import AutomationTaskDefinition, AutomationTaskRunMode
+from mediaflow.domain.manual_organize_preview import (
+    ManualOrganizePreview,
+    ManualPreviewItemStatus,
+    ManualPreviewStatus,
+)
 from mediaflow.domain.manual_safety import redact_evidence_text, redact_evidence_value
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.unattended_execution import (
@@ -89,11 +94,15 @@ class UnattendedExecutionGrantService:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         id_factory: Callable[[], str] = lambda: str(uuid4()),
+        discovery_service=None,
+        preview_service=None,
         permission_authority: CurrentPermissionAuthority | None = None,
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._id_factory = id_factory
+        self._discovery_service = discovery_service
+        self._preview_service = preview_service
         self._permission_authority = permission_authority
 
     @property
@@ -165,6 +174,21 @@ class UnattendedExecutionGrantService:
             reason = _reason(reason)
         except (TypeError, ValueError) as error:
             raise self._invalid("grant configuration evidence is invalid") from error
+        # An unattended grant authorizes real, repeated media mutation.  It may
+        # only be admitted over a real, persisted zero-mutation analysis of the
+        # exact published definition scope and bounds: the definition-bound Run
+        # once's frozen manifest with its linked exact organize Preview.  Without
+        # that shared analysis there is no evidence the exact bounds, source
+        # scope, configuration pin and workload bound were ever analyzed, so the
+        # grant is refused before any grant row, audit or media effect.
+        self._require_shared_analysis(
+            definition,
+            configuration_snapshot_id=snapshot_id,
+            configuration_snapshot_digest=snapshot_digest,
+            configuration_snapshot_version=snapshot_version,
+            max_items_per_run=max_items_per_run,
+            storage_id=storage_id,
+        )
         now = self._clock()
         value = UnattendedExecutionGrant(
             self._id_factory(),
@@ -493,6 +517,21 @@ class UnattendedExecutionGrantService:
                     next_action="restore the current permission authority, then reload eligibility",
                 )
             self._assert_current_permission(principal_id, boundary=False)
+            # The same shared analysis requirement the durable grant enforces:
+            # an unattended grant may only be admitted over a real, persisted
+            # zero-mutation analysis of the exact definition scope and bounds.  A
+            # stale or mismatched analysis is refused here exactly as at grant,
+            # but only after the current authority is proven valid.
+            analysis_error = self._validate_shared_analysis(
+                definition,
+                configuration_snapshot_id=configuration_snapshot_id,
+                configuration_snapshot_digest=configuration_snapshot_digest,
+                configuration_snapshot_version=configuration_snapshot_version,
+                max_items_per_run=max_items_per_run,
+                storage_id=storage_id,
+            )
+            if analysis_error is not None:
+                raise analysis_error
         except UnattendedExecutionGrantError as error:
             return self._eligibility_failure(error)
         return {
@@ -711,6 +750,191 @@ class UnattendedExecutionGrantService:
                 "inspect the pinned occurrence and explicitly grant the exact current bounds"
             ),
         )
+
+    def _require_shared_analysis(
+        self,
+        definition,
+        *,
+        configuration_snapshot_id: str,
+        configuration_snapshot_digest: str,
+        configuration_snapshot_version: int,
+        max_items_per_run: int,
+        storage_id: str | None,
+    ) -> None:
+        """Refuse a grant with no valid shared analysis of the exact bounds.
+
+        The independent Preview product is retired.  Its authorization-precedent
+        role is now carried by the shared zero-mutation organize analysis that the
+        definition-bound Run once produces: a frozen manifest with its linked
+        exact plan Preview.  A grant may only be admitted over that persisted,
+        current, zero-mutation analysis, so the exact definition identity, scope
+        bounds and configuration pin are provably analyzed before any repeated
+        media mutation authority is granted.
+        """
+        error = self._validate_shared_analysis(
+            definition,
+            configuration_snapshot_id=configuration_snapshot_id,
+            configuration_snapshot_digest=configuration_snapshot_digest,
+            configuration_snapshot_version=configuration_snapshot_version,
+            max_items_per_run=max_items_per_run,
+            storage_id=storage_id,
+        )
+        if error is not None:
+            raise error
+
+    def _validate_shared_analysis(
+        self,
+        definition,
+        *,
+        configuration_snapshot_id: str,
+        configuration_snapshot_digest: str,
+        configuration_snapshot_version: int,
+        max_items_per_run: int,
+        storage_id: str | None,
+    ) -> UnattendedExecutionGrantError | None:
+        """Return one bounded refusal, or ``None`` if the shared analysis is valid.
+
+        Used by both the read-only eligibility projection and the durable grant
+        admission so they refuse for exactly the same reasons.
+        """
+        if self._discovery_service is None or self._preview_service is None:
+            return UnattendedExecutionGrantError(
+                "the shared unattended-grant analysis service is unavailable",
+                code="unattended_execution_analysis_unavailable",
+                status=503,
+                durable_state="no grant or media mutation occurred",
+                next_action=(
+                    "restore the shared discovery and organize-analysis services, then "
+                    "run a fresh analysis before granting"
+                ),
+            )
+        resolved = self._discovery_service.latest_definition_analysis(
+            definition.definition_id,
+            snapshot_id=configuration_snapshot_id,
+            snapshot_digest=configuration_snapshot_digest,
+        )
+        if resolved is None:
+            return UnattendedExecutionGrantError(
+                "an unattended grant requires a shared zero-mutation analysis of the exact "
+                "definition scope; none has been performed for the current configuration",
+                code="unattended_execution_analysis_required",
+                durable_state="no grant or media mutation occurred",
+                next_action=(
+                    "open the definition and run a fresh analysis (Run once), inspect its "
+                    "findings and unblocked items, then explicitly confirm the grant"
+                ),
+                details={"definitionId": definition.definition_id},
+            )
+        discovery = resolved
+        origin = discovery.definition_origin
+        if origin is None:
+            return UnattendedExecutionGrantError(
+                "the shared analysis is not a definition-bound Run once",
+                code="unattended_execution_analysis_mismatch",
+                durable_state="no grant or media mutation occurred",
+                next_action="run a fresh definition-scoped analysis, then grant again",
+                details={"discoveryId": discovery.discovery_id},
+            )
+        mismatches = []
+        expected = (
+            ("definition identity", origin.definition_id, definition.definition_id),
+            (
+                "definition fingerprint",
+                origin.definition_fingerprint,
+                definition.definition_fingerprint,
+            ),
+            (
+                "configuration revision",
+                origin.configuration_revision_id,
+                configuration_snapshot_id,
+            ),
+            (
+                "configuration digest",
+                origin.configuration_revision_digest,
+                configuration_snapshot_digest,
+            ),
+            (
+                "configuration version",
+                origin.configuration_revision_version,
+                configuration_snapshot_version,
+            ),
+            ("ResourceLibrary", origin.resource_library_id, definition.resource_library_id),
+            ("source scope", origin.source_scope, definition.source_scope),
+            ("run mode", origin.run_mode, definition.mode.value),
+            ("Storage", discovery.storage_id, storage_id),
+        )
+        mismatches.extend(label for label, actual, wanted in expected if actual != wanted)
+        if origin.effective_primary_limit < max_items_per_run:
+            mismatches.append("workload bound")
+        if mismatches:
+            return UnattendedExecutionGrantError(
+                "the shared analysis does not match the exact grant bounds: "
+                + ", ".join(mismatches),
+                code="unattended_execution_analysis_mismatch",
+                durable_state="no grant or media mutation occurred",
+                next_action="run a fresh analysis for the current exact definition and grant bound",
+                details={"discoveryId": discovery.discovery_id, "mismatches": mismatches[:8]},
+            )
+        # The exact Preview is linked to the frozen manifest through the durable
+        # intent identity; resolve it from the latest read-only analysis of that
+        # intent rather than a discovery.preview_id column (which stays None).
+        try:
+            preview = self._preview_service.latest_readonly(discovery.intent_id)
+        except Exception as error:
+            if isinstance(error, UnattendedExecutionGrantError):
+                return error
+            return UnattendedExecutionGrantError(
+                "the shared analysis Preview is missing or unavailable",
+                code="unattended_execution_analysis_unavailable",
+                status=503,
+                durable_state="no grant or media mutation occurred",
+                next_action="run a fresh analysis, then grant again",
+                details={"intentId": discovery.intent_id},
+            )
+        if preview.current is not True or preview.zero_mutation is not True:
+            return UnattendedExecutionGrantError(
+                "the shared analysis is stale or does not prove zero mutation",
+                code="unattended_execution_analysis_stale",
+                durable_state="no grant or media mutation occurred",
+                next_action="run a fresh exact zero-mutation analysis, then grant again",
+                details={"previewId": preview.preview_id},
+            )
+        if preview.status is not ManualPreviewStatus.PREVIEWED:
+            return UnattendedExecutionGrantError(
+                "the shared analysis is not an acceptable completed analysis",
+                code="unattended_execution_analysis_ineligible",
+                durable_state="no grant or media mutation occurred",
+                next_action="resolve the analysis blockers and run a fresh analysis",
+                details={"previewId": preview.preview_id, "status": preview.status.value},
+            )
+        invalid = self._invalid_analysis_items(preview)
+        if invalid:
+            return UnattendedExecutionGrantError(
+                "the shared analysis contains blocked or failed executable items",
+                code="unattended_execution_analysis_item_blocked",
+                durable_state="no grant or media mutation occurred",
+                next_action="resolve each blocked or failed analysis item and run a fresh analysis",
+                details={"previewId": preview.preview_id, "itemStatuses": invalid[:16]},
+            )
+        return None
+
+    @staticmethod
+    def _invalid_analysis_items(preview: ManualOrganizePreview) -> list[str]:
+        """The statuses of analysis items that may not back an unattended grant."""
+
+        blocked = {
+            ManualPreviewItemStatus.BLOCKED,
+            ManualPreviewItemStatus.FAILED,
+            ManualPreviewItemStatus.STALE,
+            ManualPreviewItemStatus.UNAVAILABLE,
+            ManualPreviewItemStatus.TRUNCATED,
+            ManualPreviewItemStatus.CANCELLED,
+        }
+        invalid = []
+        for item in preview.items:
+            if item.status in blocked:
+                invalid.append(item.status.value)
+        return invalid
 
     def _require_permission(self, principal) -> None:
         if principal is None:

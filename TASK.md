@@ -420,77 +420,89 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: 5b5f863 (implementation); report successor is the docs commit containing this report
+Candidate Head: <HEAD>
 Status: READY FOR B REVIEW
-Round: fix round after B FIX REQUIRED on b765198 (previous report and B review in Git)
+Round: second fix round after B FIX REQUIRED on 5b5f863 (shared Automation authorization preflight)
 ```
 
-### 修正交付（对应 B 的 same-context durable plan continuity 三项）
+### 修正交付（对应 B 的 shared Automation authorization preflight 阻塞）
 
-1. **持久 intent→计划关联**。真实 `GET /api/v1/operations/organize/intents/{id}` 新增
-   bounded `latestPlan`（`previewId`/`status`/`current`/`intentVersion`/`createdAt`/
-   `updatedAt`/`truncated`）。来源是既有
-   `ManualOrganizePreviewService.latest_readonly`（不发布读时失效、不改写证据），
-   经新增 `manual_intent_latest_plan_document` 做与其余 operator document 相同的递归
-   脱敏/边界守卫。读取不触发明细读取以外的行为：无重新分析、无 Provider、无新 Task/
-   计划、无执行许可、无 Storage 变更；无计划时为 `null`。
-2. **同页恢复，不恢复独立页面**。`OrganizeIntentPage` 的计划身份解析顺序为：本次分析
-   刚产生的计划 → URL 中且仍与持久关联一致的精确计划（后端无该投影时才单独采用）→
-   后端持久 latest plan。显式分析后以 `replace` 把精确 `plan` 写入当前 URL，并保留
-   Files/Operations 返回上下文；硬刷新、Back/Forward、重新打开链接均回到同一份计划。
-   陈旧 URL 计划不会覆盖更新的持久计划。完整计划仍从自己的认证 GET 路由读取，
-   `OrganizePlanConfirmation` 新增 `expectedIntentId`：计划不属于当前意图时拒绝展示并
-   不提供任何执行动作。
-3. **当前/历史/已受理如实区分**。恢复的计划继续由后端 `current` 标记：历史计划显示
-   “历史”且执行项被后端 `execute.available=false` 关闭；已受理计划经同一
-   `previewId` 的持久执行历史查询显示原执行链接并禁用确认，不猜最近 Task、不重新授权、
-   不自动重提。保存选择后现在会重读该计划，使“历史证据”立即如实呈现。
-   另一份分析不会删除旧计划/旧执行证据。
-4. **fixture 与回归**。golden contract 从真实 API 增补分析后的 intent GET
-   （`organizeIntentWithPlan`）并重生成 fixture；Web 同页旅程新增：durable 恢复且零
-   POST、刷新旅程 URL 同一计划且 POST 不增加、历史计划禁用执行、已受理计划恢复原执行、
-   外来计划拒绝。B 原始 `OrganizeBReview.test.tsx` 探针临时拷入运行通过（未提交）。
-5. **真实 API 回归**。`test_v2_manual_organize` 新增：分析前 `latestPlan=null`；分析后
-   精确指向该计划且 `current=true`；重复读取 Provider/Task/计划/两侧 mutation 均不增长、
-   无执行记录；保存选择后同一计划 `current=false` 且不新建计划。
+B 在 `5b5f863` 上复现的 P1：删除独立 Preview 后，`UnattendedExecutionGrantService.grant` /
+`project_eligibility` 只校验定义/配置形状、边界与当前权限，任何已激活定义无需任何真实
+分析即可授予无人值守整理权限。本轮在保留的 Automation 授权旅程内承接**共享零变更整理
+分析/完整固定计划**作为授权前证据，不恢复独立 Preview 产品、不另建分析队列/执行引擎。
+
+1. **共享分析权威新增只读解析**。`MediaDiscoveryService.latest_definition_analysis`
+   与仓储 `latest_frozen_definition_run_once` 按“定义身份 + 不可变 Active 配置 pin
+   (revisionId/digest)”返回最近一次定义绑定 Run once 的冻结清单（真实有界发现→稳定
+   观察→内部冻结→共享分析链产出的完整计划）。Run once 的 Preview 经其持久 `intent_id`
+   关联，不依赖 `discovery.preview_id` 列；重新发布 Active 会使旧分析对新授权失效。
+
+2. **授权前校验与准入共用同一后端权威**。`UnattendedExecutionGrantService` 新增
+   `_require_shared_analysis` / `_validate_shared_analysis`（及 `_invalid_analysis_items`），
+   `grant` 与 `project_eligibility` 都调用它：缺失→`unattended_execution_analysis_required`；
+   定义身份/指纹/配置版本/ResourceLibrary/来源范围/run mode/Storage/工作量边界不匹配→
+   `unattended_execution_analysis_mismatch`；过期或非零变更→`unattended_execution_analysis_stale`；
+   非完成态→`unattended_execution_analysis_ineligible`；存在 blocked/failed/stale/unavailable/
+   truncated/cancelled 项→`unattended_execution_analysis_item_blocked`；服务缺失→
+   `unattended_execution_analysis_unavailable`(503)。全部 fail-closed，拒绝时不写 grant/audit/
+   Task/Storage。`project_eligibility` 中把分析校验放在当前权限校验之后，使被禁用主体仍返回
+   `unattended_permission_invalid`（保持既有断言）。
+
+3. **生产装配接通**。`MediaFlowApi` 构造 `UnattendedExecutionGrantService` 时注入
+   `discovery_service=self._media_discovery`、`preview_service=self._manual_previews`。
+   CLI 的 grant 服务只用于 `assert_live`（执行期实时权威重读），不经授权前准入，保持
+   `discovery_service=None`；唯一 `.grant()` 调用点在 `service_api`。
+
+4. **测试与回归**。`test_preview_retirement` 新增 `RetainedAuthorizationPrecedentTests`：
+   经真实 API/Run-once 装配证明“无分析→409 且 grant/audit/Storage 不变；eligibility 同步
+   为不 eligible；真实 Run once 产出共享分析后 eligibility 转 eligible、同一确认 grant 返回
+   201，仍零 mutation”。`test_v2_automation_operations` 与 `test_automation_unattended_grant`
+   的 grant 用例改为先跑共享分析再授予，并新增“无分析被拒”断言；直接单测用
+   `_shared_analysis_stub`/`_grant_service` 承接授权前门（测试 grant 服务自身逻辑）。
 
 ### 受影响检查（Developer 实际结果，仓库根除注明外）
 
 ```bash
 python3 scripts/check_governance.py                                  # PASS
-.venv/bin/ruff check <changed py>                                    # All checks passed
-.venv/bin/ruff format --check <changed py>                           # 4 files already formatted
+.venv/bin/ruff check mediaflow tests                                 # All checks passed
+.venv/bin/ruff format --check <8 changed py>                         # already formatted
 .venv/bin/python -m compileall -q mediaflow tests scripts            # OK
 git diff --check                                                     # clean
-PYTHONPATH=tests .venv/bin/python -m unittest test_v2_manual_organize   test_manual_operations_contract test_manual_organize_intent   test_manual_organize_preview test_manual_organize_execution        # Ran 108, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement   test_organize_preparation test_manual_operations                   # Ran 40, OK
-MEDIAFLOW_UPDATE_FIXTURES=1 ... test_manual_operations_contract       # Ran 4, OK (fixture regenerated)
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
+  test_scan_retirement test_file_index_retirement test_automation_unattended_grant \
+  test_v2_automation_operations test_automation_run_once \
+  test_automation_definition_execution test_automation_authorized_execution_matrix  # Ran 127, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
+  test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize \
+  test_organize_preparation test_automation_admission test_automation_job_fencing \
+  test_manual_operations_contract test_configuration_organize \
+  test_v2_rules_workspace_previews test_task_persistence              # Ran 218, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation \
+  test_scope_continuation test_task_center_recovery_lineage \
+  test_metadata_correction_continuation test_v2_automation_lifecycle \
+  test_automation_definition_occurrence test_v2_automation_run_once   # Ran 247, OK
+cd web && npm run test -- run src/features/operations/AutomationRouter.test.tsx \
+  src/routes/router.test.tsx src/features/operations/AutomationLifecyclePage.test.tsx  # 3 files, 31 tests OK
 cd web && npm run typecheck                                          # OK
-cd web && npx eslint <changed ts/tsx>                                # OK
-cd web && npx prettier --check <changed ts/tsx>                      # OK
-cd web && npm run test -- run src/features/operations/OrganizeRouter.test.tsx \
-  src/features/operations/OrganizeCreationPage.test.tsx \
-  src/features/operations/OperationsInventory.test.tsx \
-  src/features/operations/AutomationRouter.test.tsx \
-  src/routes/router.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
-                                                                     # 6 files, 82 tests OK
-cd web && npm run test -- run src/features/operations/OrganizeRouter.test.tsx
-                                                                     # 25 tests OK
-cd web && npm run test -- run src/features/operations/OrganizeBReview.test.tsx
-                                                                     # B probe copied then removed: 1 passed
 ```
+
+本机稳定证据（未声称外部可访问）：
+`.git/validation-evidence/task45.6-fix-preflight/verify_positive.py` 与 `verify_positive.log`，
+用真实 `_journey` 证明：无分析 grant 409（`unattended_execution_analysis_required`，grant/audit=0）；
+真实 Run once 分析后 eligible=true、grant 201、grant/audit=1、`manual_previews>=1`，且来源
+bytes 不变、目标为空、source/target mutations 均为空。
 
 ### 未执行 / 剩余风险（交 B）
 
 - 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
-  release-security 属 B，本轮未执行；上轮报告的 Python browser harness 403 环境问题
-  未复测，仍交 B 处理，不据此扩大本 Task。
-- 未改 schema/迁移；只新增只读投影字段，历史运行库不受影响。
-- URL `plan` 只是精确提示且受 bounded 语法限制；与持久计划不一致时以持久为准，外来
-  计划被拒绝；计划不可读时仍显示组件原有失败说明与重读动作。
-- 历史计划与旧执行记录保留，不因新分析清除；不提供旧计划自动迁移/重放。
-- `OrganizePlanConfirmation` 的既有 `AutomationRunOncePage` 调用未传 `expectedIntentId`，
-  行为不变；Run once 的恢复仍由其持久 `previewId` 承担。
+  release-security 属 B，本轮未执行。
+- 未改 schema/迁移；`latest_frozen_definition_run_once` 为纯只读查询，历史运行库不受影响。
+- 共享分析校验依赖 `discovery.intent_id`→`preview_service.latest_readonly`；若某适配仓储
+  不提供 `latest_frozen_definition_run_once`，授权前门返回 503（fail-closed）而非放行。
+- Web 未改：`AutomationDetailPage` 已按 `grantEligibility.eligible` 渲染说明/隐藏授权按钮，
+  不 eligible 时不显示确认框；本轮未新增 Web 分析发起入口（Run once 页面既有的共享分析即
+  授权前分析来源），未做冻结 43 的页面重设计。
 
 不自判 PASS，不关闭 Slice，不规划下一 Task。
 

@@ -27,6 +27,7 @@ from mediaflow.domain.automation import (
     AutomationTaskDefinition,
     AutomationTaskRunMode,
 )
+from mediaflow.domain.manual_organize_preview import ManualPreviewStatus
 from mediaflow.domain.security import (
     ROLE_PERMISSIONS,
     ApiPermission,
@@ -105,14 +106,124 @@ def _request(api, path: str, *, method: str = "GET", body=None, token: str = "ad
     return int(statuses[0].split()[0]), json.loads(result)
 
 
-class UnattendedGrantPersistenceTests(unittest.TestCase):
+def _shared_analysis_stub(definition):
+    """A passing shared-analysis double matching the exact definition bounds.
+
+    The independent Preview product is retired; an unattended grant now requires
+    a real shared zero-mutation analysis of the exact definition scope.  These
+    unit tests exercise the grant service's own admission, revoke and projection
+    logic, so they supply a passing shared-analysis double rather than running a
+    full Run-once journey.  The double matches the exact definition identity,
+    fingerprint, configuration pin, ResourceLibrary, source scope, run mode,
+    Storage and workload bound, and returns a current, zero-mutation,
+    completed Preview with no blocked items.
+    """
+    origin = SimpleNamespace(
+        definition_id=definition.definition_id,
+        definition_name=definition.definition_id,
+        definition_fingerprint=definition.definition_fingerprint,
+        configuration_revision_id="revision-1",
+        configuration_revision_version=1,
+        configuration_revision_digest="a" * 64,
+        resource_library_id=definition.resource_library_id,
+        source_scope=definition.source_scope,
+        definition_item_limit=definition.item_limit,
+        effective_primary_limit=definition.item_limit,
+        run_mode=definition.mode.value,
+    )
+    discovery = SimpleNamespace(
+        discovery_id="disc-1",
+        definition_origin=origin,
+        storage_id=None,
+        frozen=True,
+        preview_id="preview-1",
+    )
+    preview = SimpleNamespace(
+        preview_id="preview-1",
+        current=True,
+        zero_mutation=True,
+        status=ManualPreviewStatus.PREVIEWED,
+        items=(),
+    )
+    discovery_service = SimpleNamespace(
+        latest_definition_analysis=lambda *args, **kwargs: discovery
+    )
+    preview_service = SimpleNamespace(latest_readonly=lambda intent_id: preview)
+    return discovery_service, preview_service
+
+
+def _passing_grant_service(repository, definition, **kwargs):
+    """A grant service whose shared-analysis gate is satisfied by the stub."""
+
+    discovery_service, preview_service = _shared_analysis_stub(definition)
+    return UnattendedExecutionGrantService(
+        repository,
+        discovery_service=discovery_service,
+        preview_service=preview_service,
+        **kwargs,
+    )
+
+
+def _provider_registry_factory(*_requested):
+    """A synthetic Provider registry so exact analysis needs no external service."""
+
+    from mediaflow.application.metadata import MetadataProviderRegistry
+    from mediaflow.application.strategy_test import SyntheticMetadataProvider
+    from mediaflow.domain.metadata import MediaCandidate, MediaType
+
+    return MetadataProviderRegistry(
+        (
+            SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "129",
+                        MediaType.MOVIE,
+                        "One",
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+            ),
+        )
+    )
+
+
+def _run_shared_analysis_api(api, *, definition_id: str = "automatic") -> str:
+    """Drive a definition-bound Run once to a frozen, analyzed shared plan.
+
+    Returns the linked exact Preview id: the shared zero-mutation organize
+    analysis that an unattended grant now requires for the exact definition
+    scope and bounds.  Mirrors the production Run-once journey the Web and API
+    expose; only Storage reads and a zero-mutation analysis, never a mutation.
+    """
+    discovery = api._media_discovery.admit_definition_run_once(
+        definition_id=definition_id, actor="local-admin"
+    )
+    for index in range(16):
+        result = api._media_discovery.claim_and_run(
+            worker_id=f"analysis-worker-{index}", claim_token=f"analysis-token-{index}"
+        )
+        if result is None:
+            raise AssertionError("shared analysis discovery was not claimable")
+        if result.terminal:
+            break
+    current = api._media_discovery.get(discovery.discovery_id)
+    _frozen, preview = api._automation_run_once.finalize(
+        discovery.discovery_id, actor="local-admin", expected_version=current.version
+    )
+    assert preview.status.value == "previewed"
+    return preview.preview_id
+
     def test_grant_revoke_restart_audit_and_idempotency(self) -> None:
         definition = _definition()
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "runtime.sqlite3"
             with SQLiteTaskRepository(database) as repository:
-                service = UnattendedExecutionGrantService(
+                service = _passing_grant_service(
                     repository,
+                    definition,
                     clock=lambda: NOW,
                     id_factory=iter(("grant-1", "audit-1", "audit-2")).__next__,
                 )
@@ -129,8 +240,9 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
                 self.assertEqual(grant.status.value, "active")
                 self.assertEqual(len(service.list_audit(grant.grant_id)), 1)
             with SQLiteTaskRepository(database) as reopened:
-                service = UnattendedExecutionGrantService(
+                service = _passing_grant_service(
                     reopened,
+                    definition,
                     clock=lambda: NOW,
                     id_factory=lambda: "unused",
                 )
@@ -162,7 +274,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
         ):
-            service = UnattendedExecutionGrantService(repository)
+            service = _passing_grant_service(repository, definition)
             with self.assertRaises(UnattendedExecutionGrantError) as denied:
                 service.grant(
                     definition,
@@ -203,7 +315,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
         ):
-            service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
+            service = _passing_grant_service(repository, definition, clock=lambda: NOW)
             grant = service.grant(
                 definition,
                 configuration_snapshot_id="revision-1",
@@ -252,7 +364,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
         ):
-            service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
+            service = _passing_grant_service(repository, definition, clock=lambda: NOW)
             grant = service.grant(
                 definition,
                 configuration_snapshot_id="revision-1",
@@ -274,8 +386,9 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
         ):
-            service = UnattendedExecutionGrantService(
+            service = _passing_grant_service(
                 repository,
+                definition,
                 clock=clock,
                 id_factory=identifiers,
             )
@@ -310,7 +423,7 @@ class UnattendedGrantPersistenceTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             SQLiteTaskRepository(Path(directory) / "runtime.sqlite3") as repository,
         ):
-            service = UnattendedExecutionGrantService(repository, clock=lambda: NOW)
+            service = _passing_grant_service(repository, definitions[0], clock=lambda: NOW)
             grant = service.grant(
                 definitions[0],
                 configuration_snapshot_id="revision-1",
@@ -442,6 +555,7 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
             ),
             configuration_service=managed,
             bootstrap_document=document,
+            metadata_provider_registry_factory=_provider_registry_factory,
         )
         return api, managed, objects, runtime, configuration_repository, active
 
@@ -453,6 +567,8 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
             document["storages"][0]["rootPath"] = str(root / "source")
             document["storages"][1]["rootPath"] = str(root / "target")
             (root / "source" / "Media" / "incoming").mkdir(parents=True)
+            (root / "source" / "Media" / "incoming" / "One.2001.mkv").write_bytes(b"x" * 32)
+            (root / "target").mkdir(parents=True)
             (
                 api,
                 managed,
@@ -462,6 +578,9 @@ class UnattendedGrantApiAndWebTests(unittest.TestCase):
                 active,
             ) = self._api(directory, document)
             try:
+                # The unattended grant now requires a shared zero-mutation analysis
+                # of the exact definition scope before it is eligible or admissible.
+                _run_shared_analysis_api(api)
                 status, eligibility = _request(
                     api, "/api/v1/automation/task-definitions/automatic/grant-state"
                 )

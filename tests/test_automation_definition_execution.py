@@ -165,6 +165,63 @@ class _RecordedModePinnedDefinition(AutomationTaskDefinition):
         return self._original_fingerprint
 
 
+def _shared_analysis_stub(definition, storage_id=None):
+    """A passing shared-analysis double matching the exact definition bounds.
+
+    An unattended grant now requires a real shared zero-mutation analysis of the
+    exact definition scope; these definition-execution tests exercise the grant
+    authority itself, so they supply a passing shared-analysis double rather than
+    running a full Run-once journey.
+    """
+
+    origin = SimpleNamespace(
+        definition_id=definition.definition_id,
+        definition_name=definition.definition_id,
+        definition_fingerprint=definition.definition_fingerprint,
+        configuration_revision_id=SNAPSHOT_ID,
+        configuration_revision_version=1,
+        configuration_revision_digest=SNAPSHOT_DIGEST,
+        resource_library_id=definition.resource_library_id,
+        source_scope=definition.source_scope,
+        definition_item_limit=definition.item_limit,
+        effective_primary_limit=definition.item_limit,
+        run_mode=definition.mode.value,
+    )
+    discovery = SimpleNamespace(
+        discovery_id="disc-1",
+        definition_origin=origin,
+        storage_id=storage_id,
+        frozen=True,
+        intent_id="intent-1",
+        preview_id=None,
+    )
+    from mediaflow.domain.manual_organize_preview import ManualPreviewStatus
+
+    preview = SimpleNamespace(
+        preview_id="preview-1",
+        current=True,
+        zero_mutation=True,
+        status=ManualPreviewStatus.PREVIEWED,
+        items=(),
+    )
+    discovery_service = SimpleNamespace(
+        latest_definition_analysis=lambda *args, **kwargs: discovery
+    )
+    preview_service = SimpleNamespace(latest_readonly=lambda intent_id: preview)
+    return discovery_service, preview_service
+
+
+def _grant_service(repository, definition, *, storage_id=None):
+    """A grant service whose shared-analysis gate is satisfied by the stub."""
+
+    discovery_service, preview_service = _shared_analysis_stub(definition, storage_id=storage_id)
+    return UnattendedExecutionGrantService(
+        repository,
+        discovery_service=discovery_service,
+        preview_service=preview_service,
+    )
+
+
 class DefinitionScopedExecutionTests(unittest.TestCase):
     def _configuration(
         self,
@@ -281,7 +338,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         product is not a prerequisite.
         """
 
-        grant_service = UnattendedExecutionGrantService(repository)
+        grant_service = _grant_service(repository, definition, storage_id="source")
         grant_service.grant(
             definition,
             configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1163,7 +1220,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1272,7 +1329,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1387,7 +1444,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     SQLiteTaskRepository(configuration.database_path) as repository,
                 ):
                     job = self._emit(repository, definition)
-                    grant_service = UnattendedExecutionGrantService(repository)
+                    grant_service = _grant_service(repository, definition)
                     grant_service.grant(
                         definition,
                         configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1525,7 +1582,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1627,7 +1684,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1756,7 +1813,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1873,7 +1930,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1944,7 +2001,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant = grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -2023,7 +2080,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                grant_service = UnattendedExecutionGrantService(repository)
+                grant_service = _grant_service(repository, definition)
                 grant = grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -2173,8 +2230,13 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                             permission.allowed = False
                         return super().assert_live(claimed_job, claimed_definition)
 
+                discovery_service, preview_service = _shared_analysis_stub(
+                    definition, storage_id=None
+                )
                 grant_service = IntraItemPermissionService(
                     repository,
+                    discovery_service=discovery_service,
+                    preview_service=preview_service,
                     permission_authority=permission,
                 )
                 grant_service.grant(

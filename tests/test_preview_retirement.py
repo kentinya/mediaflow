@@ -207,6 +207,70 @@ class RetiredPreviewApiTests(unittest.TestCase):
         self.assertIn("manual_preview_items", tables)
 
 
+class RetainedAuthorizationPrecedentTests(unittest.TestCase):
+    """The unattended grant keeps its analysis precedent without the product.
+
+    The retired independent Preview used to be the required evidence before an
+    unattended grant.  That role is now carried by the shared zero-mutation
+    organize analysis a definition-bound Run once produces.  This proves the
+    real API/Run-once assembly refuses a confirmed grant until that shared
+    analysis exists, then admits it — with zero Storage mutation throughout and
+    no grant row before the analysis is real.
+    """
+
+    def test_grant_requires_the_shared_analysis_then_admits_it(self):
+        from tests.test_v2_automation_operations import (
+            _DEFINITION,
+            OPERATIONS_ROUTE,
+            AutomationOperatorJourneyTests,
+            _request,
+        )
+
+        journey = AutomationOperatorJourneyTests()
+        with journey._journey() as value:
+            api = value.api
+            # A confirmed grant with no shared analysis is refused before any
+            # grant row, audit row or Storage effect.
+            status, refused = _request(
+                api,
+                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
+                method="POST",
+                body={"revisionId": value.active.revision_id, "confirmation": True},
+            )
+            self.assertEqual(409, status, refused)
+            self.assertEqual("unattended_execution_analysis_required", refused["error"]["code"])
+            self.assertEqual((), value.repository.list_unattended_execution_grants())
+            self.assertEqual(value.source.mutations, [])
+            self.assertEqual(value.target.mutations, [])
+
+            # The eligibility projection agrees with the durable admission.
+            status, detail = _request(api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            self.assertEqual(200, status)
+            eligibility = detail["definition"]["grantEligibility"]
+            self.assertFalse(eligibility["eligible"])
+            self.assertNotIn("previewId", eligibility)
+
+            # A real definition-bound Run once produces the shared analysis.
+            preview_id = journey._run_shared_analysis(value)
+            self.assertTrue(preview_id)
+            status, detail = _request(api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
+            self.assertEqual(200, status)
+            self.assertTrue(detail["definition"]["grantEligibility"]["eligible"])
+
+            # The same confirmed grant now succeeds, still with zero mutation.
+            status, granted = _request(
+                api,
+                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
+                method="POST",
+                body={"revisionId": value.active.revision_id, "confirmation": True},
+            )
+            self.assertEqual(201, status, granted)
+            self.assertEqual("active", granted["grant"]["status"])
+            self.assertEqual(value.source.mutations, [])
+            self.assertEqual(value.target.mutations, [])
+            self.assertEqual(1, len(value.repository.list_unattended_execution_grants()))
+
+
 class RetiredPreviewScheduleTests(unittest.TestCase):
     def test_preview_schedule_command_is_rejected(self):
         from mediaflow.domain.automation import AutomationCommand, CronSchedule, IntervalSchedule
