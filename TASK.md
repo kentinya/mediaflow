@@ -420,72 +420,99 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: c71ec218ca46efa7d73e53c9c82b29f3af88bd91
+Candidate Head: b765198f2a71fe82b7169061e162986351cdbc37
 Status: READY FOR B REVIEW
+Round: fix round after B FIX REQUIRED on c71ec21 (previous report in Git)
 ```
 
-### 已交付行为
+### 修正交付（对应 B 的四项 Required correction）
 
-1. **独立 Preview 产品完整退出**。删除 `application/preview_analysis.py`、
-   `application/automation_task_definition_preview.py`、
-   `domain/automation_task_definition_preview.py`；`domain/preview_analysis.py` 只保留
-   组织内部分析控制信号与冲突类型。`AutomationCommand.PREVIEW`、`IntervalSchedule`/
-   `CronSchedule` 的 preview 命令、`jobs submit preview`、`batch preview`、`preview`
-   子命令全部移除。
-2. **schema 收敛**。fresh runtime 不再创建 `preview_analyses`、
-   `automation_task_definition_previews`、`automation_task_definition_preview_items`；
-   共享计划证据 `manual_previews`/`manual_preview_items` 与 `media_discoveries` 保留。
-   不 DROP、不清空现存运行库。
-3. **共享分析链统一**。`organize` 不执行模式、Files/新建整理/恢复与 Run once 走同一
-   `ManualOrganizePreviewService`/`OrganizerExecutor` 规划语义；Run once `finalize` 现在
-   内联产出精确计划摘要（不再委派独立 analysis），返回值由 3 元组变为 2 元组。
-4. **Automation 授权去 Preview 依赖**。`UnattendedExecutionGrantService` 的
-   `preview_service`/`preview_id` 移除；授权绑定精确定义指纹、Active revision、工作量和
-   当前 principal 权限，`project_eligibility` 不再要求 Preview 证据。
-5. **入口收网**。Web 路由/页面（PreviewNew/Detail、AutomationPreview、
-   PreviewAnalysis）、API `/api/v1/operations/previews`、`.../preview`、
-   `.../previews`、`.../preview-analyses`、CLI 命令与 `_preview_analysis_worker_context`、
-   Worker dispatch 全部删除；旧输入走普通 not-found / argparse 参数错误 / 共享不支持类型
-   错误，且在 Storage 发现、Provider、准入与许可之前停止。
-6. **测试与 fixture 迁移**。新增 `tests/test_preview_retirement.py`（8 例）覆盖模块不可导入、
-   CLI 普通用法错误、API 普通 not-found、fresh 无专属表、preview 调度值被拒绝；退役产品
-   专属测试改为等义断言（fresh schema、授权边界、快照 pin、C→A 身份）。
+1. **公共 CLI 分析不再制造正式执行待办**。`organize`/`batch organize` 带 `--execute`
+   与否决定 `analysis_only`：不执行即共享零变更分析。识别歧义、Metadata 待选、
+   Metadata 纠正、分类未命中、目标冲突五条分支统一走
+   `MediaOrganizerService._analysis_finding`，只写完整计划/附件/冲突/未就绪
+   evidence 与 DRY_RUN 逐项 Result，不写 `WAITING_CONFIRM`、pending
+   `ConflictConfirmation`、Recognition/Metadata/Classification Review，不取得单次或
+   无人值守权限。真实执行/恢复链的阻塞职责保持不变（`wait_for_*` 未改）。
+   `render_summary` 对分析项输出 `ANALYSIS` + `outcome=` + 补正 next action；
+   plan 未到达时 evidence 的 `unavailable_reason` 也带补正动作。
+   复现 B 的 target-conflict 场景：exit 0、item `dry_run`、confirmations 0、
+   Result 目标与 attachments=1 保留、两侧媒体 bytes 未变。
+2. **删除独立计划页**。`OrganizePreviewPage`、`/operations/organize/preview/$previewId`
+   路由与 `operations-organize-preview` destination 全部删除；完整固定计划摘要与精确
+   确认改由新的共享 `OrganizePlanConfirmation` 在产生它的界面呈现：
+   `OrganizeIntentPage`（分析后同页）与 `AutomationRunOncePage`（finalize 后同页）。
+   保留原来的就绪子集选择、破坏性 effect 绑定/失效、持久执行历史锁定、丢响应
+   有界核对与“不自动重提”。`OperationsLanding` 的运行详情直接内联同一份摘要
+   （不再跳转），`OrganizeExecutionPage` 的返回目标改为整理意图。Intent 页不再
+   分析后跳转，故重新分析会生成新计划（旧计划与其准入历史不可被新计划吞并）。
+3. **同上下文与拒绝行为**。Run once 文档新增精确 `previewId` 与 preview action
+   `path`（分析结果本身仍不带权限），刷新/重连/重启从持久记录恢复同一份计划摘要；
+   旧 `/operations/organize/preview/...` URL 走普通 `Route not found`，零 API 请求、
+   无退役提示/重定向/守卫（新增 router 测试）。
+4. **删除 `preview-analyses` 兼容分支**。`service_api.py` 中 5 处显式分支全删，
+   旧输入落到普通认证后 not-found 路由边界，无专用消息/guard。
+5. **测试与 harness 迁移**。`tests/test_preview_retirement.py` 从“只验证不存在”扩展为
+   真实入口证明：冲突 findings（含附件/目标/冲突类型/next action）、四类未就绪
+   findings（无 review/confirmation/authority 行、零媒体变更）、分析不能被
+   `tasks retry-failed --execute` 提权、以及同一 source/pin/策略下 CLI 分析与 Web
+   准备计划的 target/operation/attachments/conflicts/policies 等义。Web 组件/路由测试
+   迁移到同页旅程；harness/fixture 改为通过合法分析构造证据（fake server 新增
+   session 级 plan-variant 与 malformed-grant 选择器，用于已在生产的同一入口）。
 
-### 受影响检查（Developer 实际结果）
+### 受影响检查（Developer 实际结果，仓库根除注明外）
 
 ```bash
-python3 scripts/check_governance.py                     # PASS
-.venv/bin/python -m unittest discover -s tests -t .     # Ran 2670, OK (skipped=7)
-.venv/bin/python -m ruff check mediaflow/ tests/ scripts/          # All checks passed
-.venv/bin/python -m ruff format --check mediaflow/ tests/ scripts/ # 349 files already formatted
-.venv/bin/python -m compileall -q mediaflow tests scripts          # OK
-git diff --check                                                  # clean
-cd web && npx tsc --noEmit -p tsconfig.json                       # OK
-cd web && npm run test -- run                                     # 78 files, 1149 tests OK
+python3 scripts/check_governance.py                                  # PASS
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement # Ran 12, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_final_integration test_v2_manual_organize \
+  test_manual_organize_execution test_organize_preparation test_v2_automation_run_once \
+  test_automation_run_once test_manual_operations_contract           # Ran 169, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_scan_retirement test_file_index_retirement \
+  test_manual_organize_intent test_manual_organize_preview test_recovery_continuation \
+  test_scope_continuation test_task_center_recovery_lineage \
+  test_metadata_correction_continuation test_automation_definition_execution \
+  test_automation_authorized_execution_matrix test_automation_unattended_grant \
+  test_automation_admission test_automation_job_fencing test_configuration_organize \
+  test_v2_rules_workspace_previews test_task_persistence test_conflict_resolution \
+  test_file_media_detail                                              # Ran 390, OK
+.venv/bin/ruff check .                                                # All checks passed
+.venv/bin/ruff format --check .                                       # 384 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts             # OK
+git diff --check                                                     # clean
+cd web && npx tsc --noEmit -p tsconfig.json                           # OK
+cd web && npx eslint .                                                # OK
+cd web && npx prettier --check "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx,mjs}"  # OK
+cd web && npm run test -- run                                          # 78 files, 1150 tests OK
+cd web && npm run build                                                # OK (dist rebuilt from final source)
+cd web && npx playwright test                                          # 238 passed (fake-API suite)
+cd web && npx playwright test tests/e2e/{manual-organize,automation,manual-operations,operations,library-files}.spec.ts  # 57 passed on rebuilt dist
 ```
 
-Task 指定的受影响组全部通过：`test_preview_retirement`、`test_scan_retirement`、
-`test_file_index_retirement`、`test_manual_organize_*`、`test_v2_manual_organize`、
-`test_organize_preparation`、`test_recovery_continuation`、`test_scope_continuation`、
-`test_task_center_recovery_lineage`、`test_metadata_correction_continuation`、
-`test_automation_definition_execution`、`test_automation_unattended_grant`、
-`test_automation_authorized_execution_matrix`、`test_configuration_organize`、
-`test_v2_rules_workspace_previews`、`test_task_persistence`、`test_automation_admission`、
-`test_automation_job_fencing`、`test_manual_operations_contract`。
+`test_automation_task_definition_preview` / `test_automation_preview_grant_gate` 已在上一轮
+随退役模块移除（TASK 旧命令列表已过期）；本文列出的是当前真实模块。
 
-### 未验证 / 剩余风险（交由 B）
+### 未执行 / 剩余风险（交 B）
 
-- wheel/清洁构建、安装消费者、production Docker、常驻 Worker、release-security、
-  restart-fault 与真实浏览器 T4 门禁未由 Developer 执行（按 workflow 属 B）。
-- `scripts/docker_*` 与 e2e 规格已改为合法整理/授权路径，但未在本机实际运行镜像；
-  `web/tests/e2e/*.python.spec.ts` 中退役产品的三个场景已删除或改写，需 B 在固定候选上
-  重新取证。
-- 历史运行库若曾包含退役专属表不会被删除（按 RO-8 不清空），fresh 库不创建它们。
-- `tests/test_automation_definition_occurrence.py` 的 legacy 迁移用例不再插入退役表数据，
-  改为断言 fresh 不创建；若 B 要求覆盖「旧库含退役表仍可重开」，需另行确认范围。
+- `playwright.python.automation.config.ts` 与 `playwright.python.config.ts` 的 Python harness
+  当前启动即失败：`scripts/operations_inventory_harness.py` 用 operator principal 提交
+  `POST /api/v1/jobs {command: organize}`，真实 API 现在要求 `remote_execute` 权限 +
+  已启用的 remote execution + `execute=true` + execution token，因此 harness seed 报
+  `403 principal lacks remote_execute permission`。复现：
+  `.venv/bin/python scripts/operations_inventory_harness.py --port 4199`。属 B 的环境/
+  证据工作（上一轮 harness 改动遗留，非本轮产品缺陷），故本轮未跑 Python browser specs。
+- 因此 `web/tests/e2e/automation-run-once.python.spec.ts` 已按同页计划旅程改写
+  （finalize 后不再跳转、重启后从持久 previewId 恢复、恢复确认改用
+  prepare-summary/confirm），但**未实际执行**；`operations-inventory/live-files/visual/
+  unicode` 四个 python spec 未由 Developer 运行。
+- wheel/清洁构建、安装消费者、production Docker/常驻 Worker/release-security/restart-fault
+  门禁按 workflow 属 B，本轮未执行。
+- `AutomationDetailPage` 的无人值守授权已改为绑定已发布 definition revision（不再要求
+  Preview 身份）；Web `authorize/executeTaskItemRecoveryOrganize` legacy link transports 仍
+  留在 API client（后端路由仍受支持，Web 已不再使用）；是否需要删除留给 B/A 判定。
+- 历史运行库若含已退役专属表不会被删除；fresh 库不创建它们（不变）。
 
 不自判 PASS，不关闭 Slice，不规划下一 Task。
-
 
 ## B Review Result
 
