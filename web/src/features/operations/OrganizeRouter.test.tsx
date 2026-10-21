@@ -95,8 +95,6 @@ function intentDocument(): Json {
   const actions = value["actions"] as Json;
   (actions["choice"] as Json)["path"] =
     "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-  (actions["preview"] as Json)["path"] =
-    "/api/v1/operations/organize/intents/intent-1/previews";
   return value;
 }
 
@@ -152,51 +150,6 @@ function previewDocumentWithTwoItems(
     unselectedItemIds: [],
   };
   return value;
-}
-
-/**
- * The exact durable preview-analysis document the backend returns when the
- * manual intent admits its exact analysis: queued, zero mutation, and with the
- * cooperative controls the current principal may take.
- */
-function previewAnalysisDocument(): Json {
-  return {
-    analysisId: "analysis-1",
-    kind: "manual",
-    actor: "operator",
-    configurationSnapshotId: "snapshot-1",
-    configurationSnapshotDigest: "a".repeat(64),
-    status: "queued",
-    version: 1,
-    progress: {
-      phase: "queued",
-      message:
-        "queued for durable exact analysis by the resident Processing Worker",
-      visitedEntries: 0,
-      analysedItems: 0,
-      totalItems: 1,
-    },
-    definitionId: null,
-    definitionFingerprint: null,
-    intentId: "intent-1",
-    intentVersion: 2,
-    previewId: null,
-    error: null,
-    cancelRequested: false,
-    pauseRequested: false,
-    createdAt: "2026-01-01T00:00:00+00:00",
-    updatedAt: "2026-01-01T00:00:00+00:00",
-    admissionRequestId: null,
-    zeroMutation: true,
-    sideEffects: "none",
-    previewPath: null,
-    actions: {
-      pause: { available: true },
-      resume: { available: false },
-      cancel: { available: true },
-      preview: { available: false },
-    },
-  };
 }
 
 function executionDocument(): Json {
@@ -289,23 +242,17 @@ function failedExecutionDocument(): Json {
 }
 
 describe("V2 manual Organize journey", () => {
-  it("renders the durable intent, saves one optimistic choice edit and admits the exact analysis", async () => {
+  it("renders the durable intent, saves one optimistic choice edit and generates the shared analysis", async () => {
     const user = userEvent.setup();
     const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (
-        call.url ===
-          "/api/v1/operations/organize/intents/intent-1/preview-analyses" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
         call.method === "POST"
       ) {
-        return jsonResponse(previewAnalysisDocument(), 202);
-      }
-      if (
-        call.url.startsWith("/api/v1/operations/automation/preview-analyses/")
-      ) {
-        return jsonResponse(previewAnalysisDocument());
+        return jsonResponse(previewDocument(), 201);
       }
       if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
         if (call.method === "GET") {
@@ -366,30 +313,25 @@ describe("V2 manual Organize journey", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: "生成精确预览" }),
+      await screen.findByRole("button", { name: "生成分析摘要" }),
     );
     await waitFor(() =>
       expect(
         calls.some(
           (call) =>
             call.url ===
-              "/api/v1/operations/organize/intents/intent-1/preview-analyses" &&
+              "/api/v1/operations/organize/intents/intent-1/previews" &&
             call.method === "POST",
         ),
       ).toBe(true),
     );
-    // The admission carries the exact observed intent version and nothing else.
-    const admit = calls.find(
+    // The shared analysis carries the exact observed intent version and nothing else.
+    const analysis = calls.find(
       (call) =>
-        call.url ===
-          "/api/v1/operations/organize/intents/intent-1/preview-analyses" &&
+        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
         call.method === "POST",
     );
-    expect(admit?.body).toMatchObject({ expectedVersion: 2 });
-    // The journey continues to the durable analysis route, which shows the
-    // bounded progress of the admitted work instead of a synchronous Preview.
-    await screen.findByRole("heading", { name: "精确预览分析" });
-    await screen.findByText("排队中");
+    expect(analysis?.body).toMatchObject({ expectedVersion: 2 });
   });
 
   it("preserves RecognitionType C while displaying and submitting its pinned A downstream policies", async () => {

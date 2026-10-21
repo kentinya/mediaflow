@@ -107,7 +107,7 @@ def plan(number: int) -> OrganizePlan:
 
 def create_confirmation(repository: SQLiteTaskRepository, number: int):
     coordinator = PersistentTaskCoordinator(repository, repository)
-    task = coordinator.create("preview", execute_authorized=False)
+    task = coordinator.create("organize", execute_authorized=False)
     item = coordinator.begin_item(
         task.task_id,
         "source",

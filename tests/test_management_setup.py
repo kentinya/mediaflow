@@ -924,7 +924,7 @@ class ManagementSetupTests(unittest.TestCase):
             ),
         ):
             for path, body in (
-                ("/api/v1/jobs", {"command": "preview"}),
+                ("/api/v1/jobs", {"command": "organize"}),
                 ("/api/v1/manual-intents", {"source": "x"}),
                 ("/api/v1/automation/task-definitions", {"definition": {}}),
                 ("/api/v1/manual-executions", {"taskId": "x"}),

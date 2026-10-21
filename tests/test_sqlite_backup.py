@@ -35,7 +35,7 @@ class SQLiteBackupTests(unittest.TestCase):
                 repository._connection.execute("PRAGMA journal_mode=WAL")
                 repository.create_task(
                     PersistentTask(
-                        "task-1", "preview", PersistentTaskStatus.COMPLETED, False, NOW, NOW
+                        "task-1", "organize", PersistentTaskStatus.COMPLETED, False, NOW, NOW
                     )
                 )
                 repository.append_operational_log(
@@ -78,7 +78,7 @@ class SQLiteBackupTests(unittest.TestCase):
                 result = SQLiteBackupService(source).backup(target)
                 repository.create_task(
                     PersistentTask(
-                        "task-after", "preview", PersistentTaskStatus.COMPLETED, False, NOW, NOW
+                        "task-after", "organize", PersistentTaskStatus.COMPLETED, False, NOW, NOW
                     )
                 )
             self.assertEqual(result.schema_version, SCHEMA_VERSION)

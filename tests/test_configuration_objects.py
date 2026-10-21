@@ -153,6 +153,32 @@ def example_document() -> dict:
     return json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
 
 
+def admit_organize_job(api, *, limit: int = 1):
+    """Admit one supported Organize Job under the one-shot authority boundary.
+
+    The retired DryRun Job command no longer exists, so a snapshot-pin assertion
+    must read a Job the supported admission actually created.  The helper issues
+    a one-shot authorization, submits through that boundary and returns
+    ``(job_id, job_document)`` read back through the ordinary API projection.
+    """
+    from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+
+    api._refresh_configuration_binding()
+    binding = api._runtime_binding
+    service = ExecutionAuthorizationService(
+        api._repository,
+        maximum_ttl_seconds=3600,
+        maximum_active_jobs=100,
+        configuration_snapshot_id=binding.snapshot_id,
+        configuration_snapshot_digest=binding.snapshot_digest,
+    )
+    issued = service.issue(ttl_seconds=60, max_items=limit, actor="tester")
+    job = service.submit_organize(issued.token, limit=limit)
+    status, document = request(api, f"/api/v1/jobs/{job.job_id}")
+    assert status == 200, (status, document)
+    return job.job_id, document
+
+
 def request(
     api,
     path: str,
@@ -5145,13 +5171,10 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(active["status"], "active")
-                status, job = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body={"command": "preview"},
-                )
-                self.assertEqual(status, 202)
+                # The retired DryRun Job command no longer exists; a supported
+                # Organize Job is admitted by the one-shot authority boundary and
+                # carries the exact Active pin.
+                job_id, job = admit_organize_job(api)
                 self.assertEqual(job["configuration_snapshot_id"], revision_id)
                 self.assertEqual(job["configuration_snapshot_digest"], active["digest"])
 

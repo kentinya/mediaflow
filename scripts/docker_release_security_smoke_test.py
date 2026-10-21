@@ -724,7 +724,7 @@ def assert_rbac_and_no_side_effects(
         f"{base}/api/v1/jobs",
         method="POST",
         token=viewer,
-        body=json.dumps({"command": "preview", "limit": 1}).encode("utf-8"),
+        body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "viewer denied POST response")
     if status != 403:
@@ -741,7 +741,7 @@ def assert_rbac_and_no_side_effects(
         f"{base}/api/v1/jobs",
         method="POST",
         token=auditor,
-        body=json.dumps({"command": "preview", "limit": 1}).encode("utf-8"),
+        body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
     )
     assert_no_canaries(body, canaries, "auditor denied POST response")
     if status != 403:

@@ -39,7 +39,14 @@ def request(
     return int(statuses[0].split()[0]), json.loads(response)
 
 
-class OperatorJobSubmissionTests(unittest.TestCase):
+class RetiredDryRunJobSubmissionTests(unittest.TestCase):
+    """The legacy Download/DryRun Job submission command is retired.
+
+    Only the explicit one-shot Organize authority may admit a Job.  An ordinary
+    principal with ``SUBMIT_DRY_RUN`` must get an ordinary permission refusal,
+    and no Job may be created by any refused request.
+    """
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
@@ -55,50 +62,48 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         self.repository.close()
         self.directory.cleanup()
 
-    def test_scan_preview_optional_bounded_limit_and_rbac(self) -> None:
-        status, denied = request(self.api, {"command": "preview"}, token="viewer-token")
+    def test_retired_job_commands_are_ordinary_refusals_without_admission(self) -> None:
+        status, denied = request(self.api, {"command": "organize"}, token="viewer-token")
         self.assertEqual(status, 403)
         self.assertEqual(denied["error"]["code"], "forbidden")
         for document in (
             {"command": "preview"},
-            {"command": "preview", "limit": 1},
-            {"command": "preview", "limit": 10_000},
+            {"command": "scan"},
+            {"command": "organize"},
+            {"command": "organize", "limit": 1},
         ):
             with self.subTest(document=document):
-                status, created = request(self.api, document)
-                self.assertEqual(status, 202)
-                self.assertEqual(created["command"], document["command"])
-                self.assertEqual(created["limit"], document.get("limit"))
-                self.assertFalse(created["execute_authorized"])
-        self.assertEqual(len(self.repository.list_jobs()), 3)
+                status, body = request(self.api, document)
+                self.assertIn(status, (400, 403), body)
+                self.assertNotIn("job_id", body)
+        self.assertEqual(self.repository.list_jobs(), ())
         routes = [item.route for item in self.repository.list_security_audit()]
         self.assertIn("/api/v1/jobs", routes)
-        self.assertNotIn("preview", json.dumps(routes))
-        self.assertNotIn("10000", json.dumps(routes))
 
     def test_invalid_documents_and_query_create_zero_jobs(self) -> None:
         invalid = [
             {},
+            {"command": "preview"},
+            {"command": "scan"},
             {"command": "organize"},
-            {"command": "preview", "execute": False},
-            {"command": "preview", "limit": True},
-            {"command": "preview", "limit": 0},
-            {"command": "preview", "limit": -1},
-            {"command": "preview", "limit": 10_001},
-            {"command": "preview", "path": "/private"},
-            {"command": "preview", "task": "task-1"},
-            {"command": "preview", "actor": "admin"},
-            {"command": "preview", "policy": "A"},
-            {"command": "preview", "storage": "source"},
-            {"command": "preview", "schedule": "nightly"},
-            {"command": "preview", "overwrite": False},
-            {"command": "preview", "delete": False},
+            {"command": "organize", "execute": False},
+            {"command": "organize", "limit": True},
+            {"command": "organize", "limit": 0},
+            {"command": "organize", "limit": -1},
+            {"command": "organize", "limit": 10_001},
+            {"command": "organize", "path": "/private"},
+            {"command": "organize", "task": "task-1"},
+            {"command": "organize", "actor": "admin"},
+            {"command": "organize", "policy": "A"},
+            {"command": "organize", "storage": "source"},
+            {"command": "organize", "schedule": "nightly"},
+            {"command": "organize", "overwrite": False},
+            {"command": "organize", "delete": False},
         ]
         for document in invalid:
             with self.subTest(document=document):
-                expected = 403 if document.get("command") == "organize" else 400
-                self.assertEqual(request(self.api, document)[0], expected)
-        self.assertEqual(request(self.api, {"command": "preview"}, query="limit=1")[0], 400)
+                self.assertIn(request(self.api, document)[0], (400, 403))
+        self.assertIn(request(self.api, {"command": "organize"}, query="limit=1")[0], (400, 403))
         self.assertEqual(request(self.api, None, raw_body=b"{")[0], 400)
         self.assertEqual(self.repository.list_jobs(), ())
 
@@ -106,16 +111,14 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         script = APP_JS.decode()
         self.assertIn("Queue Job", script)
         self.assertNotIn("Queue DryRun job", script)
-        self.assertIn("['preview', 'organize']", script)
+        self.assertNotIn("['preview', 'organize']", script)
+        self.assertIn("['organize']", script)
         self.assertIn("Review Job", script)
         self.assertNotIn("Review DryRun job", script)
-        self.assertIn("Confirm queueing", script)
         self.assertIn("Confirm Organize", script)
         self.assertIn("Back without queueing", script)
         self.assertIn("Keep jobs unchanged", script)
         self.assertIn("Object.freeze", script)
-        self.assertIn("['Authority', 'DRY_RUN']", script)
-        self.assertIn("['Storage mutation', 'NONE']", script)
         self.assertIn("['Authority', 'REMOTE_EXECUTE (one-shot)']", script)
         self.assertIn("['Storage mutation', 'POSSIBLE']", script)
         self.assertIn("execute: true", script)
@@ -124,7 +127,6 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         self.assertIn("await renderObservability('jobs'); await showJob(created.job_id)", script)
         self.assertNotIn("window.confirm", script)
         self.assertNotIn("HTTP_X_MEDIAFLOW_EXECUTION_TOKEN", script)
-        self.assertIn("'organize'", script)
         # The Queue Job submission journey must never request overwrite authority or
         # carry an execution token; the guided OrganizePolicy configuration section
         # legitimately displays overwrite read-only.
@@ -135,6 +137,7 @@ class OperatorJobSubmissionTests(unittest.TestCase):
         self.assertNotIn("overwrite", submission.casefold())
         self.assertNotIn("delete", submission.casefold())
         self.assertNotIn("overwrite:", script)
+        self.assertNotIn("preview", submission.casefold())
 
 
 def _js_function_body(script: str, name: str) -> str:

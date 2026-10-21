@@ -448,7 +448,7 @@ class AutomationDefinitionOccurrenceEmissionTests(unittest.TestCase):
                 )
                 job = AutomationJob(
                     "job-failed",
-                    AutomationCommand.PREVIEW,
+                    AutomationCommand.ORGANIZE,
                     AutomationJobStatus.PENDING,
                     NOW,
                     NOW,
@@ -707,23 +707,6 @@ class AutomationDefinitionOccurrenceMigrationAndReadModelTests(unittest.TestCase
                     job_id TEXT NOT NULL UNIQUE, command TEXT NOT NULL,
                     next_run_at TEXT NOT NULL
                 );
-                CREATE TABLE automation_task_definition_previews (
-                    preview_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
-                    definition_fingerprint TEXT NOT NULL,
-                    configuration_revision_id TEXT NOT NULL,
-                    configuration_revision_version INTEGER NOT NULL,
-                    configuration_revision_digest TEXT NOT NULL,
-                    configuration_status TEXT NOT NULL,
-                    resource_library_id TEXT NOT NULL, storage_id TEXT NOT NULL,
-                    source_scope TEXT, run_mode TEXT NOT NULL,
-                    effective_item_limit INTEGER NOT NULL, counts_json TEXT NOT NULL,
-                    status TEXT NOT NULL, actor TEXT NOT NULL,
-                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    next_action TEXT NOT NULL, error TEXT,
-                    zero_mutation INTEGER NOT NULL, current INTEGER NOT NULL DEFAULT 1,
-                    stale_reason TEXT, truncated INTEGER NOT NULL DEFAULT 0,
-                    boundary_errors_json TEXT NOT NULL
-                );
                 """,
             )
             connection.execute(
@@ -770,39 +753,6 @@ class AutomationDefinitionOccurrenceMigrationAndReadModelTests(unittest.TestCase
                     (NOW + timedelta(minutes=1)).isoformat(),
                 ),
             )
-            connection.execute(
-                "INSERT INTO automation_task_definition_previews VALUES ("
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
-                ")",
-                (
-                    "preview-1",
-                    "definition-1",
-                    "a" * 64,
-                    "revision-1",
-                    1,
-                    "b" * 64,
-                    "active",
-                    "resource",
-                    "storage",
-                    None,
-                    "automatic-organization",
-                    7,
-                    '{"discovered": 0, "selected": 0, "permitted": 0, '
-                    '"excludedIgnored": 0, "unstable": 0, "truncatedByLimit": 0}',
-                    "previewed",
-                    "tester",
-                    NOW.isoformat(),
-                    NOW.isoformat(),
-                    "inspect",
-                    None,
-                    1,
-                    1,
-                    None,
-                    0,
-                    "[]",
-                ),
-            )
             connection.commit()
             connection.close()
             with SQLiteTaskRepository(database) as repository:
@@ -812,7 +762,9 @@ class AutomationDefinitionOccurrenceMigrationAndReadModelTests(unittest.TestCase
                     repository.list_schedule_states()[0].schedule_id, "legacy-schedule"
                 )
                 self.assertEqual(repository.list_schedule_audit()[0].audit_id, "legacy-audit")
-                self.assertIsNotNone(repository.get_automation_task_definition_preview("preview-1"))
+                # The independent Automation Preview product is retired: a fresh
+                # runtime does not create its dedicated tables, and the legacy
+                # schema roll-forward leaves unrelated legacy data alone.
                 self.assertEqual(count_rows(repository, "automation_definition_due_state"), 0)
                 self.assertEqual(count_rows(repository, "automation_definition_occurrences"), 0)
                 columns = {

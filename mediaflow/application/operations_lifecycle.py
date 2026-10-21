@@ -2197,7 +2197,6 @@ def job_lifecycle_document(
         next_action="refresh the Job to read the durable cancellation state",
     )
     command_kind = {
-        AutomationCommand.PREVIEW: "zero-mutation analysis",
         AutomationCommand.ORGANIZE: "media organization",
     }.get(job.command, "bounded continuation")
     return {

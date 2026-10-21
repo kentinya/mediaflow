@@ -408,18 +408,16 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual("frozen", frozen["phase"])
             self.assertTrue(frozen["frozen"])
             self.assertIsNotNone(frozen["intentId"])
-            # The expensive exact analysis is deferred to the resident Worker:
-            # the response carries a durable analysis identity promptly instead
-            # of blocking on the walk and Provider batch.
-            analysis_id = frozen["analysisId"]
-            self.assertIsNotNone(analysis_id)
-            self.assertEqual(
-                f"/operations/automation/preview-analyses/{analysis_id}",
-                frozen["analysisPath"],
-            )
-            self.assertEqual("queued", frozen["analysis"]["status"])
-            self.assertIsNone(frozen["previewId"])
-            # Freezing and the analysis admission are zero mutation.
+            # The shared organize analysis chain produces the exact Preview
+            # inline: the response carries the durable plan the operator reviews
+            # and separately confirms.
+            preview_id = frozen["previewId"]
+            self.assertIsNotNone(preview_id)
+            self.assertEqual(f"/operations/organize/preview/{preview_id}", frozen["previewPath"])
+            self.assertEqual(preview_id, frozen["preview"]["previewId"])
+            self.assertIsNone(frozen["analysisId"])
+            self.assertIsNone(frozen["analysisPath"])
+            # Freezing and the shared analysis are zero mutation.
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
@@ -428,7 +426,6 @@ class RunOnceApiTests(unittest.TestCase):
 
         self.media("Movies/One.2001.mkv")
         with self.journey(source_scope="Movies") as value:
-            value.run_once.bind_analysis_service(None)
             _status, body = self.request(
                 value,
                 "POST",

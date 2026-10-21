@@ -284,7 +284,7 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         failure = self._task("organize")
         self._failure_problem(failure.task_id, "failure-item")
         self._task("scan")
-        ended = self._task("preview")
+        ended = self._task("organize")
         self.repository.update_task(
             __import__("dataclasses").replace(
                 ended,
@@ -414,7 +414,7 @@ class TaskCenterViewTests(_TaskCenterTestCase):
         self._recognition_problem(task.task_id, "linked-b")
         job = AutomationJob(
             "job-linked-count",
-            AutomationCommand.PREVIEW,
+            AutomationCommand.ORGANIZE,
             AutomationJobStatus.PENDING,
             NOW,
             NOW,
@@ -687,7 +687,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.admit_job(
             AutomationJob(
                 "pre-task-job",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.PENDING,
                 NOW,
                 NOW,
@@ -720,7 +720,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.admit_job(
             AutomationJob(
                 "pre-task-repair",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.PENDING,
                 NOW,
                 NOW,
@@ -730,7 +730,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         finished = self.repository.update_job(
             AutomationJob(
                 "pre-task-repair",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.FAILED,
                 NOW,
                 NOW,
@@ -775,7 +775,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.admit_job(
             AutomationJob(
                 "queued-plain",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.PENDING,
                 NOW,
                 NOW,
@@ -785,7 +785,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.create_job(
             AutomationJob(
                 "generic-failure",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.FAILED,
                 NOW,
                 NOW,
@@ -813,7 +813,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.create_job(
             AutomationJob(
                 "cancelled-with-evidence",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.CANCELLED,
                 NOW,
                 NOW,
@@ -846,7 +846,7 @@ class RecoveryListTests(_TaskCenterTestCase):
         self.repository.create_job(
             AutomationJob(
                 "linked-repair",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.FAILED,
                 NOW,
                 NOW,

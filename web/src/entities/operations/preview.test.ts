@@ -17,10 +17,9 @@ const documents = fixture as unknown as Record<string, Json>;
  * a hand-written approximation of it.
  */
 function previewPayload(overrides: Json = {}): Json {
-  const base = JSON.parse(JSON.stringify(documents["previewDetail"])) as Record<
-    string,
-    unknown
-  >;
+  const base = JSON.parse(
+    JSON.stringify(documents["organizePreviewDetail"]),
+  ) as Record<string, unknown>;
   return { ...base, ...overrides };
 }
 
@@ -33,7 +32,6 @@ describe("normalizeManualPreview", () => {
     const model = normalizeManualPreview(previewPayload());
     expect(model.status).toBe("previewed");
     expect(model.zeroMutation).toBe(true);
-    expect(model.scope?.scopeKind).toBe("file");
     expect(model.items).toHaveLength(1);
     expect(model.items[0]?.title).toBe("One");
     expect(model.items[0]?.recognitionType).toBe("A");
@@ -106,7 +104,9 @@ describe("normalizeManualPreview", () => {
 
   it("rejects a half-identified scope instead of inventing an absence", () => {
     expect(() =>
-      normalizeManualPreview(previewPayload({ scopeId: null })),
+      normalizeManualPreview(
+        previewPayload({ scope: { kind: "file", itemCount: 1 } }),
+      ),
     ).toThrow();
   });
 
@@ -350,15 +350,6 @@ describe("normalizeManualPreviewItem", () => {
 });
 
 describe("normalizeManualPreviewListPage", () => {
-  it("accepts the real API preview list page", () => {
-    const page = normalizeManualPreviewListPage(
-      JSON.parse(JSON.stringify(documents["previewList"])) as Json,
-    );
-    expect(page.items).toHaveLength(1);
-    expect(page.total).toBe(1);
-    expect(page.scopeKind).toBe("file");
-  });
-
   it("rejects non-array items", () => {
     expect(() =>
       normalizeManualPreviewListPage({

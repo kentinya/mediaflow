@@ -437,7 +437,7 @@ class ConfigurationAdoptionTests(ResidentDeploymentFixture):
             document["automation"]["schedules"] = [
                 {
                     "id": "nightly",
-                    "command": "preview",
+                    "command": "organize",
                     "intervalSeconds": 3600,
                     "enabled": True,
                 }

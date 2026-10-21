@@ -207,7 +207,7 @@ class FileMediaDetailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(self._database(directory)) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )
@@ -251,7 +251,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )
@@ -334,7 +334,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 database = self._database(directory)
                 with SQLiteTaskRepository(database) as repository:
                     coordinator = PersistentTaskCoordinator(repository, repository)
-                    task = coordinator.create("preview", execute_authorized=False)
+                    task = coordinator.create("organize", execute_authorized=False)
                     item = coordinator.begin_item(
                         task.task_id,
                         "source",
@@ -414,7 +414,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movie.mkv", "Movie.mkv"
                 )
@@ -508,7 +508,7 @@ class FileMediaDetailTests(unittest.TestCase):
                 root = Path(directory)
                 with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                     coordinator = PersistentTaskCoordinator(repository, repository)
-                    task = coordinator.create("preview", execute_authorized=False)
+                    task = coordinator.create("organize", execute_authorized=False)
                     service = MediaOrganizerService(
                         _StaticStrategy(strategy, classification_policy),
                         None,
@@ -552,7 +552,7 @@ class FileMediaDetailTests(unittest.TestCase):
             )
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 service = MediaOrganizerService(
                     _StaticStrategy(strategy, classification_policy),
                     None,
@@ -609,7 +609,7 @@ class FileMediaDetailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(self._database(directory)) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movie.mkv", "Movie.mkv"
                 )
@@ -653,7 +653,7 @@ class FileMediaDetailTests(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create(
-                    "preview",
+                    "organize",
                     execute_authorized=False,
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest="digest-1",
@@ -697,7 +697,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )
@@ -713,7 +713,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 recognition_item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Recognition.mkv", "Recognition.mkv"
                 )
@@ -757,7 +757,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )
@@ -812,7 +812,7 @@ class FileMediaDetailTests(unittest.TestCase):
             database = self._database(directory)
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.record_discovered(
                     task.task_id, "source", "movies", "Movies/A.mkv", "Movies/A.mkv"
                 )

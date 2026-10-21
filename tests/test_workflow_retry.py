@@ -246,7 +246,7 @@ class WorkflowRetryTests(unittest.TestCase):
             executor = CountingExecutor()
             repository = SQLiteTaskRepository(Path(source_root, "runtime.sqlite3"))
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             service = MediaOrganizerService(
                 strategy_runner_from_configuration(
                     configuration, MetadataProviderRegistry((provider,)), storages=storages

@@ -29,9 +29,8 @@ describe("normalizeManualActionMatrix", () => {
     // The retired exact-file admission no longer resolves a remembered FileID;
     // the matrix directs the operator to the live file instead.
     expect(model.actions.preview.available).toBe(false);
-    expect(model.actions.preview.reason).toContain("live file");
     expect(model.runtime.ready).toBe(true);
-    expect(model.limits.previewMaxItems).toBeGreaterThan(0);
+    expect(model.limits.organizeMaxItems).toBeGreaterThan(0);
     expect(
       model.resourceLibraries.map((item) => item.resourceLibraryId),
     ).toEqual(["library"]);

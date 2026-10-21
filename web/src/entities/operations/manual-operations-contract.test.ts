@@ -24,10 +24,6 @@
 import { describe, expect, it } from "vitest";
 import fixture from "./__fixtures__/manual-operations.json";
 import { normalizeManualActionMatrix } from "./manual-actions";
-import {
-  normalizeManualPreview,
-  normalizeManualPreviewListPage,
-} from "./preview";
 
 type Json = Record<string, unknown>;
 
@@ -48,13 +44,12 @@ describe("real API action matrix documents", () => {
     expect(model.runtime.ready).toBe(true);
     expect(model.runtime.condition).toBe("configuration_active");
     // A single-file admission is made from the live directory, so the matrix
-    // states that prerequisite instead of resolving a remembered file ID.
+    // states that prerequisite instead of resolving a remembered file ID. The
+    // standalone Preview action is retired: only the Organize entry remains.
     expect(model.actions.preview.available).toBe(false);
-    expect(model.actions.preview.reason).toContain("live file");
     expect(model.actions.organize.available).toBe(false);
     expect(model.actions.organize.reason).toContain("live file");
     expect(model.source).toBeNull();
-    expect(model.limits.previewMaxItems).toBeGreaterThan(0);
     expect(
       model.resourceLibraries.map((item) => item.resourceLibraryId),
     ).toEqual(["library"]);
@@ -72,64 +67,5 @@ describe("real API action matrix documents", () => {
     expect(model.source).toBeNull();
     expect(model.actions.preview.available).toBe(false);
     expect(model.resourceLibraries).toHaveLength(1);
-  });
-});
-
-describe("real API Preview documents", () => {
-  it("normalizes the admission, detail and list documents with real findings", () => {
-    for (const name of ["previewAdmission", "previewDetail"]) {
-      const preview = normalizeManualPreview(document(name));
-      expect(preview.status).toBe("previewed");
-      expect(preview.zeroMutation).toBe(true);
-      expect(preview.current).toBe(true);
-      expect(preview.scopeKind).toBe("file");
-      expect(preview.scope?.scopeKind).toBe("file");
-      expect(preview.scope?.itemCount).toBe(1);
-      expect(preview.selection.selectedItemIds).toHaveLength(1);
-      expect(preview.selection.unselectedItemIds).toEqual([]);
-      expect(preview.failure).toBeNull();
-
-      const item = preview.items[0];
-      expect(item).toBeDefined();
-      expect(item?.status).toBe("previewed");
-      expect(item?.zeroMutation).toBe(true);
-      expect(item?.sourcePath).toBe("One.2001.mkv");
-      expect(item?.sourceFilename).toBe("One.2001.mkv");
-      expect(item?.recognitionType).toBe("A");
-      expect(item?.operation).toBe("MOVE");
-      expect(item?.destructiveImplications).toEqual({
-        overwriteRequired: false,
-        sourceCleanupRequired: false,
-        statement:
-          "this exact plan moves each source to its reviewed target; after a successful organize the source location no longer holds the original media file",
-      });
-      expect(item?.title).toBe("One");
-      expect(item?.provider).toBe("tmdb");
-      expect(item?.providerId).toBe("129");
-      expect(item?.organizePolicy).toBe("A");
-      expect(item?.targetStorageId).toBe("target");
-      expect(item?.targetPath).toBe(
-        "Movies/Movies/Anime/One (2001)/One (2001).mkv",
-      );
-      expect(item?.destination?.relativePath).toBe(
-        "Movies/Anime/One (2001)/One (2001).mkv",
-      );
-      expect(item?.planStatus).toBe("ready");
-      expect(item?.capabilities?.verdict).toBe("ok");
-      expect(item?.capabilities?.missing).toEqual([]);
-      expect(item?.attachments).toEqual([]);
-      expect(item?.conflicts).toEqual([]);
-      expect(item?.warnings).toEqual([]);
-      expect(item?.failure).toBeNull();
-    }
-  });
-
-  it("normalizes the bounded preview list page", () => {
-    const page = normalizeManualPreviewListPage(document("previewList"));
-    expect(page.total).toBe(1);
-    expect(page.limit).toBeGreaterThan(0);
-    expect(page.scopeKind).toBe("file");
-    expect(page.items).toHaveLength(1);
-    expect(page.items[0]?.zeroMutation).toBe(true);
   });
 });

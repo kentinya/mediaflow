@@ -155,7 +155,7 @@ class DashboardTests(unittest.TestCase):
     def _task(identifier: str, status: PersistentTaskStatus) -> PersistentTask:
         return PersistentTask(
             identifier,
-            "preview",
+            "organize",
             status,
             False,
             NOW,
@@ -168,7 +168,7 @@ class DashboardTests(unittest.TestCase):
         occurred = NOW + timedelta(minutes=minutes)
         return AutomationJob(
             identifier,
-            AutomationCommand.PREVIEW,
+            AutomationCommand.ORGANIZE,
             status,
             occurred,
             occurred,

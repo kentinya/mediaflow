@@ -76,10 +76,14 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             load_runtime_configuration(literal)
 
     def test_schedules_cannot_gain_execute_authority(self) -> None:
-        with self.assertRaisesRegex(ValueError, "schedule command must be preview"):
-            IntervalSchedule("unsafe", "organize", 60)
-        with self.assertRaisesRegex(ValueError, "schedule command must be preview"):
-            CronSchedule("unsafe", "organize", "* * * * *", "UTC")
+        # A schedule can only ever declare the supported organize command; the
+        # retired DryRun/Preview command is not a schedule command.
+        with self.assertRaises(ValueError):
+            IntervalSchedule("unsafe", "preview", 60)
+        with self.assertRaises(ValueError):
+            CronSchedule("unsafe", "preview", "* * * * *", "UTC")
+        # Organize is the one accepted schedule command.
+        self.assertEqual(IntervalSchedule("ok", "organize", 60).command.value, "organize")
 
     def test_issue_persists_digest_only_and_audit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -197,10 +201,11 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     400,
                 )
                 api = MediaFlowApi(repository, "api-secret", remote_execution_enabled=True)
+                # Only a refused request leaves the one-shot authority
+                # unconsumed, so the accepted case runs last.
                 for document, token in (
                     ({"command": "organize", "execute": True, "limit": 1}, None),
                     ({"command": "organize", "limit": 1}, issued.token),
-                    ({"command": "preview", "execute": True, "limit": 1}, issued.token),
                     (
                         {
                             "command": "organize",
@@ -238,11 +243,14 @@ class ExecutionAuthorizationTests(unittest.TestCase):
                     task_id = _run_queued_workflow(job, None, lambda: False)
                 self.assertEqual(task_id, "task-execute")
                 self.assertIn("--execute", calls[0])
-                preview = AutomationJobService(repository).submit("preview", limit=1)
+                unauthorized = AutomationJobService(repository).submit("organize", limit=1)
                 calls.clear()
-                with patch("mediaflow.final_cli.final_main", side_effect=fake_main):
-                    _run_queued_workflow(preview, None, lambda: False)
-                self.assertNotIn("--execute", calls[0])
+                with (
+                    patch("mediaflow.final_cli.final_main", side_effect=fake_main),
+                    self.assertRaisesRegex(RuntimeError, "lacks persisted execute authorization"),
+                ):
+                    _run_queued_workflow(unauthorized, None, lambda: False)
+                self.assertEqual(calls, [])
 
     def test_api_job_worker_executes_existing_local_storage_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -343,7 +351,7 @@ class ExecutionAuthorizationTests(unittest.TestCase):
             connection.close()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                job = AutomationJobService(repository).submit("preview")
+                job = AutomationJobService(repository).submit("organize")
                 self.assertFalse(job.execute_authorized)
 
 

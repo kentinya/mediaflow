@@ -848,7 +848,7 @@ def seed(
     """Create one deterministic run population through real producers."""
 
     # 1. A real durable Job admission: pending, pre-Task, no Worker yet.
-    status, job_document = wsgi_request(api, "POST", "/api/v1/jobs", body={"command": "preview"})
+    status, job_document = wsgi_request(api, "POST", "/api/v1/jobs", body={"command": "organize"})
     if status != 202:
         raise SystemExit(f"harness: job admission failed with {status}: {job_document}")
 
@@ -3583,77 +3583,6 @@ def run_automation_run_once_worker(state: AppState, *, discovery_id: str) -> dic
     }
 
 
-def run_preview_analysis_worker(state: AppState, *, analysis_id: str) -> dict[str, object]:
-    """Advance one admitted durable exact analysis with the real Worker.
-
-    The API only *admits* the analysis; this route is the resident
-    Processing-Worker boundary that runs the existing exact-Preview service and
-    links the resulting Preview.  It is metadata-only and never mutates Storage.
-    """
-
-    from mediaflow.application.preview_analysis import PreviewAnalysisWorker
-
-    service = getattr(state.api, "_preview_analyses", None)
-    if service is None:
-        return {"advanced": False, "reason": "preview analysis service is unavailable"}
-    worker = PreviewAnalysisWorker(service, worker_id="harness-analysis-worker")
-    try:
-        service.get(analysis_id)
-    except Exception:
-        return {"advanced": False, "reason": "the requested Preview analysis is unavailable"}
-    latest = None
-    for _ in range(12):
-        result = worker.run_next()
-        if result is None:
-            break
-        latest = result
-        if result.analysis_id == analysis_id:
-            return {
-                "advanced": True,
-                "analysisId": result.analysis_id,
-                "status": result.status.value,
-                "previewId": result.preview_id,
-            }
-    current = service.get(analysis_id)
-    if latest is None:
-        return {
-            "advanced": False,
-            "reason": "the requested Preview analysis was not claimable",
-            "analysisId": analysis_id,
-            "status": current.status.value,
-        }
-    return {
-        "advanced": False,
-        "reason": "the Worker advanced earlier queued analyses before the requested one",
-        "analysisId": analysis_id,
-        "status": current.status.value,
-        "previewId": current.preview_id,
-        "lastAdvancedAnalysisId": latest.analysis_id,
-    }
-
-
-def preview_analysis_state(state: AppState, *, analysis_id: str) -> dict[str, object]:
-    """Report one durable exact analysis for the browser proof (reads only)."""
-
-    service = getattr(state.api, "_preview_analyses", None)
-    if service is None or not analysis_id:
-        return {"found": False}
-    try:
-        analysis = service.get(analysis_id)
-    except Exception:
-        return {"found": False}
-    return {
-        "found": True,
-        "analysisId": analysis.analysis_id,
-        "kind": analysis.kind.value,
-        "status": analysis.status.value,
-        "version": analysis.version,
-        "previewId": analysis.preview_id,
-        "definitionId": analysis.definition_id,
-        "intentId": analysis.intent_id,
-    }
-
-
 def automation_run_once_state(state: AppState, *, discovery_id: str) -> dict[str, object]:
     """Report the durable Run-once manifest for the browser proof.
 
@@ -4993,14 +4922,6 @@ def application(environ, start_response):
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             discovery_id = (query.get("discoveryId") or [""])[0]
             document = automation_run_once_state(STATE, discovery_id=discovery_id)
-        elif path == "/__harness__/run-preview-analysis-worker" and method == "POST":
-            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
-            analysis_id = (query.get("analysisId") or [""])[0]
-            document = run_preview_analysis_worker(STATE, analysis_id=analysis_id)
-        elif path == "/__harness__/preview-analysis-state" and method == "GET":
-            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
-            analysis_id = (query.get("analysisId") or [""])[0]
-            document = preview_analysis_state(STATE, analysis_id=analysis_id)
         elif path == "/__harness__/seed-automation-definition-grant" and method == "POST":
             document = seed_automation_definition_grant(STATE)
         elif path == "/__harness__/reset-automation-definitions" and method == "POST":

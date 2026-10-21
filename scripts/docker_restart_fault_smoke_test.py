@@ -102,7 +102,7 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
     automation["schedules"] = [
         {
             "id": SCHEDULE_ID,
-            "command": "preview",
+            "command": "organize",
             "enabled": True,
             "intervalSeconds": 3600,
             "itemLimit": 10,
@@ -723,7 +723,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 "/api/v1/jobs",
                 token,
                 method="POST",
-                body={"command": "preview", "limit": 1},
+                body={"command": "organize", "limit": 1},
             )
             if status != 202:
                 raise RuntimeError(f"fault Job submission returned HTTP {status}: {submitted}")

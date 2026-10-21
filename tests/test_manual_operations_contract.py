@@ -230,7 +230,7 @@ class ManualOperationsContractTests(unittest.TestCase):
                     "contract-worker",
                     "contract worker",
                     30.0,
-                    ("scan", "preview", "organize"),
+                    ("scan", "organize"),
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 )
@@ -298,29 +298,23 @@ class ManualOperationsContractTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
 
-        # The current server-bound Preview contract derives SourceIdentity from
-        # live Storage: the browser submits only the ResourceLibrary identity
-        # and the library-relative path, never a FileIndex identifier.
-        status, preview_admission = _request(
-            api,
-            "/api/v1/operations/previews",
-            method="POST",
-            body={
-                "scopeKind": "file",
-                "resourceLibraryId": "library",
-                "relativePath": "One.2001.mkv",
-            },
-        )
-        self.assertEqual(201, status)
-        preview_id = preview_admission["previewId"]
-        status, preview_detail = _request(api, f"/api/v1/operations/previews/{preview_id}")
-        self.assertEqual(200, status)
-        status, preview_list = _request(
-            api,
-            "/api/v1/operations/previews",
-            query="scopeKind=file&scopeId=One.2001.mkv",
-        )
-        self.assertEqual(200, status)
+        # The standalone current-source Preview product is retired: its old
+        # routes answer as ordinary not-found results and start no work.
+        for method, path, body in (
+            (
+                "POST",
+                "/api/v1/operations/previews",
+                {
+                    "scopeKind": "file",
+                    "resourceLibraryId": "library",
+                    "relativePath": "One.2001.mkv",
+                },
+            ),
+            ("GET", "/api/v1/operations/previews?scopeKind=file&scopeId=One.2001.mkv", None),
+        ):
+            with self.subTest(path=path):
+                status, _ = _request(api, path, method=method, body=body)
+                self.assertEqual(404, status)
 
         # --- V2 manual Organize: live admission -> exact Preview -> one Execute action ---
         status, organize_intent = _request(
@@ -398,9 +392,6 @@ class ManualOperationsContractTests(unittest.TestCase):
             "actionMatrix": action_matrix,
             "resourceLibraryDiscovery": discovery_matrix,
             "resourceLibrarySelected": selected_library_matrix,
-            "previewAdmission": preview_admission,
-            "previewDetail": preview_detail,
-            "previewList": preview_list,
             "organizeIntent": organize_intent,
             "organizeIntentChoice": organize_intent_choice,
             "organizePreview": organize_preview,
@@ -445,10 +436,11 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertIsNone(_DIGEST_SHAPE.search(serialized))
         # The recognizable operator-facing evidence is preserved.
         self.assertIn("One.2001.mkv", serialized)
-        preview_detail = captured["previewDetail"]
-        self.assertTrue(preview_detail["zeroMutation"])
-        self.assertEqual("file", preview_detail["scope"]["scopeKind"])
-        plan = preview_detail["items"][0]["plan"]
+        # The retained exact organize plan summary carries the same evidence the
+        # retired standalone Preview product used to project.
+        organize_preview_detail = captured["organizePreviewDetail"]
+        self.assertTrue(organize_preview_detail["zeroMutation"])
+        plan = organize_preview_detail["items"][0]["plan"]
         self.assertEqual("A", plan["recognitionType"])
         # Slice 37 formal destination parity: the classification rule's
         # `library` value composes as the first relative-path prefix before
@@ -474,7 +466,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertTrue(matrix["selectionRequired"])
         self.assertIsNone(matrix["scopeId"])
         self.assertNotIn("scan", matrix["actions"])
-        self.assertFalse(matrix["actions"]["preview"]["available"])
+        self.assertFalse(matrix["actions"].get("preview", {}).get("available", False))
         self.assertEqual(
             ["library"],
             [item["resourceLibraryId"] for item in matrix["resourceLibraries"]],

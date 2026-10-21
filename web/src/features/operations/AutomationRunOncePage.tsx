@@ -114,30 +114,17 @@ export function AutomationRunOncePage() {
       return {
         action,
         previewId: result.previewId ?? null,
-        analysisId: result.analysisId ?? null,
       };
     },
     onSuccess: (result) => {
       setControlError(null);
       if (result.action === "finalize" && result.previewId !== null) {
-        // The frozen manifest's exact zero-mutation Preview is the existing
-        // *manual* Organize Preview over the frozen intent, so the operator
-        // continues there and separately confirms execution.  The definition
-        // Preview route reads a different repository and would 404.
+        // The frozen manifest's exact zero-mutation organize plan is the
+        // existing *manual* Organize plan over the frozen intent, so the
+        // operator continues there and separately confirms execution.
         void navigate({
           to: "/operations/organize/preview/$previewId",
           params: { previewId: result.previewId },
-          search: { ...operationsReturnSearch(operationsReturn) },
-        });
-        return;
-      }
-      if (result.action === "finalize" && result.analysisId !== null) {
-        // The expensive exact analysis was admitted to the resident Worker:
-        // continue on the durable analysis page, which shows progress and the
-        // exact Preview link when it completes.
-        void navigate({
-          to: "/operations/automation/preview-analyses/$analysisId",
-          params: { analysisId: result.analysisId },
           search: { ...operationsReturnSearch(operationsReturn) },
         });
         return;

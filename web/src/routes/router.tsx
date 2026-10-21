@@ -21,8 +21,6 @@ import { TaskListPage } from "../features/operations/TaskListPage";
 import { TaskDetailPage } from "../features/operations/TaskDetailPage";
 import { JobListPage } from "../features/operations/JobListPage";
 import { JobDetailPage } from "../features/operations/JobDetailPage";
-import { PreviewNewPage } from "../features/operations/PreviewNewPage";
-import { PreviewDetailPage } from "../features/operations/PreviewDetailPage";
 import { OrganizeCreationPage } from "../features/operations/OrganizeCreationPage";
 import { OrganizeDiscoveryPage } from "../features/operations/OrganizeDiscoveryPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
@@ -33,10 +31,8 @@ import { AutomationNewPage } from "../features/operations/AutomationNewPage";
 import { AutomationDetailPage } from "../features/operations/AutomationDetailPage";
 import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
 import { AutomationLifecyclePage } from "../features/operations/AutomationLifecyclePage";
-import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
 import { AutomationRunOncePage } from "../features/operations/AutomationRunOncePage";
-import { PreviewAnalysisPage } from "../features/operations/PreviewAnalysisPage";
 import { NotificationListPage } from "../features/operations/NotificationListPage";
 import { NotificationNewPage } from "../features/operations/NotificationNewPage";
 import { NotificationDetailPage } from "../features/operations/NotificationDetailPage";
@@ -160,18 +156,6 @@ const jobDetailRoute = createRoute({
   component: JobDetailPage,
 });
 
-const previewNewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/preview/new",
-  component: PreviewNewPage,
-});
-
-const previewDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/preview/$previewId",
-  component: PreviewDetailPage,
-});
-
 const organizeNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/organize/new",
@@ -238,12 +222,6 @@ const automationLifecycleNewRoute = createRoute({
   component: AutomationLifecyclePage,
 });
 
-const automationPreviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/automation/preview/$definitionId/$previewId",
-  component: AutomationPreviewPage,
-});
-
 const automationOccurrencesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/occurrences/$definitionId",
@@ -254,12 +232,6 @@ const automationRunOnceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations/automation/run-once/$discoveryId",
   component: AutomationRunOncePage,
-});
-
-const previewAnalysisRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "operations/automation/preview-analyses/$analysisId",
-  component: PreviewAnalysisPage,
 });
 
 const notificationListRoute = createRoute({
@@ -340,8 +312,6 @@ const routeTree = rootRoute.addChildren([
   taskDetailRoute,
   jobListRoute,
   jobDetailRoute,
-  previewNewRoute,
-  previewDetailRoute,
   organizeNewRoute,
   organizeIntentRoute,
   organizePreviewRoute,
@@ -353,10 +323,8 @@ const routeTree = rootRoute.addChildren([
   automationEditorRoute,
   automationLifecycleRoute,
   automationLifecycleNewRoute,
-  automationPreviewRoute,
   automationOccurrencesRoute,
   automationRunOnceRoute,
-  previewAnalysisRoute,
   notificationListRoute,
   notificationNewRoute,
   notificationDefinitionRoute,

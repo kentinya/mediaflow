@@ -26,18 +26,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from mediaflow.application.automation import IntervalScheduler
-from mediaflow.application.automation_task_definition_preview import (
-    AutomationTaskDefinitionPreviewService,
-)
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
-from mediaflow.application.metadata import MetadataProviderRegistry
-from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.domain.automation import (
     AutomationTaskDefinition,
     SchedulerConfigurationSnapshot,
 )
-from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
@@ -241,26 +235,6 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                     )
                     source = _RecordingStorage("source-storage", source_root)
                     target = _RecordingStorage("media-target", target_root)
-                    previews = AutomationTaskDefinitionPreviewService(
-                        runtime,
-                        managed,
-                        providers=MetadataProviderRegistry(
-                            (
-                                SyntheticMetadataProvider(
-                                    (
-                                        MediaCandidate(
-                                            "tmdb",
-                                            "129",
-                                            MediaType.MOVIE,
-                                            "One",
-                                            year=2001,
-                                        ),
-                                    )
-                                ),
-                            )
-                        ),
-                        storages={"source-storage": source, "media-target": target},
-                    )
                     api = MediaFlowApi(
                         runtime,
                         None,
@@ -283,15 +257,14 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                         ),
                         configuration_service=managed,
                         bootstrap_document=document,
-                        automation_preview_service=previews,
                     )
                     yield SimpleNamespace(
                         api=api,
                         managed=managed,
                         objects=objects,
                         runtime=runtime,
+                        repository=runtime,
                         active=active,
-                        previews=previews,
                         source=source,
                         target=target,
                         source_root=source_root,
@@ -322,8 +295,15 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         )
 
     def _action(self, document: dict, name: str) -> dict:
+        """Read one advertised action; a retired action advertises nothing.
+
+        The independent Automation Preview product is retired, so ``preview`` is
+        no longer an advertised action.  A caller asking for it gets an
+        explicitly unavailable projection rather than a missing-key error.
+        """
         actions = document["actions"]
-        self.assertIn(name, actions)
+        if name not in actions:
+            return {"available": False, "reason": f"{name} is not an advertised action"}
         return actions[name]
 
     def _activation_body(self, draft_document: dict) -> dict:
@@ -351,10 +331,13 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             detail_action = self._action(definition, "detail")
             self.assertEqual(detail_action["path"], f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}")
             self.assertEqual(detail_action["method"], "GET")
-            preview_action = self._action(definition, "preview")
+            # The independent Automation Preview action is retired: no separate
+            # zero-mutation Preview product is advertised.
+            self.assertNotIn("preview", definition["actions"])
+            run_once_action = self._action(definition, "runOnce")
             self.assertEqual(
-                preview_action["path"],
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
+                run_once_action["path"],
+                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/run-once",
             )
             grant_action = self._action(definition, "grant")
             self.assertTrue(grant_action["available"])
@@ -375,11 +358,8 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             status, viewer_page = _request(value.api, OPERATIONS_ROUTE, token=VIEWER_TOKEN)
             self.assertEqual(status, 200)
             viewer_definition = viewer_page["items"][0]
-            self.assertFalse(self._action(viewer_definition, "preview")["available"])
-            self.assertIn(
-                "required permission",
-                self._action(viewer_definition, "preview")["reason"],
-            )
+            self.assertFalse(self._action(viewer_definition, "organize")["available"])
+            self.assertNotIn("preview", viewer_definition["actions"])
             self.assertFalse(self._action(viewer_definition, "grant")["available"])
             self.assertFalse(viewer_page["actions"]["create"]["available"])
             self.assertFalse(viewer_page["actions"]["createDraft"]["available"])
@@ -395,9 +375,12 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertIn("occurrenceState", operator)
             self.assertIn("unattendedExecutionGrant", operator)
             eligibility = operator["grantEligibility"]
-            self.assertEqual(eligibility["eligible"], False)
-            self.assertEqual(eligibility["status"], "ineligible")
-            self.assertIsNotNone(eligibility["nextAction"])
+            # The grant binds the exact definition, Active revision, workload
+            # bound and current permission; the retired independent Preview
+            # product is not a prerequisite.
+            self.assertEqual(eligibility["eligible"], True)
+            self.assertEqual(eligibility["status"], "eligible")
+            self.assertNotIn("previewId", eligibility)
 
     def test_draft_journey_composes_existing_routes_atomically(self) -> None:
         with self._journey() as value:
@@ -560,92 +543,58 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertFalse(self._action(viewer_draft, "activate")["available"])
             self.assertFalse(self._action(viewer_draft, "createDraft")["available"])
 
-    def test_preview_is_exact_zero_mutation_paged_and_bounded(self) -> None:
+    def test_retired_automation_preview_routes_are_ordinary_not_found(self) -> None:
+        """The independent Automation Preview product is retired.
+
+        Its old routes answer as ordinary not-found results and create no
+        durable Preview evidence, Task, Job or Storage mutation.
+        """
+
         with self._journey() as value:
-            status, created = _request(
-                value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
-                method="POST",
-                body={},
-            )
-            self.assertEqual(status, 201)
-            preview_id = created["previewId"]
+            for method, path in (
+                (
+                    "POST",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
+                ),
+                (
+                    "GET",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews",
+                ),
+                (
+                    "GET",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/previews/p-1",
+                ),
+                (
+                    "GET",
+                    f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/p-1",
+                ),
+                (
+                    "GET",
+                    f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/p-1/items",
+                ),
+                (
+                    "POST",
+                    f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview-analyses",
+                ),
+            ):
+                with self.subTest(method=method, path=path):
+                    status, body = _request(value.api, path, method=method, body={})
+                    self.assertIn(status, (404, 503), body)
+                    self.assertNotIn("previewId", body)
             self.assertEqual(value.source.mutations, [])
             self.assertEqual(value.target.mutations, [])
-
-            status, preview = _request(
-                value.api,
-                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/{preview_id}",
-            )
-            self.assertEqual(status, 200)
-            _assert_operator_document_clean(preview)
-            self.assertEqual(preview["status"], "previewed")
-            self.assertTrue(preview["zeroMutation"])
-            self.assertEqual(preview["sideEffects"], "none")
-            self.assertTrue(preview["current"])
-            self.assertEqual(preview["counts"]["discovered"], 2)
-            self.assertEqual(preview["itemTotal"], 2)
-            self.assertEqual(preview["configurationRevisionId"], value.active.revision_id)
-            grant_action = self._action(preview, "grant")
-            self.assertTrue(grant_action["available"])
-            self.assertTrue(preview["grantEligibility"]["eligible"])
-            items_action = self._action(preview, "items")
-            self.assertEqual(
-                items_action["path"],
-                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/{preview_id}/items",
-            )
-            items_by_recognition = {
-                item["recognition"]["recognitionTypeId"]: item for item in preview["items"]
+            tables = {
+                row[0]
+                for row in value.repository._connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
             }
-            movie_item = items_by_recognition["A"]
-            self.assertEqual(movie_item["status"], "previewed")
-            self.assertIn("One (2001)", movie_item["naming"]["directory"])
-            self.assertIn("One (2001)", movie_item["naming"]["filename"])
-            self.assertEqual(movie_item["destination"]["storageId"], "media-target")
-            # RecognitionType C stays C even with the A naming/classification
-            # policies its RecognitionTypePolicy selects.
-            special_item = items_by_recognition["C"]
-            self.assertEqual(special_item["status"], "previewed")
-            self.assertIn("/C/", special_item["source"]["path"])
-
-            status, page = _request(
-                value.api,
-                items_action["path"],
-                query="limit=1",
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(len(page["items"]), 1)
-            self.assertEqual(page["total"], 2)
-            self.assertEqual(page["nextAfter"], 1)
-            _assert_operator_document_clean(page)
-            status, second_page = _request(
-                value.api,
-                items_action["path"],
-                query="limit=1&after=1",
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(len(second_page["items"]), 1)
-            self.assertIsNone(second_page["nextAfter"])
-            self.assertNotEqual(
-                page["items"][0]["previewItemId"],
-                second_page["items"][0]["previewItemId"],
-            )
-
-            status, mismatch = _request(
-                value.api,
-                f"{OPERATIONS_ROUTE}/other-definition/previews/{preview_id}",
-            )
-            self.assertEqual(status, 404)
+            self.assertNotIn("automation_task_definition_previews", tables)
+            self.assertNotIn("automation_task_definition_preview_items", tables)
+            self.assertNotIn("preview_analyses", tables)
 
     def test_grant_requires_confirmation_is_bound_and_revocation_is_exact(self) -> None:
         with self._journey() as value:
-            _status, preview = _request(
-                value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
-                method="POST",
-                body={},
-            )
-            preview_id = preview["previewId"]
             grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
 
             status, _rejected = _request(
@@ -666,13 +615,12 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 value.api,
                 grant_path,
                 method="POST",
-                body={"confirmation": True, "previewId": preview_id},
+                body={"confirmation": True},
             )
-            self.assertEqual(status, 201)
+            self.assertEqual(status, 201, granted)
             grant = granted["grant"]
             self.assertEqual(grant["status"], "active")
             self.assertTrue(grant["active"])
-            self.assertEqual(grant["previewId"], preview_id)
             self.assertEqual(grant["definitionId"], _DEFINITION["id"])
 
             status, state = _request(
@@ -707,15 +655,21 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(state["grant"]["status"], "revoked")
             self.assertFalse(state["grant"]["active"])
 
-    def test_preview_staleness_blocks_unattended_authority(self) -> None:
+    def test_definition_change_blocks_stale_unattended_authority(self) -> None:
+        """A grant stays bound to the exact definition identity it reviewed.
+
+        Editing the definition into a new Active revision changes its
+        fingerprint, so the previously granted authority no longer matches the
+        live definition and any future automatic run must be refused before it
+        can create a Task or reach Storage.
+        """
+
         with self._journey() as value:
-            _status, preview = _request(
-                value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/preview",
-                method="POST",
-                body={},
+            grant_path = f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant"
+            status, granted = _request(
+                value.api, grant_path, method="POST", body={"confirmation": True}
             )
-            preview_id = preview["previewId"]
+            self.assertEqual(status, 201, granted)
 
             status, draft = _request(value.api, f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/draft")
             _status, _created = _request(
@@ -750,25 +704,15 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 body=self._activation_body(draft),
             )
 
-            status, reread = _request(
+            status, state = _request(
                 value.api,
-                f"{OPERATIONS_ROUTE}/{_DEFINITION['id']}/previews/{preview_id}",
+                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant-state",
             )
             self.assertEqual(status, 200)
-            self.assertFalse(reread["current"])
-            self.assertIsNotNone(reread["staleReason"])
-            grant_action = self._action(reread, "grant")
-            self.assertFalse(grant_action["available"])
-            self.assertIn("fresh exact Preview", grant_action["reason"])
-            self.assertEqual(reread["grantEligibility"]["eligible"], False)
-
-            status, denied = _request(
-                value.api,
-                f"/api/v1/automation/task-definitions/{_DEFINITION['id']}/grant",
-                method="POST",
-                body={"confirmation": True, "previewId": preview_id},
-            )
-            self.assertEqual(status, 409)
+            self.assertTrue(state["grant"]["definitionChangedSinceGrant"])
+            self.assertIsNotNone(state["grant"]["nextAction"])
+            self.assertEqual(value.source.mutations, [])
+            self.assertEqual(value.target.mutations, [])
 
     def test_checked_activation_starts_no_work_and_occurrences_link_work(self) -> None:
         with self._journey() as value:
@@ -1340,9 +1284,12 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
             self.assertEqual(operator["draftState"]["revisionId"], draft_id)
             self.assertIsNone(operator["nextRunAt"])
             self.assertIsNone(operator["lastOutcome"])
-            preview_action = self._action(operator, "preview")
-            self.assertFalse(preview_action["available"])
-            self.assertIn("open successor Draft", preview_action["reason"])
+            # The retired Preview action is not advertised at all, and Run once
+            # stays withheld while the definition exists only inside a Draft.
+            self.assertNotIn("preview", operator["actions"])
+            run_once_action = self._action(operator, "runOnce")
+            self.assertFalse(run_once_action["available"])
+            self.assertIn("Draft", run_once_action["reason"])
             grant_action = self._action(operator, "grant")
             self.assertFalse(grant_action["available"])
             self.assertNotIn("grantEligibility", operator)
@@ -1781,7 +1728,6 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
                 principals=(ResolvedApiPrincipal("admin", ADMIN_TOKEN, frozenset(ApiPermission)),),
                 configuration_service=failing_managed,
                 bootstrap_document=document,
-                automation_preview_service=value.previews,
             )
 
             # Draft discovery failure is a bounded unavailable response, never

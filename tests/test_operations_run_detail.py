@@ -288,7 +288,7 @@ class RunDetailJourneyTests(_RunDetailApiTestCase):
         self.assertEqual(records["records"][0]["record_id"], "log:log-pre-task")
 
     def test_standalone_task_and_both_library_kinds_remain_inspectable(self) -> None:
-        resource_run, resource_task = self.seed_run(command="preview")
+        resource_run, resource_task = self.seed_run(command="organize")
         media_run, media_task = self.seed_run(
             command="media_organize:collection-1", library="media-collection"
         )
@@ -466,7 +466,7 @@ class RunProgressAccountingTests(_RunDetailApiTestCase):
         self.assertEqual(progress["confirmed_success"], 3)
 
     def test_analysis_completion_is_not_organize_success(self) -> None:
-        run_id, task_id = self.seed_run(command="preview", execute_authorized=False, total_items=1)
+        run_id, task_id = self.seed_run(command="organize", execute_authorized=False, total_items=1)
         self.repository.upsert_item(_item(task_id, "item-0", TaskItemStatus.DRY_RUN))
         code, overview = self.overview(run_id)
         progress = overview["progress"]

@@ -30,7 +30,7 @@ class PersistentTaskTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.record_discovered(
                     task.task_id, "源存储", "电影", "电影/千与千寻.mkv", "千与千寻.mkv"
                 )
@@ -102,7 +102,7 @@ class PersistentTaskTests(unittest.TestCase):
             SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
         ):
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             now = datetime.now(UTC)
             base = PersistentTaskItem(
                 "failed",
@@ -830,7 +830,7 @@ class Schema42To44UpgradeTests(unittest.TestCase):
         with SQLiteTaskRepository(path) as repository:
             coordinator = PersistentTaskCoordinator(repository, repository)
             task = coordinator.create(
-                "preview",
+                "organize",
                 execute_authorized=True,
                 scope_path="Media",
                 item_limit=10,

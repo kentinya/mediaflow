@@ -477,8 +477,9 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual("file", body["scopeKind"])
         self.assertIsNone(body["source"])
         self.assertNotIn("scan", body["actions"])
-        self.assertFalse(body["actions"]["preview"]["available"])
-        self.assertIn("live file", body["actions"]["preview"]["reason"])
+        # The standalone Preview action is retired; only the Organize entry
+        # remains and it names the live selection prerequisite.
+        self.assertNotIn("preview", body["actions"])
         self.assertFalse(body["actions"]["organize"]["available"])
         self.assertIn("live file", body["actions"]["organize"]["reason"])
 
@@ -516,8 +517,8 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertEqual(404, post_status)
         self.assertEqual("not_found", post_body["error"]["code"])
 
-    def test_action_matrix_with_unavailable_preview_service_offers_no_submission(self) -> None:
-        """Preview availability also requires its bound application service."""
+    def test_action_matrix_without_a_preview_service_still_offers_organize(self) -> None:
+        """The shared Organize entry owns the summary, not a separate Preview."""
 
         api = _api(
             permissions=frozenset(
@@ -536,8 +537,7 @@ class ActionMatrixTests(unittest.TestCase):
             "/api/v1/operations/manual-actions?scopeKind=resourceLibrary&resourceLibraryId=library",
         )
         self.assertEqual(200, status)
-        self.assertFalse(body["actions"]["preview"]["available"])
-        self.assertIn("Preview service is unavailable", body["actions"]["preview"]["reason"])
+        self.assertNotIn("preview", body["actions"])
         post_status, post_body = _post(
             api,
             "/api/v1/operations/previews",
@@ -546,8 +546,8 @@ class ActionMatrixTests(unittest.TestCase):
                 "resourceLibraryId": "library",
             },
         )
-        self.assertEqual(503, post_status)
-        self.assertEqual("service_unavailable", post_body["error"]["code"])
+        self.assertEqual(404, post_status)
+        self.assertEqual("not_found", post_body["error"]["code"])
 
     def test_library_scope_action_matrix(self) -> None:
         api = self._make_api()
@@ -574,7 +574,7 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertTrue(body["selectionRequired"])
         self.assertIsNone(body["source"])
         self.assertNotIn("scan", body["actions"])
-        self.assertFalse(body["actions"]["preview"]["available"])
+        self.assertFalse(body["actions"].get("preview", {}).get("available", False))
         self.assertNotIn("scan", body["actions"])
         self.assertEqual(
             ["library"], [item["resourceLibraryId"] for item in body["resourceLibraries"]]
@@ -599,7 +599,7 @@ class ActionMatrixTests(unittest.TestCase):
         )
         self.assertEqual(200, status)
         self.assertNotIn("scan", body["actions"])
-        self.assertFalse(body["actions"]["preview"]["available"])
+        self.assertFalse(body["actions"].get("preview", {}).get("available", False))
 
     def test_unknown_scope_kind_fails_closed(self) -> None:
         api = self._make_api()
@@ -650,7 +650,14 @@ class ActionMatrixTests(unittest.TestCase):
         self.assertNotIn("Bearer hidden-token", serialized)
 
 
-class ServerBoundPreviewTests(unittest.TestCase):
+class RetiredServerBoundPreviewTests(unittest.TestCase):
+    """The standalone current-source Preview product is retired.
+
+    ``/api/v1/operations/previews`` no longer serves an independent product;
+    its old inputs get an ordinary not-found answer after normal authentication
+    and create no Preview record.
+    """
+
     def setUp(self) -> None:
         self.storage = FakeStorage("source")
         self.storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
@@ -671,68 +678,28 @@ class ServerBoundPreviewTests(unittest.TestCase):
             storage=self.storage,
         )
 
-    def test_server_bound_preview_requires_permission(self) -> None:
-        api = self._make_api(permissions=frozenset({ApiPermission.READ}))
-        status, _ = _post(
-            api,
-            "/api/v1/operations/previews",
-            body={
-                "scopeKind": "resource_library",
-                "resourceLibraryId": "library",
-            },
-            token="test-token",
-        )
-        self.assertEqual(403, status)
-
-    def test_server_bound_preview_rejects_unknown_scope(self) -> None:
+    def test_old_server_bound_preview_routes_are_ordinary_not_found(self) -> None:
         api = self._make_api()
-        status, body = _post(
-            api,
-            "/api/v1/operations/previews",
-            body={
-                "scopeKind": "invalid",
-                "resourceLibraryId": "library",
-            },
-        )
-        self.assertEqual(400, status)
-
-    def test_server_bound_preview_rejects_fingerprint_echo(self) -> None:
-        api = self._make_api()
-        status, body = _post(
-            api,
-            "/api/v1/operations/previews",
-            body={
-                "scopeKind": "resource_library",
-                "resourceLibraryId": "library",
-                "fingerprint": "a" * 64,
-            },
-        )
-        self.assertEqual(400, status)
-
-    def test_server_bound_preview_list_requires_scope(self) -> None:
-        api = self._make_api()
-        status, _ = _get(
-            api,
-            "/api/v1/operations/previews",
-        )
-        self.assertEqual(400, status)
-
-    def test_server_bound_preview_detail_not_found(self) -> None:
-        api = self._make_api()
-        status, _ = _get(
-            api,
-            "/api/v1/operations/previews/nonexistent",
-        )
-        self.assertEqual(404, status)
-
-    def test_server_bound_preview_list_returns_empty(self) -> None:
-        api = self._make_api()
-        status, _ = _get(
-            api,
-            "/api/v1/operations/previews?scopeKind=resource_library&scopeId=library",
-        )
-        # Returns 200 with empty list when no previews exist
-        self.assertEqual(200, status)
+        for method, path, body in (
+            (
+                "POST",
+                "/api/v1/operations/previews",
+                {"scopeKind": "resource_library", "resourceLibraryId": "library"},
+            ),
+            ("GET", "/api/v1/operations/previews", None),
+            (
+                "GET",
+                "/api/v1/operations/previews?scopeKind=resource_library&scopeId=library",
+                None,
+            ),
+            ("GET", "/api/v1/operations/previews/nonexistent", None),
+        ):
+            with self.subTest(method=method, path=path):
+                if method == "POST":
+                    status, _ = _post(api, path, body=body)
+                else:
+                    status, _ = _get(api, path)
+                self.assertEqual(404, status)
 
 
 class ZeroMutationInvariantTests(unittest.TestCase):

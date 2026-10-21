@@ -273,7 +273,7 @@ def smoke(project: str, image: str, keep: bool) -> None:
                 f"{base}/api/v1/jobs",
                 method="POST",
                 token=token,
-                body=json.dumps({"command": "preview", "limit": 1}).encode("utf-8"),
+                body=json.dumps({"command": "organize", "limit": 1}).encode("utf-8"),
             )
             if status != 202:
                 raise RuntimeError(f"job submission returned HTTP {status}: {submitted.decode()}")

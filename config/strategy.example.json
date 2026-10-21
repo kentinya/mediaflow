@@ -16,8 +16,8 @@
     "workerPollSeconds": 2,
     "schedulerPollSeconds": 5,
     "schedules": [
-      {"id": "daily-preview", "command": "preview", "intervalSeconds": 86400, "limit": 20, "enabled": false},
-      {"id": "cn-morning-preview", "command": "preview", "cron": "0 8 * * *", "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
+      {"id": "daily-organize", "command": "organize", "intervalSeconds": 86400, "limit": 20, "enabled": false},
+      {"id": "cn-morning-organize", "command": "organize", "cron": "0 8 * * *", "timezone": "Asia/Shanghai", "limit": 20, "enabled": false}
     ]
   },
   "notifications": {

@@ -65,11 +65,12 @@ export interface ManualActionMatrixModel {
     readonly nextAction: string | null;
   };
   readonly actions: {
+    /** The retired standalone Preview action; always unavailable when absent. */
     readonly preview: ManualAction;
     readonly organize: ManualAction;
   };
   readonly limits: {
-    readonly previewMaxItems: number | null;
+    readonly organizeMaxItems: number | null;
   };
 }
 
@@ -235,7 +236,19 @@ export function normalizeManualActionMatrix(
         };
       })(),
       actions: {
-        preview: normalizeAction(actionsRaw["preview"], "actions.preview"),
+        // The independent Preview product is retired: an absent action is
+        // explicitly unavailable rather than a contract violation.
+        preview: normalizeAction(
+          actionsRaw["preview"] ?? {
+            available: false,
+            reason: "the standalone Preview product is retired",
+            method: null,
+            path: null,
+            nextAction: null,
+            modes: [],
+          },
+          "actions.preview",
+        ),
         organize: normalizeAction(
           actionsRaw["organize"] ?? {
             available: false,
@@ -250,7 +263,9 @@ export function normalizeManualActionMatrix(
       },
       limits: (() => {
         const limitsRaw = readRecord(source["limits"], "limits");
-        return { previewMaxItems: optionalCount(limitsRaw, "previewMaxItems") };
+        return {
+          organizeMaxItems: optionalCount(limitsRaw, "organizeMaxItems"),
+        };
       })(),
     };
   } catch {

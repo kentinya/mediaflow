@@ -2481,14 +2481,6 @@ function ManualOperationsSection({
             </p>
           )}
           <nav className="mf-actions" aria-label="手动操作入口">
-            {matrix.actions.preview.available && (
-              <Link
-                className="mf-button mf-button-secondary"
-                to="/operations/preview/new"
-              >
-                运行零变更预览
-              </Link>
-            )}
             {/* The Organize entry deliberately differs from the Scan/Preview
                 direct-submit entries: `新建整理任务` starts a multi-page
                 journey, not one POST. At a chosen scope its availability is
@@ -2496,14 +2488,14 @@ function ManualOperationsSection({
                 scoped fact is honestly "select a scope first", so the entry
                 gates on the two backend facts that *are* meaningful before a
                 scope exists: this is a discovery projection, and the same
-                matrix still advertises a bounded preview population for this
-                principal (`limits.previewMaxItems`, which the real backend
+                matrix still advertises a bounded organize population for this
+                principal (`limits.organizeMaxItems`, which the real backend
                 publishes as zero without the manage-manual-organize
                 permission). A read-only principal therefore sees no entry. */}
             {(matrix.actions.organize.available ||
               (matrix.selectionRequired &&
-                matrix.limits.previewMaxItems !== null &&
-                matrix.limits.previewMaxItems > 0)) && (
+                matrix.limits.organizeMaxItems !== null &&
+                matrix.limits.organizeMaxItems > 0)) && (
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/organize/new"

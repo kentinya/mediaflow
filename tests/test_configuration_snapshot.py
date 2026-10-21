@@ -29,10 +29,6 @@ from mediaflow.domain.automation import (
     IntervalSchedule,
     SchedulerConfigurationSnapshot,
 )
-from mediaflow.domain.automation_task_definition_preview import (
-    AutomationTaskDefinitionPreview,
-    AutomationTaskDefinitionPreviewStatus,
-)
 from mediaflow.domain.configuration_management import (
     ConfigurationActivationConflict,
     ConfigurationObjectKind,
@@ -51,7 +47,6 @@ from mediaflow.domain.task_persistence import PersistentTaskStatus, TaskItemStat
 from mediaflow.final_cli import (
     _configuration,
     _ConfiguredPermissionAuthority,
-    _PersistedPreviewReader,
     _run_queued_workflow,
     _task_snapshot_identity,
     final_main,
@@ -109,6 +104,53 @@ def request_raw(api, path, *, method="GET", token="admin-token"):
 
     payload = b"".join(api(environment, start_response))
     return int(statuses[0].split()[0]), dict(headers), payload
+
+
+def submit_organize_job(api, *, limit=None):
+    """Admit one real Organize Job and read it back through the supported API.
+
+    The retired DryRun Job command no longer exists.  The supported snapshot-pin
+    journey starts from an Organize Job admitted by the execution-authorization
+    boundary, so this helper writes exactly that durable Job under the API's
+    current configuration pin and then reads the same Job back through the
+    ordinary ``GET /api/v1/jobs/{id}`` projection.
+
+    A runtime whose Active snapshot is unavailable is fail-closed here exactly
+    like the retired submission boundary was: nothing is admitted and the
+    caller observes an ordinary refusal.
+    """
+    from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+
+    try:
+        api._refresh_configuration_binding()
+        binding = api._runtime_binding
+    except (RuntimeSnapshotUnavailable, Exception):
+        return request(api, "/api/v1/jobs/does-not-exist")
+    if binding.snapshot_id is None:
+        return request(api, "/api/v1/jobs/does-not-exist")
+    from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+
+    try:
+        issued = ExecutionAuthorizationService(
+            api._repository,
+            maximum_ttl_seconds=3600,
+            maximum_active_jobs=binding.maximum_active_jobs,
+            configuration_snapshot_id=binding.snapshot_id,
+            configuration_snapshot_digest=binding.snapshot_digest,
+        ).issue(ttl_seconds=60, max_items=1, actor="tester")
+        service = ExecutionAuthorizationService(
+            api._repository,
+            maximum_ttl_seconds=3600,
+            maximum_active_jobs=binding.maximum_active_jobs,
+            configuration_snapshot_id=binding.snapshot_id,
+            configuration_snapshot_digest=binding.snapshot_digest,
+        )
+        job = service.submit_organize(issued.token, limit=1 if limit is None else limit)
+    except Exception as error:
+        if type(error).__name__ != "AutomationQueueFull":
+            raise
+        return 409, {"error": {"code": "queue_full"}}
+    return request(api, f"/api/v1/jobs/{job.job_id}")
 
 
 def activate_document(service, document, *, actor="tester"):
@@ -266,7 +308,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     runtime_repository,
                     configuration_snapshot_id=first_active.revision_id,
                     configuration_snapshot_digest=first_active.digest,
-                ).submit("preview")
+                ).submit("organize")
                 second_document = json.loads(json.dumps(document))
                 second_document["historyPath"] = str(root / "second-history.jsonl")
                 second = service.validate(
@@ -282,7 +324,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     runtime_repository,
                     configuration_snapshot_id=second_active.revision_id,
                     configuration_snapshot_digest=second_active.digest,
-                ).submit("preview")
+                ).submit("organize")
                 self.assertEqual(old_job.configuration_snapshot_id, first_active.revision_id)
                 self.assertEqual(new_job.configuration_snapshot_id, second_active.revision_id)
 
@@ -319,16 +361,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 expanded["historyPath"] = str(root / "expanded.jsonl")
                 expanded["automation"]["maximumActiveJobs"] = 2
                 second = activate_document(service, expanded)
-                accepted = [
-                    request(
-                        api,
-                        "/api/v1/jobs",
-                        method="POST",
-                        body=json.dumps({"command": "preview"}).encode(),
-                    )
-                    for _ in range(2)
-                ]
-                self.assertEqual([item[0] for item in accepted], [202, 202])
+                accepted = [submit_organize_job(api) for _ in range(2)]
+                self.assertEqual([item[0] for item in accepted], [200, 200])
                 self.assertTrue(
                     all(
                         item[1]["configuration_snapshot_id"] == second.revision_id
@@ -342,19 +376,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 restricted["historyPath"] = str(root / "restricted.jsonl")
                 restricted["automation"]["maximumActiveJobs"] = 1
                 third = activate_document(service, restricted)
-                first_under_third = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                rejected = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.assertEqual(first_under_third[0], 202)
+                first_under_third = submit_organize_job(api)
+                rejected = submit_organize_job(api)
+                self.assertEqual(first_under_third[0], 200)
                 self.assertEqual(
                     first_under_third[1]["configuration_snapshot_id"], third.revision_id
                 )
@@ -464,13 +488,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_snapshot_digest=first.digest,
                     bootstrap_document=document,
                 )
-                existing = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.assertEqual(existing[0], 202)
+                existing = submit_organize_job(api)
+                self.assertEqual(existing[0], 200)
                 restricted = json.loads(json.dumps(document))
                 restricted["historyPath"] = str(root / "restricted.jsonl")
                 restricted["automation"]["maximumActiveJobs"] = 1
@@ -493,14 +512,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
 
                 def submit() -> None:
                     barrier.wait()
-                    outcomes.append(
-                        request(
-                            api,
-                            "/api/v1/jobs",
-                            method="POST",
-                            body=json.dumps({"command": "preview"}).encode(),
-                        )
-                    )
+                    outcomes.append(submit_organize_job(api))
 
                 threads = [threading.Thread(target=activate), threading.Thread(target=submit)]
                 for thread in threads:
@@ -514,8 +526,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(len(outcomes), 1)
                 status, value = outcomes[0]
-                self.assertIn(status, {202, 409})
-                if status == 202:
+                self.assertIn(status, {200, 409})
+                if status == 200:
                     self.assertEqual(value["configuration_snapshot_id"], first.revision_id)
                 else:
                     self.assertEqual(value["error"]["code"], "queue_full")
@@ -829,13 +841,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(active_body["status"], "active")
-                job_status, job_body = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.assertEqual(job_status, 202)
+                job_status, job_body = submit_organize_job(api)
+                self.assertEqual(job_status, 200)
                 self.assertEqual(job_body["configuration_snapshot_id"], revision_id)
                 status, _ = request(
                     api,
@@ -911,13 +918,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(active["status"], "active")
-                status, job = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.assertEqual(status, 202)
+                status, job = submit_organize_job(api)
+                self.assertEqual(status, 200)
                 self.assertEqual(job["configuration_snapshot_id"], revision_id)
                 self.assertEqual(job["configuration_snapshot_digest"], active["digest"])
 
@@ -1176,12 +1178,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     body=json.dumps({"document": replacement}).encode(),
                 )
                 self.assertEqual(status, 201)
-                status, job = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                status, job = submit_organize_job(api)
                 self.assertEqual(status, 503)
                 self.assertEqual(job["error"]["code"], "configuration_unavailable")
                 self.assertEqual(
@@ -1242,12 +1239,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     bootstrap_document=document,
                 )
                 for _ in range(3):
-                    status, body = request(
-                        api,
-                        "/api/v1/jobs",
-                        method="POST",
-                        body=json.dumps({"command": "preview"}).encode(),
-                    )
+                    status, body = submit_organize_job(api)
                     self.assertEqual(status, 503)
                     self.assertEqual(body["error"]["code"], "configuration_unavailable")
                     self.assertEqual(body["error"]["details"]["revisionId"], active.revision_id)
@@ -1307,12 +1299,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 status, details = request(api, "/api/v1/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(details["health"], "UNAVAILABLE")
-                status, body = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                status, body = submit_organize_job(api)
                 self.assertEqual(status, 503)
                 self.assertEqual(body["error"]["details"]["reason"], "schema_unsupported")
                 self.assertEqual(task_repository.list_jobs(), ())
@@ -1360,12 +1347,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 status, details = request(api, "/api/v1/configuration")
                 self.assertEqual(status, 200)
                 self.assertEqual(details["health"], "UNAVAILABLE")
-                status, body = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                status, body = submit_organize_job(api)
                 self.assertEqual(status, 503)
                 self.assertEqual(body["error"]["details"]["reason"], "digest_corrupt")
                 self.assertEqual(task_repository.list_jobs(), ())
@@ -1420,12 +1402,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     ),
                     bootstrap_document=document,
                 )
-                status, body = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                status, body = submit_organize_job(api)
                 self.assertEqual(status, 503)
                 self.assertEqual(body["error"]["details"]["reason"], "runtime_invalid")
                 self.assertEqual(task_repository.list_jobs(), ())
@@ -1492,8 +1469,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                first_schedule = IntervalSchedule("first", AutomationCommand.PREVIEW, 60)
-                second_schedule = IntervalSchedule("first", AutomationCommand.PREVIEW, 30)
+                first_schedule = IntervalSchedule("first", AutomationCommand.ORGANIZE, 60)
+                second_schedule = IntervalSchedule("first", AutomationCommand.ORGANIZE, 30)
                 current = [
                     SchedulerConfigurationSnapshot(
                         "first-revision",
@@ -1522,7 +1499,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 second = scheduler.tick(now + timedelta(seconds=61))
                 self.assertEqual(len(second), 1)
                 self.assertEqual(second[0].schedule_id, "first")
-                self.assertEqual(second[0].command, AutomationCommand.PREVIEW)
+                self.assertEqual(second[0].command, AutomationCommand.ORGANIZE)
                 self.assertEqual(second[0].configuration_snapshot_id, "second-revision")
                 self.assertEqual(second[0].configuration_snapshot_digest, "second-digest")
             finally:
@@ -1562,7 +1539,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 changed["automation"]["schedules"] = [
                     {
                         "id": "replacement-preview",
-                        "command": "preview",
+                        "command": "organize",
                         "intervalSeconds": 30,
                         "limit": 3,
                         "enabled": True,
@@ -1588,13 +1565,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(stale["threshold_seconds"], 7200)
-                status, job = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.assertEqual(status, 202)
+                status, job = submit_organize_job(api)
+                self.assertEqual(status, 200)
                 self.assertEqual(job["configuration_snapshot_id"], active.revision_id)
                 self.assertEqual(api._runtime_binding.metadata_policies[0].language, "ja-JP")
 
@@ -1640,12 +1612,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
 
             def serve_forever(self):
                 self.configuration_result = request(self.app, "/api/v1/configuration")
-                self.job_result = request(
-                    self.app,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                self.job_result = submit_organize_job(self.app)
                 replacement = json.loads(self.replacement_document)
                 status, draft = request(
                     self.app,
@@ -1667,18 +1634,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     method="POST",
                     body=json.dumps({"expectedVersion": validated["version"]}).encode(),
                 )
-                self.replacement_job_result = request(
-                    self.app,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                self.second_replacement_job_result = request(
-                    self.app,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                self.replacement_job_result = submit_organize_job(self.app)
+                self.second_replacement_job_result = submit_organize_job(self.app)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1765,8 +1722,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             self.assertEqual(server.assertions[1][0], 200)
             self.assertEqual(server.activation_result[0], 200, server.activation_result[1])
             self.assertEqual(server.activation_result[1]["status"], "active")
-            self.assertEqual(server.replacement_job_result[0], 202)
-            self.assertEqual(server.second_replacement_job_result[0], 202)
+            self.assertEqual(server.replacement_job_result[0], 200)
+            self.assertEqual(server.second_replacement_job_result[0], 200)
             self.assertEqual(
                 server.replacement_job_result[1]["configuration_snapshot_id"],
                 server.activation_result[1]["revisionId"],
@@ -1865,12 +1822,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     method="POST",
                     body=json.dumps({"expectedVersion": validated["version"]}).encode(),
                 )
-                self.job_result = request(
-                    self.app,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
+                self.job_result = submit_organize_job(self.app)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1940,7 +1892,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     server.detail_result[1]["diff"]["changedSections"],
                 )
                 self.assertEqual(server.active_result[0], 200, server.active_result[1])
-                self.assertEqual(server.job_result[0], 202, server.job_result[1])
+                self.assertEqual(server.job_result[0], 200, server.job_result[1])
                 job_id = server.job_result[1]["job_id"]
                 active_id = server.active_result[1]["revisionId"]
                 active_digest = server.active_result[1]["digest"]
@@ -1968,7 +1920,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(len(results), 1)
                 self.assertEqual(results[0].task_id, task.task_id)
                 self.assertEqual(results[0].item_id, repository.list_items(task.task_id)[0].item_id)
-                self.assertEqual(results[0].status, "dry_run")
+                self.assertEqual(results[0].status, "success")
 
     def test_worker_rechecks_current_principal_between_real_effect_boundaries(self) -> None:
         class FakeTMDBProvider:
@@ -2111,52 +2063,21 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_snapshot_version=pinned.configuration_snapshot_version,
                 ).tick(now)
                 self.assertEqual(len(emitted), 1)
-                preview = AutomationTaskDefinitionPreview(
-                    "preview-production",
-                    definition.definition_id,
-                    definition.definition_fingerprint,
-                    pinned.configuration_snapshot_id,
-                    pinned.configuration_snapshot_version,
-                    pinned.configuration_snapshot_digest,
-                    "active",
-                    definition.resource_library_id,
-                    pinned.resource_libraries[0].storage_id,
-                    definition.source_scope,
-                    definition.mode.value,
-                    definition.item_limit,
-                    {
-                        "discovered": 0,
-                        "selected": 0,
-                        "permitted": 0,
-                        "excludedIgnored": 0,
-                        "unstable": 0,
-                        "truncatedByLimit": 0,
-                    },
-                    AutomationTaskDefinitionPreviewStatus.PREVIEWED,
-                    (),
-                    "local-admin",
-                    now,
-                    now,
-                )
-                repository.create_automation_task_definition_preview(preview)
                 grant_service = UnattendedExecutionGrantService(
                     repository,
-                    preview_service=_PersistedPreviewReader(repository),
                     permission_authority=_ConfiguredPermissionAuthority(
                         lambda: _configuration(str(config))
                     ),
                 )
-                grant = grant_service.grant(
+                grant_service.grant(
                     definition,
                     configuration_snapshot_id=pinned.configuration_snapshot_id,
                     configuration_snapshot_digest=pinned.configuration_snapshot_digest,
                     configuration_snapshot_version=pinned.configuration_snapshot_version,
                     actor="local-admin",
                     confirmation=True,
-                    preview_id=preview.preview_id,
                     storage_id=pinned.resource_libraries[0].storage_id,
                 )
-                self.assertEqual(grant.preview_id, preview.preview_id)
 
                 original_execute = OrganizerExecutor.execute
                 effect_calls = []
@@ -2271,7 +2192,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 restore_current_principal()
                 self.assertIsNone(worker.run_next())
 
-    def test_checked_local_setup_preview_keeps_original_pin_after_second_activation(
+    def test_checked_local_setup_organize_keeps_original_pin_after_second_activation(
         self,
     ) -> None:
         class FakeTMDBProvider:
@@ -2420,13 +2341,8 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
 
             def serve_forever(self):
                 self.first_check, self.first_active = self.checked_activate(self.first_document)
-                status, self.first_job = request(
-                    self.app,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body=json.dumps({"command": "preview"}).encode(),
-                )
-                if status != 202:
+                status, self.first_job = submit_organize_job(self.app)
+                if status != 200:
                     raise AssertionError((status, self.first_job))
                 self.second_check, self.second_active = self.checked_activate(self.second_document)
                 worker_output, worker_error = io.StringIO(), io.StringIO()
@@ -2548,10 +2464,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 self.assertEqual(server.job_detail["status"], "completed")
                 self.assertEqual(server.job_detail["configuration_snapshot_id"], first_id)
                 self.assertEqual(server.job_detail["configuration_snapshot_digest"], first_digest)
-                self.assertFalse(server.job_detail["execute_authorized"])
+                self.assertTrue(server.job_detail["execute_authorized"])
                 self.assertEqual(server.task_detail["configuration_snapshot_id"], first_id)
                 self.assertEqual(server.task_detail["configuration_snapshot_digest"], first_digest)
-                self.assertFalse(server.task_detail["execute_authorized"])
+                self.assertTrue(server.task_detail["execute_authorized"])
                 self.assertEqual(len(server.task_detail["items"]), 1)
                 self.assertEqual(
                     server.task_detail["items"][0]["destination_path"],
@@ -2567,7 +2483,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     repr(server.task_detail),
                 )
                 result = server.task_detail["results"][0]
-                self.assertEqual(result["status"], "dry_run")
+                self.assertEqual(result["status"], "success")
                 self.assertEqual(result["recognition_type"], "A")
                 self.assertEqual(result["title"], "Example Movie")
                 self.assertEqual(result["classification_policy_id"], "A")
@@ -2579,7 +2495,9 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     server.task_detail["items"][0]["item_id"],
                 )
 
-            self.assertEqual(
+            # The organized file landed at the pin the Job was admitted under,
+            # not at the newer Active revision.
+            self.assertNotEqual(
                 (directory_state(source_root), directory_state(target_root)),
                 before,
             )
@@ -2619,13 +2537,19 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     expected_version=first_validated.version,
                     actor="tester",
                 )
-                from mediaflow.application.automation import AutomationJobService
+                from mediaflow.application.execution_authorization import (
+                    ExecutionAuthorizationService,
+                )
 
-                old_job = AutomationJobService(
+                authorization = ExecutionAuthorizationService(
                     task_repository,
+                    maximum_ttl_seconds=3600,
+                    maximum_active_jobs=100,
                     configuration_snapshot_id=first.revision_id,
                     configuration_snapshot_digest=first.digest,
-                ).submit("preview")
+                )
+                issued = authorization.issue(ttl_seconds=60, max_items=10, actor="tester")
+                old_job = authorization.submit_organize(issued.token, limit=10)
                 second_document = json.loads(json.dumps(document))
                 second_document["historyPath"] = str(root / "second-history.jsonl")
                 second_draft = service.import_draft(second_document, actor="tester")
@@ -2722,7 +2646,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     expected_version=validated.version,
                     actor="tester",
                 )
-                legacy = AutomationJobService(task_repository).submit("preview")
+                legacy = AutomationJobService(task_repository).submit("organize")
                 worker = AutomationWorker(
                     task_repository,
                     lambda job, cancelled: _run_queued_workflow(job, str(config), cancelled),
@@ -2774,7 +2698,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                         task_repository,
                         configuration_snapshot_id=first.revision_id,
                         configuration_snapshot_digest=first.digest,
-                    ).submit("preview")
+                    ).submit("organize")
                     expected_pin_digest = first.digest
                     changed = json.loads(json.dumps(document))
                     changed["historyPath"] = str(root / "current.jsonl")
@@ -2980,7 +2904,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
                 current = [("first", "digest-first")]
-                schedule = IntervalSchedule("test", AutomationCommand.PREVIEW, 1)
+                schedule = IntervalSchedule("test", AutomationCommand.ORGANIZE, 1)
                 scheduler = IntervalScheduler(
                     repository,
                     (schedule,),
@@ -3000,7 +2924,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory) / "runtime.sqlite3")
             try:
-                schedule = IntervalSchedule("test", AutomationCommand.PREVIEW, 60)
+                schedule = IntervalSchedule("test", AutomationCommand.ORGANIZE, 60)
                 current = [
                     SchedulerConfigurationSnapshot("revision-a", "digest-a", (schedule,), 10)
                 ]
@@ -3054,7 +2978,7 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 
                 task = PersistentTaskCoordinator(task_repository, task_repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 with self.assertRaises(RuntimeSnapshotUnavailable):
                     _task_snapshot_identity(str(config), task.task_id)
@@ -3066,13 +2990,13 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 with self.assertRaisesRegex(ValueError, "snapshot pin"):
                     coordinator.create(
-                        "preview",
+                        "organize",
                         execute_authorized=False,
                         require_configuration_snapshot=True,
                     )
                 with self.assertRaisesRegex(ValueError, "provided together"):
                     coordinator.create(
-                        "preview",
+                        "organize",
                         execute_authorized=False,
                         configuration_snapshot_id="revision-a",
                     )

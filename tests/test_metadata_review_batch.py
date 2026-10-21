@@ -25,7 +25,7 @@ class MetadataReviewBatchTests(unittest.TestCase):
     def _waiting(self, repository, number=1, task=None):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
         item = coordinator.begin_item(
             task.task_id, "source", "movies", f"Movie-{number}.mkv", f"Movie-{number}.mkv"
         )
@@ -36,7 +36,7 @@ class MetadataReviewBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 first = self._waiting(repository, number=1, task=task)
                 second = self._waiting(repository, number=2, task=task)
                 third = self._waiting(repository, number=3, task=task)
@@ -85,8 +85,8 @@ class MetadataReviewBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                first_task = coordinator.create("preview", execute_authorized=False)
-                second_task = coordinator.create("preview", execute_authorized=False)
+                first_task = coordinator.create("organize", execute_authorized=False)
+                second_task = coordinator.create("organize", execute_authorized=False)
                 first = self._waiting(repository, number=1, task=first_task)
                 second = self._waiting(repository, number=2, task=first_task)
                 third = self._waiting(repository, number=3, task=second_task)
@@ -241,7 +241,7 @@ class MetadataReviewBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 _, _, item, review = self._waiting(repository, task=task)
                 MetadataReviewService(repository).resolve_pending(1, actor="operator", limit=1)
                 retryable = coordinator.retryable_items(task.task_id, failed_only=False)

@@ -31,8 +31,8 @@ from mediaflow.domain.organizer import (
     StorageLocation,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
-from mediaflow.domain.task_persistence import ConfirmationStatus, TaskItemStatus
-from mediaflow.final_cli import _run_queued_workflow, final_main
+from mediaflow.domain.task_persistence import ConfirmationStatus
+from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -214,7 +214,7 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
                 repository,
                 configuration_snapshot_id=active.revision_id,
                 configuration_snapshot_digest=active.digest,
-            ).submit("preview", limit=limit)
+            ).submit("organize", limit=limit)
             return job.job_id
 
     def _seed_pending_conflict(self, repository: SQLiteTaskRepository, label: str) -> str:
@@ -297,224 +297,6 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
         response = b"".join(api(environ, lambda status, headers: statuses.append(status)))
         return int(statuses[0].split()[0]), json.loads(response)
 
-    def test_configuration_first_preview_conflict_is_durable_finding(self) -> None:
-        """Configuration -> Activate -> Queue first DryRun Preview (a command=preview
-        Job) keeps an organize-plan conflict as an inspectable DRY_RUN finding."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            # First a clean run discovers the exact planned destination so the
-            # second run can install a real current destination collision.
-            first_source, first_target, first_db, first_config, first_active = (
-                self._managed_environment(root / "clean")
-            )
-            first_job = self._queue_preview(first_db, first_active)
-            self._run_worker(first_config)
-            with SQLiteTaskRepository(first_db) as repository:
-                first = self._read_outcome(repository, first_job)
-            self.assertEqual(first.item_status, TaskItemStatus.DRY_RUN.value)
-            self.assertIsNotNone(first.item_destination)
-            destination = first.item_destination
-
-            source_root, target_root, database, config, active = self._managed_environment(
-                root / "collision", collision_destination=destination
-            )
-            with SQLiteTaskRepository(database) as repository:
-                seeded = self._seed_pending_conflict(repository, "PreExisting")
-                pending_before = self._pending_count(repository)
-            job_id = self._queue_preview(database, active)
-            self._run_worker(config)
-
-            source = source_root / "电影" / "Example.Movie.2024.mkv"
-            collision = target_root.joinpath(*destination.split("/"))
-            with SQLiteTaskRepository(database) as repository:
-                outcome = self._read_outcome(repository, job_id)
-                pending_after = self._pending_count(repository)
-                job_row = repository.get_job(job_id)
-                seeded_row = repository.get_confirmation(seeded)
-                waiting = tuple(
-                    item
-                    for item in repository.list_items(self._task_id(repository, job_id))
-                    if item.status is TaskItemStatus.WAITING_CONFIRM
-                )
-                confirmation_rows = repository.list_confirmations(status=ConfirmationStatus.PENDING)
-            self.assertEqual(outcome.job_status, "completed")
-            self.assertFalse(outcome.job_execute_authorized)
-            self.assertEqual(job_row.configuration_snapshot_id, active.revision_id)
-            self.assertEqual(job_row.configuration_snapshot_digest, active.digest)
-            self.assertEqual(outcome.task_command, "preview")
-            self.assertEqual(outcome.task_status, "completed")
-            self.assertEqual(outcome.item_status, TaskItemStatus.DRY_RUN.value)
-            self.assertEqual(outcome.item_destination, destination)
-            self.assertEqual(outcome.result_status, TaskItemStatus.DRY_RUN.value)
-            self.assertEqual(outcome.result_operation, "MOVE")
-            self.assertIsNotNone(outcome.result_organize_policy_id)
-            self.assertEqual(outcome.evidence_outcome, "dry_run")
-            self.assertIn("DESTINATION_EXISTS", {item[0] for item in outcome.evidence_conflicts})
-            self.assertEqual(outcome.evidence_conflicts[0][2], destination)
-            self.assertEqual(outcome.evidence_strategy, "manual")
-            self.assertIn("analysis-only finding", outcome.evidence_next_action)
-            # No PENDING ConflictConfirmation, no WAITING_CONFIRM TaskItem and no
-            # Dashboard pending-conflict increase.
-            self.assertEqual(outcome.pending_confirmations, 0)
-            self.assertEqual(pending_before, 1)
-            self.assertEqual(pending_after, 1)
-            self.assertIsNotNone(seeded_row)
-            self.assertEqual(seeded_row.status, ConfirmationStatus.PENDING)
-            self.assertEqual(waiting, ())
-            self.assertEqual([value.confirmation_id for value in confirmation_rows], [seeded])
-            # Zero Storage mutation: source intact and the pre-existing destination
-            # collision is byte-for-byte unchanged with no new file written.
-            self.assertTrue(source.exists())
-            self.assertEqual(source.read_bytes(), b"movie")
-            self.assertTrue(collision.exists())
-            self.assertEqual(collision.read_bytes(), b"existing-destination")
-            target_files = [value for value in target_root.rglob("*") if value.is_file()]
-            self.assertEqual(target_files, [collision])
-
-    def _task_id(self, repository: SQLiteTaskRepository, job_id: str) -> str:
-        job = repository.get_job(job_id)
-        self.assertIsNotNone(job)
-        self.assertIsNotNone(job.task_id)
-        return job.task_id
-
-    def test_real_organize_conflict_keeps_existing_recovery_path(self) -> None:
-        """A real execute-authorized Organize that revalidates into an unresolved
-        conflict keeps PENDING ConflictConfirmation / WAITING_CONFIRM and raises the
-        Dashboard pending-conflict count without mutating before resolution."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            clean_root = root / "clean"
-            first_source, first_target, first_db, first_config, first_active = (
-                self._managed_environment(clean_root)
-            )
-            first_job = self._queue_preview(first_db, first_active)
-            self._run_worker(first_config)
-            with SQLiteTaskRepository(first_db) as repository:
-                first = self._read_outcome(repository, first_job)
-            destination = first.item_destination
-            self.assertIsNotNone(destination)
-
-            source_root, target_root, database, config, active = self._managed_environment(
-                root / "collision", collision_destination=destination
-            )
-            with SQLiteTaskRepository(database) as repository:
-                pending_before = self._pending_count(repository)
-                service = ExecutionAuthorizationService(
-                    repository,
-                    configuration_snapshot_id=active.revision_id,
-                    configuration_snapshot_digest=active.digest,
-                    clock=lambda: datetime.now(UTC),
-                )
-                issued = service.issue(ttl_seconds=60, max_items=1, actor="tester")
-                job = service.submit_organize(issued.token, limit=1)
-            self._run_worker(config)
-
-            source = source_root / "电影" / "Example.Movie.2024.mkv"
-            collision = target_root.joinpath(*destination.split("/"))
-            with SQLiteTaskRepository(database) as repository:
-                outcome = self._read_outcome(repository, job.job_id)
-                pending_after = self._pending_count(repository)
-                job_row = repository.get_job(job.job_id)
-                confirmations = repository.list_confirmations(status=ConfirmationStatus.PENDING)
-            self.assertEqual(outcome.job_status, "completed")
-            self.assertTrue(outcome.job_execute_authorized)
-            self.assertEqual(job_row.configuration_snapshot_id, active.revision_id)
-            self.assertEqual(job_row.configuration_snapshot_digest, active.digest)
-            self.assertEqual(outcome.task_command, "organize")
-            self.assertEqual(outcome.task_status, "partial_success")
-            self.assertEqual(outcome.item_status, TaskItemStatus.WAITING_CONFIRM.value)
-            self.assertEqual(outcome.item_destination, destination)
-            self.assertEqual(pending_before, 0)
-            self.assertEqual(pending_after, 1)
-            self.assertEqual(len(confirmations), 1)
-            self.assertEqual(confirmations[0].configured_strategy, "manual")
-            # Zero mutation before conflict resolution.
-            self.assertTrue(source.exists())
-            self.assertEqual(source.read_bytes(), b"movie")
-            self.assertTrue(collision.exists())
-            self.assertEqual(collision.read_bytes(), b"existing-destination")
-            target_files = [value for value in target_root.rglob("*") if value.is_file()]
-            self.assertEqual(target_files, [collision])
-
-    def test_preview_finding_is_not_authority_and_stale_source_fails_closed(self) -> None:
-        """A Job Preview finding is never execution authority.  If the source
-        disappears before a later authorized Organize, the current-state reanalysis
-        finds nothing and performs no mutation (no stale plan is blindly executed)."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_root, target_root, database, config, active = self._managed_environment(
-                root / "preview"
-            )
-            preview_job = self._queue_preview(database, active)
-            self._run_worker(config)
-            with SQLiteTaskRepository(database) as repository:
-                preview = self._read_outcome(repository, preview_job)
-                self.assertEqual(preview.item_status, TaskItemStatus.DRY_RUN.value)
-                self.assertEqual(preview.pending_confirmations, 0)
-            destination = preview.item_destination
-            self.assertIsNotNone(destination)
-            source = source_root / "电影" / "Example.Movie.2024.mkv"
-            self.assertTrue(source.exists())
-            # The source is removed after the Preview: the stale finding must never
-            # become execution authority for a later Organize.
-            source.unlink()
-            with SQLiteTaskRepository(database) as repository:
-                service = ExecutionAuthorizationService(
-                    repository,
-                    configuration_snapshot_id=active.revision_id,
-                    configuration_snapshot_digest=active.digest,
-                    clock=lambda: datetime.now(UTC),
-                )
-                issued = service.issue(ttl_seconds=60, max_items=1, actor="tester")
-                job = service.submit_organize(issued.token, limit=1)
-            self._run_worker(config)
-            with SQLiteTaskRepository(database) as repository:
-                job_row = repository.get_job(job.job_id)
-                self.assertIsNotNone(job_row)
-                self.assertEqual(job_row.status.value, "completed")
-                self.assertTrue(job_row.execute_authorized)
-                task = repository.get_task(job_row.task_id)
-                self.assertIsNotNone(task)
-                waiting = tuple(
-                    item
-                    for item in repository.list_items(task.task_id)
-                    if item.status is TaskItemStatus.WAITING_CONFIRM
-                )
-                self.assertEqual(waiting, ())
-                self.assertEqual(
-                    repository.list_confirmations(status=ConfirmationStatus.PENDING),
-                    (),
-                )
-            self.assertFalse(source.exists())
-            self.assertEqual([value for value in target_root.rglob("*") if value.is_file()], [])
-
-    def test_shared_worker_bridge_marks_only_plain_preview_jobs_analysis_only(self) -> None:
-        """The shared queued Job Preview bridge (Jobs and Configuration first
-        Preview) routes command=preview as analysis-only. Unsupported commands never
-        reach runtime resolution, while authorized organize keeps its own handoff."""
-
-        with tempfile.TemporaryDirectory() as directory:
-            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                service = AutomationJobService(repository)
-                preview = service.submit("preview", limit=1)
-                with self.assertRaisesRegex(ValueError, "automation command must be preview"):
-                    service.submit("scan", limit=1)
-                calls = []
-
-                def fake_main(args, **kwargs):
-                    calls.append((args, kwargs))
-                    kwargs["stdout"].write("Task ID: task-x\n")
-                    return 0
-
-                with patch("mediaflow.final_cli.final_main", side_effect=fake_main):
-                    _run_queued_workflow(preview, None, lambda: False)
-                self.assertTrue(calls[0][1]["_analysis_only_preview"])
-                self.assertNotIn("--execute", calls[0][0])
-                self.assertEqual(1, len(calls))
-
     def test_api_command_matrix_and_one_shot_organize_authority(self) -> None:
         """Jobs API command matrix: SUBMIT_DRY_RUN cannot organize; real organize
         requires REMOTE_EXECUTE, execute=true and one valid single-use authority."""
@@ -559,11 +341,10 @@ class QueuedJobExecutionBoundaryTests(unittest.TestCase):
                 ):
                     status, _ = self._job_request(api, document, execution_token=execution_token)
                     self.assertEqual(status, 400)
-                # Unsupported fields and DryRun variants are rejected.
+                # Unsupported fields and missing explicit execute are rejected.
                 for document in (
                     {"command": "organize", "execute": True, "limit": 1, "path": "/private"},
                     {"command": "organize", "limit": 1},
-                    {"command": "preview", "execute": True, "limit": 1},
                 ):
                     status, _ = self._job_request(api, document, execution_token="one-time-secret")
                     self.assertEqual(status, 400)

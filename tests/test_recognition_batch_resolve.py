@@ -25,7 +25,7 @@ class RecognitionBatchResolveTests(unittest.TestCase):
     def _waiting(self, repository, source="Unknown.mkv", task=None):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
         item = coordinator.begin_item(task.task_id, "source", "unmatched", source, source)
         review = RecognitionReviewService(
             repository, development_strategy_configuration().recognition_types
@@ -36,7 +36,7 @@ class RecognitionBatchResolveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 first = self._waiting(repository, "First.mkv", task)
                 second = self._waiting(repository, "Second.mkv", task)
                 third = self._waiting(repository, "Third.mkv", task)
@@ -103,8 +103,8 @@ class RecognitionBatchResolveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                first_task = coordinator.create("preview", execute_authorized=False)
-                second_task = coordinator.create("preview", execute_authorized=False)
+                first_task = coordinator.create("organize", execute_authorized=False)
+                second_task = coordinator.create("organize", execute_authorized=False)
                 first = self._waiting(repository, "First.mkv", first_task)
                 second = self._waiting(repository, "Second.mkv", second_task)
                 service = RecognitionReviewService(
@@ -195,7 +195,7 @@ class RecognitionBatchResolveTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 self._waiting(repository, "One.mkv", task)
                 self._waiting(repository, "Two.mkv", task)
             barrier = threading.Barrier(2)
@@ -273,7 +273,7 @@ class RecognitionBatchResolveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 _, _, item, review = self._waiting(repository, "Unknown.mkv", task)
                 RecognitionReviewService(
                     repository, development_strategy_configuration().recognition_types

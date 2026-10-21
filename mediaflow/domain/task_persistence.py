@@ -56,7 +56,6 @@ MEDIA_LIBRARY_TASK_COMMAND_PREFIX = "media_"
 
 RETRYABLE_TASK_COMMANDS = frozenset(
     {
-        "preview",
         "organize",
         "retry",
         "retry-failed",

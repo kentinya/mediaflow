@@ -105,7 +105,7 @@ def request(
 def task(
     task_id: str,
     *,
-    command: str = "preview",
+    command: str = "organize",
     status: PersistentTaskStatus = PersistentTaskStatus.COMPLETED,
     rank: int = 0,
     scope_path: str | None = None,
@@ -140,7 +140,7 @@ def task(
 def job(
     job_id: str,
     *,
-    command: AutomationCommand = AutomationCommand.PREVIEW,
+    command: AutomationCommand = AutomationCommand.ORGANIZE,
     status: AutomationJobStatus = AutomationJobStatus.PENDING,
     rank: int = 0,
     task_id: str | None = None,
@@ -192,7 +192,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.repository.create_task(
             task(
                 "stage-task",
-                command="preview",
+                command="organize",
                 status=PersistentTaskStatus.RUNNING,
                 rank=1,
             )
@@ -324,7 +324,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(3, overview.total_items)
 
     def test_job_task_linkage_counts_once_and_survives_the_link(self) -> None:
-        self.repository.create_task(task("linked-task", command="preview", rank=1))
+        self.repository.create_task(task("linked-task", command="organize", rank=1))
         self.repository.create_job(job("linked-job", rank=0, task_id="linked-task"))
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         self.assertEqual(page["total"], 1)
@@ -341,7 +341,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.repository.create_task(
             task(
                 "task-failed",
-                command="preview",
+                command="organize",
                 status=PersistentTaskStatus.FAILED,
                 rank=1,
             )
@@ -349,7 +349,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.repository.create_job(
             job(
                 "job-failed-link",
-                command=AutomationCommand.PREVIEW,
+                command=AutomationCommand.ORGANIZE,
                 status=AutomationJobStatus.COMPLETED,
                 rank=0,
                 task_id="task-failed",
@@ -358,7 +358,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.repository.create_task(
             task(
                 "task-partial",
-                command="preview",
+                command="organize",
                 status=PersistentTaskStatus.PARTIAL_SUCCESS,
                 rank=3,
             )
@@ -366,7 +366,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.repository.create_job(
             job(
                 "job-partial-link",
-                command=AutomationCommand.PREVIEW,
+                command=AutomationCommand.ORGANIZE,
                 status=AutomationJobStatus.COMPLETED,
                 rank=2,
                 task_id="task-partial",
@@ -380,11 +380,11 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(page["status_counts"]["partial_success"], 1)
 
     def test_standalone_tasks_and_pre_task_jobs_remain_visible(self) -> None:
-        self.repository.create_task(task("standalone", command="preview", rank=0))
+        self.repository.create_task(task("standalone", command="organize", rank=0))
         self.repository.create_task(
             task(
                 "manual-scan-task",
-                command="preview",
+                command="organize",
                 status=PersistentTaskStatus.RUNNING,
                 rank=1,
             )
@@ -436,11 +436,11 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         self.assertEqual(triggers["manual-task"], "manual")
 
     def test_command_families_and_library_kinds_are_discoverable(self) -> None:
-        self.repository.create_task(task("preview-task", command="preview", rank=0))
+        self.repository.create_task(task("organize-task", command="organize", rank=0))
         self.repository.create_task(
             task(
                 "retry-task",
-                command="retry-failed:preview-task",
+                command="retry-failed:organize-task",
                 status=PersistentTaskStatus.RUNNING,
                 rank=1,
             )
@@ -499,8 +499,8 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         cases = (
             "unsupported-command",
             "unsupported-command:task-1",
-            "preview",
-            "preview:task-2",
+            "organize",
+            "organize:task-2",
             "organize",
             "manual_organize",
             "retry:task-3",
@@ -588,7 +588,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         """A queued admission with no real problem is not a manual to-do (RO-1)."""
 
         self.repository.create_task(
-            task("queued-task", command="preview", status=PersistentTaskStatus.PENDING, rank=0)
+            task("queued-task", command="organize", status=PersistentTaskStatus.PENDING, rank=0)
         )
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         run = page["items"][0]
@@ -605,9 +605,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             "a-completed": ("scan", PersistentTaskStatus.COMPLETED, 0),
             "b-completed": ("scan", PersistentTaskStatus.COMPLETED, 1),
             "c-failed": ("scan", PersistentTaskStatus.FAILED, 2),
-            "d-failed": ("preview", PersistentTaskStatus.FAILED, 3),
-            "e-running": ("preview", PersistentTaskStatus.RUNNING, 4),
-            "f-partial": ("preview", PersistentTaskStatus.PARTIAL_SUCCESS, 5),
+            "d-failed": ("organize", PersistentTaskStatus.FAILED, 3),
+            "e-running": ("organize", PersistentTaskStatus.RUNNING, 4),
+            "f-partial": ("organize", PersistentTaskStatus.PARTIAL_SUCCESS, 5),
         }
         for index, (task_id, (command, status, rank)) in enumerate(fixture.items()):
             self.repository.create_task(
@@ -623,9 +623,9 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             ("", 6),
             ("status=completed", 2),
             ("status=failed", 2),
-            ("command=preview", 3),
-            ("command=preview", 3),
-            ("status=failed&command=preview", 1),
+            ("command=organize", 3),
+            ("command=organize", 3),
+            ("status=failed&command=organize", 1),
             ("q=scope-1", 1),
             ("q=scope", 6),
         )
@@ -699,7 +699,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             self.repository.create_task(
                 task(
                     f"page-{index}",
-                    command="preview" if index < 2 else "preview",
+                    command="organize" if index < 2 else "organize",
                     status=PersistentTaskStatus.COMPLETED,
                     rank=index,
                 )
@@ -734,7 +734,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         )
         for mismatched in (
             f"status=failed&limit=1&cursor={cursor}",
-            f"command=preview&limit=1&cursor={cursor}",
+            f"command=organize&limit=1&cursor={cursor}",
             f"q=page-0&limit=1&cursor={cursor}",
             f"limit=1&cursor={cursor}",
         ):
@@ -858,7 +858,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             self.repository.create_task(
                 task(
                     f"bulk-{index}",
-                    command="preview",
+                    command="organize",
                     status=PersistentTaskStatus.COMPLETED,
                     rank=index,
                 )
@@ -867,7 +867,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             self.repository.create_task(
                 task(
                     f"bulk-failed-{index}",
-                    command="preview",
+                    command="organize",
                     status=PersistentTaskStatus.FAILED,
                     rank=100 + index,
                 )
@@ -955,7 +955,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             self.repository.create_task(
                 task(
                     f"cap-{index:03d}",
-                    command="preview",
+                    command="organize",
                     status=PersistentTaskStatus.COMPLETED,
                     rank=index,
                 )
@@ -1125,9 +1125,11 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             )
         )
         self.repository.create_task(
-            task("scoped-task", command="preview", rank=0, scope_path="Movies/2024")
+            task("scoped-task", command="organize", rank=0, scope_path="Movies/2024")
         )
-        self.repository.create_task(task("legacy-task", command="preview", rank=1, scope_path=None))
+        self.repository.create_task(
+            task("legacy-task", command="organize", rank=1, scope_path=None)
+        )
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         by_id = {item["run_id"]: item for item in page["items"]}
         self.assertEqual(by_id["scoped-job"]["source_scope"], "Movies/2024")
@@ -1199,7 +1201,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
                     runtime_repository.create_task(
                         task(
                             "pinned-task",
-                            command="preview",
+                            command="organize",
                             rank=0,
                             scope_path="Movies A/2024",
                         )
@@ -1273,7 +1275,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         from tests.test_configuration_objects import example_document
 
         self.repository.create_task(
-            task("durable-task", command="preview", rank=0, scope_path="Movies/2024")
+            task("durable-task", command="organize", rank=0, scope_path="Movies/2024")
         )
 
         document = example_document()
@@ -1309,7 +1311,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
 
     def test_public_documents_expose_no_host_roots_or_adapter_evidence(self) -> None:
         self.repository.create_task(
-            task("hostile-task", command="preview", rank=0, scope_path="/srv/private-host/root")
+            task("hostile-task", command="organize", rank=0, scope_path="/srv/private-host/root")
         )
         self.repository.create_task(_hostile_error_task("hostile-error-task"))
         _status, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
@@ -1370,12 +1372,12 @@ class RunInventoryTestCase(_InventoryApiTestCase):
         """
 
         for index in range(105):
-            self.repository.create_task(task(f"hist-{index:03d}", command="preview", rank=index))
+            self.repository.create_task(task(f"hist-{index:03d}", command="organize", rank=index))
         # The oldest run is not in any newest-100 window.
         code, overview, _ = request(self.api, "GET", "/api/v1/operations/runs/hist-000")
         self.assertEqual(code, 200)
         self.assertEqual("hist-000", overview["run_id"])
-        self.assertEqual("预览", overview["command_label"])
+        self.assertEqual("整理", overview["command_label"])
         self.assertEqual("none", overview["sideEffects"])
         # It is also still findable and pageable in the filtered inventory.
         code, page, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=hist-000")
@@ -1520,7 +1522,7 @@ class RunInventoryTestCase(_InventoryApiTestCase):
             worker_id="worker-inventory",
             label="inventory-worker",
             heartbeat_interval_seconds=5.0,
-            supported_commands=("preview", "organize"),
+            supported_commands=("organize",),
             configuration_snapshot_id="snap-a",
             configuration_snapshot_digest="digest-a",
             runtime_schema_version=SCHEMA_VERSION,
@@ -1619,7 +1621,7 @@ def _pause_requested_task(task_id: str) -> PersistentTask:
     from dataclasses import replace
 
     return replace(
-        task(task_id, command="preview", status=PersistentTaskStatus.RUNNING, rank=0),
+        task(task_id, command="organize", status=PersistentTaskStatus.RUNNING, rank=0),
         pause_requested=True,
     )
 
@@ -1689,7 +1691,7 @@ def _hostile_error_task(task_id: str) -> PersistentTask:
     return replace(
         task(
             task_id,
-            command="preview",
+            command="organize",
             status=PersistentTaskStatus.FAILED,
             rank=1,
             configuration_snapshot_id=None,
@@ -1770,13 +1772,16 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
     def test_hidden_legacy_scope_is_published_redacted_and_never_matched(self) -> None:
         self.repository.create_task(
             task(
-                "hostile-scope-task", command="preview", rank=0, scope_path="/srv/private-host/root"
+                "hostile-scope-task",
+                command="organize",
+                rank=0,
+                scope_path="/srv/private-host/root",
             )
         )
         self.repository.create_task(
             task(
                 "credential-scope-task",
-                command="preview",
+                command="organize",
                 rank=1,
                 scope_path="Archive api_key=LEGACY-SECRET",
             )
@@ -1808,7 +1813,7 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
         )
         self.assertEqual(200, code)
         self.assertEqual(1, found["total"])
-        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=预览")
+        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=整理")
         self.assertEqual(200, code)
         self.assertGreaterEqual(found["total"], 1)
         self.assertIn("hostile-scope-task", {item["run_id"] for item in found["items"]})
@@ -1821,12 +1826,12 @@ class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
         self.repository.create_task(
             task(
                 "legacy-long-scope-task",
-                command="preview",
+                command="organize",
                 rank=0,
                 scope_path=long_scope,
             )
         )
-        self.repository.create_task(task("visible-neighbor", command="preview", rank=1))
+        self.repository.create_task(task("visible-neighbor", command="organize", rank=1))
 
         code, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
         self.assertEqual(200, code)

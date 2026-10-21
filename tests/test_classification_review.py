@@ -364,7 +364,7 @@ class ClassificationReviewTests(unittest.TestCase):
             )
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 service = MediaOrganizerService(
                     FakeStrategy(strategy, policy()),
                     None,

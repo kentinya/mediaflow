@@ -112,6 +112,33 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
                 waiting = repo.get_resident_service_wait_state(row.service, row.instance_id)
                 self.assertEqual(waiting.waiting_reason, "unconfigured")
 
+    def submit_authorized_organize_job(self, *, limit: int = 1) -> str:
+        """Admit one supported Organize Job through the one-shot authority.
+
+        The retired plain ``jobs submit`` DryRun command no longer exists, so a
+        real Worker pin journey must start from a Job the supported
+        execution-authorization boundary admitted.
+        """
+
+        from mediaflow.application.execution_authorization import ExecutionAuthorizationService
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        with SQLiteConfigurationRepository(self.database) as configuration_repository:
+            active = configuration_repository.get_active_revision()
+        with SQLiteTaskRepository(self.database) as repository:
+            service = ExecutionAuthorizationService(
+                repository,
+                maximum_ttl_seconds=3600,
+                maximum_active_jobs=100,
+                configuration_snapshot_id=active.revision_id if active else None,
+                configuration_snapshot_digest=active.digest if active else None,
+            )
+            issued = service.issue(ttl_seconds=600, max_items=limit, actor="tester")
+            job = service.submit_organize(issued.token, limit=limit)
+            return job.job_id
+
     def test_live_worker_consumes_later_and_old_published_preview_pins(self):
         # The source is empty: the real Preview consumer constructs but never
         # calls TMDB. Supply only an isolated fake bootstrap credential.
@@ -149,13 +176,11 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         revision_a = self.publish_successor(configure)
         process.send_signal(signal.SIGSTOP)
         try:
-            code, out, err = self.cli("jobs", "submit", "preview")
-            self.assertEqual(code, 0, err)
+            self.submit_authorized_organize_job()
             self.publish_successor(
                 lambda document: document["resourceLibraries"][0].update(name="B")
             )
-            code, out, err = self.cli("jobs", "submit", "preview")
-            self.assertEqual(code, 0, err)
+            self.submit_authorized_organize_job()
             with SQLiteTaskRepository(self.database, read_only=True) as repo:
                 self.assertEqual([job.status.value for job in repo.list_jobs()], ["pending"] * 2)
         finally:

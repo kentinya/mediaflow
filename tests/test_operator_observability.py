@@ -210,7 +210,7 @@ class OperatorObservabilityTests(unittest.TestCase):
                         self.assertEqual(request(api, "/api/v1/notifications", query=query)[0], 400)
 
     def test_schedule_audit_query_is_bounded_and_schedule_list_rejects_queries(self) -> None:
-        schedules = (CronSchedule("nightly", "preview", "* * * * *", "UTC"),)
+        schedules = (CronSchedule("nightly", "organize", "* * * * *", "UTC"),)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 IntervalScheduler(repository, schedules).tick(NOW)
@@ -304,8 +304,8 @@ class OperatorObservabilityTests(unittest.TestCase):
 
     def test_schedule_audit_pages_are_bidirectional_and_schedule_scoped(self) -> None:
         schedules = (
-            CronSchedule("one", "preview", "* * * * *", "UTC"),
-            CronSchedule("two", "preview", "* * * * *", "UTC"),
+            CronSchedule("one", "organize", "* * * * *", "UTC"),
+            CronSchedule("two", "organize", "* * * * *", "UTC"),
         )
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
@@ -718,7 +718,7 @@ class OperatorObservabilityTests(unittest.TestCase):
         occurred = NOW + timedelta(minutes=rank)
         return PersistentTask(
             f"task-{rank}",
-            "preview",
+            "organize",
             PersistentTaskStatus.COMPLETED,
             False,
             occurred,
@@ -732,7 +732,7 @@ class OperatorObservabilityTests(unittest.TestCase):
         occurred = NOW + timedelta(minutes=rank)
         return AutomationJob(
             f"job-{rank}",
-            AutomationCommand.PREVIEW,
+            AutomationCommand.ORGANIZE,
             AutomationJobStatus.COMPLETED,
             occurred,
             occurred,

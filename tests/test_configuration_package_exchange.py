@@ -406,7 +406,7 @@ class PackageExchangeApiTests(unittest.TestCase):
         api, service, repository, active = self._bootstrap()
         coordinator = PersistentTaskCoordinator(repository, repository)
         task = coordinator.create(
-            "preview",
+            "organize",
             execute_authorized=False,
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,

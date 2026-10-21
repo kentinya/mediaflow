@@ -2212,7 +2212,7 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 now = datetime.now(UTC)
                 new_task = PersistentTask(
                     new_task_id,
-                    "preview",
+                    "organize",
                     PersistentTaskStatus.COMPLETED,
                     False,
                     now,

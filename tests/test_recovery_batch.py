@@ -368,7 +368,7 @@ class RecoveryBatchTests(unittest.TestCase):
                     maximum_active_jobs=1,
                     configuration_snapshot_id=environment["snapshot"][0],
                     configuration_snapshot_digest=environment["snapshot"][1],
-                ).submit("preview", limit=1)
+                ).submit("organize", limit=1)
                 batch = RecoveryBatchContinuationService(
                     repository,
                     continuation_service=RecoveryContinuationService(

@@ -34,7 +34,9 @@ class SQLiteRestoreTests(unittest.TestCase):
         source, backup = root / "original.sqlite3", root / "backup.sqlite3"
         with SQLiteTaskRepository(source) as repository:
             repository.create_task(
-                PersistentTask("task-1", "preview", PersistentTaskStatus.COMPLETED, False, NOW, NOW)
+                PersistentTask(
+                    "task-1", "organize", PersistentTaskStatus.COMPLETED, False, NOW, NOW
+                )
             )
             repository.append_result(
                 PersistentResultRecord(

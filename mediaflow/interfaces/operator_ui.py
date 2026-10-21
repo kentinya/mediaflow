@@ -2997,7 +2997,7 @@ APP_JS = b"""(() => {
   function showQueueJobForm() {
     clear(detailContent); detailContent.append(text('h2', 'Queue Job'));
     const command = document.createElement('select'); command.setAttribute('aria-label', 'Job command');
-    ['preview', 'organize'].forEach(value => { const option = text('option', value); option.value = value;
+    ['organize'].forEach(value => { const option = text('option', value); option.value = value;
       command.append(option); });
     const limit = document.createElement('input'); limit.type = 'number'; limit.min = '1';
     limit.max = '10000'; limit.step = '1'; limit.placeholder = 'Optional limit';
@@ -3007,40 +3007,29 @@ APP_JS = b"""(() => {
         if (limit.value && !limit.reportValidity()) return;
         reviewQueueJob(command.value, limit.value ? Number(limit.value) : null);
       }), actionButton('Keep jobs unchanged', () => { detail.hidden = true; }));
-    detailContent.append(text('p', 'Preview is DryRun-only and grant no execution authority. ' +
-      'Organize requires the separate one-shot execution authority and an explicit final confirmation.',
-      'warning'), controls); detail.hidden = false;
+    detailContent.append(text('p', 'Organize requires the separate one-shot execution authority ' +
+      'and an explicit final confirmation.', 'warning'), controls); detail.hidden = false;
   }
   function reviewQueueJob(command, limit) {
     const base = limit === null ? {command} : {command, limit};
-    const payload = Object.freeze(command === 'organize' ? {...base, execute: true} : base);
+    const payload = Object.freeze({...base, execute: true});
     clear(detailContent); detailContent.append(text('h2', 'Review Queue Job'));
-    if (command === 'organize') {
-      detailContent.append(cards([
-        ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
-        ['Authority', 'REMOTE_EXECUTE (one-shot)'], ['Storage mutation', 'POSSIBLE']
-      ]), text('p', 'This queues a real Organize Job that may mutate Storage only after ' +
-        'the Worker revalidates current source, destination, pinned configuration, capability and live ' +
-        'execution authority. A normal login token is not execution authority; the separate one-shot ' +
-        'execution authorization is presented out of band and remains out of browser JavaScript.',
-        'warning'), actionButton('Confirm Organize', () => submitQueueJob(payload)),
-        actionButton('Back without queueing', showQueueJobForm));
-    } else {
-      detailContent.append(cards([
-        ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
-        ['Authority', 'DRY_RUN'], ['Storage mutation', 'NONE']
-      ]), text('p', 'A Worker may read configured Storage and metadata providers. No organization is executed.',
-        'warning'), actionButton('Confirm queueing', () => submitQueueJob(payload)),
-        actionButton('Back without queueing', showQueueJobForm));
-    }
+    detailContent.append(cards([
+      ['Command', payload.command], ['Limit', payload.limit || 'No explicit limit'],
+      ['Authority', 'REMOTE_EXECUTE (one-shot)'], ['Storage mutation', 'POSSIBLE']
+    ]), text('p', 'This queues a real Organize Job that may mutate Storage only after ' +
+      'the Worker revalidates current source, destination, pinned configuration, capability and live ' +
+      'execution authority. A normal login token is not execution authority; the separate one-shot ' +
+      'execution authorization is presented out of band and remains out of browser JavaScript.',
+      'warning'), actionButton('Confirm Organize', () => submitQueueJob(payload)),
+      actionButton('Back without queueing', showQueueJobForm));
     detail.hidden = false;
   }
   async function submitQueueJob(payload) {
     try {
       const created = await api('/api/v1/jobs', {method: 'POST', body: JSON.stringify(payload)});
       await renderObservability('jobs'); await showJob(created.job_id);
-      message(payload.command === 'organize' ? 'Real Organize Job queued under one-shot authority.' :
-        'Job queued.');
+      message('Real Organize Job queued under one-shot authority.');
           } catch (error) { message(errorText(error), true); }
   }
   async function renderSchedules() {

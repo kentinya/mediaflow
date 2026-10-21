@@ -4019,7 +4019,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
             value.repository.create_task(
                 PersistentTask(
                     task_id,
-                    "preview",
+                    "organize",
                     PersistentTaskStatus.COMPLETED,
                     False,
                     now,
@@ -4527,7 +4527,7 @@ class A44BReviewCorrections(_DiscoveryFixture):
                 value.repository.create_task(
                     PersistentTask(
                         task_id,
-                        "preview",
+                        "organize",
                         PersistentTaskStatus.COMPLETED,
                         False,
                         now,

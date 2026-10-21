@@ -222,50 +222,29 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   ).toBeVisible();
   await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
 
-  // Freezing hands the expensive exact analysis to the resident Worker, so the
-  // operator continues on the durable analysis page rather than waiting inline.
+  // Freezing runs the shared Organize analysis inline, so the operator lands
+  // directly on the same-page exact plan summary that Files/create uses.
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/preview-analyses\//,
+    /\/ui-v2\/operations\/organize\/preview\/[^/]+$/,
   );
-  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
-  expect(analysisId.length).toBeGreaterThan(0);
-  await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
+  const previewId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(previewId.length).toBeGreaterThan(0);
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
 
-  // Real visual evidence of the new durable-analysis interaction at both a
-  // narrow phone width and a wide desktop width, retained beside the run.
+  // Real visual evidence of the shared-analysis interaction at both a narrow
+  // phone width and a wide desktop width, retained beside the run.
   const analysisPanel = page.getByRole("main");
   await page.setViewportSize({ width: 375, height: 720 });
-  await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await analysisPanel.screenshot({
     path: testInfo.outputPath("run-once-analysis-narrow.png"),
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await analysisPanel.screenshot({
     path: testInfo.outputPath("run-once-analysis-wide.png"),
   });
-
-  // The real Worker runs the existing exact-Preview service and links it.
-  const advanced = await page.request.post(
-    `/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
-  );
-  const advancedBody = (await advanced.json()) as {
-    advanced?: boolean;
-    status?: string;
-    previewId?: string | null;
-  };
-  expect(
-    advancedBody.advanced,
-    `analysis worker: ${JSON.stringify(advancedBody)}`,
-  ).toBe(true);
-  expect(advancedBody.status).toBe("completed");
-  expect(advancedBody.previewId).not.toBeNull();
+  const advancedBody = { previewId };
 
   await page.request.post("/__harness__/restart");
   const manifest = await runOnceState(page, discoveryId);
@@ -365,30 +344,13 @@ test("Run once preserves a successful sibling while one failed item is recovered
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   await page.getByRole("button", { name: "冻结清单并生成精确预览" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/preview-analyses\//,
+    /\/ui-v2\/operations\/organize\/preview\/[^/]+$/,
   );
-  const analysisId = new URL(page.url()).pathname.split("/").pop() ?? "";
-  const analyzed = await page.request.post(
-    `/__harness__/run-preview-analysis-worker?analysisId=${analysisId}`,
-  );
-  const analysisBody = (await analyzed.json()) as {
-    advanced?: boolean;
-    status?: string;
-    previewId?: string | null;
-  };
-  expect(analysisBody.advanced).toBe(true);
-  expect(analysisBody.status).toBe("completed");
-  expect(analysisBody.previewId).toBeTruthy();
+  const previewId = new URL(page.url()).pathname.split("/").pop() ?? "";
+  expect(previewId.length).toBeGreaterThan(0);
+  const analysisBody = { previewId };
 
   await page.request.post("/__harness__/register-manual-worker");
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/preview-analyses/${analysisId}`,
-  );
-  await page.getByRole("link", { name: "打开精确预览" }).click();
-  await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/organize/preview/${analysisBody.previewId}$`),
-  );
   await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
   await expect(page.getByLabel("选择 One.2001.mkv")).toBeChecked();
   await expect(page.getByLabel("选择 Two.2002.mkv")).toBeChecked();

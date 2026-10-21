@@ -63,7 +63,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
                 task = coordinator.create(
-                    "preview", execute_authorized=False, scope_path="/media", item_limit=20
+                    "organize", execute_authorized=False, scope_path="/media", item_limit=20
                 )
                 first = coordinator.request_pause(task.task_id)
                 second = coordinator.request_pause(task.task_id)
@@ -141,7 +141,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
             barrier = threading.Barrier(2)
             outcomes = []
@@ -170,7 +170,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
         ):
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             paused = coordinator.record_discovered(
                 task.task_id, "s", "r", "paused.mkv", "paused.mkv"
             )
@@ -190,7 +190,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
         ):
             coordinator = PersistentTaskCoordinator(repository, repository)
-            dry_run = coordinator.create("preview", execute_authorized=False)
+            dry_run = coordinator.create("organize", execute_authorized=False)
             coordinator.request_pause(dry_run.task_id)
             coordinator.acknowledge_pause(dry_run.task_id)
             with self.assertRaisesRegex(ValueError, "not execute-authorized"):
@@ -211,7 +211,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
         ):
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             coordinator.request_pause(task.task_id)
             paused = coordinator.acknowledge_pause(task.task_id)
             self.assertEqual(paused.status, PersistentTaskStatus.PAUSED)
@@ -229,7 +229,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             config.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
             with SQLiteTaskRepository(database) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
             output, errors = io.StringIO(), io.StringIO()
             with patch.object(
@@ -251,7 +251,7 @@ class TaskPauseResumeTest(unittest.TestCase):
             SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository,
         ):
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             requested = coordinator.request_pause(task.task_id)
             rendered = render_task(requested, ())
             self.assertIn("Pause requested: YES", rendered)

@@ -30,8 +30,6 @@ describe("destination model", () => {
       "Task detail",
       "Job list",
       "Job detail",
-      "Start Preview",
-      "Preview detail",
       "Manual organize",
       "Manual intent",
       "整理发现",
@@ -43,10 +41,8 @@ describe("destination model", () => {
       "Automation lifecycle",
       "Automation definition",
       "Automation Draft editor",
-      "Automation Preview",
       "Automation occurrences",
       "Automation Run once",
-      "Preview analysis",
       "Notifications",
       "Create Webhook definition",
       "Webhook definition",
@@ -72,11 +68,9 @@ describe("destination model", () => {
     expect(destinationForPath("/library/file-index/$fileId")).toBeUndefined();
     expect(isDestinationPath("/library/file-index/file-123")).toBe(false);
     expect(
-      destinationForPath("/operations/automation/preview/def-1/preview-1")?.id,
-    ).toBe("operations-automation-preview");
-    expect(
-      destinationForPath("/operations/automation/preview/def-1"),
+      destinationForPath("/operations/automation/preview/def-1/preview-1"),
     ).toBeUndefined();
+    expect(destinationForPath("/operations/preview/new")).toBeUndefined();
   });
 
   it("resolves rules edit routes carrying every backend-legal object ID", () => {

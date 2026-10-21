@@ -443,8 +443,6 @@ describe("organize creation workspace", () => {
           const actions = value["actions"] as Json;
           (actions["choice"] as Json)["path"] =
             "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          (actions["preview"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/previews";
           return jsonResponse(value);
         }
         if (url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
@@ -454,8 +452,6 @@ describe("organize creation workspace", () => {
           const actions = value["actions"] as Json;
           (actions["choice"] as Json)["path"] =
             "/api/v1/operations/organize/intents/intent-1/items/{itemId}/choice";
-          (actions["preview"] as Json)["path"] =
-            "/api/v1/operations/organize/intents/intent-1/previews";
           const item = (value["items"] as Json[])[0]!;
           item["itemId"] = "item-1";
           (item["source"] as Json)["path"] = "Movies/One.2001.mkv";

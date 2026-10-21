@@ -62,7 +62,7 @@ def _job(
 ) -> AutomationJob:
     return AutomationJob(
         job_id=job_id,
-        command=AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.PREVIEW,
+        command=AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.ORGANIZE,
         status=status,
         created_at=updated_at - timedelta(minutes=1),
         updated_at=updated_at,
@@ -167,7 +167,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
             worker_id="projection-worker",
             label="node-1",
             heartbeat_interval_seconds=2.0,
-            supported_commands=("scan", "preview"),
+            supported_commands=("scan", "organize"),
             configuration_snapshot_id="cfg-1",
             configuration_snapshot_digest="sha256:test",
             runtime_schema_version=SCHEMA_VERSION,
@@ -177,7 +177,7 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(status, 200)
         worker = document["workers"][0]
         self.assertEqual(worker["worker_id"], "projection-worker")
-        self.assertEqual(worker["supported_commands"], ["scan", "preview"])
+        self.assertEqual(worker["supported_commands"], ["scan", "organize"])
         self.assertEqual(worker["status"], "live")
         self.assertNotIn("token", json.dumps(document).lower())
 

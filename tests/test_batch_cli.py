@@ -13,7 +13,7 @@ class BatchCliTests(unittest.TestCase):
         with redirect_stdout(output), self.assertRaises(SystemExit):
             final_main(["batch", "--help"], stdout=io.StringIO(), stderr=error)
         self.assertIn("batch", output.getvalue())
-        self.assertIn("preview", output.getvalue())
+        self.assertIn("organize", output.getvalue())
         self.assertIn("organize", output.getvalue())
 
 

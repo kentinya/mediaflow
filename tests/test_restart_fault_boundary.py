@@ -163,7 +163,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                 first_process.create_job(
                     AutomationJob(
                         job_id,
-                        AutomationCommand.PREVIEW,
+                        AutomationCommand.ORGANIZE,
                         AutomationJobStatus.PENDING,
                         old,
                         old,
@@ -177,7 +177,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                     worker_id="worker-a",
                     label="worker-a",
                     heartbeat_interval_seconds=5.0,
-                    supported_commands=("scan", "preview"),
+                    supported_commands=("scan", "organize"),
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest=DIGEST,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -196,7 +196,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                     worker_id="worker-b",
                     label="worker-b",
                     heartbeat_interval_seconds=5.0,
-                    supported_commands=("scan", "preview"),
+                    supported_commands=("scan", "organize"),
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest=DIGEST,
                     runtime_schema_version=SCHEMA_VERSION,

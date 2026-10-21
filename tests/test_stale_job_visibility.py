@@ -261,7 +261,7 @@ class StaleJobVisibilityTests(unittest.TestCase):
     ) -> AutomationJob:
         return AutomationJob(
             job_id,
-            AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.PREVIEW,
+            AutomationCommand.ORGANIZE if execute_authorized else AutomationCommand.ORGANIZE,
             status,
             updated_at - timedelta(minutes=1),
             updated_at,

@@ -343,12 +343,12 @@ class NotificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 publisher = NotificationPublisher(repository, definitions)
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
                 finished = AutomationWorker(
                     repository, lambda job, cancelled: "task-1", publisher
                 ).run_next()
                 self.assertEqual(finished.status.value, "completed")
-                schedule = IntervalSchedule("hourly", "preview", 3600)
+                schedule = IntervalSchedule("hourly", "organize", 3600)
                 self.assertEqual(
                     len(IntervalScheduler(repository, (schedule,), publisher).tick(NOW)), 1
                 )

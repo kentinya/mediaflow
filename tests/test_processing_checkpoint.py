@@ -152,7 +152,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 for index, (status, raw_stage, expected_stage) in enumerate(cases):
                     item = self._item(task.task_id, f"item-{index}", status, raw_stage)
@@ -428,7 +428,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 for index, (status, table, identifier, _identifier_column) in enumerate(cases):
                     item = self._item(task.task_id, f"blocked-{index}", status, status.value)
@@ -571,7 +571,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 item = self._item(task.task_id, "stable", TaskItemStatus.FAILED, "failed")
                 repository.upsert_item(item)
@@ -625,7 +625,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview",
+                    "organize",
                     execute_authorized=False,
                     configuration_snapshot_id="revision-1",
                     configuration_snapshot_digest="digest-1",
@@ -654,7 +654,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 item = self._item(task.task_id, "api-item", TaskItemStatus.FAILED, "failed")
                 repository.upsert_item(item)
@@ -723,7 +723,7 @@ class ProcessingCheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 task = PersistentTaskCoordinator(repository, repository).create(
-                    "preview", execute_authorized=False
+                    "organize", execute_authorized=False
                 )
                 item = self._item(task.task_id, "spy", TaskItemStatus.SUCCESS, "completed")
                 repository.upsert_item(item)

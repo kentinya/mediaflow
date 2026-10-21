@@ -57,7 +57,7 @@ function intentDocument(): Json {
   const value = JSON.parse(JSON.stringify(documents["organizeIntent"])) as Json;
   value["intentId"] = "intent-1";
   const actions = value["actions"] as Json;
-  for (const actionName of ["choice", "preview"] as const) {
+  for (const actionName of ["choice"] as const) {
     const action = actions[actionName] as Json;
     action["path"] = (action["path"] as string).replace("<uuid>", "intent-1");
   }

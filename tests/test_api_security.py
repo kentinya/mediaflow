@@ -11,10 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from mediaflow.application.automation import AutomationJobService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
-from mediaflow.domain.automation_task_definition_preview import (
-    AutomationTaskDefinitionPreviewError,
-)
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
@@ -143,7 +141,7 @@ class ApiSecurityTests(unittest.TestCase):
                         "POST",
                         "/api/v1/jobs",
                         token="viewer-token",
-                        document={"command": "preview", "limit": 1},
+                        document={"command": "organize", "limit": 1},
                     )[0],
                     403,
                 )
@@ -151,15 +149,21 @@ class ApiSecurityTests(unittest.TestCase):
                     api,
                     "POST",
                     "/api/v1/jobs",
-                    token="operator-token",
-                    document={"command": "preview", "limit": 1},
+                    token="executor-token",
+                    document={"command": "organize", "limit": 1},
                 )
-                self.assertEqual(status, 202)
+                # The legacy organize Job submission requires an enabled remote
+                # execution boundary plus a one-shot execution token; without it
+                # the request is refused before any durable admission.
+                self.assertEqual(status, 400)
+                # Job cancellation stays permission-gated on the durable Job the
+                # execution-authorization boundary admitted.
+                job = AutomationJobService(repository).submit("organize", limit=1)
                 self.assertEqual(
                     request(
                         api,
                         "POST",
-                        f"/api/v1/jobs/{job['job_id']}/cancel",
+                        f"/api/v1/jobs/{job.job_id}/cancel",
                         token="viewer-token",
                     )[0],
                     403,
@@ -168,7 +172,7 @@ class ApiSecurityTests(unittest.TestCase):
                     request(
                         api,
                         "POST",
-                        f"/api/v1/jobs/{job['job_id']}/cancel",
+                        f"/api/v1/jobs/{job.job_id}/cancel",
                         token="operator-token",
                     )[0],
                     200,
@@ -287,7 +291,7 @@ class ApiSecurityTests(unittest.TestCase):
                     "POST",
                     "/api/v1/jobs",
                     token="operator-token",
-                    document={"command": "preview", "limit": 1},
+                    document={"command": "organize", "limit": 1},
                 )
                 self.assertEqual(status, 500)
                 self.assertEqual(repository.list_jobs(), ())
@@ -418,63 +422,33 @@ class WorkerRouteSecurityTests(unittest.TestCase):
                             )
 
 
-class AutomationPreviewSecurityTests(unittest.TestCase):
-    def test_viewer_can_inspect_preview_but_cannot_run_and_audit_is_secret_free(self) -> None:
-        class FakePreviewService:
-            def list_readonly(self, definition_id, *, limit=100):
-                return ()
+class RetiredAutomationPreviewSecurityTests(unittest.TestCase):
+    """The independent Automation Preview product cannot be run or inspected.
 
-            def get_readonly(self, preview_id):
-                raise LookupError("preview not found")
+    Its old routes answer as ordinary not-found results after normal
+    authentication, they leak no submitted secret and they leave no durable
+    preview record behind.
+    """
 
-            def create(self, definition_id, *, revision_id=None, actor):
-                raise AutomationTaskDefinitionPreviewError(
-                    "automation Preview failed before analysis",
-                    code="automation_preview_rejected",
-                    status=400,
-                )
-
+    def test_old_preview_routes_are_ordinary_not_found_and_secret_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "runtime.sqlite3"
             with SQLiteTaskRepository(database) as repository:
-                api = MediaFlowApi(
-                    repository,
-                    None,
-                    principals=principals(),
-                    automation_preview_service=FakePreviewService(),
-                )
-                status, body = request(
-                    api,
-                    "GET",
-                    "/api/v1/automation/task-definitions/task/previews",
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["items"], [])
-                status, _ = request(
-                    api,
-                    "POST",
-                    "/api/v1/automation/task-definitions/task/preview",
-                    token="viewer-token",
-                    document={},
-                )
-                self.assertEqual(status, 403)
-                status, body = request(
-                    api,
-                    "POST",
-                    "/api/v1/automation/task-definitions/task/preview",
-                    token="operator-token",
-                    document={"token": "secret-value"},
-                )
-                self.assertEqual(status, 400)
-                self.assertNotIn("secret-value", json.dumps(body))
+                api = MediaFlowApi(repository, None, principals=principals())
+                for method, path, token in (
+                    ("GET", "/api/v1/automation/task-definitions/task/previews", "viewer-token"),
+                    ("POST", "/api/v1/automation/task-definitions/task/preview", "viewer-token"),
+                    ("POST", "/api/v1/automation/task-definitions/task/preview", "operator-token"),
+                ):
+                    with self.subTest(method=method, path=path, token=token):
+                        status, body = request(
+                            api, method, path, token=token, document={"token": "secret-value"}
+                        )
+                        self.assertIn(status, (403, 404), body)
+                        self.assertNotIn("secret-value", json.dumps(body))
                 audit = repository.list_security_audit()
                 rendered = str([item.__dict__ for item in audit])
                 self.assertNotIn("secret-value", rendered)
-                self.assertIn(
-                    "/api/v1/automation/task-definitions/{id}/preview",
-                    rendered,
-                )
 
 
 if __name__ == "__main__":

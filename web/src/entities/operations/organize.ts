@@ -362,7 +362,8 @@ export interface OrganizeIntentModel {
   readonly items: readonly OrganizeIntentItemModel[];
   readonly actions: {
     readonly choice: OrganizeActionModel;
-    readonly preview: OrganizeActionModel;
+    /** Retired standalone Preview action; absent from the supported intent. */
+    readonly preview?: OrganizeActionModel;
     readonly execute: OrganizeActionModel;
   };
 }
@@ -767,12 +768,6 @@ export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
         actions["choice"],
         "actions.choice",
         "intent-choice",
-        intentIdentity,
-      ),
-      preview: normalizeOrganizeAction(
-        actions["preview"],
-        "actions.preview",
-        "intent-preview",
         intentIdentity,
       ),
       execute: normalizeOrganizeAction(

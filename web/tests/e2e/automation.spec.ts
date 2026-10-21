@@ -114,9 +114,10 @@ test("the definition detail offers the backend-advertised actions only", async (
   await expect(
     page.getByText(/No unattended execution grant exists/),
   ).toBeVisible();
+  // The independent Preview product is retired: no such control exists.
   await expect(
     page.getByRole("button", { name: "Create exact Preview" }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
   // Copy requires an open successor Draft, exactly as the backend advertises.
   await expect(
     page.getByRole("button", { name: "Copy into Draft" }),
@@ -127,110 +128,6 @@ test("the definition detail offers the backend-advertised actions only", async (
       /an open successor Draft is required to copy this definition/,
     ),
   ).toBeTruthy();
-});
-
-test("create exact Preview admits one durable analysis and follows it to the definition Preview", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
-  );
-  await page.getByRole("button", { name: "Create exact Preview" }).click();
-
-  // The definition action now admits a durable exact analysis: the operator
-  // lands on its own durable route, not on the Preview itself.
-  await expect(page).toHaveURL(
-    /\/ui-v2\/operations\/automation\/preview-analyses\/preview-analysis-definition-e2e-001$/,
-  );
-  await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
-  // The analysis is admitted queued and advertises only cooperative controls.
-  await expect(
-    page.getByRole("heading", { name: "排队中", exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("button", { name: "暂停分析" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "取消分析" })).toBeEnabled();
-  // No Preview exists before the Worker runs: the analysis offers no link yet.
-  await expect(page.getByRole("link", { name: "打开精确预览" })).toHaveCount(0);
-
-  // The resident Processing Worker runs the exact zero-mutation analysis and
-  // links the published Preview; no Preview exists before it does.
-  const admitted = await automationEvidence(page);
-  const admissions = admitted.items.filter(
-    (item) => item.objectType === "automation_preview_analysis",
-  );
-  expect(admissions).toHaveLength(1);
-  expect(admissions[0]?.method).toBe("POST");
-  expect(admissions[0]?.path).toBe(
-    "/api/v1/automation/task-definitions/:definitionId/preview-analyses",
-  );
-
-  const advanced = await page.request.post(
-    "/__test__/run-preview-analysis-worker",
-  );
-  expect(await advanced.json()).toMatchObject({
-    advanced: true,
-    status: "completed",
-    previewId: "automation-preview-e2e-001",
-  });
-
-  // The completed analysis publishes its exact-Preview link. The exact
-  // definition Preview itself lives on the definition Preview surface, so the
-  // journey continues there directly rather than through the manual route.
-  const previewLink = page.getByRole("link", { name: "打开精确预览" });
-  await expect(previewLink).toBeVisible();
-  await expect(previewLink).toHaveAttribute(
-    "href",
-    `/ui-v2/operations/automation/preview/${DEFINITION_ID}/automation-preview-e2e-001`,
-  );
-
-  // The token is held in memory only, so the deep link reconnects once and
-  // continues on the durable definition-Preview route.
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/preview/${DEFINITION_ID}/automation-preview-e2e-001`,
-  );
-  await expect(
-    page.getByRole("heading", { name: "Exact Automation Preview" }),
-  ).toBeVisible();
-  await expect(page.getByText(/Zero Storage mutation/)).toBeVisible();
-  await expect(page.getByText(/One\.2001\.mkv/).first()).toBeVisible();
-  // No unattended authority without the explicit confirmation.
-  const confirm = page.getByLabel("Confirm unattended execution grant");
-  const grant = page.getByRole("button", {
-    name: "Grant unattended authority",
-  });
-  await expect(grant).toBeDisabled();
-  await confirm.check();
-  await grant.click();
-  await expect(page).toHaveURL(
-    new RegExp(`/ui-v2/operations/automation/definition/${DEFINITION_ID}$`),
-  );
-  // The refreshed durable definition reports the exact grant state.
-  await expect(page.getByText("Grant state")).toBeVisible();
-  await expect(page.getByText("Active").last()).toBeVisible();
-
-  const evidence = await automationEvidence(page);
-  const grants = evidence.items.filter(
-    (item) => item.method === "POST" && item.path.endsWith("/grant"),
-  );
-  expect(grants).toHaveLength(1);
-  expect(grants[0]?.body).toMatchObject({
-    confirmation: true,
-    previewId: "automation-preview-e2e-001",
-  });
-  const serialized = JSON.stringify(evidence.items);
-  expect(serialized).not.toMatch(
-    /Bearer |digest|fingerprint|authorization|executionPlan|apiKey/i,
-  );
-  // Exactly one durable admission was emitted, and reading, analysing and
-  // granting never emits an occurrence, submits work or touches the manual
-  // Organize namespace.
-  expect(
-    evidence.items.every((item) => item.path.includes("/organize/") === false),
-  ).toBe(true);
 });
 
 test("the Draft journey composes successor Draft, bounded save, validation and checked activation", async ({
@@ -432,13 +329,10 @@ test("a read-only principal is offered no executable Automation control", async 
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Create exact Preview" }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Start successor Draft" }),
   ).toBeDisabled();
-  await expect(
-    page.getByText(/cannot run a zero-mutation Automation Preview/).first(),
-  ).toBeVisible();
 });
 
 test("a hostile grant transport renders the bounded malformed state and submits nothing", async ({
@@ -446,7 +340,7 @@ test("a hostile grant transport renders the bounded malformed state and submits 
 }) => {
   await connectOn(
     page,
-    `/ui-v2/operations/automation/preview/${DEFINITION_ID}/automation-preview-hostile-e2e-001`,
+    `/ui-v2/operations/automation/definition/${DEFINITION_ID}`,
   );
   await expect(
     page.getByText(/could not be understood as the expected contract/),
@@ -458,18 +352,6 @@ test("a hostile grant transport renders the bounded malformed state and submits 
   expect(evidence.items.filter((item) => item.method !== "GET")).toHaveLength(
     0,
   );
-});
-
-test("a misbound Preview is a not-found boundary with a safe return", async ({
-  page,
-}) => {
-  await connectOn(
-    page,
-    `/ui-v2/operations/automation/preview/${DEFINITION_ID}/automation-preview-misbound-e2e-001`,
-  );
-  await expect(
-    page.getByText(/could not be found|not found/i).first(),
-  ).toBeVisible();
 });
 
 test("the Automation journey is keyboard operable and responsive at narrow and wide viewports", async ({
@@ -487,31 +369,23 @@ test("the Automation journey is keyboard operable and responsive at narrow and w
   await expect(
     page.getByRole("heading", { name: /Automation definition/ }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Create exact Preview" }).focus();
+  // The keyboard journey reaches the retained Run once control, which owns the
+  // shared bounded discovery and zero-mutation organize analysis.
+  const runOnce = page.getByRole("link", { name: "Run once" });
+  await runOnce.focus();
   await page.keyboard.press("Enter");
-  // The keyboard journey reaches the durable analysis the definition action
-  // admits, then the exact definition Preview it links.
   await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "排队中", exact: true }),
+    page.getByRole("heading", { name: /Run once|运行一次/ }),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 375, height: 720 });
   await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "排队中", exact: true }),
+    page.getByRole("heading", { name: /Run once|运行一次/ }),
   ).toBeVisible();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(
-    page.getByRole("heading", { name: "精确预览分析" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "排队中", exact: true }),
+    page.getByRole("heading", { name: /Run once|运行一次/ }),
   ).toBeVisible();
 });
 

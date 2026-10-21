@@ -49,7 +49,7 @@ class RecognitionReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "unknown", "Unknown.mkv", "Unknown.mkv"
                 )
@@ -70,7 +70,7 @@ class RecognitionReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory, "runtime.sqlite3"))
             coordinator = PersistentTaskCoordinator(repository, repository)
-            task = coordinator.create("preview", execute_authorized=False)
+            task = coordinator.create("organize", execute_authorized=False)
             configuration = development_strategy_configuration()
             storage = LocalStorage("source", directory)
             service = MediaOrganizerService(
@@ -113,7 +113,7 @@ class RecognitionReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "unknown", "Unknown.mkv", "Unknown.mkv"
                 )
@@ -192,7 +192,7 @@ class RecognitionReviewTests(unittest.TestCase):
             config_path.write_text(json.dumps(document), encoding="utf-8")
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "missing-storage", "unknown", "Unknown.mkv", "Unknown.mkv"
                 )

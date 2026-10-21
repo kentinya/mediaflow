@@ -110,7 +110,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
     def task(
         task_id: str,
         *,
-        command: str = "preview",
+        command: str = "organize",
         status: PersistentTaskStatus = PersistentTaskStatus.COMPLETED,
         rank: int = 0,
         pause_requested: bool = False,
@@ -144,7 +144,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
     def job(
         job_id: str,
         *,
-        command: AutomationCommand = AutomationCommand.PREVIEW,
+        command: AutomationCommand = AutomationCommand.ORGANIZE,
         status: AutomationJobStatus = AutomationJobStatus.PENDING,
         rank: int = 0,
         task_id: str | None = None,
@@ -229,7 +229,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
     # -- collection filtering --------------------------------------------
 
     def test_task_and_job_collections_apply_status_and_command_filters(self) -> None:
-        self.repository.create_task(self.task("task-a", command="preview", rank=0))
+        self.repository.create_task(self.task("task-a", command="organize", rank=0))
         self.repository.create_task(
             self.task(
                 "task-b",
@@ -248,7 +248,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
         )
         for rank, (command, status) in enumerate(
             (
-                (AutomationCommand.PREVIEW, AutomationJobStatus.PENDING),
+                (AutomationCommand.ORGANIZE, AutomationJobStatus.PENDING),
                 (AutomationCommand.ORGANIZE, AutomationJobStatus.COMPLETED),
             )
         ):
@@ -266,10 +266,10 @@ class OperationsWorkspaceTests(unittest.TestCase):
         # A derived continuation belongs to its command family.
         self.assertEqual([item["task_id"] for item in page["items"]], ["task-c"])
 
-        status, page, _ = request(self.api, "GET", "/api/v1/jobs", query="command=preview")
+        status, page, _ = request(self.api, "GET", "/api/v1/jobs", query="command=organize")
         self.assertEqual(status, 200)
-        self.assertEqual([item["job_id"] for item in page["items"]], ["job-0"])
-        self.assertEqual(page["command"], "preview")
+        self.assertEqual([item["job_id"] for item in page["items"]], ["job-1", "job-0"])
+        self.assertEqual(page["command"], "organize")
 
         status, page, _ = request(
             self.api, "GET", "/api/v1/jobs", query="status=completed&command=organize"
@@ -294,7 +294,7 @@ class OperationsWorkspaceTests(unittest.TestCase):
             self.repository.create_task(
                 self.task(
                     f"task-{rank}",
-                    command="preview" if rank % 2 == 0 else "organize",
+                    command="organize" if rank % 2 == 0 else "organize",
                     status=(
                         PersistentTaskStatus.COMPLETED if rank < 2 else PersistentTaskStatus.FAILED
                     ),
@@ -567,11 +567,11 @@ class OperationsWorkspaceTests(unittest.TestCase):
 
     def test_job_cancel_fences_version_and_state(self) -> None:
         service = AutomationJobService(self.repository)
-        pending = service.submit("preview")
+        pending = service.submit("organize")
         self.repository.create_job(
             self.job(
                 "job-done",
-                command=AutomationCommand.PREVIEW,
+                command=AutomationCommand.ORGANIZE,
                 status=AutomationJobStatus.COMPLETED,
                 rank=5,
                 task_id="task-a",
@@ -720,7 +720,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.repository.close()
         self.directory.cleanup()
 
-    def running_task(self, task_id: str, *, command: str = "preview", execute: bool = False):
+    def running_task(self, task_id: str, *, command: str = "organize", execute: bool = False):
         task = PersistentTask(
             task_id,
             command,
@@ -788,7 +788,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.assertEqual(task.status, PersistentTaskStatus.CANCELLED)
 
     def test_concurrent_job_cancel_submissions_admit_exactly_one(self) -> None:
-        job = AutomationJobService(self.repository).submit("preview")
+        job = AutomationJobService(self.repository).submit("organize")
         version = job.updated_at.isoformat()
 
         self.assertEqual(
@@ -882,7 +882,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         fingerprint = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
         task = PersistentTask(
             "task-hostile",
-            "preview",
+            "organize",
             PersistentTaskStatus.FAILED,
             False,
             NOW,
@@ -944,7 +944,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.repository.create_job(
             AutomationJob(
                 "job-hostile",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.FAILED,
                 NOW,
                 NOW,
@@ -986,7 +986,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.repository.create_job(
             AutomationJob(
                 "job-envelope",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.FAILED,
                 NOW,
                 NOW,
@@ -1128,7 +1128,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.repository.create_job(
             AutomationJob(
                 "job-read",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.PENDING,
                 NOW,
                 NOW,
@@ -1160,7 +1160,7 @@ class OperationsControlFencingTests(unittest.TestCase):
         self.assertNotIn(task.task_id, json.dumps(routes))
 
     def test_worker_reports_a_web_cancelled_task_as_a_cancelled_job(self) -> None:
-        task = self.running_task("task-worker", command="preview")
+        task = self.running_task("task-worker", command="organize")
         version = self.repository.get_task(task.task_id).updated_at.isoformat()
         status, _, _ = request(
             self.api,

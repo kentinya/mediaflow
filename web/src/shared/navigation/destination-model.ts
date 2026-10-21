@@ -147,23 +147,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/jobs/" as const,
   },
   {
-    id: "operations-preview-new",
-    label: "Start Preview",
-    path: "/operations/preview/new",
-    title: "Start Preview | MediaFlow",
-    availability: "implemented" as const,
-    description: "Submit a bounded zero-mutation Preview admission.",
-  },
-  {
-    id: "operations-preview-detail",
-    label: "Preview detail",
-    path: "/operations/preview/$previewId",
-    title: "Preview detail | MediaFlow",
-    availability: "implemented" as const,
-    description: "Bounded preview document, items and zero-mutation evidence.",
-    dynamicPrefix: "/operations/preview/" as const,
-  },
-  {
     id: "operations-organize-new",
     label: "Manual organize",
     path: "/operations/organize/new",
@@ -270,16 +253,6 @@ const childDestinationData = [
     dynamicPrefix: "/operations/automation/editor/" as const,
   },
   {
-    id: "operations-automation-preview",
-    label: "Automation Preview",
-    path: "/operations/automation/preview/$definitionId/$previewId",
-    title: "Automation Preview | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Exact zero-mutation Preview evidence, paged items and grant eligibility.",
-    dynamicPrefix: "/operations/automation/preview/" as const,
-  },
-  {
     id: "operations-automation-occurrences",
     label: "Automation occurrences",
     path: "/operations/automation/occurrences/$definitionId",
@@ -298,16 +271,6 @@ const childDestinationData = [
     description:
       "Automatic discovery and frozen manifest of one published definition, with durable progress and exact Preview.",
     dynamicPrefix: "/operations/automation/run-once/" as const,
-  },
-  {
-    id: "operations-automation-preview-analysis",
-    label: "Preview analysis",
-    path: "/operations/automation/preview-analyses/$analysisId",
-    title: "Preview analysis | MediaFlow",
-    availability: "implemented" as const,
-    description:
-      "Durable exact Preview analysis of one definition or manual intent, with bounded progress and cooperative pause/resume/cancel.",
-    dynamicPrefix: "/operations/automation/preview-analyses/" as const,
   },
   {
     id: "operations-notifications",
@@ -942,14 +905,6 @@ export function allowlistedDestinationSearch(
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/preview/new") {
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    setSafe(allowed, "scopeKind", current.get("scopeKind"));
-    setSafe(allowed, "relativePath", current.get("relativePath"));
-    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
   if (path === "/operations/organize/new") {
     // The manual Organize entry carries only its bounded scope parameters
     // plus the preserved task-center return context of the journey it starts.
@@ -969,8 +924,7 @@ export function allowlistedDestinationSearch(
     path === "/operations/organize/intent/$intentId" ||
     path === "/operations/organize/discovery/$discoveryId" ||
     path === "/operations/organize/preview/$previewId" ||
-    path === "/operations/organize/execution/$executionId" ||
-    path === "/operations/automation/preview-analyses/$analysisId"
+    path === "/operations/organize/execution/$executionId"
   ) {
     // The intent, durable discovery, exact Preview and execution pages of one
     // Organize journey carry only the bounded return contexts that let them
@@ -984,13 +938,11 @@ export function allowlistedDestinationSearch(
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (
-    path === "/operations/preview/$previewId" ||
     path === "/operations/automation/new" ||
     path === "/operations/automation/lifecycle" ||
     path === "/operations/automation/lifecycle/$definitionId" ||
     path === "/operations/automation/definition/$definitionId" ||
     path === "/operations/automation/editor/$definitionId" ||
-    path === "/operations/automation/preview/$definitionId/$previewId" ||
     path === "/operations/automation/occurrences/$definitionId" ||
     path === "/operations/notifications/webhooks/new" ||
     path === "/operations/notifications/webhooks/$webhookId" ||

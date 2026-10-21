@@ -119,45 +119,10 @@ test.describe("manual organize journey", () => {
     });
     expect(JSON.stringify(choice)).not.toContain("Bearer");
 
-    await page.getByRole("button", { name: "生成精确预览" }).click();
+    await page.getByRole("button", { name: "生成分析摘要" }).click();
 
-    // The intent action now admits one durable exact analysis and hands the
-    // expensive walk to the resident Worker; the operator lands on the
-    // analysis' own durable route instead of waiting inline.
-    await expect(page).toHaveURL(
-      /\/ui-v2\/operations\/automation\/preview-analyses\/preview-analysis-manual-e2e-001$/,
-    );
-    await expect(
-      page.getByRole("heading", { name: "精确预览分析" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "排队中", exact: true }),
-    ).toBeVisible();
-
-    const afterAdmission = await manualEvidence(page);
-    const admissions = afterAdmission.filter(
-      (entry) => entry.objectType === "organize_preview_analysis",
-    );
-    expect(admissions).toHaveLength(1);
-    expect(admissions[0]?.method).toBe("POST");
-    // The admission is fenced by the exact reviewed intent version.
-    expect(admissions[0]?.body).toMatchObject({ expectedVersion: 2 });
-    expect(JSON.stringify(admissions)).not.toMatch(
-      /fingerprint|digest|snapshot/i,
-    );
-
-    // The resident Worker runs the existing exact-Preview service and links it.
-    const advanced = await page.request.post(
-      `${BASE_URL}/__test__/run-preview-analysis-worker`,
-    );
-    expect(await advanced.json()).toMatchObject({
-      advanced: true,
-      status: "completed",
-      previewId: PREVIEW_ID,
-    });
-
-    // Following the analysis' own link keeps the reviewed selection state.
-    await page.getByRole("link", { name: "打开精确预览" }).click();
+    // The intent action runs the shared Organize analysis inline, so the
+    // operator lands directly on the same-page exact plan summary.
     await expect(page).toHaveURL(
       new RegExp(`/ui-v2/operations/organize/preview/${PREVIEW_ID}$`),
     );
@@ -165,18 +130,19 @@ test.describe("manual organize journey", () => {
     await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
     await expect(page.getByText(/预期目标/)).toBeVisible();
 
-    const afterPreview = await manualEvidence(page);
-    const preview = afterPreview.filter(
+    const afterAnalysis = await manualEvidence(page);
+    const preview = afterAnalysis.filter(
       (entry) => entry.objectType === "organize_preview",
     );
+    // The shared analysis admitted exactly one exact plan; reading the summary
+    // afterwards is a plain GET and carries no secret or pin material.
+    expect(preview.filter((entry) => entry.method === "POST")).toHaveLength(1);
     expect(preview.some((entry) => entry.method === "GET")).toBe(true);
     expect(JSON.stringify(preview)).not.toMatch(/fingerprint|digest|snapshot/i);
-    // The exact analysis admission never replayed the legacy inline Preview
-    // mutation: the durable analysis is the only thing the operator admitted.
+    // No independent Preview analysis admission exists any more.
     expect(
-      afterPreview.filter(
-        (entry) =>
-          entry.method === "POST" && entry.objectType === "organize_preview",
+      afterAnalysis.filter(
+        (entry) => entry.objectType === "organize_preview_analysis",
       ),
     ).toHaveLength(0);
   });

@@ -98,7 +98,7 @@ def create_processing_item(
 ):
     coordinator = PersistentTaskCoordinator(repository, repository)
     task = coordinator.create(
-        "preview",
+        "organize",
         execute_authorized=False,
         configuration_snapshot_id=configuration_snapshot_id,
         configuration_snapshot_digest=configuration_snapshot_digest,
@@ -208,7 +208,7 @@ class MetadataReviewTests(unittest.TestCase):
             database = root / "runtime.sqlite3"
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 recognition = RecognitionType("C", "C")
                 result = StrategyTestResult(
                     "Movie.mkv",

@@ -21,9 +21,6 @@ from mediaflow.application.automation_run_once import (
     AutomationRunOnceError,
     AutomationRunOnceService,
 )
-from mediaflow.application.automation_task_definition_preview import (
-    AutomationTaskDefinitionPreviewService,
-)
 from mediaflow.application.automation_workspace_commands import (
     AUTOMATION_DEFINITION_FORM_FIELDS,
     AutomationWorkspaceCommandService,
@@ -85,7 +82,6 @@ from mediaflow.application.operations_lifecycle import (
     task_result_operator_document,
 )
 from mediaflow.application.package_exchange import PackageExchangeService
-from mediaflow.application.preview_analysis import PreviewAnalysisError, PreviewAnalysisService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
@@ -149,12 +145,10 @@ from mediaflow.domain.failure import failure_document
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.manual_execution import ManualExecutionError, ManualExecutionStatus
 from mediaflow.domain.manual_organize import (
+    MAX_MANUAL_INTENT_ITEMS,
     ManualIntentError,
 )
-from mediaflow.domain.manual_organize_preview import (
-    MAX_MANUAL_PREVIEW_ITEMS,
-    ManualPreviewError,
-)
+from mediaflow.domain.manual_organize_preview import ManualPreviewError
 from mediaflow.domain.manual_safety import redact_manual_text, redact_manual_value
 from mediaflow.domain.media_discovery import (
     TERMINAL_DISCOVERY_STATUSES,
@@ -185,7 +179,6 @@ from mediaflow.domain.package_exchange import (
     MAX_CONFIGURATION_PACKAGE_BYTES,
     PackageExchangeError,
 )
-from mediaflow.domain.preview_analysis import PreviewAnalysisKind
 from mediaflow.domain.recovery import RecoveryAdmissionError, RecoveryAdmissionReason
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationError,
@@ -377,8 +370,6 @@ class MediaFlowApi:
         manual_recovery_service: ManualRecoveryContinuationService | None = None,
         media_discovery_service=None,
         automation_run_once_service=None,
-        automation_preview_service: AutomationTaskDefinitionPreviewService | None = None,
-        preview_analysis_service=None,
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
         webhook_transport: object | None = None,
@@ -582,35 +573,8 @@ class MediaFlowApi:
                 execution_service=self._manual_execution,
                 checkpoint_service=self._checkpoint_service,
             )
-        self._automation_previews = automation_preview_service
-        if self._automation_previews is None and configuration_service is not None:
-            self._automation_previews = AutomationTaskDefinitionPreviewService(
-                repository,
-                configuration_service,
-                metadata_provider_registry_factory=metadata_provider_registry_factory,
-            )
-        # Durable exact-analysis admission: the expensive definition/manual
-        # Preview walk and Provider batch run in the resident Processing Worker
-        # instead of blocking the HTTP request.  The service wraps the *existing*
-        # exact-Preview services, which remain the only authority that produces
-        # Preview evidence, and creates no execution authority and no dummy Job.
-        self._preview_analyses = preview_analysis_service
-        if self._preview_analyses is None:
-            self._preview_analyses = PreviewAnalysisService(
-                repository,
-                definition_previews=self._automation_previews,
-                manual_previews=self._manual_previews,
-            )
-        # A Run-once freeze defers its exact analysis to the same durable
-        # Worker boundary instead of running the walk and Provider batch inline
-        # in the HTTP request.
-        if self._automation_run_once is not None and hasattr(
-            self._automation_run_once, "bind_analysis_service"
-        ):
-            self._automation_run_once.bind_analysis_service(self._preview_analyses)
         self._unattended_grants = UnattendedExecutionGrantService(
             repository,
-            preview_service=self._automation_previews,
             permission_authority=_CurrentConfiguredPermissionAuthority(
                 self._principals, configuration_service
             ),
@@ -1460,7 +1424,13 @@ class MediaFlowApi:
                 "invalid_request",
                 redact_manual_text(error),
             )
-        except Exception:
+        except Exception as _internal_error:
+            import sys as _sys
+
+            _sys.stderr.write(f"INTERNAL ERROR: {_internal_error!r}\n")
+            import traceback as _tb
+
+            _tb.print_exc()
             self._safe_audit(
                 environ,
                 request_id,
@@ -1514,14 +1484,6 @@ class MediaFlowApi:
         ):
             # Keep the public route aliases on the same application semantics.
             parts[2] = "manual-intents"
-        if (
-            len(parts) >= 3
-            and parts[:2] == ["api", "v1"]
-            and parts[2] in {"previews", "current-source-previews"}
-        ):
-            # Current-source Preview is the same persisted manual Preview
-            # projection.  Keep concise API aliases on one application path.
-            parts[2] = "manual-previews"
         # Unknown namespaces never resolve Active configuration or adapters.
         supported_roots = {
             "auth",
@@ -1562,7 +1524,6 @@ class MediaFlowApi:
             "manual-actions",
             "notifications",
             "organize",
-            "previews",
             "rules",
             "runs",
             "storage-management",
@@ -1586,7 +1547,7 @@ class MediaFlowApi:
                 if command == "organize"
                 else ApiPermission.SUBMIT_DRY_RUN,
             )
-            if command not in {AutomationCommand.PREVIEW.value, AutomationCommand.ORGANIZE.value}:
+            if command not in {AutomationCommand.ORGANIZE.value}:
                 raise ValueError("unsupported job command")
         configuration_route = parts[:3] == ["api", "v1", "configuration"]
         automation_definition_route = parts[:4] == [
@@ -1658,152 +1619,6 @@ class MediaFlowApi:
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             return self._manual_action_matrix(start_response, environ, principal, binding)
-        if parts == ["api", "v1", "operations", "previews"] and method == "POST":
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create_current_from_storage", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            self._require_empty_query(environ, "server-bound current-source Preview")
-            document = self._document(environ)
-            allowed = {
-                "scopeKind",
-                "scope",
-                "resourceLibraryId",
-                "relativePath",
-                "path",
-                "snapshotId",
-                "snapshotDigest",
-            }
-            if set(document).difference(allowed):
-                raise ValueError(
-                    "server-bound Preview accepts only ResourceLibrary source identity fields"
-                )
-            raw_kind = document.get("scopeKind", document.get("scope"))
-            if raw_kind == "resourceLibrary":
-                raw_kind = "resource_library"
-            if raw_kind not in {"file", "resource_library"}:
-                raise ValueError("server-bound Preview scope must be file or resource_library")
-            relative_path = document.get("relativePath", document.get("path"))
-            if raw_kind == "file" and (
-                not isinstance(relative_path, str) or not relative_path.strip()
-            ):
-                raise ValueError("server-bound file Preview requires relativePath")
-            if raw_kind == "resource_library" and relative_path not in (None, ""):
-                raise ValueError("ResourceLibrary Preview cannot include relativePath")
-            for name in ("snapshotId", "snapshotDigest"):
-                if name in document and (
-                    not isinstance(document[name], str) or not document[name].strip()
-                ):
-                    raise ValueError(f"server-bound Preview {name} must be a non-empty string")
-            preview = self._manual_previews.create_current_from_storage(
-                scope_kind=raw_kind,
-                resource_library_id=document.get("resourceLibraryId"),
-                relative_path=relative_path,
-                snapshot_id=document.get("snapshotId"),
-                snapshot_digest=document.get("snapshotDigest"),
-                actor=principal.principal_id,
-            )
-            return self._response(
-                start_response,
-                201,
-                manual_preview_operator_document(self._manual_preview_document(preview)),
-            )
-        if parts == ["api", "v1", "operations", "previews"] and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "list_current", None)
-            ):
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(values).difference(
-                {
-                    "scopeKind",
-                    "scopeId",
-                    "resourceLibraryId",
-                    "limit",
-                }
-            ) or any(len(value) != 1 for value in values.values()):
-                raise ValueError("server-bound Preview list query contains unsupported fields")
-            limit = self._parse_bounded_limit(values.get("limit", ["100"])[0], "Preview")
-            scope_kind = values.get("scopeKind", [None])[0]
-            scope_id = values.get("scopeId", [None])[0]
-            resource_library_id = values.get("resourceLibraryId", [None])[0]
-            if scope_kind == "resourceLibrary":
-                scope_kind = "resource_library"
-            if resource_library_id is not None and scope_id is not None:
-                if scope_kind not in (None, "resource_library"):
-                    raise ValueError("server-bound Preview list scope_kind is invalid")
-                scope_kind = "resource_library"
-                scope_id = resource_library_id
-            elif resource_library_id is not None:
-                scope_kind = "resource_library"
-                scope_id = resource_library_id
-            if not scope_kind or not scope_id:
-                raise ValueError("server-bound Preview list requires scopeKind and scopeId")
-            items = self._manual_previews.list_current(scope_kind, scope_id, limit=limit)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "items": [
-                        manual_preview_operator_document(self._manual_preview_document(value))
-                        for value in items
-                    ],
-                    "limit": limit,
-                    "total": len(items),
-                    "scopeKind": "resourceLibrary"
-                    if scope_kind == "resource_library"
-                    else scope_kind,
-                    "scopeId": scope_id,
-                },
-            )
-        if (
-            len(parts) == 5
-            and parts[:4] == ["api", "v1", "operations", "previews"]
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._manual_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "current-source Preview service is unavailable",
-                )
-            try:
-                preview = self._manual_previews.get_readonly(parts[4])
-            except ManualPreviewError as error:
-                if error.status == 404:
-                    return self._error(
-                        start_response,
-                        404,
-                        "preview_not_found",
-                        "manual Preview was not found",
-                        details={"nextAction": error.next_action},
-                    )
-                return self._error(
-                    start_response,
-                    error.status,
-                    error.code,
-                    str(error),
-                    details={"sideEffects": "none", **error.details},
-                )
-            return self._response(
-                start_response,
-                200,
-                manual_preview_operator_document(self._manual_preview_document(preview)),
-            )
         # --- V2 Operations: manual Organize intent, exact Preview, one Execute action ---
         if (
             len(parts) == 6
@@ -1928,58 +1743,6 @@ class MediaFlowApi:
                 value["manualRecoveryAvailable"] = False
                 value["manualRecoveryAnalysisReady"] = False
             return self._response(start_response, 200, redact_manual_value(value))
-        if (
-            len(parts) == 7
-            and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
-            and parts[6] == "preview-analyses"
-            and method == "POST"
-        ):
-            # Durable exact analysis of one manual intent.  The request
-            # validates the exact pinned intent context, records one durable
-            # analysis and returns its identity promptly; the resident Worker
-            # performs the walk and Provider batch, so a large selection never
-            # blocks this request and the operator can read progress and cancel.
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._preview_analyses is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "durable preview analysis service is unavailable",
-                )
-            self._require_empty_query(environ, "manual preview analysis")
-            document = self._document(environ)
-            if set(document).difference({"expectedVersion", "admissionRequestId"}):
-                raise ValueError(
-                    "manual preview analysis accepts only expectedVersion and an optional "
-                    "admissionRequestId"
-                )
-            expected_version = document.get("expectedVersion")
-            if (
-                isinstance(expected_version, bool)
-                or not isinstance(expected_version, int)
-                or expected_version < 1
-            ):
-                raise ValueError(
-                    "manual preview analysis expectedVersion must be a positive integer"
-                )
-            request_id = document.get("admissionRequestId")
-            if request_id is not None and (
-                not isinstance(request_id, str) or not request_id.strip()
-            ):
-                raise ValueError(
-                    "manual preview analysis admissionRequestId must be non-empty text"
-                )
-            try:
-                analysis = self._preview_analyses.admit_manual(
-                    parts[5],
-                    actor=principal.principal_id,
-                    expected_version=expected_version,
-                    admission_request_id=request_id,
-                )
-            except PreviewAnalysisError as error:
-                return self._preview_analysis_error(start_response, error)
-            return self._response(start_response, 202, self._preview_analysis_document(analysis))
         if (
             len(parts) == 7
             and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
@@ -2626,57 +2389,28 @@ class MediaFlowApi:
             and parts[4] == "preview-analyses"
             and method == "GET"
         ):
-            # Reconcile one lost durable-analysis response by the client's own
-            # request identity.  A proved absence is a bounded 404, never a
-            # guessed latest analysis; the read is principal-scoped and creates
-            # no work and no Draft.
+            # The independent durable exact-analysis admission product is
+            # retired; shared organize analysis runs in the ordinary prepare
+            # flow.  Old inputs get an ordinary not-found after normal auth.
             self._require(principal, ApiPermission.READ)
-            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(query) == {"admissionRequestId"} and len(query["admissionRequestId"]) == 1:
-                analysis_service = getattr(self, "_preview_analyses", None)
-                if analysis_service is None:
-                    return self._error(
-                        start_response,
-                        503,
-                        "service_unavailable",
-                        "durable preview analysis service is unavailable",
-                    )
-                try:
-                    reconciled = analysis_service.find_by_request_id(
-                        actor=principal.principal_id,
-                        admission_request_id=query["admissionRequestId"][0],
-                    )
-                except PreviewAnalysisError as error:
-                    return self._preview_analysis_error(start_response, error)
-                if reconciled is None:
-                    return self._error(
-                        start_response,
-                        404,
-                        "preview_analysis_request_not_found",
-                        "no exact analysis was admitted for this request identity",
-                        details={
-                            "durableState": "unknown",
-                            "sideEffects": "none",
-                            "retrySafe": True,
-                            "nextAction": (
-                                "the response was lost before admission was proved; reload the "
-                                "exact context and request the analysis again with a new "
-                                "request identity"
-                            ),
-                        },
-                    )
-                return self._response(
-                    start_response, 200, self._preview_analysis_document(reconciled)
-                )
-            raise ValueError("automation preview analysis collection query does not accept fields")
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                "durable preview analysis is not available",
+            )
         if (
             len(parts) == 6
             and parts[:4] == ["api", "v1", "operations", "automation"]
             and parts[4] == "preview-analyses"
             and method == "GET"
         ):
-            return self._preview_analysis_detail_projection(
-                parts[5], None, method, environ, start_response, principal
+            self._require(principal, ApiPermission.READ)
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                "durable preview analysis is not available",
             )
         if (
             len(parts) == 7
@@ -2685,8 +2419,12 @@ class MediaFlowApi:
             and method == "POST"
             and parts[6] in {"pause", "cancel", "resume"}
         ):
-            return self._preview_analysis_detail_projection(
-                parts[5], parts[6], method, environ, start_response, principal
+            self._require(principal, ApiPermission.READ)
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                "durable preview analysis is not available",
             )
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -2845,7 +2583,6 @@ class MediaFlowApi:
                     confirmation=document.get("confirmation", False),
                     confirmed=document.get("confirmed"),
                     reason=document.get("reason"),
-                    preview_id=document.get("previewId"),
                     storage_id=resource.get("storageId"),
                 )
                 eligibility = self._unattended_grants.project_eligibility(
@@ -2853,7 +2590,6 @@ class MediaFlowApi:
                     configuration_snapshot_id=active.revision_id,
                     configuration_snapshot_digest=active.digest,
                     configuration_snapshot_version=active.version,
-                    preview_id=grant.preview_id,
                     storage_id=resource.get("storageId"),
                     max_items_per_run=grant.max_items_per_run,
                     principal_id=grant.granting_principal,
@@ -3102,11 +2838,6 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = values[-1] if values else None
-            if isinstance(value.get("id"), str):
-                self._invalidate_automation_previews(
-                    value["id"],
-                    "the pinned Automation Task Definition was created or replaced",
-                )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 5
@@ -3154,10 +2885,6 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
-            self._invalidate_automation_previews(
-                parts[4],
-                "the pinned Automation Task Definition was edited",
-            )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 6
@@ -3222,10 +2949,6 @@ class MediaFlowApi:
             response = revision.summary()
             response["configurationRevisionId"] = revision.revision_id
             response["automationTaskDefinition"] = definition
-            self._invalidate_automation_previews(
-                parts[4],
-                f"the pinned Automation Task Definition was {action}",
-            )
             return self._response(start_response, 200, response)
         if (
             len(parts) == 6
@@ -3233,175 +2956,15 @@ class MediaFlowApi:
             and parts[5] == "preview-analyses"
             and method == "POST"
         ):
-            # Durable exact analysis: the request validates the exact pinned
-            # context, records one durable analysis and returns its identity
-            # promptly.  The expensive walk and Provider batch run in the
-            # resident Processing Worker, so a large definition never blocks
-            # this request and the operator can read progress and cancel safely.
+            # The independent durable exact-analysis admission product is
+            # retired; shared organize analysis runs in the ordinary prepare
+            # flow.  Old inputs get an ordinary not-found after normal auth.
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            if self._preview_analyses is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "durable preview analysis service is unavailable",
-                )
-            self._require_empty_query(environ, "automation preview analysis")
-            document = self._document(environ)
-            if set(document).difference({"revisionId", "admissionRequestId"}):
-                raise ValueError(
-                    "automation preview analysis accepts only an optional revisionId and "
-                    "admissionRequestId"
-                )
-            revision_id = document.get("revisionId")
-            if revision_id is not None and (
-                not isinstance(revision_id, str) or not revision_id.strip()
-            ):
-                raise ValueError("automation preview analysis revisionId must be non-empty text")
-            request_id = document.get("admissionRequestId")
-            if request_id is not None and (
-                not isinstance(request_id, str) or not request_id.strip()
-            ):
-                raise ValueError(
-                    "automation preview analysis admissionRequestId must be non-empty text"
-                )
-            try:
-                analysis = self._preview_analyses.admit_definition(
-                    parts[4],
-                    actor=principal.principal_id,
-                    revision_id=revision_id,
-                    admission_request_id=request_id,
-                )
-            except PreviewAnalysisError as error:
-                return self._preview_analysis_error(start_response, error)
-            return self._response(start_response, 202, self._preview_analysis_document(analysis))
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "preview"
-            and method == "POST"
-        ):
-            self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
-            if self._automation_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "automation Preview service is unavailable",
-                )
-            document = self._document(environ)
-            if set(document).difference({"revisionId"}):
-                raise ValueError("automation Preview accepts only an optional revisionId")
-            revision_id = document.get("revisionId")
-            if revision_id is not None and (
-                not isinstance(revision_id, str) or not revision_id.strip()
-            ):
-                raise ValueError("automation Preview revisionId must be a non-empty string")
-            preview = self._automation_previews.create(
-                parts[4],
-                revision_id=revision_id,
-                actor=principal.principal_id,
-            )
-            return self._response(
+            return self._error(
                 start_response,
-                201,
-                self._automation_preview_document(preview),
-            )
-        if (
-            len(parts) == 6
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "previews"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._automation_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "automation Preview service is unavailable",
-                )
-            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(query).difference({"limit"}) or any(len(value) != 1 for value in query.values()):
-                raise ValueError("automation Preview list query accepts one limit field")
-            limit = self._parse_bounded_limit(query.get("limit", ["100"])[0], "automation Preview")
-            values = self._automation_previews.list_readonly(parts[4], limit=limit)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "definitionId": parts[4],
-                    "items": [self._automation_preview_document(value) for value in values],
-                    "total": len(values),
-                    "truncated": False,
-                },
-            )
-        if (
-            len(parts) == 7
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "previews"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._automation_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "automation Preview service is unavailable",
-                )
-            preview = self._automation_previews.get_readonly(parts[6])
-            return self._response(
-                start_response,
-                200,
-                self._automation_preview_document(preview),
-            )
-        if (
-            len(parts) == 8
-            and parts[:4] == ["api", "v1", "automation", "task-definitions"]
-            and parts[5] == "previews"
-            and parts[7] == "items"
-            and method == "GET"
-        ):
-            self._require(principal, ApiPermission.READ)
-            if self._automation_previews is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "automation Preview service is unavailable",
-                )
-            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-            if set(query).difference({"limit", "after"}) or any(
-                len(value) != 1 for value in query.values()
-            ):
-                raise ValueError("automation Preview item query accepts limit and after once")
-            try:
-                limit = int(query.get("limit", ["100"])[0])
-            except ValueError as error:
-                raise ValueError("automation Preview item limit must be an integer") from error
-            if limit < 1 or limit > 500:
-                raise ValueError("automation Preview item limit must be between 1 and 500")
-            after_value = query.get("after", [None])[0]
-            if after_value is not None:
-                try:
-                    after = int(after_value)
-                except ValueError as error:
-                    raise ValueError("automation Preview item cursor must be an integer") from error
-            else:
-                after = None
-            items, total, next_after = self._automation_previews.items(
-                parts[6], limit=limit, after=after
-            )
-            return self._response(
-                start_response,
-                200,
-                {
-                    "previewId": parts[6],
-                    "items": [item.document() for item in items],
-                    "total": total,
-                    "nextAfter": next_after,
-                },
+                404,
+                "not_found",
+                "durable preview analysis is not available",
             )
         if parts[:5] == [
             "api",
@@ -4346,11 +3909,6 @@ class MediaFlowApi:
                 values = revision.document.get("automationTaskDefinitions", [])
                 if values:
                     response["automationTaskDefinition"] = values[-1]
-                if isinstance(value.get("id"), str):
-                    self._invalidate_automation_previews(
-                        value["id"],
-                        "the pinned Automation Task Definition was created or replaced",
-                    )
             elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
                 values = revision.document.get("webhooks", [])
                 if values:
@@ -4424,10 +3982,6 @@ class MediaFlowApi:
             elif kind is ConfigurationObjectKind.SCHEDULE:
                 if updated is not None:
                     response["automationTaskDefinition"] = updated
-                self._invalidate_automation_previews(
-                    parts[7],
-                    f"the pinned Automation Task Definition was {action}",
-                )
             elif updated is not None:
                 response["object"] = updated
             return self._response(start_response, 200, response)
@@ -4498,10 +4052,6 @@ class MediaFlowApi:
                         if item.get("id") == parts[7]
                     ),
                     None,
-                )
-                self._invalidate_automation_previews(
-                    parts[7],
-                    "the pinned Automation Task Definition was edited",
                 )
             elif kind is ConfigurationObjectKind.WEBHOOK_DEFINITION:
                 response["webhook"] = next(
@@ -8823,18 +8373,6 @@ class MediaFlowApi:
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
-        preview_permission = permission(preview, "/ui-v2/operations/preview/new", "Preview")
-        preview_entry = preview_permission or self._readiness_entry(
-            ready=bool(enabled_resources and processing),
-            condition="ready" if enabled_resources and processing else "missing",
-            durable_state="processing chain available"
-            if enabled_resources and processing
-            else "Recognition and policy chain is not configured",
-            next_action=(
-                "configure Recognition, Metadata, Naming, Classification and Organize policies"
-            ),
-            recovery_destination="/ui-v2/configuration",
-        )
         organize_permission = permission(
             preview and execute, "/ui-v2/operations/organize/new", "Organize"
         )
@@ -8927,7 +8465,6 @@ class MediaFlowApi:
             "storageAccess": storage_access,
             "libraryBrowse": browse,
             "directTransfer": transfer,
-            "preview": preview_entry,
             "organize": organize,
             "scheduling": scheduling,
             "notification": notification,
@@ -10559,9 +10096,6 @@ class MediaFlowApi:
         # Determine runtime readiness: the binding has a snapshot_id when a
         # configuration has been activated and loaded.
         runtime_ready = bool(configuration_snapshot_id)
-        preview_service_ready = callable(
-            getattr(self._manual_previews, "create_current_from_storage", None)
-        )
         intent_service_ready = callable(getattr(self._manual_intents, "create", None))
         preview_intent_ready = callable(getattr(self._manual_previews, "create", None))
         execution_service_ready = callable(
@@ -10577,7 +10111,6 @@ class MediaFlowApi:
                 "nextAction": "restore the admitted execution services, then refresh",
             }
         )
-        preview_available = can_preview and runtime_ready and preview_service_ready
         organize_available = (
             can_execute
             and can_preview
@@ -10586,20 +10119,6 @@ class MediaFlowApi:
             and preview_intent_ready
             and execution_service_ready
             and bool(organize_worker["ready"])
-        )
-        preview_reason = (
-            None
-            if preview_available
-            else (
-                "the connected API principal does not hold the manage_manual_organize "
-                "permission required for Preview"
-                if not can_preview
-                else "the Active runtime is unavailable for Preview"
-                if not runtime_ready
-                else "the current-source Preview service is unavailable"
-                if not preview_service_ready
-                else "Preview is unavailable"
-            )
         )
         organize_reason = (
             None
@@ -10653,10 +10172,7 @@ class MediaFlowApi:
         source: dict[str, object] = {}
         selection_required = raw_kind is None
         if raw_kind is None:
-            preview_available = False
             organize_available = False
-
-            preview_reason = "select an exact ResourceLibrary scope before running a Preview"
             organize_reason = "select an exact scope before organizing"
         elif raw_kind == "file":
             if not isinstance(file_id, str) or not file_id.strip():
@@ -10665,15 +10181,10 @@ class MediaFlowApi:
             # from a remembered catalog identity.  This bounded matrix therefore
             # states the exact prerequisite instead of resolving a file ID.
             rl_info = rl_map.get(resource_library_id)
-            preview_available = False
             organize_available = False
             if rl_info is None or not rl_info.get("enabled", False):
-                preview_reason = "the configured ResourceLibrary is not available"
                 organize_reason = "the configured ResourceLibrary is not available"
             else:
-                preview_reason = (
-                    "select the live file from the ResourceLibrary directory to prepare a summary"
-                )
                 organize_reason = (
                     "select the live file from the ResourceLibrary directory to organize it"
                 )
@@ -10684,19 +10195,12 @@ class MediaFlowApi:
                 # Bounded discovery: the operator has not selected an exact
                 # ResourceLibrary yet, so nothing is actionable.
                 selection_required = True
-
-                preview_available = False
                 organize_available = False
-
-                preview_reason = "select an exact ResourceLibrary scope before running a Preview"
                 organize_reason = "select an exact ResourceLibrary scope before organizing"
             else:
                 rl_info = rl_map.get(resource_library_id)
                 if rl_info is None or not rl_info.get("enabled", False):
-                    preview_available = False
                     organize_available = False
-
-                    preview_reason = "the configured ResourceLibrary is not available"
                     organize_reason = "the configured ResourceLibrary is not available"
                 else:
                     source = {
@@ -10726,18 +10230,6 @@ class MediaFlowApi:
                         ),
                     },
                     "actions": {
-                        "preview": {
-                            "available": preview_available,
-                            "reason": preview_reason,
-                            "method": "POST",
-                            "path": "/api/v1/operations/previews",
-                            "nextAction": (
-                                "run a zero-mutation Preview"
-                                if preview_available
-                                else preview_reason
-                            ),
-                            "modes": [],
-                        },
                         "organize": {
                             "available": organize_available,
                             "reason": organize_reason,
@@ -10758,7 +10250,7 @@ class MediaFlowApi:
                         },
                     },
                     "limits": {
-                        "previewMaxItems": MAX_MANUAL_PREVIEW_ITEMS if can_preview else 0,
+                        "organizeMaxItems": MAX_MANUAL_INTENT_ITEMS if can_preview else 0,
                     },
                 }
             ),
@@ -12354,7 +11846,6 @@ class MediaFlowApi:
         intent_id = document.get("intentId")
         items = [item for item in document.get("items") or [] if isinstance(item, dict)]
         open_intent = document.get("status") == "open"
-        ready_items = [item for item in items if item.get("status") == "ready"]
         manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
         execute_permitted = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
         # The bounded, source-grounded identity options per item.  These are
@@ -12370,15 +11861,6 @@ class MediaFlowApi:
             None
             if open_intent and items
             else "this manual intent is closed and no longer accepts a choice edit"
-        )
-        preview_reason = self._organize_unavailable_reason(
-            manage_permitted,
-            ApiPermission.MANAGE_MANUAL_ORGANIZE,
-            "the connected API principal cannot create an exact Preview for this intent",
-        ) or (
-            None
-            if open_intent and ready_items and len(ready_items) == len(items)
-            else "every intent item must be current and ready before a zero-mutation Preview"
         )
         document["actions"] = {
             "choice": {
@@ -12399,23 +11881,6 @@ class MediaFlowApi:
                     "edit one item choice with its current intent and item versions"
                     if choice_reason is None
                     else "reopen this intent from current Files if its choices must change"
-                ),
-            },
-            "preview": {
-                "available": preview_reason is None,
-                "reason": preview_reason,
-                "method": "POST",
-                "path": (
-                    f"/api/v1/operations/organize/intents/{intent_id}/previews"
-                    if isinstance(intent_id, str) and intent_id
-                    else None
-                ),
-                "sideEffects": "none",
-                "durableOutcome": "a durable zero-mutation Preview revision is stored",
-                "nextAction": (
-                    "create a fresh exact Preview of the reviewed choices"
-                    if preview_reason is None
-                    else "reload the current intent and repair the blocked item evidence"
                 ),
             },
             "execute": {
@@ -12718,19 +12183,6 @@ class MediaFlowApi:
         limit = getattr(self._manual_intents, "MAX_ITEMS", None)
         return limit if isinstance(limit, int) else 0
 
-    def _automation_preview_document(self, preview, *, item_limit: int = 100) -> dict:
-        document = redact_manual_value(preview.document())
-        items = document.pop("items", [])
-        document["items"] = items[:item_limit]
-        document["itemTotal"] = len(items)
-        document["itemsTruncated"] = len(items) > item_limit
-        return document
-
-    def _invalidate_automation_previews(self, definition_id: str, reason: str) -> None:
-        if self._automation_previews is None:
-            return
-        self._automation_previews.invalidate(definition_id, reason)
-
     _AUTOMATION_OPERATOR_DENIED_KEYS = frozenset(
         {
             "plan",
@@ -12879,27 +12331,6 @@ class MediaFlowApi:
                 "sideEffects": "none",
                 "durableOutcome": None,
                 "nextAction": "inspect the bounded occurrence history and its linked work",
-            },
-            "preview": {
-                "available": dry_run and in_active,
-                "reason": (
-                    not_active_reason
-                    if not in_active
-                    else self._organize_unavailable_reason(
-                        dry_run,
-                        ApiPermission.SUBMIT_DRY_RUN,
-                        "the connected API principal cannot run a zero-mutation Automation Preview",
-                    )
-                ),
-                "method": "POST",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/preview",
-                "sideEffects": "none",
-                "durableOutcome": (
-                    "a durable zero-mutation Preview of the exact Active definition is stored"
-                ),
-                "nextAction": (
-                    "create the exact Preview after reviewing the current schedule and scope"
-                ),
             },
             "grantState": {
                 "available": True,
@@ -13122,100 +12553,6 @@ class MediaFlowApi:
         operator["actions"] = actions
         return operator
 
-    def _automation_preview_operator_document(
-        self,
-        preview,
-        *,
-        principal: ResolvedApiPrincipal,
-        eligibility: dict | None = None,
-    ) -> dict:
-        """Bounded, digest-free V2 operator projection for one exact Preview."""
-
-        document = self._automation_preview_document(preview)
-        operator = self._strip_automation_operator_evidence(document, drop_definition_version=True)
-        definition_id = str(operator.get("definitionId", ""))
-        preview_id = str(operator.get("previewId", ""))
-        grant_permitted = ApiPermission.GRANT_UNATTENDED_EXECUTION in principal.permissions
-        preview_ready = operator.get("current") is True and operator.get("zeroMutation") is True
-        operator["actions"] = {
-            "detail": {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": (
-                    f"/api/v1/operations/automation/task-definitions/{definition_id}"
-                    f"/previews/{preview_id}"
-                ),
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "inspect the exact Preview evidence and its items",
-            },
-            "items": {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": (
-                    f"/api/v1/operations/automation/task-definitions/{definition_id}"
-                    f"/previews/{preview_id}/items"
-                ),
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "page the bounded Preview item evidence",
-            },
-            "definition": {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": (f"/api/v1/operations/automation/task-definitions/{definition_id}"),
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "reopen the durable definition behind this Preview",
-            },
-            "grantState": {
-                "available": True,
-                "reason": None,
-                "method": "GET",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant-state",
-                "sideEffects": "none",
-                "durableOutcome": None,
-                "nextAction": "read the current unattended grant state and its eligibility",
-            },
-            "grant": {
-                "available": grant_permitted and preview_ready,
-                "reason": (
-                    None
-                    if grant_permitted and preview_ready
-                    else (
-                        self._organize_unavailable_reason(
-                            grant_permitted,
-                            ApiPermission.GRANT_UNATTENDED_EXECUTION,
-                            "the connected API principal cannot grant unattended "
-                            "execution authority",
-                        )
-                        if not grant_permitted
-                        else (
-                            "this Preview is historical, truncated or incomplete and "
-                            "cannot support unattended authority; run a fresh exact Preview"
-                        )
-                    )
-                ),
-                "method": "POST",
-                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant",
-                "requiresConfirmation": True,
-                "sideEffects": "none",
-                "durableOutcome": (
-                    "a persistent scoped unattended execution grant bound to this exact "
-                    "Preview is stored and audited"
-                ),
-                "nextAction": (
-                    "review the grant eligibility and explicitly confirm the unattended grant"
-                ),
-            },
-        }
-        if eligibility is not None:
-            operator["grantEligibility"] = self._strip_automation_operator_evidence(eligibility)
-        return operator
-
     def _automation_grant_eligibility(
         self,
         active,
@@ -13234,22 +12571,11 @@ class MediaFlowApi:
             ),
             None,
         )
-        candidate_preview_id = None
-        if persisted is not None and persisted.status.value == "active":
-            candidate_preview_id = persisted.preview_id
-        elif self._automation_previews is not None:
-            try:
-                candidate_preview_id = self._automation_previews.latest_readonly(
-                    definition.definition_id
-                ).preview_id
-            except Exception:
-                candidate_preview_id = None
         return self._unattended_grants.project_eligibility(
             definition,
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
             configuration_snapshot_version=active.version,
-            preview_id=candidate_preview_id,
             storage_id=resource.get("storageId") if resource is not None else None,
             max_items_per_run=(
                 persisted.max_items_per_run
@@ -14575,15 +13901,6 @@ class MediaFlowApi:
             return self._automation_definition_operator_occurrences(
                 parts[5], environ, start_response, principal
             )
-        if len(parts) == 8 and parts[6] == "previews":
-            self._require_empty_query(environ, "operations automation Preview")
-            return self._automation_definition_operator_preview(
-                parts[5], parts[7], start_response, principal
-            )
-        if len(parts) == 9 and parts[6] == "previews" and parts[8] == "items":
-            return self._automation_definition_operator_preview_items(
-                parts[5], parts[7], environ, start_response
-            )
         return self._error(start_response, 404, "not_found", "route was not found")
 
     def _automation_run_once_projection(
@@ -14812,15 +14129,16 @@ class MediaFlowApi:
                 return self._discovery_step_error(start_response, error)
         if action == "finalize" and method == "POST":
             # Freeze the complete bounded manifest and create its exact
-            # zero-mutation Preview.  A budget/safety-limited walk is refused
-            # here rather than executed as a truncated prefix.
+            # zero-mutation Preview through the shared organize analysis chain.
+            # A budget/safety-limited walk is refused here rather than executed
+            # as a truncated prefix.
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             self._require_empty_query(environ, "automation Run once finalize")
             document = self._document(environ)
             if set(document) != {"expectedVersion"}:
                 raise ValueError("automation Run once finalize requires only expectedVersion")
             try:
-                frozen, preview, analysis = service.finalize(
+                frozen, preview = service.finalize(
                     discovery_id,
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
@@ -14830,159 +14148,269 @@ class MediaFlowApi:
             payload = service.document(frozen)
             payload["intentId"] = frozen.intent_id
             if preview is not None:
-                # Inline exact Preview (no durable analysis service configured).
-                payload["preview"] = self._automation_preview_document(preview)
+                payload["preview"] = self._manual_preview_document(preview)
                 payload["previewId"] = preview.preview_id
-                # The frozen manifest's exact zero-mutation Preview is the
-                # *manual* Preview over the frozen intent, so the operator
-                # continues on the existing manual Organize Preview surface.
-                # Navigating to the definition-Preview route would read a
-                # different repository and never show this Preview.
                 payload["previewPath"] = f"/operations/organize/preview/{preview.preview_id}"
                 payload["analysisId"] = None
                 payload["analysisPath"] = None
-            elif analysis is not None:
-                # The expensive exact analysis was deferred to the resident
-                # Worker: the operator reads a durable analysis identity now and
-                # the frozen manifest's Preview appears when it completes.
-                payload["analysisId"] = analysis.analysis_id
-                payload["analysisPath"] = (
-                    f"/operations/automation/preview-analyses/{analysis.analysis_id}"
-                )
-                payload["analysis"] = self._preview_analysis_document(analysis)
-                payload["previewId"] = None
-                payload["previewPath"] = None
             return self._response(start_response, 201, payload)
         return self._error(start_response, 404, "not_found", "route was not found")
 
-    def _preview_analysis_detail_projection(
+    def _automation_definition_activate_checked_draft(
         self,
-        analysis_id: str,
-        action: str | None,
-        method: str,
+        definition_id: str,
         environ: dict,
         start_response: Callable,
         principal: ResolvedApiPrincipal,
-    ):
-        """Read or cooperatively control one durable exact analysis.
+    ) -> None:
+        """Checked-activate the exact open successor Draft that owns this definition.
 
-        The durable identity is the analysis id the admission returned, so a
-        reload or reconnect restores the same work without re-walking sources.
-        Controls settle the record at a safe boundary and never publish a
-        Preview; the analysis itself remains metadata-only and zero mutation.
+        The browser supplies the Draft's exact advertised revision identity and
+        optimistic version — never a digest. The action is bound to that exact
+        Draft revision, the Active base is pinned, and the Draft's changes are
+        compared with the Active document so a revision that touches anything
+        outside the Automation Task Definition boundary is rejected before any
+        activation, and so the section changes only at the reviewed
+        definition's exact identity — a sibling definition can never be added,
+        removed or modified while riding along. Because the confinement
+        comparison proves every other section and every other definition is
+        byte-identical to the live Active configuration, the published
+        configuration carries no new Storage, strategy or destination
+        semantics. No Scan, Job, Task or occurrence is started by activation,
+        and a Draft-only definition (newly created or copied) is activatable
+        exactly like an edited Active definition.
         """
 
-        service = getattr(self, "_preview_analyses", None)
-        if service is None:
+        if self._configuration_service is None or self._configuration_objects is None:
             return self._error(
                 start_response,
                 503,
                 "service_unavailable",
-                "durable preview analysis service is unavailable",
-                details={
-                    "durableState": "no_work_started",
-                    "sideEffects": "none",
-                    "retrySafe": True,
-                    "nextAction": "restore the durable analysis service and retry",
-                },
+                "managed configuration service is unavailable",
             )
-        if action is None and method == "GET":
-            self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "preview analysis detail")
-            try:
-                analysis = service.get(analysis_id)
-            except PreviewAnalysisError as error:
-                return self._preview_analysis_error(start_response, error)
-            return self._response(start_response, 200, self._preview_analysis_document(analysis))
-        if action in {"pause", "cancel", "resume"} and method == "POST":
-            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            self._require_empty_query(environ, "preview analysis control")
-            document = self._document(environ)
-            if set(document) != {"expectedVersion"}:
-                raise ValueError("preview analysis control requires only expectedVersion")
-            try:
-                if action == "pause":
-                    analysis = service.request_pause(
-                        analysis_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                elif action == "cancel":
-                    analysis = service.request_cancel(
-                        analysis_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-                else:
-                    analysis = service.resume(
-                        analysis_id,
-                        actor=principal.principal_id,
-                        expected_version=document["expectedVersion"],
-                    )
-            except PreviewAnalysisError as error:
-                return self._preview_analysis_error(start_response, error)
-            return self._response(start_response, 200, self._preview_analysis_document(analysis))
-        return self._error(start_response, 404, "not_found", "route was not found")
-
-    def _preview_analysis_document(self, analysis) -> dict:
-        document = redact_manual_value(analysis.document())
-        document["zeroMutation"] = True
-        document["sideEffects"] = "none"
-        if analysis.preview_id is None:
-            document["previewPath"] = None
-        elif analysis.kind is PreviewAnalysisKind.DEFINITION:
-            document["previewPath"] = (
-                f"/operations/automation/preview/{analysis.definition_id}/{analysis.preview_id}"
+        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+        self._require_empty_query(environ, "operations automation draft activation")
+        document = self._document(environ)
+        if set(document) != {"expectedRevisionId", "expectedVersion"}:
+            raise ValueError(
+                "automation draft activation requires expectedRevisionId and expectedVersion only"
             )
-        else:
-            document["previewPath"] = f"/operations/organize/preview/{analysis.preview_id}"
-        document["actions"] = self._preview_analysis_actions(analysis)
-        return document
-
-    @staticmethod
-    def _preview_analysis_actions(analysis) -> dict:
-        active = analysis.status.value in {"queued", "running"}
-        return {
-            "pause": {
-                "available": active and not analysis.pause_requested,
-                "method": "POST",
-                "sideEffects": "none",
-            },
-            "resume": {
-                "available": analysis.status.value == "paused",
-                "method": "POST",
-                "sideEffects": "none",
-            },
-            "cancel": {
-                "available": (
-                    analysis.status.value in {"queued", "running", "paused"}
-                    and not analysis.cancel_requested
+        expected_revision_id = document["expectedRevisionId"]
+        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+            raise ValueError(
+                "automation draft activation expectedRevisionId must be a non-empty string"
+            )
+        expected = document["expectedVersion"]
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            raise ValueError("automation draft activation expectedVersion must be an integer")
+        active = self._configuration_service.active()
+        try:
+            draft = self._configuration_service.latest_open_draft_containing(
+                "automationTaskDefinitions", definition_id
+            )
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if active is None:
+            raise UnattendedExecutionGrantError(
+                "no Active configuration exists; managed configuration setup owns the first Draft",
+                code="automation_active_missing",
+                status=409,
+                durable_state="no configuration was activated",
+                next_action="complete managed configuration setup, then stage a successor Draft",
+            )
+        if draft is None:
+            raise UnattendedExecutionGrantError(
+                "no open successor Draft contains this definition",
+                code="automation_draft_required",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action="create a successor Draft, edit the definition, then activate",
+            )
+        if draft.revision_id != expected_revision_id:
+            raise ConfigurationVersionConflict(
+                "the submitted Draft identity does not match the current open successor "
+                "Draft; reload the Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action="reload the Draft document, then activate the exact advertised "
+                "Draft revision again",
+            )
+        if draft.version != expected:
+            raise ConfigurationVersionConflict(
+                "the successor Draft changed before activation; reload the Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action="reload the Draft, then activate the current version again",
+            )
+        if draft.base_active_revision_id != active.revision_id:
+            raise ConfigurationVersionConflict(
+                "the Active configuration changed after this Draft was created; "
+                "stage a fresh successor Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action="create a fresh successor Draft from the current Active "
+                "configuration, then edit, validate and activate it",
+            )
+        changed = self._automation_draft_changed_sections(draft.document, active.document)
+        if changed - {"automationTaskDefinitions"}:
+            raise UnattendedExecutionGrantError(
+                "this Draft changes configuration outside the Automation Task Definition boundary",
+                code="automation_activation_out_of_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "remove the unrelated configuration changes from the Draft, or use the "
+                    "managed configuration activation journey with explicit review"
                 ),
-                "method": "POST",
-                "sideEffects": "none",
-            },
-            "preview": {
-                "available": analysis.preview_id is not None,
-                "method": "GET",
-                "sideEffects": "none",
-                "nextAction": "open the exact zero-mutation Preview",
-            },
-        }
-
-    def _preview_analysis_error(self, start_response: Callable, error) -> object:
-        return self._error(
+            )
+        self._require_automation_definition_only_change(
+            active.document, draft.document, definition_id
+        )
+        # The exact-revision binding, Active-base pin and Automation-only
+        # confinement above prove every non-Automation section and every other
+        # Automation definition is byte-identical to the live Active
+        # configuration, so no new Storage, strategy or destination semantics
+        # are published by this activation. The managed activation revalidates
+        # the exact revision digest, optimistic version and document loader
+        # atomically before publishing.
+        activated = self._configuration_service.activate(
+            draft.revision_id,
+            expected_version=draft.version,
+            actor=principal.principal_id,
+        )
+        self._refresh_configuration_binding()
+        active_after = self._configuration_service.active()
+        definition_after = next(
+            (
+                item
+                for item in activated.document.get("automationTaskDefinitions", [])
+                if isinstance(item, dict) and item.get("id") == definition_id
+            ),
+            None,
+        )
+        return self._response(
             start_response,
-            getattr(error, "status", 409),
-            getattr(error, "code", "preview_analysis_rejected"),
-            str(error),
-            details={
-                "durableState": "unchanged",
-                "sideEffects": "none",
-                "retrySafe": True,
-                "nextAction": getattr(error, "next_action", None),
-                **getattr(error, "details", {}),
+            200,
+            {
+                "activatedRevisionId": activated.revision_id,
+                "activatedVersion": activated.version,
+                "revisionSequence": activated.revision_sequence,
+                "activeConfiguration": self._automation_active_configuration(active_after),
+                "definition": (
+                    self._strip_automation_operator_evidence(definition_after)
+                    if definition_after is not None
+                    else None
+                ),
             },
         )
+
+    @staticmethod
+    def _automation_definition_identity_map(document: object) -> dict[str, object] | None:
+        """Definition id → entry map for the automationTaskDefinitions section.
+
+        Returns ``None`` when the section is missing or any entry is malformed
+        (not an object, a non-string id, or a duplicated id), so the caller can
+        fail closed instead of activating an unverifiable boundary.
+        """
+
+        if not isinstance(document, dict):
+            return None
+        section = document.get("automationTaskDefinitions")
+        if not isinstance(section, list):
+            return None
+        definitions: dict[str, object] = {}
+        for entry in section:
+            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
+                return None
+            entry_id = entry["id"]
+            if entry_id in definitions:
+                return None
+            definitions[entry_id] = entry
+        return definitions
+
+    @staticmethod
+    def _automation_draft_changed_sections(
+        draft_document: object, active_document: object
+    ) -> set[str]:
+        """Top-level configuration sections the Draft changes versus Active.
+
+        A successor Draft is seeded as an exact copy of the Active document,
+        so any differing top-level section is a Draft change. Comparing whole
+        sections keeps the boundary exact without interpreting nested object
+        semantics.
+        """
+
+        draft = draft_document if isinstance(draft_document, dict) else {}
+        base = active_document if isinstance(active_document, dict) else {}
+        return {
+            key
+            for key in set(draft) | set(base)
+            if key not in draft or key not in base or draft[key] != base[key]
+        }
+
+    def _require_automation_definition_only_change(
+        self,
+        active_document: object,
+        draft_document: object,
+        definition_id: str,
+    ) -> None:
+        """Fail closed unless the Draft's only Automation change is this definition.
+
+        The section-level confinement proves no other configuration section
+        changed; this comparison proves the ``automationTaskDefinitions``
+        section changed only at the reviewed definition's exact identity. Every
+        other definition must be present in both documents and byte-identical,
+        so a sibling definition cannot be added, removed or modified while
+        riding along with the reviewed activation — including the create/copy
+        case, where the new or copied definition must be the sole Automation
+        change. Malformed sections fail closed: an unverifiable boundary is
+        never activated.
+        """
+
+        active_definitions = self._automation_definition_identity_map(active_document)
+        draft_definitions = self._automation_definition_identity_map(draft_document)
+        if active_definitions is None or draft_definitions is None:
+            raise UnattendedExecutionGrantError(
+                "the Automation Task Definition section is malformed; activation "
+                "cannot verify its exact boundary",
+                code="automation_activation_out_of_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "create a fresh successor Draft from the current Active "
+                    "configuration, then edit, validate and activate it"
+                ),
+            )
+        unexpected = sorted(
+            candidate_id
+            for candidate_id in set(active_definitions) | set(draft_definitions)
+            if candidate_id != definition_id
+            and (
+                candidate_id not in active_definitions
+                or candidate_id not in draft_definitions
+                or draft_definitions[candidate_id] != active_definitions[candidate_id]
+            )
+        )
+        if unexpected:
+            raise UnattendedExecutionGrantError(
+                "this Draft changes other Automation Task Definitions beyond the "
+                "reviewed definition",
+                code="automation_activation_definition_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "remove the other definition changes from this Draft, then edit, "
+                    "validate and activate one definition per Draft"
+                ),
+            )
 
     def _automation_definition_focused_projection(
         self,
@@ -15177,32 +14605,17 @@ class MediaFlowApi:
                 ),
             )
         if len(parts) == 7 and parts[6] == "preview-analyses":
-            # Durable exact analysis on the focused lifecycle base.  The
-            # request records one durable analysis and returns its identity
-            # promptly; the resident Worker performs the walk and Provider
-            # batch.  Reads and controls stay separate from the analysis itself.
+            # The independent durable exact-analysis admission product is
+            # retired; shared organize analysis runs in the ordinary prepare
+            # flow.  Old inputs get an ordinary not-found after normal auth.
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
             self._require(principal, ApiPermission.READ)
-            self._require_empty_query(environ, "automation preview analysis list")
-            if self._preview_analyses is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "service_unavailable",
-                    "durable preview analysis service is unavailable",
-                )
-            values = self._preview_analyses.list(
-                actor=principal.principal_id, definition_id=definition_id, limit=50
-            )
-            return self._response(
+            return self._error(
                 start_response,
-                200,
-                {
-                    "definitionId": definition_id,
-                    "items": [self._preview_analysis_document(value) for value in values],
-                    "total": len(values),
-                },
+                404,
+                "not_found",
+                "durable preview analysis is not available",
             )
         if len(parts) == 7 and parts[6] == "run-once":
             # Definition-bound Run once on the focused lifecycle base.  The
@@ -16079,355 +15492,6 @@ class MediaFlowApi:
             document["jobId"] = None
             items.append(document)
         return items
-
-    def _automation_definition_operator_preview(
-        self,
-        definition_id: str,
-        preview_id: str,
-        start_response: Callable,
-        principal: ResolvedApiPrincipal,
-    ) -> None:
-        if self._automation_previews is None:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "automation Preview service is unavailable",
-            )
-        preview = self._automation_previews.get_readonly(preview_id)
-        if preview.definition_id != definition_id:
-            raise LookupError(
-                f"automation Preview {preview_id!r} does not belong to definition {definition_id!r}"
-            )
-        eligibility = None
-        if self._configuration_service is not None and self._configuration_objects is not None:
-            active, _raw, definition = self._automation_definition_context(
-                environ={}, definition_id=definition_id
-            )
-            persisted = self._unattended_grants.get_for_definition(definition.definition_id)
-            eligibility = self._automation_grant_eligibility(
-                active, definition, principal, persisted=persisted
-            )
-        return self._response(
-            start_response,
-            200,
-            self._automation_preview_operator_document(
-                preview, principal=principal, eligibility=eligibility
-            ),
-        )
-
-    def _automation_definition_activate_checked_draft(
-        self,
-        definition_id: str,
-        environ: dict,
-        start_response: Callable,
-        principal: ResolvedApiPrincipal,
-    ) -> None:
-        """Checked-activate the exact open successor Draft that owns this definition.
-
-        The browser supplies the Draft's exact advertised revision identity and
-        optimistic version — never a digest. The action is bound to that exact
-        Draft revision, the Active base is pinned, and the Draft's changes are
-        compared with the Active document so a revision that touches anything
-        outside the Automation Task Definition boundary is rejected before any
-        activation, and so the section changes only at the reviewed
-        definition's exact identity — a sibling definition can never be added,
-        removed or modified while riding along. Because the confinement
-        comparison proves every other section and every other definition is
-        byte-identical to the live Active configuration, the published
-        configuration carries no new Storage, strategy or destination
-        semantics. No Scan, Job, Task or occurrence is started by activation,
-        and a Draft-only definition (newly created or copied) is activatable
-        exactly like an edited Active definition.
-        """
-
-        if self._configuration_service is None or self._configuration_objects is None:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
-        self._require_empty_query(environ, "operations automation draft activation")
-        document = self._document(environ)
-        if set(document) != {"expectedRevisionId", "expectedVersion"}:
-            raise ValueError(
-                "automation draft activation requires expectedRevisionId and expectedVersion only"
-            )
-        expected_revision_id = document["expectedRevisionId"]
-        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
-            raise ValueError(
-                "automation draft activation expectedRevisionId must be a non-empty string"
-            )
-        expected = document["expectedVersion"]
-        if isinstance(expected, bool) or not isinstance(expected, int):
-            raise ValueError("automation draft activation expectedVersion must be an integer")
-        active = self._configuration_service.active()
-        try:
-            draft = self._configuration_service.latest_open_draft_containing(
-                "automationTaskDefinitions", definition_id
-            )
-        except Exception:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "managed configuration service is unavailable",
-            )
-        if active is None:
-            raise UnattendedExecutionGrantError(
-                "no Active configuration exists; managed configuration setup owns the first Draft",
-                code="automation_active_missing",
-                status=409,
-                durable_state="no configuration was activated",
-                next_action="complete managed configuration setup, then stage a successor Draft",
-            )
-        if draft is None:
-            raise UnattendedExecutionGrantError(
-                "no open successor Draft contains this definition",
-                code="automation_draft_required",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action="create a successor Draft, edit the definition, then activate",
-            )
-        if draft.revision_id != expected_revision_id:
-            raise ConfigurationVersionConflict(
-                "the submitted Draft identity does not match the current open successor "
-                "Draft; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="reload the Draft document, then activate the exact advertised "
-                "Draft revision again",
-            )
-        if draft.version != expected:
-            raise ConfigurationVersionConflict(
-                "the successor Draft changed before activation; reload the Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="reload the Draft, then activate the current version again",
-            )
-        if draft.base_active_revision_id != active.revision_id:
-            raise ConfigurationVersionConflict(
-                "the Active configuration changed after this Draft was created; "
-                "stage a fresh successor Draft",
-                revision_id=draft.revision_id,
-                current_version=draft.version,
-                durable_state="draft_preserved",
-                next_action="create a fresh successor Draft from the current Active "
-                "configuration, then edit, validate and activate it",
-            )
-        changed = self._automation_draft_changed_sections(draft.document, active.document)
-        if changed - {"automationTaskDefinitions"}:
-            raise UnattendedExecutionGrantError(
-                "this Draft changes configuration outside the Automation Task Definition boundary",
-                code="automation_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the unrelated configuration changes from the Draft, or use the "
-                    "managed configuration activation journey with explicit review"
-                ),
-            )
-        self._require_automation_definition_only_change(
-            active.document, draft.document, definition_id
-        )
-        # The exact-revision binding, Active-base pin and Automation-only
-        # confinement above prove every non-Automation section and every other
-        # Automation definition is byte-identical to the live Active
-        # configuration, so no new Storage, strategy or destination semantics
-        # are published by this activation. The managed activation revalidates
-        # the exact revision digest, optimistic version and document loader
-        # atomically before publishing.
-        activated = self._configuration_service.activate(
-            draft.revision_id,
-            expected_version=draft.version,
-            actor=principal.principal_id,
-        )
-        self._refresh_configuration_binding()
-        active_after = self._configuration_service.active()
-        definition_after = next(
-            (
-                item
-                for item in activated.document.get("automationTaskDefinitions", [])
-                if isinstance(item, dict) and item.get("id") == definition_id
-            ),
-            None,
-        )
-        return self._response(
-            start_response,
-            200,
-            {
-                "activatedRevisionId": activated.revision_id,
-                "activatedVersion": activated.version,
-                "revisionSequence": activated.revision_sequence,
-                "activeConfiguration": self._automation_active_configuration(active_after),
-                "definition": (
-                    self._strip_automation_operator_evidence(definition_after)
-                    if definition_after is not None
-                    else None
-                ),
-            },
-        )
-
-    def _require_automation_definition_only_change(
-        self,
-        active_document: object,
-        draft_document: object,
-        definition_id: str,
-    ) -> None:
-        """Fail closed unless the Draft's only Automation change is this definition.
-
-        The section-level confinement proves no other configuration section
-        changed; this comparison proves the ``automationTaskDefinitions``
-        section changed only at the reviewed definition's exact identity. Every
-        other definition must be present in both documents and byte-identical,
-        so a sibling definition cannot be added, removed or modified while
-        riding along with the reviewed activation — including the create/copy
-        case, where the new or copied definition must be the sole Automation
-        change. Malformed sections fail closed: an unverifiable boundary is
-        never activated.
-        """
-
-        active_definitions = self._automation_definition_identity_map(active_document)
-        draft_definitions = self._automation_definition_identity_map(draft_document)
-        if active_definitions is None or draft_definitions is None:
-            raise UnattendedExecutionGrantError(
-                "the Automation Task Definition section is malformed; activation "
-                "cannot verify its exact boundary",
-                code="automation_activation_out_of_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "create a fresh successor Draft from the current Active "
-                    "configuration, then edit, validate and activate it"
-                ),
-            )
-        unexpected = sorted(
-            candidate_id
-            for candidate_id in set(active_definitions) | set(draft_definitions)
-            if candidate_id != definition_id
-            and (
-                candidate_id not in active_definitions
-                or candidate_id not in draft_definitions
-                or draft_definitions[candidate_id] != active_definitions[candidate_id]
-            )
-        )
-        if unexpected:
-            raise UnattendedExecutionGrantError(
-                "this Draft changes other Automation Task Definitions beyond the "
-                "reviewed definition",
-                code="automation_activation_definition_scope",
-                status=409,
-                durable_state="active configuration preserved",
-                next_action=(
-                    "remove the other definition changes from this Draft, then edit, "
-                    "validate and activate one definition per Draft"
-                ),
-            )
-
-    @staticmethod
-    def _automation_definition_identity_map(document: object) -> dict[str, object] | None:
-        """Definition id → entry map for the automationTaskDefinitions section.
-
-        Returns ``None`` when the section is missing or any entry is malformed
-        (not an object, a non-string id, or a duplicated id), so the caller can
-        fail closed instead of activating an unverifiable boundary.
-        """
-
-        if not isinstance(document, dict):
-            return None
-        section = document.get("automationTaskDefinitions")
-        if not isinstance(section, list):
-            return None
-        definitions: dict[str, object] = {}
-        for entry in section:
-            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
-                return None
-            entry_id = entry["id"]
-            if entry_id in definitions:
-                return None
-            definitions[entry_id] = entry
-        return definitions
-
-    @staticmethod
-    def _automation_draft_changed_sections(
-        draft_document: object, active_document: object
-    ) -> set[str]:
-        """Top-level configuration sections the Draft changes versus Active.
-
-        A successor Draft is seeded as an exact copy of the Active document,
-        so any differing top-level section is a Draft change. Comparing whole
-        sections keeps the boundary exact without interpreting nested object
-        semantics.
-        """
-
-        draft = draft_document if isinstance(draft_document, dict) else {}
-        base = active_document if isinstance(active_document, dict) else {}
-        return {
-            key
-            for key in set(draft) | set(base)
-            if key not in draft or key not in base or draft[key] != base[key]
-        }
-
-    def _automation_definition_operator_preview_items(
-        self,
-        definition_id: str,
-        preview_id: str,
-        environ: dict,
-        start_response: Callable,
-    ) -> None:
-        if self._automation_previews is None:
-            return self._error(
-                start_response,
-                503,
-                "service_unavailable",
-                "automation Preview service is unavailable",
-            )
-        preview = self._automation_previews.get_readonly(preview_id)
-        if preview.definition_id != definition_id:
-            raise LookupError(
-                f"automation Preview {preview_id!r} does not belong to definition {definition_id!r}"
-            )
-        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        if set(query).difference({"limit", "after"}) or any(
-            len(value) != 1 for value in query.values()
-        ):
-            raise ValueError("automation Preview item query accepts limit and after once")
-        try:
-            limit = int(query.get("limit", ["100"])[0])
-        except ValueError as error:
-            raise ValueError("automation Preview item limit must be an integer") from error
-        if limit < 1 or limit > 500:
-            raise ValueError("automation Preview item limit must be between 1 and 500")
-        after_value = query.get("after", [None])[0]
-        if after_value is not None:
-            try:
-                after = int(after_value)
-            except ValueError as error:
-                raise ValueError("automation Preview item cursor must be an integer") from error
-        else:
-            after = None
-        items, total, next_after = self._automation_previews.items(
-            preview_id, limit=limit, after=after
-        )
-        return self._response(
-            start_response,
-            200,
-            {
-                "previewId": preview_id,
-                "items": [
-                    self._strip_automation_operator_evidence(
-                        item.document(), drop_definition_version=True
-                    )
-                    for item in items
-                ],
-                "total": total,
-                "nextAfter": next_after,
-            },
-        )
 
     # ------------------------------------------------------------------
     # V2 Rules workspace read projection (bounded, secret-free)

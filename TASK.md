@@ -9,7 +9,7 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
@@ -418,8 +418,74 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ## Developer Completion Report
 
-Pending implementation. 报告固定SHA、实际行为/主要取舍、受影响命令/结果及剩余风险；
-不自判PASS，不规划下一Task，不等待B全量门禁。
+```text
+Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
+Candidate Head: recorded by the checkpoint commit on branch main (below)
+Status: READY FOR B REVIEW
+```
+
+### 已交付行为
+
+1. **独立 Preview 产品完整退出**。删除 `application/preview_analysis.py`、
+   `application/automation_task_definition_preview.py`、
+   `domain/automation_task_definition_preview.py`；`domain/preview_analysis.py` 只保留
+   组织内部分析控制信号与冲突类型。`AutomationCommand.PREVIEW`、`IntervalSchedule`/
+   `CronSchedule` 的 preview 命令、`jobs submit preview`、`batch preview`、`preview`
+   子命令全部移除。
+2. **schema 收敛**。fresh runtime 不再创建 `preview_analyses`、
+   `automation_task_definition_previews`、`automation_task_definition_preview_items`；
+   共享计划证据 `manual_previews`/`manual_preview_items` 与 `media_discoveries` 保留。
+   不 DROP、不清空现存运行库。
+3. **共享分析链统一**。`organize` 不执行模式、Files/新建整理/恢复与 Run once 走同一
+   `ManualOrganizePreviewService`/`OrganizerExecutor` 规划语义；Run once `finalize` 现在
+   内联产出精确计划摘要（不再委派独立 analysis），返回值由 3 元组变为 2 元组。
+4. **Automation 授权去 Preview 依赖**。`UnattendedExecutionGrantService` 的
+   `preview_service`/`preview_id` 移除；授权绑定精确定义指纹、Active revision、工作量和
+   当前 principal 权限，`project_eligibility` 不再要求 Preview 证据。
+5. **入口收网**。Web 路由/页面（PreviewNew/Detail、AutomationPreview、
+   PreviewAnalysis）、API `/api/v1/operations/previews`、`.../preview`、
+   `.../previews`、`.../preview-analyses`、CLI 命令与 `_preview_analysis_worker_context`、
+   Worker dispatch 全部删除；旧输入走普通 not-found / argparse 参数错误 / 共享不支持类型
+   错误，且在 Storage 发现、Provider、准入与许可之前停止。
+6. **测试与 fixture 迁移**。新增 `tests/test_preview_retirement.py`（8 例）覆盖模块不可导入、
+   CLI 普通用法错误、API 普通 not-found、fresh 无专属表、preview 调度值被拒绝；退役产品
+   专属测试改为等义断言（fresh schema、授权边界、快照 pin、C→A 身份）。
+
+### 受影响检查（Developer 实际结果）
+
+```bash
+python3 scripts/check_governance.py                     # PASS
+.venv/bin/python -m unittest discover -s tests -t .     # Ran 2670, OK (skipped=7)
+.venv/bin/python -m ruff check mediaflow/ tests/ scripts/          # All checks passed
+.venv/bin/python -m ruff format --check mediaflow/ tests/ scripts/ # 349 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts          # OK
+git diff --check                                                  # clean
+cd web && npx tsc --noEmit -p tsconfig.json                       # OK
+cd web && npm run test -- run                                     # 78 files, 1149 tests OK
+```
+
+Task 指定的受影响组全部通过：`test_preview_retirement`、`test_scan_retirement`、
+`test_file_index_retirement`、`test_manual_organize_*`、`test_v2_manual_organize`、
+`test_organize_preparation`、`test_recovery_continuation`、`test_scope_continuation`、
+`test_task_center_recovery_lineage`、`test_metadata_correction_continuation`、
+`test_automation_definition_execution`、`test_automation_unattended_grant`、
+`test_automation_authorized_execution_matrix`、`test_configuration_organize`、
+`test_v2_rules_workspace_previews`、`test_task_persistence`、`test_automation_admission`、
+`test_automation_job_fencing`、`test_manual_operations_contract`。
+
+### 未验证 / 剩余风险（交由 B）
+
+- wheel/清洁构建、安装消费者、production Docker、常驻 Worker、release-security、
+  restart-fault 与真实浏览器 T4 门禁未由 Developer 执行（按 workflow 属 B）。
+- `scripts/docker_*` 与 e2e 规格已改为合法整理/授权路径，但未在本机实际运行镜像；
+  `web/tests/e2e/*.python.spec.ts` 中退役产品的三个场景已删除或改写，需 B 在固定候选上
+  重新取证。
+- 历史运行库若曾包含退役专属表不会被删除（按 RO-8 不清空），fresh 库不创建它们。
+- `tests/test_automation_definition_occurrence.py` 的 legacy 迁移用例不再插入退役表数据，
+  改为断言 fresh 不创建；若 B 要求覆盖「旧库含退役表仍可重开」，需另行确认范围。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
+
 
 ## B Review Result
 

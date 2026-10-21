@@ -455,7 +455,13 @@ class ManualPreviewTests(unittest.TestCase):
                 broken.create_current_from_storage(**self.current_request(value.record))
             self.assertEqual((0, 0, 0), self.work_counts(repository))
 
-    def test_api_current_preview_routes_are_strict_shared_and_rbac_protected(self):
+    def test_retired_current_preview_routes_are_ordinary_not_found(self):
+        """The standalone current-source Preview product is retired.
+
+        Its old routes answer as ordinary not-found results after normal
+        authentication and create no durable Preview record.
+        """
+
         operator = ResolvedApiPrincipal(
             "operator",
             "operator-token",
@@ -476,66 +482,14 @@ class ManualPreviewTests(unittest.TestCase):
                 "resourceLibraryId": "library",
                 "relativePath": value.record.path,
             }
-            status, document = request(
-                api,
-                "/api/v1/operations/previews",
-                token="operator-token",
-                method="POST",
-                body=payload,
-            )
-            self.assertEqual(201, status)
-            self.assertEqual("file", document["scopeKind"])
-            # The operator document never publishes the raw occurrence identity;
-            # it names the exact Storage source the reviewer can re-open.
-            self.assertEqual(value.record.path, document["items"][0]["source"]["path"])
-            self.assertNotIn("occurrenceId", json.dumps(document))
-            preview_id = document["previewId"]
-            status, reread = request(
-                api,
-                f"/api/v1/manual-previews/{preview_id}",
-                token="viewer-token",
-            )
-            self.assertEqual(200, status)
-            # The two routes publish the same durable Preview identity and scope;
-            # the operator projection adds bounded fields, so identity is what
-            # must match exactly.
-            self.assertEqual(document["previewId"], reread["previewId"])
-            self.assertEqual(document["scopeKind"], reread["scopeKind"])
-            self.assertEqual(document["scopeId"], reread["scopeId"])
-            self.assertEqual(document["status"], reread["status"])
-            status, listed = request(
-                api,
-                "/api/v1/manual-previews",
-                token="viewer-token",
-                query=f"scopeKind=file&scopeId={value.record.path}",
-            )
-            self.assertEqual(200, status)
-            self.assertEqual(preview_id, listed["items"][0]["previewId"])
-            status, denied = request(
-                api,
-                "/api/v1/operations/previews",
-                token="viewer-token",
-                method="POST",
-                body=payload,
-            )
-            self.assertEqual(403, status)
-            self.assertEqual("forbidden", denied["error"]["code"])
-            status, invalid = request(
-                api,
-                "/api/v1/operations/previews",
-                token="operator-token",
-                method="POST",
-                body={**payload, "fileId": "arbitrary-private-id"},
-            )
-            self.assertEqual(400, status)
-            self.assertEqual("invalid_request", invalid["error"]["code"])
-            status, resource_preview = request(
-                api,
-                "/api/v1/operations/previews",
-                token="operator-token",
-                method="POST",
-                body={"scopeKind": "resource_library", "resourceLibraryId": "library"},
-            )
-            self.assertEqual(201, status)
-            self.assertEqual("resourceLibrary", resource_preview["scopeKind"])
-            self.assertEqual("library", resource_preview["scopeId"])
+            for token in ("operator-token", "viewer-token"):
+                with self.subTest(token=token):
+                    status, document = request(
+                        api,
+                        "/api/v1/operations/previews",
+                        token=token,
+                        method="POST",
+                        body=payload,
+                    )
+                    self.assertEqual(404, status, document)
+            self.assertEqual((0, 0, 0), self.work_counts(repository))

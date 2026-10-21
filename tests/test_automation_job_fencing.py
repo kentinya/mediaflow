@@ -66,7 +66,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_claim_heartbeat_cancellation_and_terminal_completion_are_fenced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                queued = AutomationJobService(repository).submit("preview")
+                queued = AutomationJobService(repository).submit("organize")
                 claimed = repository.claim_next_job(NOW)
                 self.assertEqual(claimed.job_id, queued.job_id)
                 self.assertTrue(claimed.claim_token)
@@ -102,7 +102,7 @@ class AutomationJobFencingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("preview")
+                service.submit("organize")
                 first = repository.claim_next_job(NOW - timedelta(hours=2))
                 first_token = first.claim_token
                 requeued = service.requeue_stale(first.job_id, age_seconds=3600)
@@ -124,7 +124,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_worker_losing_claim_does_not_publish_or_overwrite_new_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                first = AutomationJobService(repository).submit("preview")
+                first = AutomationJobService(repository).submit("organize")
                 notifications = RecordingNotifications()
 
                 def handler(job, cancelled):
@@ -147,12 +147,12 @@ class AutomationJobFencingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("preview")
+                service.submit("organize")
                 repository.register_worker(
                     worker_id="worker-a",
                     label="worker-a",
                     heartbeat_interval_seconds=5.0,
-                    supported_commands=("scan", "preview"),
+                    supported_commands=("scan", "organize"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -165,7 +165,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     worker_id="worker-b",
                     label="worker-b",
                     heartbeat_interval_seconds=5.0,
-                    supported_commands=("scan", "preview"),
+                    supported_commands=("scan", "organize"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -207,12 +207,12 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_mismatched_owner_cannot_complete_even_with_matching_claim_token(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
                 repository.register_worker(
                     worker_id="worker-a",
                     label="worker-a",
                     heartbeat_interval_seconds=5.0,
-                    supported_commands=("scan", "preview"),
+                    supported_commands=("scan", "organize"),
                     configuration_snapshot_id=None,
                     configuration_snapshot_digest=None,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -239,7 +239,7 @@ class AutomationJobFencingTests(unittest.TestCase):
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 # A legacy no-snapshot Job is present; a no-snapshot stale worker
                 # has an expired heartbeat and must not be able to claim.
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
                 repository.register_worker(
                     worker_id="worker-stale",
                     label="worker-stale",
@@ -283,7 +283,7 @@ class AutomationJobFencingTests(unittest.TestCase):
                     repository,
                     configuration_snapshot_id="cfg-a",
                     configuration_snapshot_digest="digest-a",
-                ).submit("preview")
+                ).submit("organize")
                 repository.register_worker(
                     worker_id="worker-other-snapshot",
                     label="worker-other-snapshot",
@@ -317,14 +317,14 @@ class AutomationJobFencingTests(unittest.TestCase):
                 # Use distinct created_at timestamps so the claim order is stable.
                 for offset, command in enumerate(
                     (
-                        AutomationCommand.PREVIEW,
                         AutomationCommand.ORGANIZE,
                         AutomationCommand.RECOVERY_CONTINUATION,
+                        AutomationCommand.SCOPE_CONTINUATION,
                     )
                 ):
                     created_at = NOW + timedelta(seconds=offset)
                     job = AutomationJob(
-                        job_id=f"job-{command.value}",
+                        job_id=f"job-{offset}-{command.value}",
                         command=command,
                         status=AutomationJobStatus.PENDING,
                         created_at=created_at,
@@ -340,9 +340,9 @@ class AutomationJobFencingTests(unittest.TestCase):
                     label="worker-other-snapshot",
                     heartbeat_interval_seconds=5.0,
                     supported_commands=(
-                        AutomationCommand.PREVIEW.value,
                         AutomationCommand.ORGANIZE.value,
                         AutomationCommand.RECOVERY_CONTINUATION.value,
+                        AutomationCommand.SCOPE_CONTINUATION.value,
                     ),
                     configuration_snapshot_id="cfg-b",
                     configuration_snapshot_digest="digest-b",
@@ -359,9 +359,9 @@ class AutomationJobFencingTests(unittest.TestCase):
                     label="worker-matching",
                     heartbeat_interval_seconds=5.0,
                     supported_commands=(
-                        AutomationCommand.PREVIEW.value,
                         AutomationCommand.ORGANIZE.value,
                         AutomationCommand.RECOVERY_CONTINUATION.value,
+                        AutomationCommand.SCOPE_CONTINUATION.value,
                     ),
                     configuration_snapshot_id="cfg-a",
                     configuration_snapshot_digest="digest-a",
@@ -369,9 +369,9 @@ class AutomationJobFencingTests(unittest.TestCase):
                     now=NOW,
                 )
                 for expected_command in (
-                    AutomationCommand.PREVIEW,
                     AutomationCommand.ORGANIZE,
                     AutomationCommand.RECOVERY_CONTINUATION,
+                    AutomationCommand.SCOPE_CONTINUATION,
                 ):
                     claimed = repository.claim_next_job(NOW, worker_id="worker-matching")
                     self.assertIsNotNone(claimed)
@@ -442,7 +442,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_success_clears_token_and_cli_notification_output_is_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
                 notifications = RecordingNotifications()
                 observed_tokens = []
 
@@ -464,7 +464,7 @@ class AutomationJobFencingTests(unittest.TestCase):
     def test_heartbeat_refresh_controls_stale_age_and_token_is_api_redacted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
                 claimed = repository.claim_next_job(NOW - timedelta(hours=2))
                 self.assertEqual(
                     len(repository.list_stale_running_jobs(NOW - timedelta(hours=1))), 1

@@ -17,7 +17,6 @@ from mediaflow.domain.cron import CronExpression
 
 
 class AutomationCommand(StrEnum):
-    PREVIEW = "preview"
     ORGANIZE = "organize"
     FILE_METADATA_CORRECTION = "file-metadata-correction"
     RECOVERY_CONTINUATION = "recovery-continuation"
@@ -806,8 +805,8 @@ class IntervalSchedule:
             raise ValueError("schedule ID must be non-empty")
         if not isinstance(self.command, AutomationCommand):
             object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.PREVIEW}:
-            raise ValueError("schedule command must be preview")
+        if self.command not in {AutomationCommand.ORGANIZE}:
+            raise ValueError("schedule command must be organize")
         if self.interval_seconds <= 0:
             raise ValueError("schedule interval must be positive")
         if self.limit is not None and self.limit < 1:
@@ -833,8 +832,8 @@ class CronSchedule:
             raise ValueError("schedule ID must be non-empty")
         if not isinstance(self.command, AutomationCommand):
             object.__setattr__(self, "command", AutomationCommand(self.command))
-        if self.command not in {AutomationCommand.PREVIEW}:
-            raise ValueError("schedule command must be preview")
+        if self.command not in {AutomationCommand.ORGANIZE}:
+            raise ValueError("schedule command must be organize")
         expression = CronExpression.parse(self.expression)
         try:
             timezone = ZoneInfo(self.timezone)

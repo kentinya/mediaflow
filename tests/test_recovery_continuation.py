@@ -1601,7 +1601,7 @@ class RecoveryContinuationTests(unittest.TestCase):
                 repository.create_job(
                     AutomationJob(
                         "blocking-job",
-                        AutomationCommand.PREVIEW,
+                        AutomationCommand.ORGANIZE,
                         AutomationJobStatus.PENDING,
                         now,
                         now,

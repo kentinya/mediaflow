@@ -13,7 +13,6 @@ from shutil import copyfile
 from unittest.mock import patch
 
 from mediaflow.application.unattended_execution import (
-    UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
 )
 from mediaflow.domain.automation import (
@@ -124,7 +123,9 @@ class MigrationRehearsalTests(unittest.TestCase):
         source, backup = root / "source.sqlite3", root / "backup.sqlite3"
         with SQLiteTaskRepository(source) as repository:
             repository.create_task(
-                PersistentTask("task-1", "preview", PersistentTaskStatus.COMPLETED, False, NOW, NOW)
+                PersistentTask(
+                    "task-1", "organize", PersistentTaskStatus.COMPLETED, False, NOW, NOW
+                )
             )
             repository.append_result(
                 PersistentResultRecord(
@@ -230,13 +231,13 @@ class MigrationRehearsalTests(unittest.TestCase):
                     configuration_snapshot_digest="a" * 64,
                     configuration_snapshot_version=1,
                 )
-                service = UnattendedExecutionGrantService(
-                    repository,
-                    preview_service=object(),
-                )
-                with self.assertRaises(UnattendedExecutionGrantError) as failure:
-                    service.authorize(job, definition)
-                self.assertEqual(failure.exception.code, "unattended_execution_preview_missing")
+                service = UnattendedExecutionGrantService(repository)
+                # A legacy grant that carries no durable Preview linkage is still
+                # readable; the retired Preview product is not part of the
+                # authority tuple, so authorization binds the definition and
+                # configuration revision the grant recorded.
+                authority = service.authorize(job, definition)
+                self.assertEqual(authority.grant.grant_id, "legacy-grant")
 
     def test_migration_failure_keeps_schema30_source_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

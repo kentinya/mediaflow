@@ -151,7 +151,7 @@ class ManualIgnoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unknown"):
                     self._service(repository).ignore(task.task_id, item.item_id, actor="operator")
                 second = PersistentTaskCoordinator(repository, repository).create(
-                    "preview",
+                    "organize",
                     execute_authorized=False,
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,

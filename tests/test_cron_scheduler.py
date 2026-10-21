@@ -113,7 +113,7 @@ class CronSchedulerTests(unittest.TestCase):
                 self.assertEqual(repository.list_schedule_audit(), ())
 
     def test_current_future_missed_and_audit(self) -> None:
-        schedule = CronSchedule("morning", "preview", "0 8 * * *", "Asia/Shanghai", 20)
+        schedule = CronSchedule("morning", "organize", "0 8 * * *", "Asia/Shanghai", 20)
         now = datetime(2026, 8, 22, 0, 0, 30, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
@@ -132,7 +132,7 @@ class CronSchedulerTests(unittest.TestCase):
                 self.assertEqual(len(repository.list_jobs()), 2)
 
     def test_concurrent_ticks_emit_one_job_and_one_audit(self) -> None:
-        schedule = CronSchedule("midnight", "preview", "0 0 * * *", "UTC")
+        schedule = CronSchedule("midnight", "organize", "0 0 * * *", "UTC")
         now = datetime(2026, 8, 22, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
@@ -158,8 +158,8 @@ class CronSchedulerTests(unittest.TestCase):
 
     def test_audit_filter_limit_and_api(self) -> None:
         schedules = (
-            CronSchedule("one", "preview", "* * * * *", "UTC"),
-            CronSchedule("two", "preview", "* * * * *", "UTC"),
+            CronSchedule("one", "organize", "* * * * *", "UTC"),
+            CronSchedule("two", "organize", "* * * * *", "UTC"),
         )
         now = datetime(2026, 8, 22, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
@@ -186,7 +186,7 @@ class CronSchedulerTests(unittest.TestCase):
             "schedules": [
                 {
                     "id": "cn-morning",
-                    "command": "preview",
+                    "command": "organize",
                     "cron": "0 8 * * *",
                     "timezone": "Asia/Shanghai",
                 }
@@ -222,16 +222,16 @@ class CronSchedulerTests(unittest.TestCase):
     def test_invalid_cron_schedule_configuration(self) -> None:
         base = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         invalid = (
-            {"id": "x", "command": "preview", "cron": "* * * * *"},
+            {"id": "x", "command": "organize", "cron": "* * * * *"},
             {
                 "id": "x",
-                "command": "preview",
+                "command": "organize",
                 "cron": "* * * * *",
                 "timezone": "Missing/Zone",
             },
             {
                 "id": "x",
-                "command": "preview",
+                "command": "organize",
                 "cron": "* * * * *",
                 "timezone": "UTC",
                 "intervalSeconds": 60,

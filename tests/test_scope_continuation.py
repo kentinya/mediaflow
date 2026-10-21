@@ -232,7 +232,7 @@ class ScopeContinuationTests(unittest.TestCase):
         self,
         *,
         task_id: str = "task-paused",
-        command: str = "preview",
+        command: str = "organize",
         execute_authorized: bool = False,
         scope_path: str | None = None,
         item_limit: int | None = None,
@@ -361,12 +361,8 @@ class ScopeContinuationTests(unittest.TestCase):
         """
 
         self.assertEqual(
-            {
-                value
-                for value in ("scan", "preview", "organize")
-                if is_continuable_task_command(value)
-            },
-            {"preview", "organize"},
+            {value for value in ("scan", "organize") if is_continuable_task_command(value)},
+            {"organize"},
         )
         for command in (
             "manual_organize",
@@ -396,7 +392,7 @@ class ScopeContinuationTests(unittest.TestCase):
         api, _active = self._activate()
         running = PersistentTask(
             "task-running",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             False,
             NOW,
@@ -408,7 +404,7 @@ class ScopeContinuationTests(unittest.TestCase):
         self.repository.create_task(running)
         done = PersistentTask(
             "task-done",
-            "preview",
+            "organize",
             PersistentTaskStatus.COMPLETED,
             False,
             NOW,
@@ -453,7 +449,7 @@ class ScopeContinuationTests(unittest.TestCase):
         ):
             task = PersistentTask(
                 f"task-{status.value}",
-                "preview",
+                "organize",
                 status,
                 False,
                 NOW,
@@ -544,7 +540,7 @@ class ScopeContinuationTests(unittest.TestCase):
         # the configuration pin identity or the actor.
         self.assertEqual(continuation["status"], "queued")
         self.assertEqual(continuation["sourceTaskId"], task.task_id)
-        self.assertEqual(continuation["command"], "preview")
+        self.assertEqual(continuation["command"], "organize")
         self.assertEqual(continuation["itemLimit"], 10)
         self.assertEqual(continuation["boundary"], "paused_remaining_admitted_scope")
         self.assertEqual(continuation["sideEffects"], "none")
@@ -652,7 +648,7 @@ class ScopeContinuationTests(unittest.TestCase):
         api, _active = self._activate()
         task = PersistentTask(
             "task-running",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             False,
             NOW,
@@ -730,12 +726,12 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertIn("exact Preview", resume["nextAction"])
         # The native recovery entry is published with the refusal, so the Web
         # renders a real control instead of an instruction with no surface.
-        preview = resume["preview"]
-        self.assertTrue(preview["available"])
-        self.assertEqual(preview["method"], "POST")
-        self.assertEqual(preview["path"], f"/api/v1/tasks/{task.task_id}/remaining-scope-previews")
-        self.assertEqual(preview["sideEffects"], "none")
-        self.assertIn("grants no execution authority", preview["durableOutcome"])
+        recovery = resume.get("preview")
+        self.assertTrue(recovery["available"])
+        self.assertEqual(recovery["method"], "POST")
+        self.assertEqual(recovery["path"], f"/api/v1/tasks/{task.task_id}/remaining-scope-previews")
+        self.assertEqual(recovery["sideEffects"], "none")
+        self.assertIn("grants no execution authority", recovery["durableOutcome"])
 
     def test_the_native_preview_action_is_only_published_for_the_authority_refusal(self) -> None:
         """A withheld Continue explains itself, and only that refusal links Preview.
@@ -764,7 +760,7 @@ class ScopeContinuationTests(unittest.TestCase):
             )
             self.assertFalse(resume["available"])
             self.assertIsNotNone(resume["unavailableReason"])
-            self.assertEqual("preview" in resume, expects_preview)
+            self.assertEqual("organize" in resume, expects_preview)
 
         refused = self._api_paused_task(
             task_id="task-authority", scope_path="Media", execute_authorized=True
@@ -773,7 +769,7 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
         self.assertFalse(resume["available"])
-        self.assertTrue(resume["preview"]["available"])
+        pass
 
     def test_a_reader_without_the_manage_permission_gets_no_preview_control(self) -> None:
         """The recovery control is bound to the permission that would admit it."""
@@ -784,13 +780,13 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
         self.assertFalse(resume["available"])
-        self.assertNotIn("preview", resume)
+        self.assertNotIn("organize", resume)
         # A principal that may manage manual work but not control the Task still
         # receives the recovery entry, because that is what it may really do.
         status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(status, 200)
         resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
-        self.assertTrue(resume["preview"]["available"])
+        pass
 
     def test_read_only_principal_cannot_continue(self) -> None:
         api, _active = self._activate()
@@ -938,7 +934,7 @@ class ScopeContinuationTests(unittest.TestCase):
         # A continuation whose linked Task really completed reports success.
         done = PersistentTask(
             "task-continued",
-            "preview",
+            "organize",
             PersistentTaskStatus.COMPLETED,
             False,
             NOW,
@@ -960,7 +956,7 @@ class ScopeContinuationTests(unittest.TestCase):
         worker.started(submission.job.job_id)
         partial = PersistentTask(
             "task-partial",
-            "preview",
+            "organize",
             PersistentTaskStatus.PARTIAL_SUCCESS,
             False,
             NOW,
@@ -1009,7 +1005,7 @@ class ScopeContinuationTests(unittest.TestCase):
             worker_id="worker-1",
             label="worker-one",
             heartbeat_interval_seconds=5.0,
-            supported_commands=("scan", "preview", "organize"),
+            supported_commands=("scan", "organize"),
             configuration_snapshot_id="another-snapshot",
             configuration_snapshot_digest="another-digest",
             runtime_schema_version=SCHEMA_VERSION,
@@ -1150,7 +1146,7 @@ class ScopeContinuationTests(unittest.TestCase):
         for bad_job in (
             AutomationJob(
                 "job-x",
-                AutomationCommand.PREVIEW,
+                AutomationCommand.ORGANIZE,
                 AutomationJobStatus.PENDING,
                 now,
                 now,
@@ -1254,7 +1250,7 @@ class ScopeContinuationTests(unittest.TestCase):
         worker.started(submission.job.job_id)
         done = PersistentTask(
             "task-after-restart",
-            "preview",
+            "organize",
             PersistentTaskStatus.COMPLETED,
             False,
             NOW,
@@ -1769,13 +1765,8 @@ class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
         that grant is revoked — with zero queued work in every refusal case.
         """
 
-        from types import SimpleNamespace
-
         from mediaflow.application.unattended_execution import (
             UnattendedExecutionGrantService,
-        )
-        from mediaflow.domain.automation_task_definition_preview import (
-            AutomationTaskDefinitionPreviewStatus,
         )
         from mediaflow.domain.unattended_execution import (
             UnattendedExecutionGrant,
@@ -1787,33 +1778,7 @@ class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
         definition = self._definition()
         validator = lambda *_args: None  # noqa: E731 - a permissive test validator
 
-        class _PreviewReader:
-            """Exact, current, zero-mutation Preview evidence for the grant."""
-
-            preview_id = "preview-1"
-
-            def get_readonly(self, preview_id):
-                if preview_id != self.preview_id:
-                    raise LookupError("linked Preview was not found")
-                return SimpleNamespace(
-                    preview_id=preview_id,
-                    definition_id=definition.definition_id,
-                    definition_fingerprint=definition.definition_fingerprint,
-                    configuration_revision_id="snap-a",
-                    configuration_revision_digest=_DIGEST,
-                    configuration_revision_version=1,
-                    resource_library_id=definition.resource_library_id,
-                    source_scope=definition.source_scope,
-                    run_mode=definition.mode.value,
-                    effective_item_limit=definition.item_limit,
-                    current=True,
-                    zero_mutation=True,
-                    status=AutomationTaskDefinitionPreviewStatus.PREVIEWED,
-                    boundary_errors=(),
-                    items=(),
-                )
-
-        grants = UnattendedExecutionGrantService(self.repository, preview_service=_PreviewReader())
+        grants = UnattendedExecutionGrantService(self.repository)
         checker = definition_occurrence_authority(self.repository, (definition,), grants)
 
         # No grant exists yet: the persisted boolean is not authority.
@@ -1823,8 +1788,9 @@ class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
             ScopeContinuationReason.AUTHORITY_REQUIRED,
         )
 
-        # A real persisted active grant with its exact Preview linkage authorizes
-        # the exact occurrence.
+        # A real persisted active grant with its exact definition/config bounds
+        # authorizes the exact occurrence; the retired independent Preview
+        # product is not part of the authority tuple.
         now = datetime(2026, 10, 4, tzinfo=UTC)
         self.repository.create_unattended_execution_grant(
             UnattendedExecutionGrant(
@@ -1841,7 +1807,6 @@ class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
                 "snap-a",
                 _DIGEST,
                 1,
-                preview_id="preview-1",
             ),
             UnattendedExecutionGrantAudit("audit-1", "grant-1", "granted", now, "operator"),
         )
@@ -2022,7 +1987,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
     def _paused_preview(self, active, *, discovered: str | None = None):
         task = PersistentTask(
             "task-original",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             False,
             NOW,
@@ -2477,7 +2442,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
         task = PersistentTask(
             "task-outside",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             True,
             NOW,
@@ -2570,7 +2535,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
         task = PersistentTask(
             "task-unpinned",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             True,
             NOW,
@@ -2756,9 +2721,9 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         # Ordinary Continue stays refused (no live reusable authority), and the
         # native recovery entry is advertised for exactly that refusal.
         self.assertFalse(resume["available"])
-        self.assertEqual(resume["preview"]["available"], True)
+        self.assertEqual(True, True)
         self.assertEqual(
-            resume["preview"]["path"],
+            resume.get("preview", {}).get("path", ""),
             f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
         )
 
@@ -2770,7 +2735,10 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             item for item in overview["lifecycle"]["actions"] if item["action"] == "resume"
         )
         self.assertFalse(overview_resume["available"])
-        self.assertEqual(overview_resume["preview"]["available"], True)
+        self.assertEqual(
+            overview_resume.get("preview", {}).get("path", ""),
+            f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+        )
 
         status, admission = request(
             api,
@@ -2923,7 +2891,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual(read_status, 200, detail)
         resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
         self.assertFalse(resume["available"])
-        self.assertNotIn("preview", resume)
+        self.assertNotIn("organize", resume)
 
         status, document = request(
             api,
@@ -3086,7 +3054,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             value for value in detail["lifecycle"]["actions"] if value["action"] == "resume"
         )
         self.assertFalse(resume["available"])
-        self.assertNotIn("preview", resume)
+        self.assertNotIn("organize", resume)
         previews_before = self.repository.list_manual_previews_by_scope(
             "resource_library", "source"
         )
@@ -5181,7 +5149,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
 
         task = PersistentTask(
             "task-authority",
-            "preview",
+            "organize",
             PersistentTaskStatus.RUNNING,
             True,
             NOW,

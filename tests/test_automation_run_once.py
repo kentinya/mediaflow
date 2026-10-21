@@ -328,33 +328,10 @@ class _RunOnceFixture(unittest.TestCase):
                 clock=self.clock,
                 budgets=budgets or DiscoveryBudgets(),
             )
-            from mediaflow.application.automation_task_definition_preview import (
-                AutomationTaskDefinitionPreviewService,
-            )
-            from mediaflow.application.preview_analysis import (
-                PreviewAnalysisService,
-                PreviewAnalysisWorker,
-            )
-
-            definition_previews = AutomationTaskDefinitionPreviewService(
-                repository,
-                managed,
-                runtime_resolver=lambda snapshot_id, digest: runtime,
-                storages=dict(storages),
-                clock=self.clock,
-            )
-            analyses = PreviewAnalysisService(
-                repository,
-                definition_previews=definition_previews,
-                manual_previews=previews,
-                clock=self.clock,
-            )
-            analysis_worker = PreviewAnalysisWorker(analyses, worker_id="harness-analysis-worker")
             run_once = AutomationRunOnceService(
                 discovery,
                 intents,
                 previews,
-                analysis_service=analyses,
                 clock=self.clock,
             )
             execution = ManualOrganizeExecutionService(
@@ -402,9 +379,6 @@ class _RunOnceFixture(unittest.TestCase):
                 intents=intents,
                 previews=previews,
                 discovery=discovery,
-                definition_previews=definition_previews,
-                analyses=analyses,
-                analysis_worker=analysis_worker,
                 execution=execution,
                 execution_worker=execution_worker,
                 run_once=run_once,
@@ -468,7 +442,6 @@ class ModeRemovalTests(_RunOnceFixture):
             "scan-and-plan",
             "scan_and_plan",
             "scanAndPlan",
-            "preview",
         ):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
@@ -599,7 +572,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             discovery = value.run_once.admit("nightly", actor="operator")
             self.drive(value)
             current = value.run_once.get(discovery.discovery_id)
-            frozen, preview, analysis = value.run_once.finalize(
+            frozen, preview = value.run_once.finalize(
                 discovery.discovery_id,
                 actor="operator",
                 expected_version=current.version,
@@ -607,12 +580,10 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNotNone(frozen.frozen_at)
             self.assertIsNotNone(frozen.intent_id)
             self.assertEqual("automatic-organization", frozen.definition_origin.run_mode)
-            # With a durable analysis service bound, the exact Preview work is
-            # deferred to the resident Worker instead of running inline.
-            self.assertIsNone(preview)
-            self.assertIsNotNone(analysis)
-            self.assertEqual("queued", analysis.status.value)
-            self.assertEqual(frozen.intent_id, analysis.intent_id)
+            # The shared organize analysis chain produces the exact Preview
+            # inline; the plan still needs a separate explicit confirmation.
+            self.assertIsNotNone(preview)
+            self.assertEqual(frozen.intent_id, preview.intent_id)
             # Freezing and Preview admission are still zero-mutation: only a
             # separate explicit execution may ever reach OrganizerExecutor.
             self.assertEqual([], value.source.mutations)
@@ -620,36 +591,16 @@ class RunOnceJourneyTests(_RunOnceFixture):
             document = value.run_once.document(frozen)
             self.assertEqual("frozen", document["phase"])
             self.assertTrue(document["frozen"])
-            self.assertTrue(document["actions"]["preview"])
-
-    def test_finalize_runs_inline_when_no_analysis_service_is_bound(self) -> None:
-        """Without a durable analysis service the inline exact Preview is kept."""
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            value.run_once.bind_analysis_service(None)
-            discovery = value.run_once.admit("nightly", actor="operator")
-            self.drive(value)
-            current = value.run_once.get(discovery.discovery_id)
-            frozen, preview, analysis = value.run_once.finalize(
-                discovery.discovery_id,
-                actor="operator",
-                expected_version=current.version,
-            )
-            self.assertIsNone(analysis)
-            self.assertIsNotNone(preview)
-            self.assertTrue(preview.zero_mutation)
-            self.assertIsNotNone(preview.preview_id)
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
+            self.assertFalse(document["actions"].get("organize", False))
 
     def test_frozen_manifest_reaches_linked_execution_and_operations_origin(self) -> None:
         """The complete Run-once journey reaches a real linked execution.
 
         Freeze → exact manual Preview → one separate explicit execution →
         resident Worker outcome, with the definition origin durable on the
-        resulting Operations run.  The analysis is zero mutation throughout and
-        only the explicit confirmation reaches ``OrganizerExecutor``.
+        resulting Operations run.  The shared analysis is zero mutation
+        throughout and only the explicit confirmation reaches
+        ``OrganizerExecutor``.
         """
 
         self.media("Movies/One.2001.mkv")
@@ -657,18 +608,13 @@ class RunOnceJourneyTests(_RunOnceFixture):
             discovery = value.run_once.admit("nightly", actor="operator")
             self.drive(value)
             current = value.run_once.get(discovery.discovery_id)
-            frozen, preview, analysis = value.run_once.finalize(
+            frozen, preview = value.run_once.finalize(
                 discovery.discovery_id,
                 actor="operator",
                 expected_version=current.version,
             )
-            self.assertIsNotNone(analysis)
-            # The resident Worker completes the durable exact analysis.
-            settled = value.analysis_worker.run_next()
-            self.assertIsNotNone(settled)
-            self.assertEqual("completed", settled.status.value)
-            preview_id = settled.preview_id
-            self.assertIsNotNone(preview_id)
+            self.assertIsNotNone(preview)
+            preview_id = preview.preview_id
             # The exact Preview is the *manual* Preview over the frozen intent.
             preview = value.previews.get(preview_id)
             self.assertEqual(frozen.intent_id, preview.intent_id)
@@ -884,64 +830,6 @@ class RunOnceJourneyTests(_RunOnceFixture):
             third = value.run_once.admit("nightly", actor="operator")
             self.assertEqual(first.discovery_id, third.discovery_id)
 
-    def test_every_accepted_request_identity_keeps_its_own_durable_lookup(
-        self,
-    ) -> None:
-        """Each accepted request ID reconciles to the work it actually created.
-
-        Two equivalent Run-once requests from the same principal converge on
-        one durable discovery — but *both* submitted request identities are
-        durably associated with that admission, so a lost response for either
-        one reconciles by its own ID instead of a bounded 404 that reads as
-        "no work exists" (B43.2-R3-2).
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            first_request = "12121212-1212-4212-8212-121212121212"
-            second_request = "34343434-3434-4343-8434-343434343434"
-            first = value.run_once.admit(
-                "nightly", actor="operator", admission_request_id=first_request
-            )
-            second = value.run_once.admit(
-                "nightly", actor="operator", admission_request_id=second_request
-            )
-            # Equivalent open work converges on one durable discovery.
-            self.assertEqual(first.discovery_id, second.discovery_id)
-            # Each accepted identity stays verifiably associated with it.
-            readback_first = value.discovery.find_by_request_id(
-                actor="operator", admission_request_id=first_request
-            )
-            readback_second = value.discovery.find_by_request_id(
-                actor="operator", admission_request_id=second_request
-            )
-            self.assertIsNotNone(readback_first)
-            self.assertIsNotNone(readback_second)
-            self.assertEqual(first.discovery_id, readback_first.discovery_id)
-            self.assertEqual(second.discovery_id, readback_second.discovery_id)
-            self.assertEqual([], value.source.mutations)
-
-    def test_definition_analysis_request_alias_keeps_its_own_durable_lookup(
-        self,
-    ) -> None:
-        """A definition-analysis request ID that converged on open work stays readable."""
-
-        with self.journey() as value:
-            first_request = "56565656-5656-4565-8565-565656565656"
-            second_request = "78787878-7878-4787-8787-787878787878"
-            first = value.analyses.admit_definition(
-                "nightly", actor="operator", admission_request_id=first_request
-            )
-            second = value.analyses.admit_definition(
-                "nightly", actor="operator", admission_request_id=second_request
-            )
-            self.assertEqual(first.analysis_id, second.analysis_id)
-            readback_second = value.analyses.find_by_request_id(
-                actor="operator", admission_request_id=second_request
-            )
-            self.assertIsNotNone(readback_second)
-            self.assertEqual(first.analysis_id, readback_second.analysis_id)
-
     def test_run_once_requires_the_published_definition(self) -> None:
         with self.journey() as value:
             with self.assertRaises(DiscoveryError) as caught:
@@ -1009,7 +897,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             discovery = value.run_once.admit("nightly", actor="operator")
             settled = self.drive(value)
             self.assertEqual(1, len(settled.sources))
-            frozen, _preview, _analysis = value.run_once.finalize(
+            frozen, _preview = value.run_once.finalize(
                 discovery.discovery_id,
                 actor="operator",
                 expected_version=settled.version,
@@ -1067,34 +955,6 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
             self.assertEqual((), value.discovery.list(actor="operator"))
-
-    def test_durable_analysis_is_pausable_and_cancellable_before_it_settles(self) -> None:
-        """AC-T3: long analysis is durable, observable and safely controllable."""
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            discovery = value.run_once.admit("nightly", actor="operator")
-            # The durable record exists and is observable *before* the walk.
-            current = value.run_once.get(discovery.discovery_id)
-            self.assertEqual(DiscoveryStatus.QUEUED, current.status)
-            document = value.run_once.document(current)
-            self.assertEqual("discovering", document["phase"])
-            self.assertTrue(document["actions"]["cancel"])
-            paused = value.discovery.request_pause(
-                discovery.discovery_id, actor="operator", expected_version=current.version
-            )
-            self.assertTrue(paused.pause_requested)
-            # The operator's own control settles the walk at a safe boundary.
-            settled = value.discovery.claim_and_run(worker_id="worker-0", claim_token="token-0")
-            self.assertEqual(DiscoveryStatus.PAUSED, settled.status)
-            cancelled = value.discovery.request_cancel(
-                discovery.discovery_id,
-                actor="operator",
-                expected_version=settled.version,
-            )
-            self.assertEqual(DiscoveryStatus.CANCELLED, cancelled.status)
-            self.assertEqual([], value.source.mutations)
-            self.assertEqual([], value.target.mutations)
 
     def test_an_unreadable_subtree_refuses_the_definition_manifest(self) -> None:
         """A definition-derived manifest must prove completeness.
@@ -1415,116 +1275,6 @@ class RunOnceApiTests(_RunOnceFixture):
                     expected_definition_fingerprint="0" * 64,
                 )
             self.assertEqual("definition_stale", caught.exception.code)
-
-    def test_concurrent_equivalent_new_ids_both_stay_reconcilable(self) -> None:
-        """B43.2-R4-2: an accepted concurrent alias is never a bounded 404.
-
-        Two equivalent Run-once requests with distinct IDs synchronize only
-        between the real open-work read and the durable create, so one wins the
-        identity race.  The loser converged on the winner's record, so its own
-        request ID must remain a verifiable association: the winner path must
-        bind it, not return and leave the lookup reporting "no work exists".
-        """
-
-        import threading
-        from concurrent.futures import ThreadPoolExecutor
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            barrier = threading.Barrier(2)
-            original = value.discovery._reconcile_definition_admission
-            call_lock = threading.Lock()
-            calls = 0
-
-            def synchronized_find(*args, **kwargs):
-                nonlocal calls
-                result = original(*args, **kwargs)
-                with call_lock:
-                    calls += 1
-                    call = calls
-                if call <= 2:
-                    barrier.wait(timeout=10)
-                return result
-
-            value.discovery._reconcile_definition_admission = synchronized_find
-            request_ids = [
-                "10101010-1010-4010-8010-101010101010",
-                "20202020-2020-4020-8020-202020202020",
-            ]
-
-            def admit(request_id):
-                return value.run_once.admit(
-                    "nightly", actor="operator", admission_request_id=request_id
-                )
-
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                admissions = list(pool.map(admit, request_ids))
-            identities = {item.discovery_id for item in admissions}
-            self.assertEqual(1, len(identities))
-            for request_id in request_ids:
-                readback = value.discovery.find_by_request_id(
-                    actor="operator", admission_request_id=request_id
-                )
-                self.assertIsNotNone(readback, request_id)
-                self.assertEqual(next(iter(identities)), readback.discovery_id)
-            self.assertEqual([], value.source.mutations)
-
-    def test_discovery_alias_refuses_an_identity_claimed_by_other_work(
-        self,
-    ) -> None:
-        """B43.2-R5-1: the discovery alias writer validates the identity too.
-
-        A request identity already durably claimed by another admission (a
-        direct analysis row) must be refused by a delayed alias writer, so the
-        identity never names two durable facts.  The refused writer reports an
-        explicit admission-request conflict, never a second acceptance.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            request_id = "30303030-3030-4030-8030-303030303030"
-            # The identity is claimed by an analysis through its own column.
-            value.analyses.admit_definition(
-                "nightly", actor="operator", admission_request_id=request_id
-            )
-            discovery = value.run_once.admit("nightly", actor="operator")
-            self.assertIsNone(discovery.admission_request_id)
-            with self.assertRaises(DiscoveryError):
-                value.discovery._bind_request(request_id, discovery)
-            bindings = value.repository._connection.execute(
-                "SELECT target_id FROM admission_request_bindings "
-                "WHERE actor=? AND admission_request_id=?",
-                ("operator", request_id),
-            ).fetchall()
-            self.assertEqual([], bindings)
-            self.assertEqual([], value.source.mutations)
-
-    def test_discovery_admission_refuses_an_identity_claimed_by_other_work(
-        self,
-    ) -> None:
-        """B43.2-R5-1: the discovery direct-create writer validates too.
-
-        A Run-once admission whose client request identity already names a
-        durable analysis must refuse instead of recording a second, cross-family
-        admission for the same identity.
-        """
-
-        self.media("Movies/One.2001.mkv")
-        with self.journey(source_scope="Movies") as value:
-            request_id = "40404040-4040-4040-8040-404040404040"
-            value.analyses.admit_definition(
-                "nightly", actor="operator", admission_request_id=request_id
-            )
-            with self.assertRaises(DiscoveryError) as caught:
-                value.run_once.admit("nightly", actor="operator", admission_request_id=request_id)
-            self.assertIn("admission request identity", str(caught.exception))
-            rows = value.repository._connection.execute(
-                "SELECT discovery_id FROM media_discoveries "
-                "WHERE actor=? AND admission_request_id=?",
-                ("operator", request_id),
-            ).fetchall()
-            self.assertEqual([], rows)
-            self.assertEqual([], value.source.mutations)
 
     def test_malformed_run_once_body_is_rejected(self) -> None:
         with self.journey(source_scope="Movies") as value:

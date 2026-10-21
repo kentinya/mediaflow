@@ -11,7 +11,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Thread
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from mediaflow.application.automation import (
@@ -46,7 +45,7 @@ class AutomationPersistenceTests(unittest.TestCase):
             connection.close()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                job = AutomationJobService(repository).submit("preview")
+                job = AutomationJobService(repository).submit("organize")
                 self.assertFalse(job.cancellation_requested)
                 self.assertEqual(repository.list_schedule_states(), ())
 
@@ -55,8 +54,8 @@ class AutomationPersistenceTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 service = AutomationJobService(repository)
-                first = service.submit("preview", limit=3)
-                second = service.submit("preview")
+                first = service.submit("organize", limit=3)
+                second = service.submit("organize")
                 claimed = repository.claim_next_job(datetime.now(UTC))
                 self.assertEqual(claimed.job_id, first.job_id)
                 self.assertEqual(claimed.status, AutomationJobStatus.RUNNING)
@@ -75,7 +74,7 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
-                AutomationJobService(repository).submit("preview")
+                AutomationJobService(repository).submit("organize")
             barrier = Barrier(2)
             claimed = []
 
@@ -95,11 +94,11 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("preview")
+                service.submit("organize")
                 completed = AutomationWorker(repository, lambda job, cancelled: "task-1").run_next()
                 self.assertEqual(completed.status, AutomationJobStatus.COMPLETED)
                 self.assertEqual(completed.task_id, "task-1")
-                service.submit("preview")
+                service.submit("organize")
 
                 def fail(job, cancelled):
                     raise RuntimeError("Authorization: Bearer top-secret")
@@ -112,7 +111,7 @@ class AutomationPersistenceTests(unittest.TestCase):
     def test_running_cancellation_becomes_cancelled_and_retains_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                queued = AutomationJobService(repository).submit("preview")
+                queued = AutomationJobService(repository).submit("organize")
 
                 def handler(job, cancelled):
                     repository.request_job_cancellation(job.job_id, datetime.now(UTC))
@@ -128,7 +127,7 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                queued = service.submit("preview")
+                queued = service.submit("organize")
                 running = repository.claim_next_job(datetime.now(UTC))
                 old = replace(running, updated_at=datetime.now(UTC) - timedelta(hours=2))
                 repository.update_job(old)
@@ -143,8 +142,8 @@ class AutomationPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                service.submit("preview")
-                service.submit("preview")
+                service.submit("organize")
+                service.submit("organize")
                 calls, sleeps = [], []
                 stopped = False
 
@@ -163,7 +162,7 @@ class AutomationPersistenceTests(unittest.TestCase):
                     lambda: stopped, poll_seconds=0.5, sleep=sleep
                 )
                 self.assertEqual(processed, 2)
-                self.assertEqual(calls, ["preview", "preview"])
+                self.assertEqual(calls, ["organize", "organize"])
                 self.assertEqual(sleeps, [0.5])
 
 
@@ -172,8 +171,8 @@ class IntervalSchedulerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             schedules = (
-                IntervalSchedule("scan-fast", "preview", 60, 5),
-                IntervalSchedule("disabled", "preview", 60, enabled=False),
+                IntervalSchedule("scan-fast", "organize", 60, 5),
+                IntervalSchedule("disabled", "organize", 60, enabled=False),
             )
             now = datetime(2026, 8, 22, tzinfo=UTC)
             with SQLiteTaskRepository(database) as repository:
@@ -199,7 +198,7 @@ class IntervalSchedulerTests(unittest.TestCase):
                     stopped = True
 
                 emitted = IntervalScheduler(
-                    repository, (IntervalSchedule("daily", "preview", 86400),)
+                    repository, (IntervalSchedule("daily", "organize", 86400),)
                 ).run(lambda: stopped, poll_seconds=2, sleep=sleep)
                 self.assertEqual(emitted, 1)
                 self.assertEqual(sleeps, [2])
@@ -208,12 +207,12 @@ class IntervalSchedulerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository)
-                for command in ("organize", "execute", "delete"):
-                    with self.assertRaisesRegex(ValueError, "must be preview"):
+                for command in ("preview", "scan", "execute", "delete"):
+                    with self.assertRaisesRegex(ValueError, "must be organize"):
                         service.submit(command)
                 for limit in (0, -1, 10_001, True, "2"):
                     with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
-                        service.submit("preview", limit=limit)
+                        service.submit("organize", limit=limit)
 
 
 class ServiceApiTests(unittest.TestCase):
@@ -253,19 +252,26 @@ class ServiceApiTests(unittest.TestCase):
         self.assertNotIn("api-secret", json.dumps(document))
 
     def test_submit_list_show_cancel_and_utf8(self) -> None:
-        status, created, headers = self.request(
-            "POST", "/api/v1/jobs", {"command": "preview", "limit": 20}, "api-secret"
+        # The legacy job submission command is retired; a supported organize Job
+        # is admitted by the execution-authorization boundary.  A viewer with
+        # only SUBMIT_DRY_RUN therefore gets an ordinary unsupported refusal.
+        status, refused, _ = self.request(
+            "POST", "/api/v1/jobs", {"command": "organize", "limit": 20}, "api-secret"
         )
-        self.assertEqual(status, 202)
+        self.assertEqual(status, 400)
+        self.assertEqual(refused["error"]["code"], "invalid_request")
+        queued = AutomationJobService(self.repository).submit("organize", limit=20)
+        job_id = queued.job_id
+        status, created, headers = self.request("GET", f"/api/v1/jobs/{job_id}", token="api-secret")
+        self.assertEqual(status, 200)
         self.assertIn("charset=utf-8", headers["Content-Type"])
-        job_id = created["job_id"]
         self.assertEqual(
             self.request("GET", f"/api/v1/jobs/{job_id}", token="api-secret")[1]["limit"],
             20,
         )
         self.assertEqual(
             self.request("GET", "/api/v1/jobs", token="api-secret")[1]["items"][0]["command"],
-            "preview",
+            "organize",
         )
         cancelled = self.request("POST", f"/api/v1/jobs/{job_id}/cancel", token="api-secret")[1]
         self.assertEqual(cancelled["status"], "cancelled")
@@ -274,7 +280,7 @@ class ServiceApiTests(unittest.TestCase):
         self.api = MediaFlowApi(
             self.repository,
             "api-secret",
-            (IntervalSchedule("nightly", "preview", 3600, 20),),
+            (IntervalSchedule("nightly", "organize", 3600, 20),),
         )
         status, response, _ = self.request("GET", "/api/v1/schedules", token="api-secret")
         self.assertEqual(status, 200)
@@ -282,7 +288,7 @@ class ServiceApiTests(unittest.TestCase):
         self.assertIsNone(response["items"][0]["state"])
 
     def test_api_requests_running_job_cancellation(self) -> None:
-        queued = AutomationJobService(self.repository).submit("preview")
+        queued = AutomationJobService(self.repository).submit("organize")
         self.repository.claim_next_job(datetime.now(UTC))
         status, response, _ = self.request(
             "POST", f"/api/v1/jobs/{queued.job_id}/cancel", token="api-secret"
@@ -294,8 +300,10 @@ class ServiceApiTests(unittest.TestCase):
     def test_rejects_execute_and_unsupported_commands(self) -> None:
         for document in (
             {"command": "organize"},
-            {"command": "preview", "execute": False},
-            {"command": "preview", "overwrite": False},
+            {"command": "organize", "execute": False},
+            {"command": "organize", "overwrite": False},
+            {"command": "preview"},
+            {"command": "scan"},
         ):
             status, response, _ = self.request("POST", "/api/v1/jobs", document, "api-secret")
             self.assertEqual(status, 400)
@@ -346,7 +354,7 @@ class AutomationCliTests(unittest.TestCase):
             "schedules": [
                 {
                     "id": "periodic-scan",
-                    "command": "preview",
+                    "command": "organize",
                     "intervalSeconds": 3600,
                     "limit": 20,
                 }
@@ -377,11 +385,13 @@ class AutomationCliTests(unittest.TestCase):
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         document["api"] = {"tokenEnv": "MEDIAFLOW_API_TOKEN"}
         document["automation"] = {
-            "schedules": [{"id": "periodic-preview", "command": "preview", "intervalSeconds": 3600}]
+            "schedules": [
+                {"id": "periodic-organize", "command": "organize", "intervalSeconds": 3600}
+            ]
         }
         loaded = load_runtime_configuration(copy.deepcopy(document))
         self.assertEqual(loaded.api_token_env, "MEDIAFLOW_API_TOKEN")
-        self.assertEqual(loaded.automation_schedules[0].schedule_id, "periodic-preview")
+        self.assertEqual(loaded.automation_schedules[0].schedule_id, "periodic-organize")
         document["api"] = {"tokenEnv": "invalid-name"}
         with self.assertRaisesRegex(ValueError, "API tokenEnv"):
             load_runtime_configuration(document)
@@ -389,11 +399,14 @@ class AutomationCliTests(unittest.TestCase):
     def test_invalid_automation_configuration_rejects_execute_and_duplicates(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
         for schedules, message in (
-            ([{"id": "x", "command": "organize", "intervalSeconds": 1}], "must be preview"),
+            (
+                [{"id": "x", "command": "preview", "intervalSeconds": 1}],
+                "must be organize",
+            ),
             (
                 [
-                    {"id": "x", "command": "preview", "intervalSeconds": 1},
-                    {"id": "x", "command": "preview", "intervalSeconds": 2},
+                    {"id": "x", "command": "organize", "intervalSeconds": 1},
+                    {"id": "x", "command": "organize", "intervalSeconds": 2},
                 ],
                 "IDs must be unique",
             ),
@@ -456,34 +469,17 @@ class AutomationCliTests(unittest.TestCase):
             self.assertNotIn("Authorization", error.getvalue())
 
 
-class AutomationDefinitionPreviewApiTests(unittest.TestCase):
-    def test_preview_run_list_read_rbac_and_read_only_load(self) -> None:
-        class FakePreviewService:
-            def __init__(self) -> None:
-                self.create_calls = 0
-                self.preview = SimpleNamespace(
-                    previewId="p-1",
-                    document=lambda: {
-                        "previewId": "p-1",
-                        "status": "previewed",
-                        "items": [],
-                    },
-                )
+class RetiredAutomationPreviewApiTests(unittest.TestCase):
+    """The independent Automation Preview product is retired.
 
-            def create(self, definition_id, *, revision_id=None, actor):
-                self.create_calls += 1
-                return self.preview
+    Its old routes must fail as ordinary not-found answers after normal
+    authentication, and they must create no durable record, Job or Task.
+    """
 
-            def list_readonly(self, definition_id, *, limit=100):
-                return ()
-
-            def get_readonly(self, preview_id):
-                return self.preview
-
+    def test_old_preview_routes_are_ordinary_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
-                previews = FakePreviewService()
                 api = MediaFlowApi(
                     repository,
                     None,
@@ -493,51 +489,48 @@ class AutomationDefinitionPreviewApiTests(unittest.TestCase):
                             "viewer", "viewer-token", frozenset({ApiPermission.READ})
                         ),
                     ),
-                    automation_preview_service=previews,
                 )
-                status, body = self._request(
-                    api,
-                    "POST",
-                    "/api/v1/automation/task-definitions/task/preview",
-                    token="admin-token",
-                    document={},
-                )
-                self.assertEqual(status, 201)
-                self.assertEqual(body["previewId"], "p-1")
-                self.assertEqual(previews.create_calls, 1)
-                status, body = self._request(
-                    api,
-                    "GET",
-                    "/api/v1/automation/task-definitions/task/previews",
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["items"], [])
-                status, _ = self._request(
-                    api,
-                    "POST",
-                    "/api/v1/automation/task-definitions/task/preview",
-                    token="viewer-token",
-                    document={},
-                )
-                self.assertEqual(status, 403)
-                self.assertEqual(previews.create_calls, 1)
-                status, body = self._request(
-                    api,
-                    "GET",
-                    "/api/v1/automation/task-definitions/task/previews/p-1",
-                    token="viewer-token",
-                )
-                self.assertEqual(status, 200)
-                self.assertEqual(body["previewId"], "p-1")
-                self.assertEqual(
-                    repository._connection.execute(
-                        "SELECT COUNT(*) FROM automation_task_definition_previews"
-                    ).fetchone()[0],
-                    0,
-                )
+                for method, path, token, expected in (
+                    (
+                        "POST",
+                        "/api/v1/automation/task-definitions/task/preview",
+                        "admin-token",
+                        404,
+                    ),
+                    (
+                        "GET",
+                        "/api/v1/automation/task-definitions/task/previews",
+                        "viewer-token",
+                        404,
+                    ),
+                    (
+                        "GET",
+                        "/api/v1/automation/task-definitions/task/previews/p-1",
+                        "viewer-token",
+                        404,
+                    ),
+                    (
+                        "GET",
+                        "/api/v1/operations/automation/task-definitions/task/previews/p-1",
+                        "viewer-token",
+                        503,
+                    ),
+                ):
+                    with self.subTest(method=method, path=path):
+                        status, body = self._request(api, method, path, token=token, document={})
+                        self.assertEqual(status, expected, body)
+                        self.assertNotIn("previewId", body)
                 self.assertEqual(repository.list_jobs(), ())
                 self.assertEqual(repository.list_tasks(), ())
+                tables = {
+                    row[0]
+                    for row in repository._connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                self.assertNotIn("automation_task_definition_previews", tables)
+                self.assertNotIn("automation_task_definition_preview_items", tables)
+                self.assertNotIn("preview_analyses", tables)
 
     @staticmethod
     def _request(

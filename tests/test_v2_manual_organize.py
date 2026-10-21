@@ -318,7 +318,7 @@ class _JourneyFixtureMixin:
                     "worker-1",
                     "worker one",
                     10.0,
-                    ("scan", "preview", "organize"),
+                    ("scan", "organize"),
                     configuration_snapshot_id=SNAPSHOT_ID,
                     configuration_snapshot_digest=SNAPSHOT_DIGEST,
                     runtime_schema_version=SCHEMA_VERSION,
@@ -620,7 +620,10 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual("organize", intent["journey"])
             self.assertTrue(intent["zeroMutation"])
             self.assertEqual("open", intent["status"])
-            self.assertTrue(intent["actions"]["preview"]["available"], intent["actions"])
+            self.assertFalse(
+                intent["actions"].get("preview", {}).get("available", False),
+                intent["actions"],
+            )
             self.assertTrue(intent["options"]["recognitionTypes"])
             self._assert_secret_free(intent, "intent")
 
@@ -641,7 +644,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertTrue(preview["actions"]["execute"]["available"], preview["actions"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            self._assert_secret_free(preview, "preview")
+            self._assert_secret_free(preview, "organize")
 
             status, execution = self._execute(value, preview, intent)
             self.assertEqual(202, status, execution)
@@ -2052,7 +2055,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                 "worker-1",
                 "worker one",
                 10.0,
-                ("scan", "preview", "organize"),
+                ("scan", "organize"),
                 configuration_snapshot_id=SNAPSHOT_ID,
                 configuration_snapshot_digest=SNAPSHOT_DIGEST,
                 runtime_schema_version=SCHEMA_VERSION,

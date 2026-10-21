@@ -36,7 +36,7 @@ class TaskRetryTests(unittest.TestCase):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
             task = coordinator.create(
-                "preview",
+                "organize",
                 execute_authorized=False,
                 configuration_snapshot_id=snapshot_id,
                 configuration_snapshot_digest=snapshot_digest,
@@ -92,7 +92,7 @@ class TaskRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 first = self._failed(repository, number=1, task=task)
                 second = self._failed(repository, number=2, task=task)
                 third = self._failed(repository, number=3, task=task)

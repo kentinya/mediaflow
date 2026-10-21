@@ -81,12 +81,12 @@ class AutomationAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 service = AutomationJobService(repository, maximum_active_jobs=1)
-                pending = service.submit("preview")
+                pending = service.submit("organize")
                 with self.assertRaises(AutomationQueueFull):
-                    service.submit("preview")
+                    service.submit("organize")
                 repository.claim_next_job(datetime.now(UTC))
                 with self.assertRaises(AutomationQueueFull):
-                    service.submit("preview")
+                    service.submit("organize")
                 for status in (
                     AutomationJobStatus.COMPLETED,
                     AutomationJobStatus.FAILED,
@@ -102,7 +102,7 @@ class AutomationAdmissionTests(unittest.TestCase):
                             }
                         )
                     )
-                    replacement = service.submit("preview")
+                    replacement = service.submit("organize")
                     self.assertEqual(replacement.status, AutomationJobStatus.PENDING)
                     pending = replacement
                     repository.claim_next_job(datetime.now(UTC))
@@ -120,7 +120,7 @@ class AutomationAdmissionTests(unittest.TestCase):
                     try:
                         return (
                             AutomationJobService(repository, maximum_active_jobs=1)
-                            .submit("preview")
+                            .submit("organize")
                             .job_id
                         )
                     except AutomationQueueFull:
@@ -136,10 +136,10 @@ class AutomationAdmissionTests(unittest.TestCase):
         now = datetime(2026, 8, 22, 12, tzinfo=UTC)
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("preview")
+                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("organize")
                 scheduler = IntervalScheduler(
                     repository,
-                    (IntervalSchedule("hourly", "preview", 3600),),
+                    (IntervalSchedule("hourly", "organize", 3600),),
                     maximum_active_jobs=1,
                 )
                 self.assertEqual(scheduler.tick(now), ())
@@ -154,7 +154,7 @@ class AutomationAdmissionTests(unittest.TestCase):
     def test_remote_ticket_survives_full_queue_then_consumes_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("preview")
+                filler = AutomationJobService(repository, maximum_active_jobs=1).submit("organize")
                 authorizations = ExecutionAuthorizationService(
                     repository, maximum_active_jobs=1, token_factory=lambda: "one-time-token"
                 )
@@ -181,10 +181,14 @@ class AutomationAdmissionTests(unittest.TestCase):
                     frozenset({ApiPermission.READ, ApiPermission.SUBMIT_DRY_RUN}),
                 )
                 api = MediaFlowApi(repository, None, principals=(principal,), maximum_active_jobs=1)
-                self.assertEqual(api_request(api, {"command": "preview"})[0], 202)
-                status, document = api_request(api, {"command": "preview"})
-                self.assertEqual(status, 409)
-                self.assertEqual(document["error"]["code"], "queue_full")
+                # A DryRun-only principal cannot organize; the queue-full
+                # semantics are exercised through the application admission
+                # boundary that owns the supported command.
+                self.assertEqual(api_request(api, {"command": "organize"})[0], 403)
+                jobs = AutomationJobService(repository, maximum_active_jobs=1)
+                jobs.submit("organize")
+                with self.assertRaises(AutomationQueueFull):
+                    jobs.submit("organize")
                 self.assertEqual(len(repository.list_jobs()), 1)
         script = APP_JS.decode()
         self.assertIn("catch (error) { message(errorText(error), true); }", script)

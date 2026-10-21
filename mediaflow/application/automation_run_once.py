@@ -78,33 +78,16 @@ class AutomationRunOnceService:
         intent_service,
         preview_service,
         *,
-        analysis_service=None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._discovery = discovery_service
         self._intents = intent_service
         self._previews = preview_service
-        # Optional durable exact-analysis admission.  When present, freezing a
-        # Run-once manifest hands its exact Preview work to the resident Worker
-        # instead of running the whole walk and Provider batch inline in the
-        # HTTP request.
-        self._analyses = analysis_service
         self._clock = clock
 
     @property
     def discovery(self):
         return self._discovery
-
-    def bind_analysis_service(self, analysis_service) -> None:
-        """Attach the durable exact-analysis admission used by ``finalize``.
-
-        The API constructs the exact-Preview and analysis services after this
-        service, so the binding is explicit rather than a construction-order
-        dependency.  Until it is bound, ``finalize`` produces the exact Preview
-        inline as before.
-        """
-
-        self._analyses = analysis_service
 
     # ------------------------------------------------------------------
     # Admission (prompt; no Storage walk in the HTTP request)
@@ -329,20 +312,17 @@ class AutomationRunOnceService:
 
     def finalize(
         self, discovery_id: str, *, actor: str, expected_version: int
-    ) -> tuple[MediaDiscovery, object | None, object | None]:
-        """Freeze the complete manifest and admit its exact zero-mutation Preview.
+    ) -> tuple[MediaDiscovery, object | None]:
+        """Freeze the complete manifest and create its exact zero-mutation Preview.
 
         Freezing reuses the existing discovery finalize, which hands the frozen
         source list to the existing manual intent admission.  The exact Preview
-        over that intent is then admitted through the durable analysis service
-        when one is configured, so a large frozen manifest never blocks the HTTP
-        request; the resident Worker runs the walk and Provider batch and links
-        the resulting exact Preview.  Either way no execution authority is
-        created: the operator still has to confirm execution separately.
+        over that intent is then produced inline through the shared zero-mutation
+        organize analysis chain.  No execution authority is created: the operator
+        still has to confirm execution separately.
 
-        Returns ``(frozen, preview, analysis)``.  ``preview`` is the completed
-        Preview when one could be produced inline (no durable analysis service),
-        and ``analysis`` is the durable admission when the work was deferred.
+        Returns ``(frozen, preview)``.  ``preview`` is the completed Preview
+        produced by the shared analysis chain.
         """
 
         discovery = self._discovery.get(discovery_id)
@@ -366,23 +346,12 @@ class AutomationRunOnceService:
                 next_action="inspect the discovery state, then finalize it again",
             )
         intent_version = self._intent_version(frozen.intent_id)
-        if self._analyses is not None:
-            # Defer the expensive exact analysis to the resident Worker.  The
-            # frozen manifest and its intent are already durable, so the
-            # operator reads a durable analysis identity immediately and the
-            # separate one-shot execution intent is still required afterwards.
-            analysis = self._analyses.admit_manual(
-                frozen.intent_id,
-                actor=actor,
-                expected_version=intent_version,
-            )
-            return frozen, None, analysis
         preview = self._previews.create(
             frozen.intent_id,
             actor=actor,
             expected_version=intent_version,
         )
-        return frozen, preview, None
+        return frozen, preview
 
     def _intent_version(self, intent_id: str) -> int:
         intent = self._intents.get(intent_id)

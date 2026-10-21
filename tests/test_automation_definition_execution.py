@@ -37,9 +37,6 @@ from mediaflow.domain.automation import (
     AutomationTaskRunMode,
     SchedulerConfigurationSnapshot,
 )
-from mediaflow.domain.automation_task_definition_preview import (
-    AutomationTaskDefinitionPreviewStatus,
-)
 from mediaflow.domain.library import FileStabilityPolicy, MediaLibrary, ResourceLibrary
 from mediaflow.domain.metadata import (
     MediaCandidate,
@@ -67,41 +64,6 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 SNAPSHOT_ID = "revision-1"
 SNAPSHOT_DIGEST = "a" * 64
-
-
-class _GrantPreviewReader:
-    """Test-only persisted Preview evidence for direct application callers."""
-
-    def __init__(self, definition, job, *, preview_id: str) -> None:
-        self.preview_id = preview_id
-        self.preview = SimpleNamespace(
-            preview_id=preview_id,
-            definition_id=definition.definition_id,
-            definition_fingerprint=definition.definition_fingerprint,
-            configuration_revision_id=job.configuration_snapshot_id,
-            configuration_revision_digest=job.configuration_snapshot_digest,
-            configuration_revision_version=job.configuration_snapshot_version,
-            resource_library_id=definition.resource_library_id,
-            storage_id=None,
-            source_scope=definition.source_scope,
-            run_mode=definition.mode.value,
-            effective_item_limit=definition.item_limit,
-            current=True,
-            zero_mutation=True,
-            status=AutomationTaskDefinitionPreviewStatus.PREVIEWED,
-            boundary_errors=(),
-            items=(),
-        )
-
-    def get_readonly(self, preview_id):
-        if preview_id != self.preview_id:
-            raise LookupError("linked Preview was not found")
-        return self.preview
-
-
-def _preview_for(definition, job):
-    preview_id = f"preview-{definition.definition_id}"
-    return preview_id, _GrantPreviewReader(definition, job, preview_id=preview_id)
 
 
 def _definition(
@@ -311,57 +273,15 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _persisted_preview(repository, definition, job):
-        """Persist one exact zero-mutation Preview for the real Worker path."""
-
-        from mediaflow.domain.automation_task_definition_preview import (
-            AutomationTaskDefinitionPreview,
-        )
-
-        preview = AutomationTaskDefinitionPreview(
-            f"preview-{definition.definition_id}",
-            definition.definition_id,
-            definition.definition_fingerprint,
-            job.configuration_snapshot_id,
-            job.configuration_snapshot_version,
-            job.configuration_snapshot_digest,
-            "active",
-            definition.resource_library_id,
-            "source",
-            definition.source_scope,
-            definition.mode.value,
-            definition.item_limit,
-            {
-                "discovered": 0,
-                "selected": 0,
-                "permitted": 0,
-                "excludedIgnored": 0,
-                "unstable": 0,
-                "truncatedByLimit": 0,
-            },
-            AutomationTaskDefinitionPreviewStatus.PREVIEWED,
-            (),
-            "admin",
-            NOW,
-            NOW,
-        )
-        repository.create_automation_task_definition_preview(preview)
-        return preview
-
-    @staticmethod
     def _grant(repository, definition, job):
         """Grant the exact unattended authority an automatic definition needs.
 
-        The grant is bound to a *persisted* exact Preview, exactly like the
-        production grant admission, so the real Worker path can re-read it.
+        The grant binds the exact definition identity, configuration revision and
+        workload bound the operator reviewed; the retired independent Preview
+        product is not a prerequisite.
         """
 
-        from mediaflow.final_cli import _PersistedPreviewReader
-
-        preview = DefinitionScopedExecutionTests._persisted_preview(repository, definition, job)
-        grant_service = UnattendedExecutionGrantService(
-            repository, preview_service=_PersistedPreviewReader(repository)
-        )
+        grant_service = UnattendedExecutionGrantService(repository)
         grant_service.grant(
             definition,
             configuration_snapshot_id=job.configuration_snapshot_id,
@@ -369,7 +289,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             configuration_snapshot_version=job.configuration_snapshot_version,
             actor="admin",
             confirmation=True,
-            preview_id=preview.preview_id,
             storage_id="source",
         )
         return grant_service
@@ -1244,10 +1163,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1255,7 +1171,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 service = self._service(
                     repository,
@@ -1357,10 +1272,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1368,7 +1280,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 finished = self._run(
                     repository,
@@ -1476,10 +1387,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     SQLiteTaskRepository(configuration.database_path) as repository,
                 ):
                     job = self._emit(repository, definition)
-                    preview_id, preview_reader = _preview_for(definition, job)
-                    grant_service = UnattendedExecutionGrantService(
-                        repository, preview_service=preview_reader
-                    )
+                    grant_service = UnattendedExecutionGrantService(repository)
                     grant_service.grant(
                         definition,
                         configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1487,7 +1395,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         configuration_snapshot_version=job.configuration_snapshot_version,
                         actor="admin",
                         confirmation=True,
-                        preview_id=preview_id,
                     )
                     finished = self._run(
                         repository,
@@ -1618,10 +1525,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1629,7 +1533,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 finished = self._run(
                     repository,
@@ -1724,10 +1627,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1735,7 +1635,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 finished = self._run(
                     repository,
@@ -1857,10 +1756,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1868,7 +1764,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 finished = self._run(
                     repository,
@@ -1978,10 +1873,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -1989,7 +1881,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 finished = self._run(
                     repository,
@@ -2053,10 +1944,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant = grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -2064,7 +1952,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 grant_service.revoke(grant.grant_id, actor="admin")
                 service = self._service(
@@ -2136,10 +2023,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
-                grant_service = UnattendedExecutionGrantService(
-                    repository, preview_service=preview_reader
-                )
+                grant_service = UnattendedExecutionGrantService(repository)
                 grant = grant_service.grant(
                     definition,
                     configuration_snapshot_id=job.configuration_snapshot_id,
@@ -2147,7 +2031,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
 
                 class RevokingGrantService(UnattendedExecutionGrantService):
@@ -2165,7 +2048,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                             self.revoke(grant.grant_id, actor="admin", reason="boundary")
                         return super().assert_live(claimed_job, claimed_definition)
 
-                revoking = RevokingGrantService(repository, preview_service=preview_reader)
+                revoking = RevokingGrantService(repository)
                 service = self._service(
                     repository,
                     configuration,
@@ -2274,7 +2157,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 SQLiteTaskRepository(configuration.database_path) as repository,
             ):
                 job = self._emit(repository, definition)
-                preview_id, preview_reader = _preview_for(definition, job)
                 permission = TogglePermissionAuthority()
 
                 class IntraItemPermissionService(UnattendedExecutionGrantService):
@@ -2293,7 +2175,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
 
                 grant_service = IntraItemPermissionService(
                     repository,
-                    preview_service=preview_reader,
                     permission_authority=permission,
                 )
                 grant_service.grant(
@@ -2303,7 +2184,6 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     configuration_snapshot_version=job.configuration_snapshot_version,
                     actor="admin",
                     confirmation=True,
-                    preview_id=preview_id,
                 )
                 service = self._service(
                     repository,

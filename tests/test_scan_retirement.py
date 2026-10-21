@@ -47,7 +47,7 @@ class StandaloneScanRetirementTests(unittest.TestCase):
     def test_legacy_job_refused_without_creating_work(self):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
-                with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
+                with self.assertRaisesRegex(ValueError, "unsupported|must be organize"):
                     AutomationJobService(repository).submit("scan")
                 self.assertEqual((), repository.list_jobs())
                 self.assertEqual((), repository.list_tasks())
@@ -125,7 +125,7 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                     handler.assert_not_called()
                     self.assertEqual((), repository.list_tasks())
                     with patch("mediaflow.final_cli._configuration", side_effect=AssertionError):
-                        with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
+                        with self.assertRaisesRegex(ValueError, "unsupported|must be organize"):
                             _run_queued_workflow(job, None, lambda: False, repository=repository)
 
     def test_unsupported_dispatch_refuses_before_configuration(self):
@@ -173,7 +173,7 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                         actor="operator",
                         maximum_active_jobs=10,
                     )
-                with self.assertRaisesRegex(ValueError, "unsupported|must be preview"):
+                with self.assertRaisesRegex(ValueError, "unsupported|must be organize"):
                     coordinator.retryable_items(paused.task_id, failed_only=False)
                 self.assertEqual((), repository.list_jobs())
                 self.assertEqual(paused, repository.get_task(paused.task_id))
@@ -232,7 +232,8 @@ class StandaloneScanRetirementTests(unittest.TestCase):
                 final_main(args, stdout=io.StringIO(), stderr=io.StringIO())
             self.assertEqual(0, raised.exception.code)
             self.assertNotIn("scan", out.getvalue().lower())
-            self.assertIn("preview", out.getvalue())
+            self.assertNotIn("preview", out.getvalue())
+            self.assertIn("organize", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -180,7 +180,7 @@ function manualActionsPayload() {
       preview: { available: true, reason: null },
       organize: { available: false, reason: "not advertised" },
     },
-    limits: { previewMaxItems: 100 },
+    limits: { organizeMaxItems: 100 },
   };
 }
 

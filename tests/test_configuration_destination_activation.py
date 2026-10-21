@@ -34,7 +34,7 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION as RUNTIME_SCHEMA_VERSION
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_configuration_objects import example_document, request
+from tests.test_configuration_objects import admit_organize_job, example_document, request
 
 
 class RemoteDestinationFake:
@@ -390,17 +390,11 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     configuration_service=managed,
                     bootstrap_document=document,
                 )
-                status, created = request(
-                    api,
-                    "/api/v1/jobs",
-                    method="POST",
-                    body={"command": "preview"},
-                )
-                self.assertEqual(status, 202)
-                stored = runtime_repository.get_job(created["job_id"])
+                job_id, created = admit_organize_job(api)
+                stored = runtime_repository.get_job(job_id)
                 self.assertIsNotNone(stored)
-                self.assertEqual(stored.configuration_revision_id, activated.revision_id)
-                self.assertEqual(stored.configuration_revision_digest, activated.digest)
+                self.assertEqual(stored.configuration_snapshot_id, activated.revision_id)
+                self.assertEqual(stored.configuration_snapshot_digest, activated.digest)
 
     def test_set_to_unset_credential_readiness_blocks_checked_activation_through_api(
         self,

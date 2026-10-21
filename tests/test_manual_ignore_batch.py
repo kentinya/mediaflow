@@ -52,7 +52,7 @@ class ManualIgnoreBatchTests(unittest.TestCase):
         coordinator = PersistentTaskCoordinator(repository, repository)
         if task is None:
             task = coordinator.create(
-                "preview",
+                "organize",
                 execute_authorized=False,
                 configuration_snapshot_id=snapshot_id,
                 configuration_snapshot_digest=snapshot_digest,
@@ -94,7 +94,7 @@ class ManualIgnoreBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 recognition = self._create_waiting(repository, "recognition", number=1, task=task)
                 metadata = self._create_waiting(repository, "metadata", number=2, task=task)
                 correction = self._create_waiting(
@@ -148,8 +148,8 @@ class ManualIgnoreBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                first_task = coordinator.create("preview", execute_authorized=False)
-                second_task = coordinator.create("preview", execute_authorized=False)
+                first_task = coordinator.create("organize", execute_authorized=False)
+                second_task = coordinator.create("organize", execute_authorized=False)
                 first_recognition = self._create_waiting(
                     repository, "recognition", number=1, task=first_task
                 )

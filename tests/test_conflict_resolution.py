@@ -175,7 +175,7 @@ class ConflictResolutionTests(unittest.TestCase):
             database = Path(directory, "runtime.sqlite3")
             with SQLiteTaskRepository(database) as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Film.mkv", "Film.mkv"
                 )
@@ -237,7 +237,7 @@ class ConflictResolutionTests(unittest.TestCase):
             config.write_text(json.dumps(document), encoding="utf-8")
             with SQLiteTaskRepository(root / "runtime.sqlite3") as repository:
                 coordinator = PersistentTaskCoordinator(repository, repository)
-                task = coordinator.create("preview", execute_authorized=False)
+                task = coordinator.create("organize", execute_authorized=False)
                 item = coordinator.begin_item(
                     task.task_id, "source", "movies", "Film.mkv", "Film.mkv"
                 )

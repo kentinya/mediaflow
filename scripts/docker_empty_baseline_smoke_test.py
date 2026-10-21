@@ -952,8 +952,8 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             ]
             document.setdefault("automation", {})["schedules"] = [
                 {
-                    "id": "acceptance-scan",
-                    "command": "preview",
+                    "id": "acceptance-organize",
+                    "command": "organize",
                     "intervalSeconds": 2,
                     "enabled": True,
                 }
@@ -1229,7 +1229,7 @@ def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> Non
             description="the resident Worker reporting transfer readiness",
         )
         print("   resident Worker reports ResourceLibrary transfer readiness")
-        for command in ("scan", "preview"):
+        for command in ("organize",):
             admitted = stack.json_api("/api/v1/jobs", method="POST", body={"command": command})
             wait_job(stack, admitted)
         if list(stack.target_root.rglob("*.mkv")):

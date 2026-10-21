@@ -19,16 +19,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
-  admitDefinitionPreviewAnalysis,
-  reconcilePreviewAnalysis,
   createAutomationSuccessorDraft,
   copyAutomationDefinition,
   grantAutomationAuthority,
   revokeAutomationAuthority,
 } from "../../shared/api/api-client";
-import { newRequestId } from "../../shared/api/request-id";
-import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
-import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
   automationDefinitionQueryKey,
   automationDefinitionQueryOptions,
@@ -38,77 +33,6 @@ import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import { describeAutomationRunMode } from "../../entities/operations/automation";
-import { usePrincipalIdentity } from "./principal-identity-query";
-
-const PREVIEW_ANALYSIS_INTENT_PREFIX =
-  "mediaflow.operations.automation-preview-analysis:";
-
-function previewAnalysisIntentSessionKey(principalId: string): string {
-  return `${PREVIEW_ANALYSIS_INTENT_PREFIX}${principalIdStorageSegment(principalId)}`;
-}
-
-interface PendingPreviewAnalysis {
-  readonly definitionId: string;
-  readonly requestId: string;
-}
-
-function readPendingPreviewAnalysis(
-  principalId: string | null,
-): PendingPreviewAnalysis | null {
-  if (principalId === null || typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(
-      previewAnalysisIntentSessionKey(principalId),
-    );
-    if (raw === null) return null;
-    const value = JSON.parse(raw) as unknown;
-    if (value === null || typeof value !== "object") return null;
-    const source = value as Record<string, unknown>;
-    if (
-      typeof source.definitionId !== "string" ||
-      typeof source.requestId !== "string" ||
-      source.requestId.length === 0
-    ) {
-      return null;
-    }
-    return {
-      definitionId: source.definitionId,
-      requestId: source.requestId,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writePendingPreviewAnalysis(
-  principalId: string | null,
-  intent: PendingPreviewAnalysis | null,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (principalId === null) return;
-    const key = previewAnalysisIntentSessionKey(principalId);
-    if (intent === null) {
-      window.sessionStorage.removeItem(key);
-    } else {
-      window.sessionStorage.setItem(key, JSON.stringify(intent));
-    }
-  } catch {
-    // Persisting the reconciliation context is best-effort: the operator can
-    // always reconcile from the durable Automation history after a reconnect.
-  }
-}
-
-registerPrincipalSessionDataCleaner(() => {
-  if (typeof window === "undefined") return;
-  const storage = window.sessionStorage;
-  const keys: string[] = [];
-  for (let index = 0; index < storage.length; index += 1) {
-    const key = storage.key(index);
-    if (key?.startsWith(PREVIEW_ANALYSIS_INTENT_PREFIX)) keys.push(key);
-  }
-  for (const key of keys) storage.removeItem(key);
-});
 
 function displayEnum(value: string): string {
   return value
@@ -126,23 +50,6 @@ export function AutomationDetailPage() {
   const queryClient = useQueryClient();
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The principal identity the backend confirms for this token: the retained
-  // exact-Preview intent's session key is scoped to it, so another principal's
-  // unknown outcome can never be reconciled as this one's result.
-  const principalIdentity = usePrincipalIdentity();
-  const principalId = principalIdentity.resolved
-    ? principalIdentity.principalId
-    : null;
-
-  const [pendingPreviewAnalysisOverride, setPendingPreviewAnalysisState] =
-    useState<PendingPreviewAnalysis | null>(null);
-  const pendingPreviewAnalysis =
-    pendingPreviewAnalysisOverride ?? readPendingPreviewAnalysis(principalId);
-  const setPendingPreviewAnalysis = (intent: PendingPreviewAnalysis | null) => {
-    setPendingPreviewAnalysisState(intent);
-    writePendingPreviewAnalysis(principalId, intent);
-  };
-
   const detailQuery = useQuery(
     automationDefinitionQueryOptions(token, definitionId),
   );
@@ -151,121 +58,6 @@ export function AutomationDetailPage() {
     void queryClient.invalidateQueries({
       queryKey: [automationDefinitionQueryKey],
     });
-  };
-
-  const previewMutation = useMutation({
-    mutationFn: () => {
-      // The admission context is retained principal-scoped. The identity is
-      // established before the POST, so an unknown outcome is always
-      // retained for this exact principal (B43.2-R5-2); admitting while the
-      // identity is unresolved could not prove whose request it was.
-      const identity = principalIdentity;
-      if (!identity.resolved) {
-        return Promise.reject(
-          new Error(
-            identity.reason === "loading"
-              ? "principal-identity-pending"
-              : "principal-identity-unavailable",
-          ),
-        );
-      }
-      const requestId = newRequestId();
-      const intent: PendingPreviewAnalysis | null =
-        requestId === null ? null : { definitionId, requestId };
-      if (intent !== null) {
-        writePendingPreviewAnalysis(identity.principalId, intent);
-        setPendingPreviewAnalysisState(intent);
-      }
-      return admitDefinitionPreviewAnalysis(token, {
-        definitionId,
-        admissionRequestId: requestId,
-      }).then((result) => ({
-        result,
-        intent,
-        principalId: identity.principalId,
-      }));
-    },
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: ({ result, intent, principalId: admittedPrincipalId }) => {
-      if (result.ok && result.model !== undefined) {
-        setPendingPreviewAnalysis(null);
-        writePendingPreviewAnalysis(admittedPrincipalId, null);
-        void navigate({
-          to: "/operations/automation/preview-analyses/$analysisId",
-          params: { analysisId: result.model.analysisId },
-        });
-        return;
-      }
-      const unknown =
-        result.status === 0 ||
-        result.status >= 500 ||
-        result.code === "malformed_response";
-      if (unknown && intent !== null) {
-        // The outcome is unknown, not absent: keep the retained intent so the
-        // operator can deliberately reconcile it before any resubmission.
-        setError(
-          "精确预览的响应未能送达或无法解读,无法确定后端是否已经受理。" +
-            "已受理的分析是持久的;请先使用“核对上次请求”,不要重复提交。",
-        );
-        return;
-      }
-      setPendingPreviewAnalysis(null);
-      writePendingPreviewAnalysis(admittedPrincipalId, null);
-      setError(
-        `Creating the Preview was rejected (${result.code}). Reload the current state and try again; nothing is retried automatically.`,
-      );
-    },
-  });
-
-  // Reconcile the retained unknown exact-Preview admission from durable truth.
-  // This never creates work: it reads back the analysis the client's own
-  // request id actually produced, or reports a bounded absence.
-  const reconcilePreviewMutation = useMutation({
-    mutationFn: (intent: PendingPreviewAnalysis) =>
-      reconcilePreviewAnalysis(token, { admissionRequestId: intent.requestId }),
-    retry: false,
-    onMutate: () => setError(null),
-    onSuccess: (result) => {
-      if (result.ok && result.model !== undefined) {
-        setPendingPreviewAnalysis(null);
-        writePendingPreviewAnalysis(principalId, null);
-        void navigate({
-          to: "/operations/automation/preview-analyses/$analysisId",
-          params: { analysisId: result.model.analysisId },
-        });
-        return;
-      }
-      if (result.code === "preview_analysis_request_not_found") {
-        // The reconcile lookup proved *nothing*: the API reports
-        // `durableState: unknown`, because a bounded absence cannot establish
-        // that no work was admitted (B43.2-R4-3).  Keep the exact retained
-        // context and require a bounded investigation plus an explicit
-        // resolution before any fresh admission replaces it.
-        setError(
-          "核对没有找到这次请求的持久工作,但这不能证明后端没有受理:" +
-            "响应可能在写入前丢失。请先查看持久历史/任务中心确认,再决定是否放弃这次请求。",
-        );
-        return;
-      }
-      setError(
-        `核对上次精确预览失败(${result.code ?? "unknown"})。${
-          result.nextAction ?? "请稍后重试核对,不要重复提交。"
-        }`,
-      );
-    },
-  });
-
-  // Resolve one still-unresolved request only after the operator explicitly
-  // accepts the bounded uncertainty: nothing is deleted and no work is
-  // replayed, but the retained context stops blocking a deliberate new
-  // admission (B43.2-R4-3).
-  const discardPreviewIntent = () => {
-    setPendingPreviewAnalysis(null);
-    setError(
-      "已放弃这次未决请求的本地上下文。后端可能仍保留了它实际受理的工作;" +
-        "如需继续,请重新发起精确预览并留意新请求的身份。",
-    );
   };
 
   const draftMutation = useMutation({
@@ -588,64 +380,10 @@ export function AutomationDetailPage() {
             <section className="mf-count-section">
               <h3>Definition actions</h3>
               <p className="mf-dashboard-meta">
-                {definition.actions.preview.available
-                  ? "Create an exact zero-mutation Preview of the Active definition."
-                  : `Preview unavailable: ${definition.actions.preview.reason ?? "not advertised"}`}
+                Run once performs the shared bounded discovery and zero-mutation
+                organize analysis of this definition scope.
               </p>
               <div className="mf-actions">
-                <Button
-                  type="button"
-                  disabled={
-                    !definition.actions.preview.available ||
-                    previewMutation.isPending ||
-                    pendingPreviewAnalysis !== null ||
-                    !principalIdentity.resolved
-                  }
-                  onClick={() => previewMutation.mutate()}
-                >
-                  {previewMutation.isPending
-                    ? "Creating Preview…"
-                    : "Create exact Preview"}
-                </Button>
-                {!principalIdentity.resolved && (
-                  <p className="mf-dashboard-meta">
-                    {principalIdentity.reason === "loading"
-                      ? "正在确认当前登录身份；确认后才能发起精确预览，以保证未决请求能被完整保留。"
-                      : "当前登录身份暂不可用，精确预览暂不能发起；请稍后刷新重试。未决请求的核对不受影响。"}
-                  </p>
-                )}
-                {pendingPreviewAnalysis !== null ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={reconcilePreviewMutation.isPending}
-                      onClick={() =>
-                        reconcilePreviewMutation.mutate(pendingPreviewAnalysis)
-                      }
-                    >
-                      {reconcilePreviewMutation.isPending
-                        ? "核对中..."
-                        : "核对上次请求"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={discardPreviewIntent}
-                    >
-                      放弃未决请求
-                    </Button>
-                    {/* Bounded investigation: the durable Operations history
-                        is where an accepted-but-unreconciled admission is
-                        visible, so the operator can look before resolving. */}
-                    <Link
-                      className="mf-button mf-button-secondary"
-                      to="/operations"
-                    >
-                      查看持久历史
-                    </Link>
-                  </>
-                ) : null}
                 {definition.draftState.present ? (
                   <Link
                     className="mf-button mf-button-secondary"
