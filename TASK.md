@@ -420,7 +420,7 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: recorded by the checkpoint commit on branch main (below)
+Candidate Head: c71ec218ca46efa7d73e53c9c82b29f3af88bd91
 Status: READY FOR B REVIEW
 ```
 
