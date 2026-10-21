@@ -420,97 +420,77 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: b765198f2a71fe82b7169061e162986351cdbc37
+Candidate Head: 5b5f863 (implementation); report successor is the docs commit containing this report
 Status: READY FOR B REVIEW
-Round: fix round after B FIX REQUIRED on c71ec21 (previous report in Git)
+Round: fix round after B FIX REQUIRED on b765198 (previous report and B review in Git)
 ```
 
-### 修正交付（对应 B 的四项 Required correction）
+### 修正交付（对应 B 的 same-context durable plan continuity 三项）
 
-1. **公共 CLI 分析不再制造正式执行待办**。`organize`/`batch organize` 带 `--execute`
-   与否决定 `analysis_only`：不执行即共享零变更分析。识别歧义、Metadata 待选、
-   Metadata 纠正、分类未命中、目标冲突五条分支统一走
-   `MediaOrganizerService._analysis_finding`，只写完整计划/附件/冲突/未就绪
-   evidence 与 DRY_RUN 逐项 Result，不写 `WAITING_CONFIRM`、pending
-   `ConflictConfirmation`、Recognition/Metadata/Classification Review，不取得单次或
-   无人值守权限。真实执行/恢复链的阻塞职责保持不变（`wait_for_*` 未改）。
-   `render_summary` 对分析项输出 `ANALYSIS` + `outcome=` + 补正 next action；
-   plan 未到达时 evidence 的 `unavailable_reason` 也带补正动作。
-   复现 B 的 target-conflict 场景：exit 0、item `dry_run`、confirmations 0、
-   Result 目标与 attachments=1 保留、两侧媒体 bytes 未变。
-2. **删除独立计划页**。`OrganizePreviewPage`、`/operations/organize/preview/$previewId`
-   路由与 `operations-organize-preview` destination 全部删除；完整固定计划摘要与精确
-   确认改由新的共享 `OrganizePlanConfirmation` 在产生它的界面呈现：
-   `OrganizeIntentPage`（分析后同页）与 `AutomationRunOncePage`（finalize 后同页）。
-   保留原来的就绪子集选择、破坏性 effect 绑定/失效、持久执行历史锁定、丢响应
-   有界核对与“不自动重提”。`OperationsLanding` 的运行详情直接内联同一份摘要
-   （不再跳转），`OrganizeExecutionPage` 的返回目标改为整理意图。Intent 页不再
-   分析后跳转，故重新分析会生成新计划（旧计划与其准入历史不可被新计划吞并）。
-3. **同上下文与拒绝行为**。Run once 文档新增精确 `previewId` 与 preview action
-   `path`（分析结果本身仍不带权限），刷新/重连/重启从持久记录恢复同一份计划摘要；
-   旧 `/operations/organize/preview/...` URL 走普通 `Route not found`，零 API 请求、
-   无退役提示/重定向/守卫（新增 router 测试）。
-4. **删除 `preview-analyses` 兼容分支**。`service_api.py` 中 5 处显式分支全删，
-   旧输入落到普通认证后 not-found 路由边界，无专用消息/guard。
-5. **测试与 harness 迁移**。`tests/test_preview_retirement.py` 从“只验证不存在”扩展为
-   真实入口证明：冲突 findings（含附件/目标/冲突类型/next action）、四类未就绪
-   findings（无 review/confirmation/authority 行、零媒体变更）、分析不能被
-   `tasks retry-failed --execute` 提权、以及同一 source/pin/策略下 CLI 分析与 Web
-   准备计划的 target/operation/attachments/conflicts/policies 等义。Web 组件/路由测试
-   迁移到同页旅程；harness/fixture 改为通过合法分析构造证据（fake server 新增
-   session 级 plan-variant 与 malformed-grant 选择器，用于已在生产的同一入口）。
+1. **持久 intent→计划关联**。真实 `GET /api/v1/operations/organize/intents/{id}` 新增
+   bounded `latestPlan`（`previewId`/`status`/`current`/`intentVersion`/`createdAt`/
+   `updatedAt`/`truncated`）。来源是既有
+   `ManualOrganizePreviewService.latest_readonly`（不发布读时失效、不改写证据），
+   经新增 `manual_intent_latest_plan_document` 做与其余 operator document 相同的递归
+   脱敏/边界守卫。读取不触发明细读取以外的行为：无重新分析、无 Provider、无新 Task/
+   计划、无执行许可、无 Storage 变更；无计划时为 `null`。
+2. **同页恢复，不恢复独立页面**。`OrganizeIntentPage` 的计划身份解析顺序为：本次分析
+   刚产生的计划 → URL 中且仍与持久关联一致的精确计划（后端无该投影时才单独采用）→
+   后端持久 latest plan。显式分析后以 `replace` 把精确 `plan` 写入当前 URL，并保留
+   Files/Operations 返回上下文；硬刷新、Back/Forward、重新打开链接均回到同一份计划。
+   陈旧 URL 计划不会覆盖更新的持久计划。完整计划仍从自己的认证 GET 路由读取，
+   `OrganizePlanConfirmation` 新增 `expectedIntentId`：计划不属于当前意图时拒绝展示并
+   不提供任何执行动作。
+3. **当前/历史/已受理如实区分**。恢复的计划继续由后端 `current` 标记：历史计划显示
+   “历史”且执行项被后端 `execute.available=false` 关闭；已受理计划经同一
+   `previewId` 的持久执行历史查询显示原执行链接并禁用确认，不猜最近 Task、不重新授权、
+   不自动重提。保存选择后现在会重读该计划，使“历史证据”立即如实呈现。
+   另一份分析不会删除旧计划/旧执行证据。
+4. **fixture 与回归**。golden contract 从真实 API 增补分析后的 intent GET
+   （`organizeIntentWithPlan`）并重生成 fixture；Web 同页旅程新增：durable 恢复且零
+   POST、刷新旅程 URL 同一计划且 POST 不增加、历史计划禁用执行、已受理计划恢复原执行、
+   外来计划拒绝。B 原始 `OrganizeBReview.test.tsx` 探针临时拷入运行通过（未提交）。
+5. **真实 API 回归**。`test_v2_manual_organize` 新增：分析前 `latestPlan=null`；分析后
+   精确指向该计划且 `current=true`；重复读取 Provider/Task/计划/两侧 mutation 均不增长、
+   无执行记录；保存选择后同一计划 `current=false` 且不新建计划。
 
 ### 受影响检查（Developer 实际结果，仓库根除注明外）
 
 ```bash
 python3 scripts/check_governance.py                                  # PASS
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement # Ran 12, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_final_integration test_v2_manual_organize \
-  test_manual_organize_execution test_organize_preparation test_v2_automation_run_once \
-  test_automation_run_once test_manual_operations_contract           # Ran 169, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_scan_retirement test_file_index_retirement \
-  test_manual_organize_intent test_manual_organize_preview test_recovery_continuation \
-  test_scope_continuation test_task_center_recovery_lineage \
-  test_metadata_correction_continuation test_automation_definition_execution \
-  test_automation_authorized_execution_matrix test_automation_unattended_grant \
-  test_automation_admission test_automation_job_fencing test_configuration_organize \
-  test_v2_rules_workspace_previews test_task_persistence test_conflict_resolution \
-  test_file_media_detail                                              # Ran 390, OK
-.venv/bin/ruff check .                                                # All checks passed
-.venv/bin/ruff format --check .                                       # 384 files already formatted
-.venv/bin/python -m compileall -q mediaflow tests scripts             # OK
+.venv/bin/ruff check <changed py>                                    # All checks passed
+.venv/bin/ruff format --check <changed py>                           # 4 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts            # OK
 git diff --check                                                     # clean
-cd web && npx tsc --noEmit -p tsconfig.json                           # OK
-cd web && npx eslint .                                                # OK
-cd web && npx prettier --check "src/**/*.{ts,tsx}" "tests/**/*.{ts,tsx,mjs}"  # OK
-cd web && npm run test -- run                                          # 78 files, 1150 tests OK
-cd web && npm run build                                                # OK (dist rebuilt from final source)
-cd web && npx playwright test                                          # 238 passed (fake-API suite)
-cd web && npx playwright test tests/e2e/{manual-organize,automation,manual-operations,operations,library-files}.spec.ts  # 57 passed on rebuilt dist
+PYTHONPATH=tests .venv/bin/python -m unittest test_v2_manual_organize   test_manual_operations_contract test_manual_organize_intent   test_manual_organize_preview test_manual_organize_execution        # Ran 108, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement   test_organize_preparation test_manual_operations                   # Ran 40, OK
+MEDIAFLOW_UPDATE_FIXTURES=1 ... test_manual_operations_contract       # Ran 4, OK (fixture regenerated)
+cd web && npm run typecheck                                          # OK
+cd web && npx eslint <changed ts/tsx>                                # OK
+cd web && npx prettier --check <changed ts/tsx>                      # OK
+cd web && npm run test -- run src/features/operations/OrganizeRouter.test.tsx \
+  src/features/operations/OrganizeCreationPage.test.tsx \
+  src/features/operations/OperationsInventory.test.tsx \
+  src/features/operations/AutomationRouter.test.tsx \
+  src/routes/router.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx
+                                                                     # 6 files, 82 tests OK
+cd web && npm run test -- run src/features/operations/OrganizeRouter.test.tsx
+                                                                     # 25 tests OK
+cd web && npm run test -- run src/features/operations/OrganizeBReview.test.tsx
+                                                                     # B probe copied then removed: 1 passed
 ```
-
-`test_automation_task_definition_preview` / `test_automation_preview_grant_gate` 已在上一轮
-随退役模块移除（TASK 旧命令列表已过期）；本文列出的是当前真实模块。
 
 ### 未执行 / 剩余风险（交 B）
 
-- `playwright.python.automation.config.ts` 与 `playwright.python.config.ts` 的 Python harness
-  当前启动即失败：`scripts/operations_inventory_harness.py` 用 operator principal 提交
-  `POST /api/v1/jobs {command: organize}`，真实 API 现在要求 `remote_execute` 权限 +
-  已启用的 remote execution + `execute=true` + execution token，因此 harness seed 报
-  `403 principal lacks remote_execute permission`。复现：
-  `.venv/bin/python scripts/operations_inventory_harness.py --port 4199`。属 B 的环境/
-  证据工作（上一轮 harness 改动遗留，非本轮产品缺陷），故本轮未跑 Python browser specs。
-- 因此 `web/tests/e2e/automation-run-once.python.spec.ts` 已按同页计划旅程改写
-  （finalize 后不再跳转、重启后从持久 previewId 恢复、恢复确认改用
-  prepare-summary/confirm），但**未实际执行**；`operations-inventory/live-files/visual/
-  unicode` 四个 python spec 未由 Developer 运行。
-- wheel/清洁构建、安装消费者、production Docker/常驻 Worker/release-security/restart-fault
-  门禁按 workflow 属 B，本轮未执行。
-- `AutomationDetailPage` 的无人值守授权已改为绑定已发布 definition revision（不再要求
-  Preview 身份）；Web `authorize/executeTaskItemRecoveryOrganize` legacy link transports 仍
-  留在 API client（后端路由仍受支持，Web 已不再使用）；是否需要删除留给 B/A 判定。
-- 历史运行库若含已退役专属表不会被删除；fresh 库不创建它们（不变）。
+- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
+  release-security 属 B，本轮未执行；上轮报告的 Python browser harness 403 环境问题
+  未复测，仍交 B 处理，不据此扩大本 Task。
+- 未改 schema/迁移；只新增只读投影字段，历史运行库不受影响。
+- URL `plan` 只是精确提示且受 bounded 语法限制；与持久计划不一致时以持久为准，外来
+  计划被拒绝；计划不可读时仍显示组件原有失败说明与重读动作。
+- 历史计划与旧执行记录保留，不因新分析清除；不提供旧计划自动迁移/重放。
+- `OrganizePlanConfirmation` 的既有 `AutomationRunOncePage` 调用未传 `expectedIntentId`，
+  行为不变；Run once 的恢复仍由其持久 `previewId` 承担。
 
 不自判 PASS，不关闭 Slice，不规划下一 Task。
 
