@@ -15,7 +15,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER FIXES TASK45.6 PLAN RELOAD CONTINUITY; B RECHECKS FIXED CANDIDATE
+Next Action: DEVELOPER RESTORES SHARED AUTOMATION AUTHORIZATION PREFLIGHT; B RECHECKS FIXED CANDIDATE
 ```
 
 ## Goal
@@ -497,79 +497,97 @@ cd web && npm run test -- run src/features/operations/OrganizeBReview.test.tsx
 ## B Review Result
 
 ```text
-Reviewed candidate: b765198f2a71fe82b7169061e162986351cdbc37
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..b765198f2a71fe82b7169061e162986351cdbc37
-Report successor: 3d6099111d95b5bcb1859a525f663bd856b2b34b — TASK.md only; executable inputs unchanged
+Reviewed candidate: 5b5f86330b92965adafa1de08a53cc326ac7bcfe
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..5b5f86330b92965adafa1de08a53cc326ac7bcfe
+Report successor: fac0593a12ac944b4297435e4a76b994eac8f026 — TASK.md only; executable inputs unchanged
 Decision: FIX REQUIRED
 Review stage: early proven-blocker review; complete Base..Head/T4 acceptance remains pending
-Task blocker: current same-page fixed plan is lost from the intent UI on hard reload / return
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 continuity incomplete
+Task blocker: retained Automation authorization preflight no longer performs shared analysis/planning
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 preflight incomplete
 Next: SAME TASK FIX LOOP; B owns corrected-candidate full T4 acceptance
 ```
 
 ### 已核实交付与证据边界
 
 - governance PASS；branch main，开工 HEAD 为上述 report successor。已记录并保留所有预存
-  图片删除、日志、截图、压缩包和 `.DS_Store`；未访问私有配置、运行库或真实媒体。
-- 上轮 CLI 冲突分析阻塞已修正：通过公共 `organize` 不带 `--execute`，真实临时根与
-  fake Provider 得到 item `dry_run`、正式 pending confirmations 0→0、无执行授权，
-  来源和目标 bytes 不变。`test_preview_retirement` 12/12 通过。
-- 上轮独立 `OrganizePreviewPage`/路由已删除，摘要改为当前 intent/Run once 内嵌。
-  现有 `OrganizeRouter.test.tsx` 与 `routes/router.test.tsx` 共24例通过，含普通旧路由拒绝；
-  这不替代生产 browser/Worker 验收。
-- 上轮 Preview 专用退役分支已删除。真实认证 WSGI 请求原 API 得到共享
-  `404 not_found / route was not found`；Jobs/Tasks新增及两侧Storage mutation均为零。
-  B 初次脚本将普通404文案误写为 `route not found` 导致自身断言失败；已按实际公共
-  not-found文案修正并复跑通过，原始失败日志保留，不记作产品失败。
-- 新独立 router/component 复现1例失败：沿现有 intent 页点击“生成分析摘要”，显示计划后
-  以同一实际URL重新挂载真实router和空query cache（模拟硬刷新），摘要消失；POST计数
-  仍1，无自动重分析。这使用既有API契约fixture/真实normalizer，不是生产浏览器或Worker证明。
-- 真实 Files→intent→choice→plan API 再读证明：原计划GET仍200且身份一致，intent GET
-  不包含该计划身份，两侧媒体零变更。结合UI复现，缺陷是计划上下文不可恢复，不是计划
-  数据丢失、已发生媒体重复执行或数据库损坏。
+  图片删除、日志、截图、压缩包和 `.DS_Store`；工作区与 Git 可写，未访问私有配置、运行库
+  或真实媒体。没有修改 Slice/Roadmap/Progress 或改写前项接受结论。
+- **上轮刷新阻塞已修正。** B 原独立 router/component 探针在本候选运行 1/1 通过：
+  现有 intent 页显式分析后，以真实生成 URL 和空 query cache 重新挂载，恢复同页摘要，
+  POST 数不增加。真实认证 Files→intent→choice→plan→intent GET 复核通过：
+  `latestPlan.previewId` 精确等于原持久计划、`current=true`，计划 GET 200，两侧 mutation 为零。
+  这是 component/API 证明，不冒充生产浏览器、Worker 或 restart 验收。
+- **新的 P1 已从现有真实入口复现。** 用既有 Automation managed-configuration journey
+  在隔离临时根中完成合法 Draft→Validate→Activate，读取真实定义详情，沿其实际广告的
+  `actions.grant.path/method` 提交 Web 等义的 `revisionId + confirmation=true`。未先分析时，
+  详情已返回 `grantEligibility.eligible=true` / grant action available；POST 返回 201；
+  grant-state GET 200 且 `active=true`。共享计划及逐项计划、intent、discovery、Task/Job
+  均始终为 0，grant/audit 分别 0→1；来源 bytes 不变、目标为空。未手工 upsert 工作状态，
+  未构造不存在入口，未执行 Scheduler/Worker，不声称已发生未经许可变更或数据损失。
+- 实现审查确认：`UnattendedExecutionGrantService.grant/project_eligibility` 去掉原分析证据
+  检查后，只保留定义/配置形状、边界和当前权限；API 未接入共享分析，Web 只需勾选授权。
+  这不是要求恢复独立 Preview 产品，而是 RO-8 明确保留的授权前分析/精确计划职责尚未承接。
+  对应 V2-OPS-013、Preview退役设计第1/3/5节、本Task实施步骤5及验收第6项。
 
 本机稳定证据：
-`.git/validation-evidence/b765198f2a71fe82b7169061e162986351cdbc37/task45.6/b-review/`，
-含复现源码、原始日志及简短运行记录；不声称外部可访问。
-已审候选清单、上轮修正diff及相关真实入口；完整Task Base..Head、全量Python/Web/E2E、
-production/native/wheel/installed-consumer/Docker/security/restart等T4验收尚未完成。
-依workflow §6，在已证明P1后提前返回，不机械启动昂贵全量；没有豁免，也不交回Developer。
-Developer报告的全量结果只作为交接事实，不冒充B验收；其报告的Python harness 403属于B
-后续证据/环境事项，本轮未独立重跑，不作为新的产品阻塞或要求Developer扩大工作。
+`.git/validation-evidence/5b5f86330b92965adafa1de08a53cc326ac7bcfe/task45.6/b-review/`，
+含 candidate 输入差异、`OrganizeBReview.test.tsx`、真实 API reread/preflight 脚本、原始日志
+及计时记录；不声称外部可访问。preflight脚本断言当前观察事实，用于复现，不是期望通过的
+产品验收断言；修正后的回归须断言没有合法分析证据就不能授予权限。
 
-### Required correction — same-context durable plan continuity
+本轮已审本次修正diff及Task范围内相关授权消费者/删除断言；**完整 Task Base..Head 与
+全量 Python/Web/E2E、production/native/wheel/installed-consumer/Docker/security/restart
+验收尚未完成**。依workflow §6，在已证明 P1 后提前返回；没有豁免，也不交回Developer。
+Developer报告的受影响测试不冒充B验收；旧候选证据仅保留历史事实，不当作本候选全量结果。
+Python browser harness 403仍属B后续环境/证据事项，本轮未重跑，不列为产品阻塞。
 
-1. 修复 `OrganizeIntentPage.tsx` 的计划恢复：当前计划身份只在 `useState(null)` 中，
-   仅分析POST成功后赋值；硬刷新、离开后返回或执行页“返回整理意图”都会丢失摘要入口。
-   通过既有整理计划/意图持久关联或经过后端验证的精确上下文恢复该份计划，继续内嵌展示，
-   不恢复独立Preview页，不新建队列/分析引擎，不在读取/刷新时POST重分析或调用Provider。
-2. 保留原intent/pin/版本/来源和返回筛选；当前与历史/已受理计划必须如实区分。
-   已受理/提交未知时恢复对应持久执行历史或有界核对，不猜最近任务、不自动重新授权/提交。
-   计划过期或当前账号不可读时清楚说明并给出合法动作；不能用另一次分析吞掉旧受理证据。
-   原因只是丢失UI关联，不能用清库、删除旧计划或标成功来修复。
-3. 将硬刷新/真实返回路径回归纳入现有同页旅程：先从已有来源入口生成计划，刷新后显示
-   同一计划且分析POST/Provider/执行准入计数不增加；确认后返回/刷新仍显示原执行，
-   失效及未知响应保持拒绝/核对和非重放。fixture必须对应真实API；不制造不可达组合。
+### Required correction — shared Automation authorization preflight
+
+1. 在当前保留的 Automation 授权旅程内承接**共享整理分析/完整固定计划**，而非仅删除
+   旧产品依赖后直接显示 eligible。分析必须使用该定义的真实 ResourceLibrary/相对范围、
+   工作量边界、精确配置/定义版本及实际策略，保留稳定性、附件、冲突/能力和未就绪解释。
+   复用既有应用行为/Task/Worker；长分析不另建队列，也不恢复独立 Preview 页面/API/命令/
+   Job/定时/专用仓储/兼容服务。不把Run once入口存在视为授权前分析已经被消费。
+2. eligibility投影与grant准入共享同一后端权威校验：缺失、失败、过期或不匹配的分析证据
+   不得被视为满足授权条件；按既有安全规则区分可接受项和真实阻塞，不用空对象/字符串/
+   客户端摘要替代完整证据。与精确定义、配置、范围和授权边界关联，修正/拓宽后失效并解释
+   下一动作。不要把分析本身当作执行许可，不自动创建grant或组织Job；不要求每次合法
+   定时运行重复点击授权，也不改绑已准入工作的合法pin或降低运行时权限/能力/冲突检查。
+3. Web/API在原旅程可明确发起必要分析、检查摘要/未就绪和失败原因，再单独确认范围内
+   可撤销授权。刷新/重连读取持久证据，不悄悄分析、发权或执行；失败保留可恢复状态。
+   本次只修必要共享耦合，不恢复冻结43的工作区/指标/设置重设计。若必须改变上述保留
+   义务或扩大Slice边界，先交A，不以“独立产品已退役”自行删掉该能力。
+4. 将此前删除的授权前缺失/失败/过期/定义或配置及范围不匹配等仍适用断言，迁到共享
+   分析/授权测试；不要恢复旧独立产品测试或只修改断言接受无分析的grant。用真实准入
+   入口证明成功路径和拒绝路径；缺失/不合格时grant/audit/执行准入/媒体变更不增长，
+   合格分析仍无权限，另行明确授权才持久创建grant。保留当前刷新修正及零变更/原pin/
+   已完成和未知效果非重放覆盖。
 
 ### Developer — 本轮受影响验证
 
-Web（cwd `web/`）：
+先运行治理；补充上述已复现失败路径及新共享preflight测试，然后按实际修改运行直接
+受影响组（仓库根）：
 
 ```bash
-npm run test -- run src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/AutomationRouter.test.tsx src/routes/router.test.tsx
-npm run typecheck
+python3 scripts/check_governance.py
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_unattended_grant test_v2_automation_operations test_automation_run_once test_automation_definition_execution test_automation_authorized_execution_matrix test_preview_retirement
 ```
 
-如调整后端只读关联/投影，仓库根补跑实际受影响组：
+修改共享计划/发现/确认时追加相应 `test_manual_organize_preview`、
+`test_manual_organize_execution`、`test_organize_preparation`，不重跑不受影响的整个仓库。
+Web在web/运行实际改变的旅程，最低：
 
 ```bash
-PYTHONPATH=tests .venv/bin/python -m unittest test_v2_manual_organize test_manual_operations_contract test_manual_organize_intent test_manual_organize_preview test_manual_organize_execution
+npm run test -- run src/features/operations/AutomationRouter.test.tsx
 ```
 
-加修改文件的eslint/prettier或ruff检查、governance与`git diff --check`。如需原生验证只跑
-对应修改场景，不跑全量/构建发布矩阵，不把B的环境修复与完整证据工作交回Developer。
-B保留本Task原定固定候选完整diff、独立关键复现及T4全部适用门禁；匹配执行输入才复用。
+改共享同页组件时加 `src/features/operations/OrganizeRouter.test.tsx`。执行changed-file
+ruff/eslint/prettier、DTO的 `npm run typecheck` 和 `git diff --check`。提交连贯候选并报告实际结果即可；
+不跑全Python/Web/E2E或发布矩阵，不补B全量证据包。
 
+B在新固定候选上复核此阻塞、完整Task Base..Head，并保留本Task原定独立关键复现及全部
+适用T4门禁；匹配执行输入才复用，不机械重复Slice-final。用户要求本轮测试/build/quality
+累计时间低于实际工作时间50%；本轮独立复现仅约3秒，未启动昂贵全量，精确运行记录见证据目录。
 Task45.5在Task Base记录的RO-7 PASS及先前Task45.4接受/验证例外不变；父文档的旧pending
-措辞留给A事实闭合，不倒改既有结论。本轮不新造Task、不提交Closure Packet、不宣称
-SLICE READY FOR A REVIEW，不改变Slice/Roadmap/Progress边界或自行关闭。
+文字不能覆盖该事实。当前RO-8未满足，不造下一Task、不提交Closure Packet、不宣告A复审就绪
+或自行关闭Slice。
