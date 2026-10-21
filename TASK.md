@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER IMPLEMENTS THIS TASK AND HANDS OFF A FIXED CANDIDATE
+Next Action: DEVELOPER FIXES TASK45.6 SAME TASK; B RECHECKS FIXED CANDIDATE
 ```
 
 ## Goal
@@ -490,10 +490,68 @@ Task 指定的受影响组全部通过：`test_preview_retirement`、`test_scan_
 ## B Review Result
 
 ```text
-Reviewed: NOT YET
-Decision: PENDING
-Acceptance runs: pending B fixed-candidate review
-Task blockers: not assessed
-Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 implementation pending
-Next: DEVELOPER IMPLEMENTS TASK45.6
+Reviewed: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..c71ec218ca46efa7d73e53c9c82b29f3af88bd91
+Decision: FIX REQUIRED
+Review stage: early proven-blocker review; full range acceptance is incomplete, not PASS
+Acceptance runs: governance PASS; test_preview_retirement 8/8; existing router/component reproduction 1 passed, 19 unselected; real public CLI and authenticated API reproductions confirm blockers; full gates NOT STARTED
+Task blockers: analysis-only CLI creates formal execution backlog; separate executable OrganizePreview journey remains; dedicated Preview retirement guards remain
+Slice Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 incomplete
+Next: SAME TASK FIX LOOP — Developer affected checks; B owns fixed-candidate full T4 acceptance
 ```
+
+Candidate `c71ec218ca46efa7d73e53c9c82b29f3af88bd91` matches report successor
+`c6c0824` in all executable inputs (`git diff` shows only the Candidate Head line in TASK).
+Local reproduction scripts/logs and the compact command record are under
+`.git/validation-evidence/c71ec218ca46efa7d73e53c9c82b29f3af88bd91/task45.6/b-review/`;
+these local artifacts are not claimed remotely accessible. Developer's reported full runs are
+handoff facts, not B's completed acceptance. Packaging/browser/security/restart and full diff/test
+review remain pending B after correction; no gate is waived or transferred to Developer.
+Prior Task45.5's B result at Task Base records RO-7 PASS and RO-1–6 retained/rechecked;
+that conclusion and 45.4's disclosed exception remain unchanged. The older parent progress prose
+does not erase that delivery. RO-8 is still incomplete, so no new Task or Closure Packet is created.
+
+### Required correction — shared analysis and first-deployment Preview absence
+
+1. Make public CLI `organize` without `--execute` use the same application-level analysis/plan
+   semantics as Web preparation. In the reproduced real target-conflict case, only findings/plans
+   may be recorded: no `WAITING_CONFIRM`, pending ConflictConfirmation or other formal execution
+   backlog. Preserve real execute/recovery blocker persistence and full plan/attachment evidence;
+   do not merely suppress the UI, mark blockers resolved, or replace the production chain with mocks.
+   Add real CLI-entry regression assertions for conflict and the other required unready branches,
+   compare meaningful plan/target/attachment/policy evidence with Web, and verify no mutation or
+   execution authority. Existing actual reproduction yields exit 0, unauthorized analysis Task,
+   item `waiting_confirm`, and pending confirmations 0→1 with both media byte sets unchanged.
+2. Remove `OrganizePreviewPage`, its `/operations/organize/preview/$previewId` route and all actual
+   navigation/deep-link producers. In particular, `OrganizeIntentPage` generates analysis then
+   navigates to it; `AutomationRunOncePage.finalize` and the API `previewPath` also point there.
+   Keep complete pinned plan storage and confirmation authority; show the summary and exact
+   confirmation in the current organize/recovery/Run once context through existing shared behavior.
+   Do not replace the old page with a redirect, retired-route guard or hidden executable alias.
+3. Follow surviving links from Operations/Execution/intent/Run once to their supported destination;
+   keep return context, unknown-admission reconciliation, exact subset/effect controls, old-pin and
+   completed/uncertain non-replay. Replace the old-page tests with same-context journey assertions
+   and an ordinary authenticated not-found assertion for the removed route.
+4. Remove the surviving explicit `preview-analyses` compatibility branches in `service_api.py`
+   (including the focused definitions handler), not just their underlying service. Unsupported old
+   input must fall through the ordinary authenticated route/type boundary, without dedicated
+   Preview-unavailable messages or guards. Retain legitimate local Rules/schedule calculations.
+5. Recheck deleted-test coverage against still-supported consumers. The retirement test module
+   currently tests absence/rejection/schema only; it does not prove its docstring's shared analysis,
+   no-execution-authority and grant claims. Cover the surviving shared analysis/plan and native
+   same-context confirmation through their real entry points; do not manufacture unreachable states.
+
+Developer reruns changed/new tests and directly affected groups only, including:
+
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement test_final_integration test_v2_manual_organize test_manual_organize_execution test_organize_preparation test_v2_automation_run_once
+cd web && npm run test -- run src/routes/router.test.tsx src/features/operations/OrganizeRouter.test.tsx src/features/operations/OrganizeCreationPage.test.tsx src/features/operations/OperationsInventory.test.tsx src/features/operations/TaskItemRecoveryPanel.test.tsx src/features/operations/AutomationRouter.test.tsx
+```
+
+Update filenames if obsolete-page tests are moved; keep equivalent safety assertions. Run changed-file
+static checks, typecheck and `git diff --check`. B retains ownership of full regression, native,
+wheel/image/security/restart gates on the next fixed candidate; none are assigned back to Developer.
+
+B also notes a harness concern for its own later acceptance: the restart smoke's schedule command
+was changed to organize, but its fencing fixture still advertises preview and its descriptions are
+stale. No failure is claimed from strings alone; B must use the existing harness entry, establish
+an actual failure if any, and repair environment/evidence work without inventing a product blocker.
