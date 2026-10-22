@@ -420,17 +420,105 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: 59c0f6e56ca9ba0f2d06fb6adf63660f1d615296
+Candidate Head: c7a725b1e78b1f59160f13e95eae6a9335b734a4
 Handoff Head: HEAD (all commits above Candidate Head touch TASK.md only, so the
        reviewed executable input is exactly Candidate Head)
 Status: READY FOR B REVIEW
-Round: seventh round; fixes B's FIX REQUIRED on 98c65b4e6c3db275150fd87497529f68b5f82a25
-       (the plan rows were persisted before the fenced run link, so a control
-       that won the publication window left a confirmable current plan reachable
-       from the linked intent's latest-plan/execute entries)
+Round: eighth round; fixes B's FIX REQUIRED on 58fee6e9bbfff937918d60bd35086923cb9397ef
+       (only a *complete* walk handed its plan to the atomic publication, so a
+       legal read_failure known subset wrote preview_id/prepared with no plan rows)
 ```
 
-### Current round — 计划与运行关联的一次原子提交（B 的当前阻塞）
+### Current round — 合法部分发现也发布完整计划（B 的当前阻塞）
+
+#### 根因
+
+`59c0f6e` 把计划写入改成“分析后原子发布”，但只对 `complete` 分支传了计划
+（`plan=preview if complete else None`）。`read_failure` 的合法部分发现走的是同一个
+`_analyze` 尾段却传 `None`，于是 `_publish_prepared_plan` 退回纯 discovery 写：
+`preview_id`、`phase=prepared`、`prepared=true` 全部持久化，而计划行从未写入。B 在
+`POST .../files/discoveries`（autoPrepare）→ 文件消失 → 真 Worker 的旅程里读到
+`partial_success + prepared=true` 与非空 previewId，但该 ID 的既有计划 GET 404、
+intent latestPlan=null、重开仍是悬空关联。
+
+#### 本轮实现（同一 Task；未新增队列/状态机/独立 Preview 生命周期）
+
+1. **完整性不再是“是否持久化计划”的开关**（`media_discovery.py::_analyze`）：
+   分析产出的计划一律交给原子发布边界，`complete` 只决定 run 状态
+   （`COMPLETED`/`PARTIAL_SUCCESS`）与逐项就绪，绝不再决定计划是否落库。
+2. **计划参数变为强制**（`_publish_prepared_plan`）：`plan` 从 `object | None` 收紧为
+   `object`；无计划时 fail-closed 抛 `DiscoveryUnavailable`，从类型/边界上排除“只有
+   链接没有行”的悬空摘要。降级路径（有界测试替身仓储）同样先持久化计划再发布。
+3. **部分计划的 fence 与完整计划完全相同**：仍是一条 `BEGIN IMMEDIATE` 事务内先写
+   计划行（共享 `_publish_manual_preview_rows` 的 intent/item 守卫），再执行
+   `discovery_id + version CAS + 精确 claim_token` 的 discovery 写入；控制/旧 owner
+   赢时整体回滚，部分计划同样“一行都不存在”，不存在可确认残余。
+4. **保留原有语义**：read_failure finding、material refusal 拒绝路径、定义来源不完整
+   清单拒绝、Run once 的 `discovery_incomplete_manifest` 均未改动；未抹去错误、未自动
+   执行、未把完整性当放行开关。
+5. **回归（真实 API/SQLite/Worker/Provider，无人工 upsert）**：
+
+| 位置 | 覆盖 |
+|---|---|
+| `test_organize_preparation` `test_a_legal_read_failure_subset_publishes_its_complete_plan` | 混合选择（消失的显式文件 + 可读目录）→ read_failure、无 material refusal、`prepared=true`；计划 GET 200 且恰为已知子集、逐项 `previewed`；intent latest-plan 与重开（`SQLiteTaskRepository` 新连接）一致；零执行准入/零 mutation；显式确认后才 1 项执行成功 |
+| `test_organize_preparation` `test_a_legal_partial_plan_is_never_published_by_a_losing_write` | 仓储原子边界直接验证：版本 CAS 输 → `DiscoveryConflict` 且计划行/intent latest 全无；非精确 claim → `DiscoveryOwnershipLost` 且无残余；零 mutation |
+| `test_organize_preparation` `test_a_pause_that_wins_a_partial_analysis_leaves_no_plan` / `test_a_cancel_that_wins_a_partial_analysis_leaves_no_plan` | 真 Worker 阻塞在真实合成 Provider，真实 API pause/cancel 先胜：paused/cancelled、`previewId=null`、`prepared=false`、intent 无计划、claim 已释放、零 Task/零 mutation；pause 后 Continue 再发布唯一真实计划 |
+| 既有 `test_material_budget_refusal_never_becomes_an_executable_prefix` | 保留：预算/material refusal 仍拒绝、不冻结、无 previewId |
+
+#### 本轮受影响检查（仓库根除注明外，均为实际结果）
+
+```bash
+python3 scripts/check_governance.py                                  # PASS
+.venv/bin/ruff check <2 changed py>                                  # All checks passed
+.venv/bin/ruff format --check <2 changed py>                         # 2 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests                    # OK
+git diff --check                                                     # clean
+PYTHONPATH=tests .venv/bin/python -m unittest test_organize_preparation   test_media_discovery test_automation_run_once test_v2_automation_run_once   # Ran 196, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_organize_preparation   test_media_discovery test_automation_run_once test_v2_automation_run_once   test_manual_organize_intent test_manual_organize_preview   test_manual_organize_execution test_v2_manual_organize            # Ran 300, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent   test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize   test_manual_preview test_preview_retirement test_task_persistence   test_scan_retirement test_file_index_retirement                   # Ran 173, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement   test_scan_retirement test_file_index_retirement test_recovery_continuation   test_scope_continuation test_task_center_recovery_lineage   test_metadata_correction_continuation test_task_persistence       # Ran 245, OK
+```
+
+#### 失败先于修正（父提交对照，真实入口探针）
+
+`.git/validation-evidence/developer/task45.6-fix-partial-plan-publication/` 含
+`verify_partial_plan.py`、`verify_partial_plan.log`（**32/32 通过**）与
+`prefix_15294d0_repro.log`（父提交 **8 项失败 / 24 通过**）。
+
+- 同一脚本在隔离父提交 `15294d0`（worktree，未改动工作区）上复现 B 的 P1：
+  `plan GET resolves the published identity` → 404 `preview_not_found`；
+  `plan carries the exact known subset` / `plan items are ready for explicit
+  confirmation` / `intent latest plan is the same plan` / `reopen keeps the plan
+  rows` / `reopen keeps the intent projection` / `continued plan is readable` /
+  `continued plan carries the known subset` 均失败。
+- 本候选：合法部分发现计划 GET 200、恰为已知子集、逐项 previewed、intent latest 与
+  重开后一致、零执行准入/零 mutation/零 Task、claim 已释放；pause 先胜分支无计划行与
+  链接、Continue 后发布唯一真实计划；同脚本 `test_organize_preparation` 全 17 例 OK，
+  父提交上其中 2 例失败。
+
+#### 未执行 / 剩余风险（交 B）
+
+- 全量 Python/Web/E2E、production assets、逐 spec 原生浏览器、wheel/安装消费者/
+  Docker/常驻 Worker/restart/release-security 属 B，本轮未执行。
+- `_publish_prepared_plan` 的降级路径（仓储无原子边界时 `_persist_create` + fenced
+  发布 + 补偿退役）仍非同一事务；本仓唯一实现 `SQLiteTaskRepository` 走原子边界，
+  降级路径仅服务于有界测试替身。
+- 若计划自身守卫在发布时拒绝（例如分析期间操作者保存了纠正），事务整体回滚、计划
+  不落库，run 仍停在 `ANALYZING` 持有 claim，由操作者重新 `analyze` 收敛；该边界
+  与既有 `request_analysis` 的“同页重新分析”语义一致，本轮未新增状态。
+- 本轮测试/质量检查累计约 2.5 分钟（含 3 次真实入口探针与 1 次父提交复现），低于
+  本轮实际工作时间的 30%。
+
+本机稳定证据（未声称外部可访问）：
+`.git/validation-evidence/developer/task45.6-fix-partial-plan-publication/`。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
+
+### 上一轮记录（seventh round — 计划与运行关联的一次原子提交）
+
+以下为 `59c0f6e`/`58fee6e` 轮的交付与检查记录，保留原样。
+
+#### 第七轮记录 — 计划与运行关联的一次原子提交
 
 #### 根因
 
@@ -523,7 +611,7 @@ PYTHONPATH=tests .venv/bin/python -m unittest test_automation_task_definition \
 
 以下为 `764291d`/`98c65b4` 轮的交付与检查记录，保留原样。
 
-### Current round — 计划发布与 pause/cancel 协调（B 的当前阻塞）
+#### 第六轮记录 — 计划发布与 pause/cancel 协调
 
 #### 根因
 
