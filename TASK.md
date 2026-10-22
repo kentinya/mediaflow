@@ -544,6 +544,13 @@ cd web && npm run typecheck                                          # OK
   不会伪造计划。
 - 未做冻结 Slice43 的页面/指标/设置重设计；本轮只恢复既有 Run once 同页持久关联。
 
+本机稳定证据（未声称外部可访问）：
+`.git/validation-evidence/da5e80107aae7fe7b93d231ebe8656e53a4ce923/task45.6/developer/`
+含 `verify_positive.py/.log`（真实 API 准入202→Worker→finalize201→同 URL GET200 同一
+previewId 与 action path、零二次 finalize/分析、source/target mutations 为空、SQLite
+重开后同一份计划；同一探针在 `bb0b1f3` 上按 B 报告断言失败）、`web-verify.log` 与
+`web-parent-failure.log`（新 Web 重载回归在本候选 4/4 通过，在父候选按同一断言失败）。
+
 不自判 PASS，不关闭 Slice，不规划下一 Task。
 
 ### 上一轮记录（授权前分析阻塞，已被 B 核实修正）
