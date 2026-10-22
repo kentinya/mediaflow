@@ -420,11 +420,68 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: da5e80107aae7fe7b93d231ebe8656e53a4ce923
+Candidate Head: 4e23a53403657e8ccb9b5ab36c9fc4ab5fdbcc52
 Status: READY FOR B REVIEW
-Round: third round; fixes B's FIX REQUIRED on bb0b1f314916d316ef384430ce3633e6220b3e21
-       (Run once shared-plan summary/confirmation lost on reread)
+Round: fourth round; fixes B's FIX REQUIRED on 2e84e8883250c3f166f61b978b33a46c641379f6
+       (full-Python fixture lacks the shared-analysis evidence the grant requires)
 ```
+
+### 本轮修正交付（对应 B 的 full-Python fixture 阻塞）
+
+B 在 `2e84e88` 上运行全量 Python 时，`test_configuration_snapshot.py`
+`test_worker_rechecks_current_principal_between_real_effect_boundaries` 在第 2072 行直接调用
+`UnattendedExecutionGrantService.grant`，而该服务现已按 Task 要求拒绝没有真实 Run once
+共享分析证据的授权，于是报 `unattended_execution_analysis_unavailable`。这是被改变的授权前置
+条件未同步到同一 Task 的测试夹具，不是服务校验本身的问题。本轮只修夹具，不改产品行为。
+
+1. **夹具改走真实授权前置。** 新增模块级 `_produce_shared_analysis`（配 `_snapshot_analysis_api`
+   与 `_SnapshotTMDBProvider` 合成 Provider），沿真实生产装配
+   `admit_definition_run_once` → `claim_and_run`（真实有界发现与稳定观察）→
+   `AutomationRunOnceService.finalize`（冻结清单 + 共享零变更整理分析）产出证据，并断言
+   `previewed`/`zero_mutation`。该分析与授权绑定同一份已发布 Active 修订。
+2. **不绕过 preflight。** 同一份确认授权在分析产出前仍被拒绝：断言
+   `unattended_execution_analysis_required` 且 `list_unattended_execution_grants() == ()`；
+   分析产出后同一确认授权成功，随后 Worker 才产生媒体效果。
+3. **原有断言全部保留。** 首项成功后当前 principal 被撤销、后续 effect 前重新核权、
+   Alpha 成功 / Beta 失败的独立结果、`unattended_authority` 类别、
+   `permitted_action_ids == ("investigate",)`、`len(effect_calls) == 1`、目标目录内容与
+   恢复 principal 后无待处理工作，均未放宽、未跳过、未加重试。
+
+#### 受影响检查（本轮 Developer 实际结果，仓库根）
+
+```bash
+python3 scripts/check_governance.py                                  # PASS
+.venv/bin/ruff check tests/test_configuration_snapshot.py            # All checks passed
+.venv/bin/ruff format --check tests/test_configuration_snapshot.py   # already formatted
+.venv/bin/python -m compileall -q tests/test_configuration_snapshot.py  # OK
+git diff --check                                                     # clean
+PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_snapshot \
+  test_automation_unattended_grant test_v2_automation_operations \
+  test_automation_run_once                                          # Ran 101, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
+  test_v2_automation_run_once test_automation_definition_execution \
+  test_automation_authorized_execution_matrix test_manual_organize_preview \
+  test_media_discovery                                             # Ran 190, OK
+```
+
+失败先于修正复现：父候选 `2e84e88` 上同一用例报
+`unattended_execution_analysis_unavailable`（B 报告一致）；本候选通过。
+
+#### 未执行 / 剩余风险（交 B）
+
+- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
+  release-security 属 B，本轮未执行。
+- 仅改测试夹具，无产品代码、schema 或迁移改动；`UnattendedExecutionGrantService` 的
+  授权前校验保持原样。
+- 夹具新增合成 Provider 只服务该测试的本地临时根，不访问真实 TMDB/私有配置/用户媒体。
+
+本机稳定证据（未声称外部可访问）：
+`.git/validation-evidence/developer/task45.6-fix-shared-analysis-fixture/` 含
+`affected-python.log`、`affected-python-2.log` 与
+`verify_shared_analysis_fixture.py/.log`（独立探针：无分析 grant 被拒且 grant 行数为 0；
+真实 Run once 分析后同一确认 grant 成功；来源 bytes 不变、目标为空；重开数据库后授权仍在）。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
 
 ### 上一轮修正交付（对应 B 的 shared Automation authorization preflight 阻塞，已被 B 核实修正）
 
