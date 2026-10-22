@@ -15,7 +15,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER UPDATES SHARED-GRANT TEST FIXTURE WITH REAL PREFLIGHT; B CONTINUES T4 GATES
+Next Action: SAME TASK — RESTORE SECRET-FREE ERROR LOGGING AND DURABLE SHARED ANALYSIS; B RETAINS T4 GATES
 ```
 
 ## Goal
@@ -658,134 +658,86 @@ bytes 不变、目标为空、source/target mutations 均为空。
 
 ## B Review Result
 
-### Current review — `2e84e8883250c3f166f61b978b33a46c641379f6`
-
 ```text
-Reviewed candidate: 2e84e8883250c3f166f61b978b33a46c641379f6
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..2e84e8883250c3f166f61b978b33a46c641379f6
+Reviewed candidate: cd92a85f722ae54c778b2f8eac843b773a886985
+Implementation: 4e23a53403657e8ccb9b5ab36c9fc4ab5fdbcc52
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..cd92a85f722ae54c778b2f8eac843b773a886985
 Decision: FIX REQUIRED
-Review stage: durable Run once recovery and focused gates pass; full regression blocker found
-Task blocker: full Python regression fails because a direct grant fixture has no shared-analysis evidence
-Next: SAME TASK FIX LOOP; B owns remaining full/native/packaging/security/restart gates
+Stage: proven-blocker review; complete Task-range/T4 acceptance remains pending
+Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; no new Task or Slice closure
 ```
 
-- 上轮 Run once 刷新阻塞已修复。本轮从真实授权详情动作，经HTTP Run once admission/finalize、
-  同URL GET、 intent计划GET及明确grant再次独立验证通过：planId相同、操作只读、授权需分开确认，
-  来源bytes不变、目标为空、Storage mutation为空。Python受影响组 **84 passed**；Web受影响组
-  **10 files / 128 passed**。候选实现 diff（`bb0b1f3..HEAD`）及新增的同URL刷新/陈旧URL/
-  冻结前保护测试已审，未发现新的生产行为阻塞。此前授权前分析修复保持有效。
-- **全量 Python 失败，夹具欠缺共享分析证据。** `.venv/bin/python -m unittest discover -s tests`
-  结果 `Ran 2672 tests in 253.967s; FAILED (errors=1, skipped=7)`：
-  `tests/test_configuration_snapshot.py::ManagedConfigurationSnapshotTests.test_worker_rechecks_current_principal_between_real_effect_boundaries`
-  在行2072直接调用 `UnattendedExecutionGrantService.grant`，但该服务现在按Task要求拒绝没有真实
-  Run-once共享分析证据的grant（`unattended_execution_analysis_unavailable`）。这是被改变的授权前置
-  条件尚未同步到同一Task测试夹具，不是允许去掉服务校验；要求该测试以合法、真实的共享分析前置
-  建立grant，保留逐effect权限重检断言。无skip/放宽权限/制造内存preview作为替代。
-- Python全量之外的 B 质量门禁通过：ruff format检查（384 files）、ruff check、compileall、
-  pip check、两个示例配置验证、无FFmpeg/FFprobe命中、`git diff --check`。Web typecheck、lint、
-  format和production build通过（有现有bundle >500kB提示）。B已开始但中止全量Web Vitest；
-  因Python全量不绿且本轮测试时间预算接近50%，Web全量及E2E/native/asset/wheel/installed consumer/
-  Docker/Worker/restart/release-security等门禁尚未完成，均保留为B责任，不是豁免或交回Developer。
-- 复核所有入口均基于已存在路由/真实组件；未构造虚假产品状态。未改Slice/Roadmap/Progress，
-  保留预存dirty/private工作，未访问私有配置、用户运行库或真实媒体。治理PASS。
+### 已核实的本轮交付
 
-#### Required correction — Task45.6 的测试/夹具修正
+- Governance PASS，main、候选及预存dirty已记录；工作区/Git可写。上一候选到本候选仅修改
+  `tests/test_configuration_snapshot.py` 和报告；实现到报告后继仅 `TASK.md`，产品未变化。
+- 上轮失败用例现在通过：真实 Run once 发现/冻结/共享分析后才grant；无分析拒绝、逐effect
+  当前principal核权、成功兄弟项保留的断言未放宽。独立单例 `Ran 1 test; OK`。
+- **B全量Python：2672 tests / OK / skipped=7，264.929s，exit 0。** 原始完整日志保留，
+  包含ResourceWarning；没有隐去skip或将日志安全问题计为全量断言失败。
+- 原授权前分析和同URL固定计划修正保持既有核实事实；本轮未冒称再次完成其全套原生/重启证明。
+  45.5的RO-7 PASS、45.4既有接受/验证例外保持；不改Slice/Roadmap/Progress。
 
-1. 修复 `test_configuration_snapshot.py` 上述真实worker权限边界测试的setup：grant写入前使用现有
-   受支持的 Automation Run once 和共享整理分析链，绑定相同定义、Active revision/digest/version、
-   source scope与Storage；不直接省略grant校验。已有共享分析fixture/辅助方法可复用。
-2. 保留原测试“一个文件效果成功后当前principal撤销，后续effect前重新核权并保留已完成项”的
-   原断言。Developer运行此测试、`test_automation_unattended_grant`、`test_v2_automation_operations`、
-   `test_automation_run_once`及changed-file质量检查；仅当共享fixture有改动时补充对应受影响测试。
-   不跑全仓套件；提交同Task连贯handoff。
-3. B重跑修正后的全Python门禁，然后在原固定候选上继续未完成的Web全量、指定Python-backed
-   浏览器journeys、独立关键CLI/API/Worker证明、clean wheel/安装消费者、Docker/restart/security，
-   并完成完整Task Base..Head审查。按执行输入复用本轮通过的匹配证据；Slice-final只补缺项。
+### 阻塞1 — 通用API异常日志绕过脱敏
 
-本轮开始 `2026-10-22 10:20 +0800`；full Python约254s、受影响Python约11s、受影响Web约13s，
-质量/构建及不完整Web尝试合计仍在本轮实际用时50%以内。所有run实际结果和输出保存在：
-`.git/validation-evidence/2e84e8883250c3f166f61b978b33a46c641379f6/task45.6/b-review/`。
+位置：`mediaflow/interfaces/service_api.py:1430–1436`。Task实现
+`c71ec218ca46efa7d73e53c9c82b29f3af88bd91`（2026-10-21 17:25:39 +0800）新增
+`repr(exception)` stderr输出及 `traceback.print_exc()`，未使用现有脱敏边界。
 
-### Previous B review — `bb0b1f314916d316ef384430ce3633e6220b3e21`
+真实入口：`POST /api/v1/jobs`。复用已有
+`ApiSecurityTests.test_audit_failure_blocks_job_creation_before_mutation` 的审计依赖故障，
+仅使用临时SQLite及合成 `token=secret` 标记。原测试证明响应500、Job=0、响应脱敏，
+但B额外捕获stderr，发现标记出现在原始异常和traceback中；本轮全量原始日志亦可见。
+没有访问或声称泄露任何真实凭据。问题是**错误日志仍能输出未经脱敏的敏感异常内容**，
+不满足AGENTS日志不变量、REQ-LOG-003及Slice安全不变量2；正常JSON脱敏不能抵消它。
 
-```text
-Reviewed candidate: bb0b1f314916d316ef384430ce3633e6220b3e21
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..bb0b1f314916d316ef384430ce3633e6220b3e21
-Decision: FIX REQUIRED
-Review stage: early proven-blocker review; complete Base..Head/T4 acceptance remains pending
-Task blocker: Run once shared-plan summary/confirmation is not restored at the same durable URL
-Required Outcomes / Surfaces all satisfied: NO — RO-8 / S-10 / AC-8 retained shared journey incomplete
-Next: SAME TASK FIX LOOP; B owns corrected-candidate full T4 acceptance
-```
+修正：删除临时原始输出，恢复安全异常处理；如保留诊断，必须有界且脱敏，不能直接
+输出原始异常链。扩展上述现有测试，覆盖响应、stderr/实际日志均无合成secret，且仍
+返回500、零工作准入、审计失败fail-closed；不要改弱故障或断言来通过。
 
-### 已核实交付与边界
+### 阻塞2 — 共享分析退回HTTP内联，未由现有Task/Worker承接
 
-- Governance PASS；branch main，固定候选为上述 SHA；工作区与 Git 可写。预存图片删除、
-  日志、截图、压缩包及 `.DS_Store` 原样保留；未访问私有配置、运行库或真实媒体。
-  未改 Slice/Roadmap/Progress；Task45.5 的 RO-7 PASS 与先前接受/验证例外不变。
-- **上轮授权前分析阻塞已修正。** B 沿真实定义详情广告的 grant/runOnce 动作，使用隔离
-  Local/SQLite/fake Provider：无分析 grant 409 (`unattended_execution_analysis_required`)，
-  grant/audit=0；HTTP Run once 准入202→真实 discovery claim/run→HTTP finalize201→共享
-  计划 GET200。合格分析后 eligibility=true，但仍 grant=0；另行明确 grant POST201 后
-  grant/audit各1。来源 bytes不变、目标为空、两侧 mutation为空。没有手工 upsert 工作状态。
-  这证明本次核心修正的正反路径，不代替全部 stale/mismatch/运行期或原生浏览器验收。
-- **P1：该实际共享消费者重开后丢失同页固定计划。** 同一次 HTTP finalize201 返回精确
-  `previewId`，随后对既有 Run once URL GET200 却返回 `phase=frozen / previewId=null`，
-  finalize不可用，preview action虽available但path=null；原共享计划仍GET200且没有新增计划。
-  B把这些真实响应送入现有完整 router/component：点击“冻结清单并生成计划摘要”后摘要
-  可见；相同URL、空query cache重新挂载后“来源清单已冻结”可见，但摘要及其确认区消失，
-  POST仍仅1次。期望同页恢复的断言 **1/1失败**，不是伪造状态或不存在的入口。
-- 页面仍有“打开整理意图”跳转，不能宣称整个整理流程不可恢复、计划丢库或发生越权变更。
-  阻塞是本Task已要求的**原旅程持久证据/同页摘要恢复**未完成；本轮Developer还将Run once
-  作为保留的授权前分析入口，因此不能以冻结43页面重设计延期豁免这个必要共享耦合。
-  只修持久计划解析/投影，不要求重做43工作区、指标或设置。
-- 根因：`AutomationRunOnceService.finalize` 将计划写入intent的共享计划记录；
-  `document/_actions` 却读取未被该路径写入的 `discovery.preview_id`。Web finalize后靠
-  React局部 `admittedPlanPreviewId` 展示；重开时回退到空的 `model.previewId`，因此不挂载
-  既有 `OrganizePlanConfirmation`。新grant逻辑已正确从intent解析计划，Run once读取没有同步承接。
+位置：`mediaflow/application/automation_run_once.py:360–403` 及
+`mediaflow/interfaces/service_api.py:14111–14143`。同一 `c71ec218` 删除耐久分析装配后，
+finalize直接同步调用 `_previews.create`；没有将保留的分析职责承接到现有Task/Worker。
 
-本机稳定证据（不声称外部可访问）：
-`.git/validation-evidence/bb0b1f314916d316ef384430ce3633e6220b3e21/task45.6/b-review/`。
-含 `public-run-once-probe.py/.log`、真实 `public-api-documents.json`、
-`AutomationBReview.test.tsx`、`router-reload.log`、计时与review摘要。Python探针断言观察事实；
-Web测试断言应有恢复行为，当前为红。初次探针误期望准入201（实际202）的harness错误日志保留，
-修正harness后公共链路完成；不作为产品失败或隐藏重试。
+真实入口：定义Run once POST202 → 真实有界发现claim/run → 既有finalize POST。
+B复用生产API装配和既有journey fixture，仅让本地合成Provider用Event暂缓返回，在
+另一线程读取同一真实Run once：HTTP请求仍未完成，Provider正在请求线程中执行，
+Jobs=0、Tasks=0、phase=frozen、intent已持久化、previewId=null，finalize/pause/cancel
+均不可用；现有Worker无Job可取。释放Provider后该请求201，实际来源bytes及目标目录树均未变化。
+探针没有制造预览记录、非法产品状态或假路由，也没有声称已经复现进程崩溃/永久丢失。
 
-本轮审查本次修正及Task范围内相关Run once/计划/授权消费者；**完整Task Base..Head与全量
-Python/Web/E2E、production/native/wheel/installed-consumer/Docker/security/restart门禁仍pending**。
-依据workflow §6，在已证明P1后提前返回，不豁免、不交回Developer、不把受影响测试冒充B全量。
-旧候选结果只按匹配执行输入复用；本候选没有机械重跑Final。未验证的harness环境事项不列产品阻塞。
+这不满足RO-8“长分析使用现有Task/Worker”及页面规范§3的耐久准备/进度要求；慢Provider
+或多项分析仍占用HTTP请求，当前页无法观察或控制这段分析。已耐久保存发现清单/intent
+不能代替分析阶段的耐久工作。**独立Preview退役符合方向，删除共享长分析的承接不符合需求。**
 
-### Required correction — durable in-context shared plan
+修正：将共享整理分析接回现有持久Task/Worker，在原创建/Run once/恢复旅程内展示
+分析中、完成/失败及合法恢复，完成后持久发布同一固定计划。保持精确scope/pin、零mutation/
+零授权、同页摘要与明确执行确认、去重/fence；不恢复独立Preview页面/API/Job类型/专用
+生命周期/schema，不另建队列或执行引擎。审核其他受影响共享入口，避免仅修Run once。
 
-1. 在现有Run once→intent→完整共享计划关系上恢复持久权威：正常GET/重连可解析该次运行
-   已产出的精确计划身份；投影与现有同页组件一致。可复用共享只读解析，不新建独立产品/
-   生命周期/队列或兼容页，不从客户端缓存、最新全局计划或不相关intent猜测。
-2. 冻结/分析成功后，清空浏览器内存、重连以及同版本数据库重开仍能在原URL查看同一份
-   来源/配置/版本/附件/冲突/未就绪摘要；已准入执行仍显示原持久结果并阻止自动重放。
-   读取不得重新分析、调用Provider、生成第二份计划、授予权限或执行。若无合法计划，明确
-   原旅程安全补正动作；不能“frozen但没有摘要且不能继续”。不要求已过期计划恢复可执行。
-3. 保留本轮已证实的缺分析拒绝/合格分析不授权/另行grant成功，以及intent页先前刷新修正。
-   补充真实HTTP finalize→GET、SQLite重开及真实router空cache恢复断言，不能只填fixture字段
-   或只断言POST响应；当前B红测可作最小复现参考。现有跳转恢复不是同页持久关联的替代。
+### Developer受影响验证与B门禁
 
-### Developer — 受影响验证与 B 最终门禁
+1. Developer在同Task修正以上两项，运行 `test_api_security`、`test_preview_retirement`、
+   `test_automation_run_once`、`test_v2_automation_run_once`、`test_manual_organize_preview`、
+   `test_configuration_snapshot` 及修改所直接影响的Worker/准入/恢复测试和changed-file质量检查。
+   补充已有入口的Provider在途/失败、准入去重、合法固定pin、计划发布和重开证据；Web改动
+   只跑修改及直接受影响的journey测试。无需Developer全仓回归或发布矩阵。
+2. B固定修正候选，先复现这两项，再完成指定全Python/Web/E2E、独立关键消费者、逐spec
+   Python-backed原生浏览器、桌面/窄屏、clean wheel/安装消费者、Docker/常驻Worker/
+   restart/release-security和完整Task Base..Head审查。未完成门禁仍归B，不因本轮Python
+   通过而豁免；只复用执行输入确实匹配的证据，Slice-final不机械重复。
+3. 本轮已有可证阻塞，未启动剩余昂贵门禁；不把B环境/证据问题作为产品缺陷退给Developer。
+   全部RO尚未满足，不新建Task、不提交Closure Packet、不宣称SLICE READY或自行关闭。
 
-Developer仅执行新改/直接受影响验证，仓库根：
+本机稳定证据（非远程链接）：
+`.git/validation-evidence/cd92a85f722ae54c778b2f8eac843b773a886985/task45.6/b-review/`
+含 `baseline.json`、`fixture-test.log`、`full-python.log`、`runs.jsonl`、
+`log-redaction-probe.py/.json/.stderr.log`、`inline-analysis-probe.py/.json`。
+此前报告与证据边界见 `ffdb318b9a22591e2061a0bf813fd3580024824a:TASK.md`；详细历史保留Git。
 
-```bash
-python3 scripts/check_governance.py
-PYTHONPATH=tests .venv/bin/python -m unittest test_v2_automation_run_once test_automation_run_once test_v2_automation_operations test_preview_retirement
-```
-
-若更改共享计划/发现持久化，追加 `test_manual_organize_preview`、`test_media_discovery` 及
-实际直接受影响存储测试；若更改grant，追加 `test_automation_unattended_grant`。
-Web在现有Automation旅程测试内加入Run once刷新回归，在web/运行对应changed test；
-若触及共享组件，再跑 `src/features/operations/OrganizeRouter.test.tsx`。运行changed-file
-ruff/eslint/prettier、DTO的typecheck及 `git diff --check`。提交同Task连贯候选并报告实际结果；
-不跑全Python/Web/E2E或发布矩阵，不补B全量证据包。
-
-B在纠正候选上独立复核上述阻塞，审完整Task Base..Head，并执行本Task原定全部适用T4门禁；
-覆盖与执行输入匹配才复用，完整覆盖可同时满足Slice-final，不机械重跑。实际测试/build/quality
-累计远低于本轮实际工作时间50%，包括失败探针和Web红测；具体计时见证据目录。
-RO-8仍未满足，不造下一Task、不提交Closure Packet、不宣告SLICE READY FOR A REVIEW或自行关闭。
+本轮自2026-10-22 13:00:16 +0800开始；13:09:22记录实际用时547s，测试/质量检查
+保守上界268s（含失败探针和一次补强重跑），占比低于49.1%；未以等待凑时间。计时见
+`time-allocation.json`。
