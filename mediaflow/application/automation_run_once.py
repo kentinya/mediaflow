@@ -75,13 +75,11 @@ class AutomationRunOnceService:
     def __init__(
         self,
         discovery_service,
-        intent_service,
         preview_service,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._discovery = discovery_service
-        self._intents = intent_service
         self._previews = preview_service
         self._clock = clock
 
@@ -203,6 +201,10 @@ class AutomationRunOnceService:
     ) -> str:
         if discovery.status in {DiscoveryStatus.QUEUED, DiscoveryStatus.RUNNING}:
             return "discovering"
+        if discovery.status is DiscoveryStatus.ANALYZING:
+            # The frozen manifest's exact plan is being built by the resident
+            # Worker; the run identity, progress and pause/cancel stay live.
+            return "analyzing"
         if discovery.status is DiscoveryStatus.WAITING_STABILITY:
             return "analyzing"
         if discovery.status is DiscoveryStatus.PAUSED:
@@ -240,12 +242,17 @@ class AutomationRunOnceService:
         finalizable = (
             terminal and refusal is None and bool(discovery.sources) and not discovery.frozen
         )
-        pause = discovery.status in {DiscoveryStatus.QUEUED, DiscoveryStatus.RUNNING}
+        pause = discovery.status in {
+            DiscoveryStatus.QUEUED,
+            DiscoveryStatus.RUNNING,
+            DiscoveryStatus.ANALYZING,
+        }
         cancel = discovery.status in {
             DiscoveryStatus.QUEUED,
             DiscoveryStatus.RUNNING,
             DiscoveryStatus.WAITING_STABILITY,
             DiscoveryStatus.PAUSED,
+            DiscoveryStatus.ANALYZING,
         }
         resume = discovery.status is DiscoveryStatus.PAUSED
         # The exact plan identity the same page re-reads after a reload.  It is
@@ -262,12 +269,12 @@ class AutomationRunOnceService:
                 "method": "POST",
                 "sideEffects": "none",
                 "durableOutcome": (
-                    "the complete bounded manifest is frozen and an exact zero-mutation "
-                    "manual Preview is stored"
+                    "the complete bounded manifest is frozen and the resident Worker runs the "
+                    "exact zero-mutation analysis on this same durable run"
                 ),
                 "nextAction": (
-                    "review the exact Preview of the frozen manifest, then separately "
-                    "confirm execution"
+                    "review the exact plan of the frozen manifest once the Worker links it, "
+                    "then separately confirm execution"
                 ),
             },
             "narrowScope": {
@@ -283,12 +290,19 @@ class AutomationRunOnceService:
                 # organize plan of its linked intent.  Its exact durable identity
                 # is published so the Run once page can restore the same plan
                 # summary after a reload, reconnect or restart instead of
-                # re-analysing the manifest.
+                # re-analysing the manifest.  While the resident Worker is still
+                # building the plan the action is available but its route is
+                # honestly null; the page shows the durable analysis stage and
+                # the plan appears here once it completes.
                 "available": discovery.frozen and discovery.intent_id is not None,
                 "method": "GET",
                 "path": (f"/api/v1/operations/organize/previews/{plan_id}" if plan_id else None),
                 "sideEffects": "none",
-                "nextAction": "review the frozen manifest's exact plan summary in this Run once",
+                "nextAction": (
+                    "review the frozen manifest's exact plan summary in this Run once"
+                    if plan_id
+                    else "wait for the resident Worker to link this run's exact plan"
+                ),
             },
         }
 
@@ -331,6 +345,11 @@ class AutomationRunOnceService:
                 "narrow the definition sourceScope or correct the unreadable source so a "
                 "complete manifest is proved, publish it, then start Run once again"
             )
+        if discovery.status is DiscoveryStatus.ANALYZING:
+            return (
+                "wait for the resident Worker to finish the zero-mutation analysis; the exact "
+                "plan appears on this run and still needs a separate explicit confirmation"
+            )
         if discovery.frozen and discovery.intent_id is not None:
             return (
                 "review the exact zero-mutation manual Preview of the frozen manifest, then "
@@ -360,16 +379,19 @@ class AutomationRunOnceService:
     def finalize(
         self, discovery_id: str, *, actor: str, expected_version: int
     ) -> tuple[MediaDiscovery, object | None]:
-        """Freeze the complete manifest and create its exact zero-mutation Preview.
+        """Freeze the complete manifest and enter its durable shared analysis.
 
         Freezing reuses the existing discovery finalize, which hands the frozen
-        source list to the existing manual intent admission.  The exact Preview
-        over that intent is then produced inline through the shared zero-mutation
-        organize analysis chain.  No execution authority is created: the operator
-        still has to confirm execution separately.
+        source list to the existing manual intent admission.  The exact plan
+        over that intent is then produced by the resident Processing Worker
+        through the existing durable analysis stage (one versioned ANALYZING
+        publication on this same run record) — never inline inside the HTTP
+        request.  No execution authority is created: the operator still has to
+        confirm execution separately once the exact plan appears.
 
-        Returns ``(frozen, preview)``.  ``preview`` is the completed Preview
-        produced by the shared analysis chain.
+        Returns ``(frozen, None)``.  ``preview`` is always ``None`` here; the
+        exact plan is read back from the same run's durable association when
+        the Worker links it.
         """
 
         discovery = self._discovery.get(discovery_id)
@@ -381,6 +403,15 @@ class AutomationRunOnceService:
                 status=404,
                 next_action="open the definition and start Run once",
             )
+        if (
+            discovery.status is DiscoveryStatus.ANALYZING
+            and discovery.frozen
+            and discovery.intent_id is not None
+        ):
+            # A repeated or lost-response request converges on the analysis
+            # already queued for this exact frozen intent: one durable run, one
+            # linked intent, one analysis stage — never duplicate work.
+            return discovery, None
         self._assert_complete(discovery)
         frozen = self._discovery.finalize(
             discovery_id, actor=actor, expected_version=expected_version
@@ -392,17 +423,14 @@ class AutomationRunOnceService:
                 status=503,
                 next_action="inspect the discovery state, then finalize it again",
             )
-        intent_version = self._intent_version(frozen.intent_id)
-        preview = self._previews.create(
-            frozen.intent_id,
-            actor=actor,
-            expected_version=intent_version,
+        # The shared zero-mutation analysis continues on this same durable run:
+        # the resident Worker claims the ANALYZING stage and publishes the exact
+        # plan here.  A repeated request after a lost response converges on the
+        # already-queued analysis instead of duplicating work.
+        analyzing = self._discovery.begin_frozen_analysis(
+            discovery_id, actor=actor, expected_version=frozen.version
         )
-        return frozen, preview
-
-    def _intent_version(self, intent_id: str) -> int:
-        intent = self._intents.get(intent_id)
-        return int(getattr(intent, "version", 1))
+        return analyzing, None
 
     def _assert_complete(self, discovery: MediaDiscovery) -> None:
         # A definition-derived Run once must prove a *complete* manifest of the

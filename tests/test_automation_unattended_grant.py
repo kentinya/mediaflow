@@ -210,9 +210,16 @@ def _run_shared_analysis_api(api, *, definition_id: str = "automatic") -> str:
         if result.terminal:
             break
     current = api._media_discovery.get(discovery.discovery_id)
-    _frozen, preview = api._automation_run_once.finalize(
+    _analyzing, _plan = api._automation_run_once.finalize(
         discovery.discovery_id, actor="local-admin", expected_version=current.version
     )
+    assert _plan is None
+    # The exact plan is durable Worker work of this same run.
+    analyzed = api._media_discovery.claim_and_run(
+        worker_id="analysis-worker-final", claim_token="analysis-token-final"
+    )
+    assert analyzed is not None and analyzed.preview_id is not None
+    preview = api._manual_previews.get_readonly(analyzed.preview_id)
     assert preview.status.value == "previewed"
     return preview.preview_id
 

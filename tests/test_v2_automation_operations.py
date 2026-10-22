@@ -308,8 +308,9 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         Returns the linked exact Preview id: the shared zero-mutation organize
         analysis that an unattended grant now requires for the exact definition
         scope and bounds.  This mirrors the production Run-once journey the Web
-        and API expose; it performs only Storage reads and a zero-mutation
-        analysis, never a media mutation.
+        and API expose: the exact plan is durable Worker work of the same run,
+        never inline HTTP analysis; only Storage reads and a zero-mutation
+        analysis happen here, never a media mutation.
         """
         discovery = value.api._media_discovery.admit_definition_run_once(
             definition_id=definition_id, actor="admin"
@@ -326,11 +327,18 @@ class AutomationOperatorJourneyTests(unittest.TestCase):
         else:
             raise AssertionError("shared analysis did not settle in the step budget")
         current = value.api._media_discovery.get(discovery.discovery_id)
-        frozen, preview = value.api._automation_run_once.finalize(
+        _analyzing, _plan = value.api._automation_run_once.finalize(
             discovery.discovery_id, actor="admin", expected_version=current.version
         )
-        self.assertTrue(frozen.frozen)
-        self.assertEqual(preview.status.value, "previewed")
+        self.assertIsNone(_plan)
+        self.assertEqual("analyzing", _analyzing.status.value)
+        analyzed = value.api._media_discovery.claim_and_run(
+            worker_id="analysis-worker-final", claim_token="analysis-token-final"
+        )
+        self.assertIsNotNone(analyzed)
+        self.assertIsNotNone(analyzed.preview_id)
+        preview = value.api._manual_previews.get_readonly(analyzed.preview_id)
+        self.assertEqual("previewed", preview.status.value)
         return preview.preview_id
 
     def _snapshot(self, value) -> SchedulerConfigurationSnapshot:

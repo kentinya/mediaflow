@@ -1611,6 +1611,70 @@ class MediaDiscoveryService:
             # A repeated request converges on the analysis already queued: the
             # Worker re-runs the analysis under the same immutable intent.
             return discovery
+        return self._enter_analysis(
+            discovery,
+            message=(
+                "the resident Worker is re-running the complete zero-mutation analysis "
+                "under the same pinned configuration"
+            ),
+        )
+
+    def begin_frozen_analysis(
+        self, discovery_id: str, *, actor: str, expected_version: int
+    ) -> MediaDiscovery:
+        """Enter the durable analysis stage of one frozen manifest.
+
+        The exact fixed plan over the frozen intent is produced by the resident
+        Processing Worker through the same zero-mutation production analysis
+        chain the preparation journey uses — never inline inside the HTTP
+        request.  The request records one versioned durable stage only; a slow
+        Provider or a large manifest never blocks it, the operator keeps one
+        durable run identity with pause/cancel control, and the resulting plan
+        is linked to the same run when the Worker completes.
+        """
+
+        self._actor(actor)
+        discovery = self._require_version(discovery_id, expected_version)
+        if discovery.status is DiscoveryStatus.ANALYZING:
+            # A repeated or lost-response request converges on the analysis
+            # already queued under the same immutable frozen intent.
+            return discovery
+        if discovery.status in {DiscoveryStatus.FAILED, DiscoveryStatus.CANCELLED}:
+            raise DiscoveryError(
+                "a finished run cannot start its analysis again",
+                code="discovery_already_finished",
+                status=409,
+                next_action="start a new Run once if the same scope is still wanted",
+                details={"status": discovery.status.value},
+            )
+        if discovery.pause_requested or discovery.cancel_requested:
+            raise DiscoveryError(
+                "a pending pause or cancellation is acknowledged first",
+                code="discovery_control_pending",
+                status=409,
+                next_action=(
+                    "refresh the run until its control is acknowledged, then start the "
+                    "analysis again"
+                ),
+            )
+        if not discovery.frozen or discovery.intent_id is None:
+            raise DiscoveryError(
+                "only a frozen manifest with its linked intent can be analysed",
+                code="discovery_not_frozen",
+                status=409,
+                next_action="finalize the completed bounded walk, then the analysis starts",
+            )
+        return self._enter_analysis(
+            discovery,
+            message=(
+                "the frozen source list is durable; the resident Worker is running the "
+                "complete zero-mutation analysis to build the exact plan"
+            ),
+        )
+
+    def _enter_analysis(self, discovery: MediaDiscovery, *, message: str) -> MediaDiscovery:
+        """Publish one versioned ANALYZING stage for a frozen preparation."""
+
         now = self._clock()
         updated = replace(
             discovery,
@@ -1625,10 +1689,7 @@ class MediaDiscoveryService:
             progress=replace(
                 discovery.progress,
                 phase="analyzing",
-                message=(
-                    "the resident Worker is re-running the complete zero-mutation analysis "
-                    "under the same pinned configuration"
-                ),
+                message=message,
             ),
         )
         return self._persist(updated, expected_version=discovery.version)
@@ -2079,12 +2140,12 @@ class MediaDiscoveryService:
             stale = self._stale_recovery_preparation(discovery, claim_token)
             if stale is not None:
                 return stale
-        if discovery.auto_prepare and discovery.status is DiscoveryStatus.ANALYZING:
-            # The bounded walk already froze its reviewed sources into a
-            # durable intent.  The Worker now runs the complete production
-            # analysis chain through the existing zero-mutation Preview
-            # authority and links the exact read-only plan summary.  No
-            # execution authority is created.
+        if discovery.status is DiscoveryStatus.ANALYZING and discovery.intent_id is not None:
+            # A frozen manifest (a full preparation or a definition-bound Run
+            # once) already linked its durable intent.  The Worker now runs the
+            # complete production analysis chain through the existing
+            # zero-mutation Preview authority and links the exact read-only plan
+            # summary.  No execution authority is created.
             return self._analyze(discovery, claim_token)
         try:
             runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)

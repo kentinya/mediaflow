@@ -274,12 +274,13 @@ class RunOnceApiTests(unittest.TestCase):
                 repository,
                 intents,
                 configuration=runtime,
+                preview_service=previews,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storages=dict(storages),
                 clock=self.clock,
                 budgets=DiscoveryBudgets(),
             )
-            run_once = AutomationRunOnceService(discovery, intents, previews, clock=self.clock)
+            run_once = AutomationRunOnceService(discovery, previews, clock=self.clock)
             api = MediaFlowApi(
                 repository,
                 None,
@@ -387,7 +388,7 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
-    def test_finalize_freezes_manifest_and_returns_exact_preview(self) -> None:
+    def test_finalize_freezes_manifest_and_defers_the_plan_to_the_worker(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(source_scope="Movies") as value:
             _status, body = self.request(
@@ -405,32 +406,48 @@ class RunOnceApiTests(unittest.TestCase):
                 {"expectedVersion": current.version},
             )
             self.assertEqual(201, status)
-            self.assertEqual("frozen", frozen["phase"])
+            # The exact plan is durable work of this same run: the response
+            # names the analyzing stage and the resident Worker links the plan
+            # here; no plan or execution authority is created inline.
+            self.assertEqual("analyzing", frozen["phase"])
             self.assertTrue(frozen["frozen"])
             self.assertIsNotNone(frozen["intentId"])
-            # The shared organize analysis chain produces the exact Preview
-            # inline: the response carries the durable plan the operator reviews
-            # and separately confirms.
-            preview_id = frozen["previewId"]
-            self.assertIsNotNone(preview_id)
-            self.assertEqual(f"/operations/organize/preview/{preview_id}", frozen["previewPath"])
-            self.assertEqual(preview_id, frozen["preview"]["previewId"])
+            self.assertIsNone(frozen["previewId"])
+            self.assertIsNone(frozen["previewPath"])
             self.assertIsNone(frozen["analysisId"])
             self.assertIsNone(frozen["analysisPath"])
-            # Freezing and the shared analysis are zero mutation.
+            # The analyzing run stays pausable and cancellable.
+            self.assertTrue(frozen["actions"]["pause"]["available"])
+            self.assertTrue(frozen["actions"]["cancel"]["available"])
+            # The plain run read honestly advertises the pending plan route.
+            status, reading = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
+            )
+            self.assertEqual("analyzing", reading["phase"])
+            self.assertIsNone(reading["previewId"])
+            self.assertTrue(reading["actions"]["preview"]["available"])
+            self.assertIsNone(reading["actions"]["preview"]["path"])
+            # The resident Worker completes the same analysis on this run.
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertIsNotNone(analyzed.preview_id)
+            # Freezing and the durable analysis are zero mutation.
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
     def test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen(self) -> None:
         """The exact plan is re-read from the durable intent association.
 
-        Finalize runs the shared zero-mutation analysis over the frozen intent,
-        so the plan is addressed by that intent rather than by the discovery's
-        own ``preview_id`` column.  An ordinary GET — a reload, a reconnect or a
-        restart — must therefore return the exact plan identity the finalize
-        response published, and the same must hold after the runtime database is
-        closed and reopened.  The read performs no second freeze, no second
-        analysis and no mutation.
+        The durable Worker analysis writes the plan against the frozen intent,
+        so the plan is addressed by that intent rather than guessed.  An
+        ordinary GET — a reload, a reconnect or a restart — must return the
+        exact plan identity the run produced, and the same must hold after the
+        runtime database is closed and reopened.  The read performs no second
+        freeze, no second analysis and no mutation.
         """
 
         self.media("Movies/One.2001.mkv")
@@ -450,9 +467,15 @@ class RunOnceApiTests(unittest.TestCase):
                 {"expectedVersion": current.version},
             )
             self.assertEqual(201, status)
-            preview_id = frozen["previewId"]
+            # Finalize defers the plan to the durable analysis stage.
+            self.assertIsNone(frozen["previewId"])
+            # The resident Worker links the exact plan on this same run.
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            preview_id = analyzed.preview_id
             self.assertIsNotNone(preview_id)
-            self.assertEqual(preview_id, frozen["preview"]["previewId"])
             # A plain read of the same durable run resolves the same plan.
             status, reread = self.request(
                 value,
@@ -512,8 +535,8 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertFalse(document["actions"]["preview"]["available"])
             self.assertTrue(document["actions"]["finalize"]["available"])
 
-    def test_finalize_inline_preview_when_analysis_is_unbound(self) -> None:
-        """Without the durable analysis service the inline exact Preview is kept."""
+    def test_repeated_finalize_converges_on_one_durable_analysis(self) -> None:
+        """A repeated or lost-response finalize never duplicates work."""
 
         self.media("Movies/One.2001.mkv")
         with self.journey(source_scope="Movies") as value:
@@ -532,20 +555,25 @@ class RunOnceApiTests(unittest.TestCase):
                 {"expectedVersion": current.version},
             )
             self.assertEqual(201, status)
-            self.assertEqual("frozen", frozen["phase"])
-            self.assertIsNotNone(frozen["previewId"])
-            self.assertIsNotNone(frozen["intentId"])
-            self.assertEqual(frozen["previewId"], frozen["preview"]["previewId"])
-            # The frozen manifest's exact zero-mutation Preview is the existing
-            # *manual* Organize Preview over the frozen intent, so the operator
-            # continues on that surface.  The definition-Preview route reads a
-            # different repository and would never show this Preview.
-            self.assertEqual(
-                f"/operations/organize/preview/{frozen['previewId']}",
-                frozen["previewPath"],
+            self.assertEqual("analyzing", frozen["phase"])
+            # A repeated request converges on the already-queued analysis.
+            status, repeated = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+                {"expectedVersion": frozen["version"]},
             )
-            self.assertIsNone(frozen["analysisId"])
-            # Freezing and Preview are zero mutation.
+            self.assertEqual(201, status)
+            self.assertEqual("analyzing", repeated["phase"])
+            self.assertEqual(frozen["intentId"], repeated["intentId"])
+            # One frozen manifest, one linked intent, one analysis stage.
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertIsNotNone(analyzed.preview_id)
+            previews = value.repository.list_manual_previews(frozen["intentId"])
+            self.assertEqual(1, len(previews))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 

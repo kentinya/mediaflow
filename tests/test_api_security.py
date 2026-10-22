@@ -286,16 +286,27 @@ class ApiSecurityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with BrokenAuditRepository(Path(directory, "runtime.sqlite3")) as repository:
                 api = MediaFlowApi(repository, None, principals=principals())
-                status, response = request(
-                    api,
-                    "POST",
-                    "/api/v1/jobs",
-                    token="operator-token",
-                    document={"command": "organize", "limit": 1},
-                )
+                # The whole response is captured: the failing audit dependency
+                # must never leak its credential-shaped message through the
+                # JSON error, a stderr diagnostic or any traceback output.
+                stderr = io.StringIO()
+                with patch("sys.stderr", stderr):
+                    status, response = request(
+                        api,
+                        "POST",
+                        "/api/v1/jobs",
+                        token="operator-token",
+                        document={"command": "organize", "limit": 1},
+                    )
                 self.assertEqual(status, 500)
                 self.assertEqual(repository.list_jobs(), ())
                 self.assertNotIn("secret", json.dumps(response))
+                # The raw exception chain is never written to any stream: the
+                # operator-facing error and the audit row carry the bounded,
+                # secret-free evidence instead (REQ-LOG-003).
+                self.assertNotIn("secret", stderr.getvalue())
+                self.assertNotIn("INTERNAL ERROR", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_local_audit_cli_is_storage_free_and_redacted(self) -> None:
         document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))

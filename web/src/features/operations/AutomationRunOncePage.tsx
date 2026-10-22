@@ -44,7 +44,7 @@ import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 
 const PHASE_LABELS: Readonly<Record<string, string>> = {
   discovering: "正在发现来源",
-  analyzing: "正在分析稳定性",
+  analyzing: "正在分析，等待计划摘要",
   ready: "来源清单已发现，等待冻结",
   frozen: "来源清单已冻结",
   refused: "发现未完整，已拒绝执行",
@@ -129,22 +129,24 @@ export function AutomationRunOncePage() {
     },
     onSuccess: (result) => {
       setControlError(null);
-      if (result.action === "finalize" && result.previewId !== null) {
-        // The frozen manifest's complete zero-mutation plan is summarized in
-        // this page; the operator reviews it and separately confirms execution.
-        // The exact plan identity is also carried by the journey URL so a hard
-        // reload, Back/Forward or a re-opened link restores it; the backend
-        // Run once read remains the durable authority.
-        setPlanPreviewId(result.previewId);
-        void navigate({
-          to: "/operations/automation/run-once/$discoveryId",
-          params: { discoveryId },
-          search: {
-            ...operationsReturnSearch(operationsReturn),
-            ...planContextSearch(result.previewId),
-          },
-          replace: true,
-        });
+      if (result.action === "finalize") {
+        // Finalize never produces a plan inline: the durable analysis stage is
+        // queued on this same run and the resident Worker links the exact plan
+        // here.  The bounded poll picks the plan identity up from the durable
+        // run read; the URL hint stays reserved for a plan this page actually
+        // rendered, so an analyzing run never guesses a plan identity.
+        if (result.previewId !== null) {
+          setPlanPreviewId(result.previewId);
+          void navigate({
+            to: "/operations/automation/run-once/$discoveryId",
+            params: { discoveryId },
+            search: {
+              ...operationsReturnSearch(operationsReturn),
+              ...planContextSearch(result.previewId),
+            },
+            replace: true,
+          });
+        }
         refresh();
         return;
       }
@@ -249,6 +251,13 @@ export function AutomationRunOncePage() {
               >
                 <p>{model.nextAction}</p>
                 {model.message !== "" ? <p>{model.message}</p> : null}
+                {model.phase === "analyzing" && model.frozen ? (
+                  <p role="status">
+                    常驻处理 Worker
+                    正在本次运行上执行完整零变更分析；冻结清单与运行身份已耐久保存。
+                    完成前不会出现可执行范围，也不会产生任何执行授权；完成后摘要会出现在本页。
+                  </p>
+                ) : null}
                 {model.phase === "refused" ? (
                   <p role="status">
                     发现未完整遍历定义范围
@@ -354,7 +363,9 @@ export function AutomationRunOncePage() {
                     冻结清单并生成计划摘要
                   </Button>
                 ) : null}
-                {model.actions.preview.available && model.intentId !== null ? (
+                {model.actions.preview.available &&
+                model.intentId !== null &&
+                planPreviewId === null ? (
                   <Link
                     to="/operations/organize/intent/$intentId"
                     params={{ intentId: model.intentId }}

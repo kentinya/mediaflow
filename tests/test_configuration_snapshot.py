@@ -152,11 +152,20 @@ def _produce_shared_analysis(repository, configuration_service, document, defini
     else:
         raise AssertionError("shared analysis discovery did not settle")
     current = api._media_discovery.get(discovery.discovery_id)
-    _frozen, preview = api._automation_run_once.finalize(
+    _analyzing, _plan = api._automation_run_once.finalize(
         discovery.discovery_id,
         actor="local-admin",
         expected_version=current.version,
     )
+    assert _plan is None
+    assert _analyzing.status.value == "analyzing", _analyzing.status
+    # The exact plan is durable Worker work of this same run: the resident
+    # Worker links it once the zero-mutation analysis completes.
+    analyzed = api._media_discovery.claim_and_run(
+        worker_id="analysis-worker-final", claim_token="analysis-token-final"
+    )
+    assert analyzed is not None and analyzed.preview_id is not None
+    preview = api._manual_previews.get_readonly(analyzed.preview_id)
     assert preview.status.value == "previewed", preview.status
     assert preview.zero_mutation is True
     return api._media_discovery, api._manual_previews

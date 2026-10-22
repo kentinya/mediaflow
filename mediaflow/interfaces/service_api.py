@@ -443,11 +443,10 @@ class MediaFlowApi:
         if (
             self._automation_run_once is None
             and self._media_discovery is not None
-            and self._manual_intents is not None
+            and self._manual_previews is not None
         ):
             self._automation_run_once = AutomationRunOnceService(
                 self._media_discovery,
-                self._manual_intents,
                 self._manual_previews,
             )
         self._configuration_objects = (
@@ -1427,13 +1426,12 @@ class MediaFlowApi:
                 "invalid_request",
                 redact_manual_text(error),
             )
-        except Exception as _internal_error:
-            import sys as _sys
-
-            _sys.stderr.write(f"INTERNAL ERROR: {_internal_error!r}\n")
-            import traceback as _tb
-
-            _tb.print_exc()
+        except Exception:
+            # One bounded, secret-free diagnostic only: the operator-facing JSON
+            # error and the durable audit row already carry the request identity
+            # and the exact route.  The raw exception chain may contain
+            # credential-shaped content, so it is never written to any log or
+            # stream (AGENTS logging invariant, REQ-LOG-003).
             self._safe_audit(
                 environ,
                 request_id,
@@ -14112,17 +14110,17 @@ class MediaFlowApi:
             except (AutomationRunOnceError, DiscoveryError) as error:
                 return self._discovery_step_error(start_response, error)
         if action == "finalize" and method == "POST":
-            # Freeze the complete bounded manifest and create its exact
-            # zero-mutation Preview through the shared organize analysis chain.
-            # A budget/safety-limited walk is refused here rather than executed
-            # as a truncated prefix.
+            # Freeze the complete bounded manifest and enter the durable shared
+            # analysis stage: the resident Worker produces the exact zero-mutation
+            # plan on this same run and links it here.  A budget/safety-limited
+            # walk is refused here rather than executed as a truncated prefix.
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             self._require_empty_query(environ, "automation Run once finalize")
             document = self._document(environ)
             if set(document) != {"expectedVersion"}:
                 raise ValueError("automation Run once finalize requires only expectedVersion")
             try:
-                frozen, preview = service.finalize(
+                frozen, _preview = service.finalize(
                     discovery_id,
                     actor=principal.principal_id,
                     expected_version=document["expectedVersion"],
@@ -14131,12 +14129,14 @@ class MediaFlowApi:
                 return self._discovery_step_error(start_response, error)
             payload = service.document(frozen)
             payload["intentId"] = frozen.intent_id
-            if preview is not None:
-                payload["preview"] = self._manual_preview_document(preview)
-                payload["previewId"] = preview.preview_id
-                payload["previewPath"] = f"/operations/organize/preview/{preview.preview_id}"
-                payload["analysisId"] = None
-                payload["analysisPath"] = None
+            # The exact plan is durable work of this same run: the response names
+            # the analyzing stage and the plain run read (a reload, reconnect or
+            # restart) restores the plan identity once the Worker links it.  No
+            # plan, analysis identity or execution authority is created inline.
+            payload["previewId"] = None
+            payload["previewPath"] = None
+            payload["analysisId"] = None
+            payload["analysisPath"] = None
             return self._response(start_response, 201, payload)
         return self._error(start_response, 404, "not_found", "route was not found")
 

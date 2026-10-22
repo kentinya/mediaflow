@@ -323,6 +323,7 @@ class _RunOnceFixture(unittest.TestCase):
                 repository,
                 intents,
                 configuration=runtime,
+                preview_service=previews,
                 runtime_resolver=lambda snapshot_id, digest: runtime,
                 storages=dict(storages),
                 clock=self.clock,
@@ -330,7 +331,6 @@ class _RunOnceFixture(unittest.TestCase):
             )
             run_once = AutomationRunOnceService(
                 discovery,
-                intents,
                 previews,
                 clock=self.clock,
             )
@@ -566,7 +566,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNone(value.repository.get_automation_definition_due_state("nightly"))
             self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
 
-    def test_finalize_freezes_the_manifest_and_creates_an_exact_preview(self) -> None:
+    def test_finalize_freezes_the_manifest_and_enters_durable_analysis(self) -> None:
         self.media("Movies/One.2001.mkv")
         with self.journey(source_scope="Movies") as value:
             discovery = value.run_once.admit("nightly", actor="operator")
@@ -580,26 +580,97 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNotNone(frozen.frozen_at)
             self.assertIsNotNone(frozen.intent_id)
             self.assertEqual("automatic-organization", frozen.definition_origin.run_mode)
-            # The shared organize analysis chain produces the exact Preview
-            # inline; the plan still needs a separate explicit confirmation.
-            self.assertIsNotNone(preview)
-            self.assertEqual(frozen.intent_id, preview.intent_id)
-            # Freezing and Preview admission are still zero-mutation: only a
-            # separate explicit execution may ever reach OrganizerExecutor.
+            # The exact plan is durable work of this same run: the resident
+            # Worker produces it through the existing analysis chain, never
+            # inline inside the request.  The frozen record is analyzing and
+            # no plan exists yet.
+            self.assertIsNone(preview)
+            self.assertEqual(DiscoveryStatus.ANALYZING, frozen.status)
+            self.assertFalse(frozen.terminal)
+            document = value.run_once.document(frozen)
+            self.assertEqual("analyzing", document["phase"])
+            self.assertTrue(document["frozen"])
+            self.assertIsNone(document["previewId"])
+            self.assertFalse(document["actions"].get("organize", False))
+            # The plan still needs a separate explicit confirmation once it
+            # appears; the run records no plan identity inline.
+            self.assertEqual((), value.repository.list_manual_previews(frozen.intent_id))
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
-            document = value.run_once.document(frozen)
+            # The paused/cancellable analysis stays claimable by the resident
+            # Worker, which then links the exact plan on the same run.
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
+            self.assertIsNotNone(analyzed.preview_id)
+            document = value.run_once.document(analyzed)
             self.assertEqual("frozen", document["phase"])
-            self.assertTrue(document["frozen"])
-            self.assertFalse(document["actions"].get("organize", False))
+            self.assertEqual(analyzed.preview_id, document["previewId"])
+            self.assertEqual(
+                analyzed.preview_id,
+                document["actions"]["preview"]["path"].rsplit("/", 1)[-1],
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_slow_provider_never_blocks_the_finalize_request(self) -> None:
+        """RO-8: the exact analysis is durable Worker work, not HTTP work.
+
+        A blocked Provider call must leave the finalize request free: the
+        request has already returned the durable analyzing stage, the resident
+        Worker owns the claim and no Job/Task rows are created for analysis.
+        """
+
+        import threading
+        from unittest.mock import patch
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            provider = next(iter(value.previews._providers._providers.values()))
+            release = threading.Event()
+
+            def blocked_search(inner_self, query, policy=None, **kwargs):
+                release.wait(timeout=10)
+                return inner_self._candidates
+
+            with patch.object(type(provider), "search_movie", blocked_search):
+                discovery = value.run_once.admit("nightly", actor="operator")
+                self.drive(value)
+                current = value.run_once.get(discovery.discovery_id)
+                frozen, preview = value.run_once.finalize(
+                    discovery.discovery_id,
+                    actor="operator",
+                    expected_version=current.version,
+                )
+                # The request returned while the Worker's Provider call is
+                # still in flight: no plan, no execution authority.
+                self.assertIsNone(preview)
+                self.assertEqual(DiscoveryStatus.ANALYZING, frozen.status)
+                self.assertIsNone(frozen.preview_id)
+                document = value.run_once.document(frozen)
+                self.assertEqual("analyzing", document["phase"])
+                self.assertEqual([], value.source.mutations)
+                self.assertEqual([], value.target.mutations)
+            # With the Provider released the resident Worker completes the same
+            # analysis and links the exact plan on this run.
+            release.set()
+            analyzed = value.discovery.claim_and_run(
+                worker_id="released-worker", claim_token="released-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertIsNotNone(analyzed.preview_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_frozen_manifest_reaches_linked_execution_and_operations_origin(self) -> None:
         """The complete Run-once journey reaches a real linked execution.
 
-        Freeze → exact manual Preview → one separate explicit execution →
-        resident Worker outcome, with the definition origin durable on the
-        resulting Operations run.  The shared analysis is zero mutation
-        throughout and only the explicit confirmation reaches
+        Freeze → durable Worker analysis → exact manual Preview → one separate
+        explicit execution → resident Worker outcome, with the definition
+        origin durable on the resulting Operations run.  The shared analysis is
+        zero mutation throughout and only the explicit confirmation reaches
         ``OrganizerExecutor``.
         """
 
@@ -613,8 +684,13 @@ class RunOnceJourneyTests(_RunOnceFixture):
                 actor="operator",
                 expected_version=current.version,
             )
-            self.assertIsNotNone(preview)
-            preview_id = preview.preview_id
+            self.assertIsNone(preview)
+            # The resident Worker links the exact plan on this same run.
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed.preview_id)
+            preview_id = analyzed.preview_id
             # The exact Preview is the *manual* Preview over the frozen intent.
             preview = value.previews.get(preview_id)
             self.assertEqual(frozen.intent_id, preview.intent_id)

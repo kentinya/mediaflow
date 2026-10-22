@@ -3550,17 +3550,20 @@ def run_automation_run_once_worker(state: AppState, *, discovery_id: str) -> dic
     except Exception:
         return {"advanced": False, "reason": "the requested Run-once discovery is unavailable"}
     latest = None
-    for _ in range(12):
+    for _ in range(20):
         result = worker.run_next()
         if result is None:
             break
         latest = result
-        if result.discovery_id == discovery_id:
+        if result.discovery_id == discovery_id and (
+            result.terminal or result.preview_id is not None
+        ):
             return {
                 "advanced": True,
                 "discoveryId": result.discovery_id,
                 "status": result.status.value,
                 "primarySourceCount": len(result.sources),
+                "previewId": result.preview_id,
             }
     current = service.get(discovery_id)
     if latest is None:
@@ -3579,6 +3582,7 @@ def run_automation_run_once_worker(state: AppState, *, discovery_id: str) -> dic
         "discoveryId": discovery_id,
         "status": current.status.value,
         "primarySourceCount": len(current.sources),
+        "previewId": current.preview_id,
         "lastAdvancedDiscoveryId": latest.discovery_id,
     }
 

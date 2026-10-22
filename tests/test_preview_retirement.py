@@ -212,11 +212,11 @@ class RetainedRunOncePlanTests(unittest.TestCase):
 
     The retired independent Preview was where an operator reviewed a plan.  The
     retained shared journey is the definition-bound Run once: it freezes the
-    complete bounded manifest and runs the shared zero-mutation analysis over
-    its linked intent.  Because finalize writes the plan against that intent,
-    the plan identity must be re-readable from an ordinary Run once GET and from
-    a reopened runtime store, so a reload, reconnect or restart restores the same
-    plan instead of losing it or re-running the analysis.
+    complete bounded manifest and the resident Worker runs the shared
+    zero-mutation analysis over its linked intent on this same durable run.
+    The plan identity must be re-readable from an ordinary Run once GET and
+    from a reopened runtime store, so a reload, reconnect or restart restores
+    the same plan instead of losing it or re-running the analysis.
     """
 
     def test_frozen_run_once_plan_is_reread_from_the_durable_intent(self):
@@ -262,10 +262,19 @@ class RetainedRunOncePlanTests(unittest.TestCase):
                 body={"expectedVersion": ready["version"]},
             )
             self.assertEqual(201, status, frozen)
-            preview_id = frozen["previewId"]
-            self.assertIsNotNone(preview_id)
-            self.assertEqual(preview_id, frozen["preview"]["previewId"])
+            # Finalize defers the plan to the durable analysis stage on this
+            # same run; no plan or analysis identity is produced inline.
+            self.assertEqual("analyzing", frozen["phase"])
+            self.assertIsNone(frozen["previewId"])
+            self.assertNotIn("preview", frozen)
             self.assertIsNone(frozen["analysisId"])
+            # The resident Worker links the exact plan on the same run.
+            analyzed = api._media_discovery.claim_and_run(
+                worker_id="plan-analysis-worker", claim_token="plan-analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            preview_id = analyzed.preview_id
+            self.assertIsNotNone(preview_id)
 
             # An ordinary read of the same durable run resolves the exact plan.
             status, reread = _request(api, path)

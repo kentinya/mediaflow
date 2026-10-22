@@ -215,6 +215,40 @@ function frozenRunOnceDocument(previewId: string | null): Json {
   return value;
 }
 
+/**
+ * The analyzing projection after Finalize: the manifest is frozen, the exact
+ * plan is durable Worker work of this same run and its identity is honestly
+ * absent until the resident Worker links it.
+ */
+function analyzingRunOnceDocument(): Json {
+  return runOnceDocument({
+    phase: "analyzing",
+    status: "analyzing",
+    intentId: INTENT_ID,
+    previewId: null,
+    frozen: true,
+    frozenAt: "2026-10-21T23:47:21+00:00",
+    version: 5,
+    nextAction:
+      "wait for the resident Worker to finish the zero-mutation analysis; the exact " +
+      "plan appears on this run and still needs a separate explicit confirmation",
+    actions: {
+      pause: action({ available: true }),
+      cancel: action({ available: true }),
+      resume: action(),
+      finalize: action(),
+      narrowScope: action(),
+      preview: action({
+        available: true,
+        method: "GET",
+        path: null,
+        nextAction:
+          "wait for the resident Worker to link this run's exact plan",
+      }),
+    },
+  });
+}
+
 function previewDocument(): Json {
   const value = JSON.parse(
     JSON.stringify(documents["organizePreviewDetail"]),
@@ -238,24 +272,27 @@ function previewDocument(): Json {
 describe("V2 Automation Run once journey", () => {
   it("restores the frozen plan at the same URL after a reload without re-freezing", async () => {
     const user = userEvent.setup();
-    let frozen = false;
+    // ready (unfrozen) → finalize → analyzing → Worker links the plan (frozen)
+    let stage: "ready" | "analyzing" | "linked" = "ready";
     const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
       }
       if (call.url === API_PATH && call.method === "GET") {
-        // The durable Run once record resolves its exact plan from the linked
-        // intent association, so a reload reads the same plan identity back.
-        return jsonResponse(
-          frozen ? frozenRunOnceDocument(PREVIEW_ID) : runOnceDocument(),
-        );
+        // Finalize defers the plan to the durable analysis stage; the resident
+        // Worker then links the exact plan on this same run, so a reload reads
+        // the same plan identity back.
+        if (stage === "linked") {
+          return jsonResponse(frozenRunOnceDocument(PREVIEW_ID));
+        }
+        if (stage === "analyzing") {
+          return jsonResponse(analyzingRunOnceDocument());
+        }
+        return jsonResponse(runOnceDocument());
       }
       if (call.url === `${API_PATH}/finalize` && call.method === "POST") {
-        frozen = true;
-        const response = frozenRunOnceDocument(PREVIEW_ID);
-        response["preview"] = previewDocument();
-        response["previewPath"] = `/operations/organize/preview/${PREVIEW_ID}`;
-        return jsonResponse(response, 201);
+        stage = "analyzing";
+        return jsonResponse(analyzingRunOnceDocument(), 201);
       }
       if (call.url === `/api/v1/operations/organize/previews/${PREVIEW_ID}`) {
         return jsonResponse(previewDocument());
@@ -282,12 +319,22 @@ describe("V2 Automation Run once journey", () => {
     await user.click(
       await screen.findByRole("button", { name: "冻结清单并生成计划摘要" }),
     );
-    await screen.findByRole("heading", { name: "本次运行计划的零变更摘要" });
-    // The exact plan identity travels in the journey URL so a reload, a
-    // Back/Forward step or a re-opened link restores it.
+    // The response carries no plan identity: the page shows the durable
+    // analyzing stage and picks the plan up from the durable run read.  The
+    // Finalize POST itself never inline-analyzes anything.
+    await screen.findByText("正在分析，等待计划摘要");
     expect(
-      new URLSearchParams(router.history.location.search).get("plan"),
-    ).toBe(PREVIEW_ID);
+      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
+    ).toBeNull();
+    stage = "linked"; // the resident Worker links the plan durably
+    // The bounded run poll (2s while analyzing) picks the durable plan up.
+    await screen.findByRole(
+      "heading",
+      { name: "本次运行计划的零变更摘要" },
+      { timeout: 5_000 },
+    );
+    // The plan identity is read from the durable run association, and a
+    // reload restores the same plan without another Finalize.
     const finalizeCount = calls.filter(
       (call) => call.url === `${API_PATH}/finalize`,
     ).length;
@@ -388,5 +435,41 @@ describe("V2 Automation Run once journey", () => {
     expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
     expect(calls.some((call) => call.method === "POST")).toBe(false);
     expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
+  });
+
+  it("shows the durable analyzing stage and offers no plan while the Worker runs", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (call.url === API_PATH && call.method === "GET") {
+        return jsonResponse(analyzingRunOnceDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+
+    // The frozen manifest's analysis is a durable stage of this run: the page
+    // explains it and keeps the run's pause/cancel available, without any
+    // plan summary, plan route or execution control.
+    await screen.findByText("正在分析，等待计划摘要");
+    expect(
+      screen.getByText(/常驻处理 Worker 正在本次运行上执行完整零变更分析/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "冻结清单并生成计划摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "暂停分析" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "取消运行" })).toBeEnabled();
+    expect(
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/execute"),
+      ),
+    ).toBe(false);
   });
 });

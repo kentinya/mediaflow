@@ -222,9 +222,25 @@ test("the frozen manifest and its exact Preview are durable across a restart", a
   ).toBeVisible();
   await page.getByRole("button", { name: "冻结清单并生成计划摘要" }).click();
 
-  // Freezing runs the shared Organize analysis inline, so the complete fixed
-  // plan summary renders in this same Run once page: no separate plan
-  // destination is opened and the durable run-once route is kept.
+  // Freezing defers the exact plan to the durable analysis stage of this same
+  // run: the resident Worker runs the shared Organize analysis and links the
+  // complete fixed plan, so the summary renders in this same Run once page —
+  // no separate plan destination is opened and the durable run-once route is
+  // kept.
+  let planLinked = false;
+  for (let step = 0; step < 20 && !planLinked; step += 1) {
+    const advanced = await page.request.post(
+      `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced?: boolean;
+      readonly previewId?: string | null;
+    };
+    planLinked = Boolean(body.advanced && body.previewId != null);
+  }
+  expect(planLinked, "the durable Worker never linked the exact plan").toBe(
+    true,
+  );
   await expect(page).toHaveURL(
     new RegExp(`/ui-v2/operations/automation/run-once/${discoveryId}$`),
   );
@@ -348,6 +364,22 @@ test("Run once preserves a successful sibling while one failed item is recovered
   });
   await connectOn(page, `/ui-v2/operations/automation/run-once/${discoveryId}`);
   await page.getByRole("button", { name: "冻结清单并生成计划摘要" }).click();
+  // The durable Worker analysis links the exact plan before confirmation.
+  let mixedPlanLinked = false;
+  for (let step = 0; step < 20 && !mixedPlanLinked; step += 1) {
+    const advanced = await page.request.post(
+      `/__harness__/run-automation-run-once-worker?discoveryId=${discoveryId}`,
+    );
+    const body = (await advanced.json()) as {
+      readonly advanced?: boolean;
+      readonly previewId?: string | null;
+    };
+    mixedPlanLinked = Boolean(body.advanced && body.previewId != null);
+  }
+  expect(
+    mixedPlanLinked,
+    "the durable Worker never linked the mixed-scope plan",
+  ).toBe(true);
   await expect(
     page.getByRole("heading", { name: "本次运行计划的零变更摘要" }),
   ).toBeVisible();

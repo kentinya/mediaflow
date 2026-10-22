@@ -34,6 +34,9 @@ const STATUSES: ReadonlySet<string> = new Set([
   "running",
   "paused",
   "waiting_stability",
+  // The frozen manifest's durable analysis stage: the exact plan is being
+  // produced by the resident Worker on this same run.
+  "analyzing",
   "completed",
   "partial_success",
   "failed",
