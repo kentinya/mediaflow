@@ -55,7 +55,7 @@ from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 
 OPERATOR_TOKEN = "operator-token"
@@ -776,11 +776,11 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNone(
                 value.repository.media_discovery_claim(frozen.discovery_id)["claimToken"]
             )
-            # ... and the unpublished plan is not readable as a current plan.
+            # ... and the losing pass leaves no plan row at all: the plan
+            # publication is one atomic commit that lost its fence, so nothing
+            # was ever readable as a current plan or re-exposed by the intent.
             previews = value.repository.list_manual_previews(frozen.intent_id)
-            self.assertEqual(1, len(previews), previews)
-            self.assertFalse(previews[0].current)
-            self.assertEqual("stale", previews[0].status.value)
+            self.assertEqual((), previews, previews)
             # The paused run is continuable and exposes no confirmable plan.
             status, readback = self.request(
                 value,
@@ -814,7 +814,7 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertIsNotNone(analyzed)
             self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
             self.assertIsNotNone(analyzed.preview_id)
-            self.assertNotEqual(previews[0].preview_id, analyzed.preview_id)
+            # Exactly one current plan now exists: this run's own linked plan.
             status, linked = self.request(
                 value,
                 f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
@@ -863,10 +863,11 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual(DiscoveryStatus.CANCELLED, durable.status)
             self.assertTrue(durable.cancel_requested)
             self.assertIsNone(durable.preview_id)
+            # The losing pass leaves no plan row at all: the plan publication is
+            # one atomic commit that lost its fence, so nothing was ever
+            # readable as a current plan or re-exposed by the intent.
             previews = value.repository.list_manual_previews(frozen.intent_id)
-            self.assertEqual(1, len(previews), previews)
-            self.assertFalse(previews[0].current)
-            self.assertEqual("stale", previews[0].status.value)
+            self.assertEqual((), previews, previews)
             # The cancelled run never re-exposes a confirmable plan, even though
             # the linked intent would otherwise resolve a latest plan.
             status, readback = self.request(
@@ -959,6 +960,141 @@ class RunOnceJourneyTests(_RunOnceFixture):
     def _wait_for_provider_call(entered, *, timeout: float = 15.0) -> None:
         if not entered.wait(timeout=timeout):
             raise AssertionError("the Worker never reached the Provider call")
+
+    def test_a_control_that_wins_the_publication_window_leaves_no_confirmable_plan(
+        self,
+    ) -> None:
+        """B's confirmed window: no plan row, no intent summary, no admission.
+
+        The analysis plan must never touch the database before its run link is
+        committed.  A control that wins the race between the analysis and the
+        publication therefore leaves no plan row at all, so the exact plan ID,
+        the intent's latest-plan projection and the normal execute admission
+        all find nothing to confirm — even with the plan ID already known.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen = self._frozen_analyzing_run(value)
+            provider, release, entered, patch_search = self._blocked_provider_analysis(value)
+            results: list[object] = []
+            with patch_search:
+                thread = self._advance_worker_in_thread(value, results)
+                self._wait_for_provider_call(entered)
+                # The operator cancels while the Provider call is in flight.
+                status, cancelled = self.request(
+                    value,
+                    self._control_path(frozen.discovery_id, "cancel"),
+                    "POST",
+                    {"expectedVersion": frozen.version},
+                )
+                self.assertEqual(200, status, cancelled)
+            # The losing Worker's analysis returns while the cancellation is
+            # durable.  The publication must be refused with no plan row.
+            release.set()
+            thread.join(timeout=20)
+            self.assertFalse(thread.is_alive())
+            durable = value.repository.get_media_discovery(frozen.discovery_id)
+            self.assertEqual(DiscoveryStatus.CANCELLED, durable.status)
+            self.assertIsNone(durable.preview_id)
+            self.assertEqual((), value.repository.list_manual_previews(frozen.intent_id))
+            self.assertIsNone(value.repository.get_latest_manual_preview(frozen.intent_id))
+            # The intent's operator projection carries no confirmable plan.
+            status, intent = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{frozen.intent_id}",
+            )
+            self.assertEqual(200, status, intent)
+            self.assertIsNone(intent.get("latestPlan"), intent)
+            # The run's plain GET never advertises a confirmable plan either.
+            status, readback = self.request(
+                value,
+                f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
+            )
+            self.assertEqual("cancelled", readback["phase"])
+            self.assertIsNone(readback["previewId"])
+            self.assertFalse(readback["actions"]["preview"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_a_normal_analysis_publishes_one_exactly_confirmable_plan(self) -> None:
+        """Without a race the atomic publication is ordinary and confirmable.
+
+        The resident Worker completes the shared analysis, the plan is linked
+        on its run, the intent's latest-plan projection names exactly that one
+        plan, and one explicit confirmation admits the reviewed selection.
+        The publication never grants authority by itself.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen = self._frozen_analyzing_run(value)
+            analyzed = value.discovery.claim_and_run(
+                worker_id="analysis-worker", claim_token="analysis-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
+            preview_id = analyzed.preview_id
+            self.assertIsNotNone(preview_id)
+            # Exactly one durable plan exists and it is the run's linked plan.
+            previews = value.repository.list_manual_previews(frozen.intent_id)
+            self.assertEqual(1, len(previews))
+            self.assertEqual(preview_id, previews[0].preview_id)
+            self.assertTrue(previews[0].current)
+            self.assertEqual(
+                preview_id,
+                value.repository.get_latest_manual_preview(frozen.intent_id).preview_id,
+            )
+            # The intent's operator projection advertises exactly that plan.
+            status, intent = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{frozen.intent_id}",
+            )
+            self.assertEqual(200, status, intent)
+            self.assertEqual(preview_id, intent["latestPlan"]["previewId"], intent)
+            # A live resident Worker must be registered so the admitted
+            # execution is claimable — the same readiness the real journey
+            # requires.  Readiness compares the heartbeat against the wall
+            # clock, so this registration uses the real current time.
+            value.repository.register_worker(
+                worker_id="resident-worker",
+                label="test-node",
+                heartbeat_interval_seconds=60.0,
+                supported_commands=("organize",),
+                configuration_snapshot_id=value.revision.revision_id,
+                configuration_snapshot_digest=value.revision.digest,
+                runtime_schema_version=SCHEMA_VERSION,
+                now=datetime.now(UTC),
+            )
+            status, detail = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_id}",
+            )
+            self.assertEqual(200, status, detail)
+            self.assertTrue(detail["worker"]["ready"], detail["worker"])
+            self.assertTrue(detail["actions"]["execute"]["available"], detail["actions"])
+            item_ids = detail["executionCandidateItemIds"]
+            self.assertTrue(item_ids)
+            # One explicit confirmation admits the exact selection; the
+            # analysis itself never granted authority.
+            self.assertEqual((), value.repository.list_confirmations())
+            status, admitted = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview_id}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": item_ids,
+                    "expectedIntentVersion": detail["intentVersion"],
+                    "allowOverwrite": False,
+                    "allowSourceCleanup": False,
+                },
+            )
+            self.assertEqual(202, status, admitted)
+            self.assertIsNotNone(admitted.get("executionId"), admitted)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
     def test_frozen_manifest_reaches_linked_execution_and_operations_origin(self) -> None:
         """The complete Run-once journey reaches a real linked execution.

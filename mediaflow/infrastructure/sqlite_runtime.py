@@ -9377,6 +9377,31 @@ class SQLiteTaskRepository:
         independently inspectable, so a bounded batch cannot erase a sibling
         merely because another item was re-previewed.
         """
+        self._validate_manual_preview_projection(preview, items)
+        values = tuple(preview.items if items is None else items)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._publish_manual_preview_rows(preview, values)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        value = self.get_manual_preview(preview.preview_id)
+        if value is None:
+            raise ManualPreviewUnavailable(
+                "published manual Preview could not be reloaded",
+                details={"previewId": preview.preview_id},
+            )
+        return value
+
+    @staticmethod
+    def _validate_manual_preview_projection(
+        preview: ManualOrganizePreview,
+        items: tuple[ManualPreviewItem, ...] | list[ManualPreviewItem] | None,
+    ) -> None:
+        """The shared shape/ownership check for every plan publication path."""
+
         if not isinstance(preview, ManualOrganizePreview):
             raise ValueError("manual Preview projection is required")
         values = tuple(preview.items if items is None else items)
@@ -9389,216 +9414,215 @@ class SQLiteTaskRepository:
             for value in values
         ):
             raise ValueError("manual Preview item ownership is invalid")
+
+    def _publish_manual_preview_rows(
+        self,
+        preview: ManualOrganizePreview,
+        values: tuple[ManualPreviewItem, ...],
+    ) -> None:
+        """Write the plan rows inside the caller's open immediate transaction.
+
+        The caller owns the transaction, the lock and any extra fenced write.
+        A new Preview supersedes only the selected item identities; the old
+        aggregate is retained as history and its unselected child rows remain
+        independently inspectable, so a bounded batch cannot erase a sibling
+        merely because another item was re-previewed.
+        """
+
         item_ids = tuple(value.item_id for value in values)
         placeholders = ", ".join("?" for _ in item_ids)
         superseded_error = "superseded by a newer Preview for this item"
         superseded_action = "inspect the newer Preview or request a fresh Preview"
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                intent_row = self._connection.execute(
-                    "SELECT status, version, configuration_snapshot_id, "
-                    "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",
-                    (preview.intent_id,),
-                ).fetchone()
-                if intent_row is None:
-                    raise LookupError(f"manual intent {preview.intent_id!r} was not found")
-                if preview.recovery_source_task_id is not None:
-                    source_task = self._connection.execute(
-                        "SELECT status, configuration_snapshot_id, "
-                        "configuration_snapshot_digest FROM tasks WHERE task_id=?",
-                        (preview.recovery_source_task_id,),
-                    ).fetchone()
-                    if (
-                        source_task is None
-                        or source_task["status"] != PersistentTaskStatus.PAUSED.value
-                        or source_task["configuration_snapshot_id"]
-                        != preview.configuration_snapshot_id
-                        or source_task["configuration_snapshot_digest"]
-                        != preview.configuration_snapshot_digest
-                    ):
-                        raise ManualPreviewConflict(
-                            "the source Task changed or its pinned configuration no longer "
-                            "matches; no recovery Preview was published"
-                        )
-                    active_continuation = self._connection.execute(
-                        "SELECT 1 FROM scope_continuations WHERE source_task_id=? "
-                        "AND status IN (?, ?) LIMIT 1",
-                        (
-                            preview.recovery_source_task_id,
-                            ScopeContinuationStatus.QUEUED.value,
-                            ScopeContinuationStatus.RUNNING.value,
-                        ),
-                    ).fetchone()
-                    if active_continuation is not None:
-                        raise ManualPreviewConflict(
-                            "the source Task already has a queued continuation; no recovery "
-                            "Preview was published"
-                        )
-                if (
-                    intent_row["status"] != ManualIntentStatus.OPEN.value
-                    or int(intent_row["version"]) != preview.intent_version
-                    or intent_row["configuration_snapshot_id"] != preview.configuration_snapshot_id
-                    or intent_row["configuration_snapshot_digest"]
-                    != preview.configuration_snapshot_digest
-                ):
-                    raise ManualIntentConflict(
-                        "manual intent changed; no Preview was published",
-                        current_version=int(intent_row["version"]),
-                    )
-                for item in values:
-                    current_row = self._connection.execute(
-                        "SELECT * FROM manual_intent_items WHERE intent_id=? AND item_id=?",
-                        (preview.intent_id, item.item_id),
-                    ).fetchone()
-                    if current_row is None:
-                        raise LookupError(f"manual intent item {item.item_id!r} was not found")
-                    current_item = self._manual_item(current_row)
-                    if (
-                        current_item.version != item.item_version
-                        or current_item.status is not ManualIntentItemStatus.READY
-                        or current_item.source.document() != item.source.document()
-                        or current_item.choice.document() != item.choice.document()
-                    ):
-                        raise ManualIntentConflict(
-                            "manual intent item changed; no Preview was published",
-                            current_version=int(intent_row["version"]),
-                        )
-                old_rows = self._connection.execute(
-                    f"SELECT DISTINCT preview_id FROM manual_preview_items "
-                    f"WHERE intent_id=? AND current=1 AND item_id IN ({placeholders})",
-                    (preview.intent_id, *item_ids),
-                ).fetchall()
-                if old_rows:
-                    old_preview_ids = tuple(row["preview_id"] for row in old_rows)
-                    self._connection.execute(
-                        f"UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
-                        f"current=0, updated_at=? WHERE intent_id=? AND current=1 "
-                        f"AND item_id IN ({placeholders})",
-                        (
-                            ManualPreviewItemStatus.STALE.value,
-                            superseded_error,
-                            superseded_action,
-                            preview.updated_at.isoformat(),
-                            preview.intent_id,
-                            *item_ids,
-                        ),
-                    )
-                    old_parent_placeholders = ", ".join("?" for _ in old_preview_ids)
-                    self._connection.execute(
-                        f"UPDATE manual_previews SET status=?, error=?, next_action=?, "
-                        f"current=0, updated_at=? WHERE current=1 AND preview_id IN "
-                        f"({old_parent_placeholders})",
-                        (
-                            ManualPreviewStatus.STALE.value,
-                            superseded_error,
-                            superseded_action,
-                            preview.updated_at.isoformat(),
-                            *old_preview_ids,
-                        ),
-                    )
-                self._connection.execute(
-                    "INSERT INTO manual_previews "
-                    "(preview_id, intent_id, actor, configuration_snapshot_id, "
-                    "configuration_snapshot_digest, status, intent_version, created_at, "
-                    "updated_at, next_action, error, zero_mutation, current, truncated, "
-                    "previous_preview_id, unselected_item_ids_json, source_scope, "
-                    "source_scope_id, recovery_source_task_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        preview.preview_id,
-                        preview.intent_id,
-                        preview.actor,
-                        preview.configuration_snapshot_id,
-                        preview.configuration_snapshot_digest,
-                        preview.status.value,
-                        preview.intent_version,
-                        preview.created_at.isoformat(),
-                        preview.updated_at.isoformat(),
-                        redact_manual_text(preview.next_action),
-                        redact_manual_text(preview.error) if preview.error is not None else None,
-                        int(preview.zero_mutation),
-                        int(preview.current),
-                        int(preview.truncated),
-                        preview.previous_preview_id,
-                        json.dumps(
-                            list(preview.unselected_item_ids),
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
-                        preview.source_scope,
-                        preview.source_scope_id,
-                        preview.recovery_source_task_id,
-                    ),
+        intent_row = self._connection.execute(
+            "SELECT status, version, configuration_snapshot_id, "
+            "configuration_snapshot_digest FROM manual_intents WHERE intent_id=?",
+            (preview.intent_id,),
+        ).fetchone()
+        if intent_row is None:
+            raise LookupError(f"manual intent {preview.intent_id!r} was not found")
+        if preview.recovery_source_task_id is not None:
+            source_task = self._connection.execute(
+                "SELECT status, configuration_snapshot_id, "
+                "configuration_snapshot_digest FROM tasks WHERE task_id=?",
+                (preview.recovery_source_task_id,),
+            ).fetchone()
+            if (
+                source_task is None
+                or source_task["status"] != PersistentTaskStatus.PAUSED.value
+                or source_task["configuration_snapshot_id"] != preview.configuration_snapshot_id
+                or source_task["configuration_snapshot_digest"]
+                != preview.configuration_snapshot_digest
+            ):
+                raise ManualPreviewConflict(
+                    "the source Task changed or its pinned configuration no longer "
+                    "matches; no recovery Preview was published"
                 )
-                for item in values:
-                    self._connection.execute(
-                        "INSERT INTO manual_preview_items "
-                        "(preview_item_id, preview_id, intent_id, item_id, position, "
-                        "intent_version, item_version, source_json, choice_json, "
-                        "configuration_snapshot_id, configuration_snapshot_digest, "
-                        "source_fingerprint, source_evidence_versions_json, "
-                        "review_versions_json, conflict_versions_json, input_fingerprint, "
-                        "plan_fingerprint, status, plan_json, error, next_action, "
-                        "zero_mutation, execution_state, truncated, created_at, updated_at, "
-                        "current) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        "?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            item.preview_item_id,
-                            item.preview_id,
-                            item.intent_id,
-                            item.item_id,
-                            item.position,
-                            item.intent_version,
-                            item.item_version,
-                            json.dumps(item.source.document(), ensure_ascii=False, sort_keys=True),
-                            json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
-                            item.configuration_snapshot_id,
-                            item.configuration_snapshot_digest,
-                            item.source_fingerprint,
-                            json.dumps(
-                                list(item.source_evidence_versions),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                            json.dumps(
-                                list(item.review_versions),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                            json.dumps(
-                                list(item.conflict_versions),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                            item.input_fingerprint,
-                            item.plan_fingerprint,
-                            item.status.value,
-                            json.dumps(item.plan, ensure_ascii=False, sort_keys=True)
-                            if item.plan is not None
-                            else None,
-                            redact_manual_text(item.error) if item.error is not None else None,
-                            redact_manual_text(item.next_action),
-                            int(item.zero_mutation),
-                            item.execution_state,
-                            int(item.truncated),
-                            item.created_at.isoformat(),
-                            item.updated_at.isoformat(),
-                            int(item.current),
-                        ),
-                    )
-                self._connection.commit()
-            except BaseException:
-                self._connection.rollback()
-                raise
-        value = self.get_manual_preview(preview.preview_id)
-        if value is None:
-            raise ManualPreviewUnavailable(
-                "published manual Preview could not be reloaded",
-                details={"previewId": preview.preview_id},
+            active_continuation = self._connection.execute(
+                "SELECT 1 FROM scope_continuations WHERE source_task_id=? "
+                "AND status IN (?, ?) LIMIT 1",
+                (
+                    preview.recovery_source_task_id,
+                    ScopeContinuationStatus.QUEUED.value,
+                    ScopeContinuationStatus.RUNNING.value,
+                ),
+            ).fetchone()
+            if active_continuation is not None:
+                raise ManualPreviewConflict(
+                    "the source Task already has a queued continuation; no recovery "
+                    "Preview was published"
+                )
+        if (
+            intent_row["status"] != ManualIntentStatus.OPEN.value
+            or int(intent_row["version"]) != preview.intent_version
+            or intent_row["configuration_snapshot_id"] != preview.configuration_snapshot_id
+            or intent_row["configuration_snapshot_digest"] != preview.configuration_snapshot_digest
+        ):
+            raise ManualIntentConflict(
+                "manual intent changed; no Preview was published",
+                current_version=int(intent_row["version"]),
             )
-        return value
+        for item in values:
+            current_row = self._connection.execute(
+                "SELECT * FROM manual_intent_items WHERE intent_id=? AND item_id=?",
+                (preview.intent_id, item.item_id),
+            ).fetchone()
+            if current_row is None:
+                raise LookupError(f"manual intent item {item.item_id!r} was not found")
+            current_item = self._manual_item(current_row)
+            if (
+                current_item.version != item.item_version
+                or current_item.status is not ManualIntentItemStatus.READY
+                or current_item.source.document() != item.source.document()
+                or current_item.choice.document() != item.choice.document()
+            ):
+                raise ManualIntentConflict(
+                    "manual intent item changed; no Preview was published",
+                    current_version=int(intent_row["version"]),
+                )
+        old_rows = self._connection.execute(
+            f"SELECT DISTINCT preview_id FROM manual_preview_items "
+            f"WHERE intent_id=? AND current=1 AND item_id IN ({placeholders})",
+            (preview.intent_id, *item_ids),
+        ).fetchall()
+        if old_rows:
+            old_preview_ids = tuple(row["preview_id"] for row in old_rows)
+            self._connection.execute(
+                f"UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                f"current=0, updated_at=? WHERE intent_id=? AND current=1 "
+                f"AND item_id IN ({placeholders})",
+                (
+                    ManualPreviewItemStatus.STALE.value,
+                    superseded_error,
+                    superseded_action,
+                    preview.updated_at.isoformat(),
+                    preview.intent_id,
+                    *item_ids,
+                ),
+            )
+            old_parent_placeholders = ", ".join("?" for _ in old_preview_ids)
+            self._connection.execute(
+                f"UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                f"current=0, updated_at=? WHERE current=1 AND preview_id IN "
+                f"({old_parent_placeholders})",
+                (
+                    ManualPreviewStatus.STALE.value,
+                    superseded_error,
+                    superseded_action,
+                    preview.updated_at.isoformat(),
+                    *old_preview_ids,
+                ),
+            )
+        self._connection.execute(
+            "INSERT INTO manual_previews "
+            "(preview_id, intent_id, actor, configuration_snapshot_id, "
+            "configuration_snapshot_digest, status, intent_version, created_at, "
+            "updated_at, next_action, error, zero_mutation, current, truncated, "
+            "previous_preview_id, unselected_item_ids_json, source_scope, "
+            "source_scope_id, recovery_source_task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                preview.preview_id,
+                preview.intent_id,
+                preview.actor,
+                preview.configuration_snapshot_id,
+                preview.configuration_snapshot_digest,
+                preview.status.value,
+                preview.intent_version,
+                preview.created_at.isoformat(),
+                preview.updated_at.isoformat(),
+                redact_manual_text(preview.next_action),
+                redact_manual_text(preview.error) if preview.error is not None else None,
+                int(preview.zero_mutation),
+                int(preview.current),
+                int(preview.truncated),
+                preview.previous_preview_id,
+                json.dumps(
+                    list(preview.unselected_item_ids),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                preview.source_scope,
+                preview.source_scope_id,
+                preview.recovery_source_task_id,
+            ),
+        )
+        for item in values:
+            self._connection.execute(
+                "INSERT INTO manual_preview_items "
+                "(preview_item_id, preview_id, intent_id, item_id, position, "
+                "intent_version, item_version, source_json, choice_json, "
+                "configuration_snapshot_id, configuration_snapshot_digest, "
+                "source_fingerprint, source_evidence_versions_json, "
+                "review_versions_json, conflict_versions_json, input_fingerprint, "
+                "plan_fingerprint, status, plan_json, error, next_action, "
+                "zero_mutation, execution_state, truncated, created_at, updated_at, "
+                "current) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.preview_item_id,
+                    item.preview_id,
+                    item.intent_id,
+                    item.item_id,
+                    item.position,
+                    item.intent_version,
+                    item.item_version,
+                    json.dumps(item.source.document(), ensure_ascii=False, sort_keys=True),
+                    json.dumps(item.choice.document(), ensure_ascii=False, sort_keys=True),
+                    item.configuration_snapshot_id,
+                    item.configuration_snapshot_digest,
+                    item.source_fingerprint,
+                    json.dumps(
+                        list(item.source_evidence_versions),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        list(item.review_versions),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        list(item.conflict_versions),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    item.input_fingerprint,
+                    item.plan_fingerprint,
+                    item.status.value,
+                    json.dumps(item.plan, ensure_ascii=False, sort_keys=True)
+                    if item.plan is not None
+                    else None,
+                    redact_manual_text(item.error) if item.error is not None else None,
+                    redact_manual_text(item.next_action),
+                    int(item.zero_mutation),
+                    item.execution_state,
+                    int(item.truncated),
+                    item.created_at.isoformat(),
+                    item.updated_at.isoformat(),
+                    int(item.current),
+                ),
+            )
 
     def get_manual_preview(self, preview_id: str) -> ManualOrganizePreview | None:
         if not isinstance(preview_id, str) or not preview_id.strip():
@@ -11674,6 +11698,81 @@ class SQLiteTaskRepository:
                 self._connection.rollback()
                 raise
         return self.get_media_discovery(discovery.discovery_id)
+
+    def publish_media_discovery_plan_with_plan(
+        self,
+        discovery: MediaDiscovery,
+        plan: ManualOrganizePreview,
+        *,
+        expected_version: int,
+        claim_token: str,
+    ) -> tuple[MediaDiscovery, ManualOrganizePreview]:
+        """Commit one analyzed plan and its run link as one fenced publication.
+
+        The Worker first computes the complete plan *outside* any transaction
+        (the Provider/Storage calls are done), then hands the plan projection to
+        this boundary.  Inside one immediate transaction the repository writes
+        the plan rows (the exact same guarded publication the ordinary Files
+        journey uses), then updates the discovery's status/version/progress/
+        link and releases its claim, guarded by the discovery's version CAS *and*
+        the exact live claim.  If either fence fails, or the plan's own intent/
+        item guards refuse, the transaction rolls back and the plan was never
+        visible: an operator control or a successor Worker that won the race
+        cannot leave a confirmable plan behind.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if not isinstance(plan, ManualOrganizePreview):
+            raise ValueError("manual plan projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("media discovery claim token is invalid")
+        values = tuple(plan.items)
+        self._validate_manual_preview_projection(plan, values)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                # The plan rows first: their guards (intent identity/version,
+                # item versions) must all hold, otherwise nothing is published.
+                self._publish_manual_preview_rows(plan, values)
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
+                    "sources_json=?, attempts=?, error=?, updated_at=?, preview_id=?, "
+                    "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL "
+                    "WHERE discovery_id=? AND version=? AND claim_token=?",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                        discovery.attempts,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        discovery.preview_id,
+                        discovery.discovery_id,
+                        expected_version,
+                        claim_token,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    self._raise_discovery_write_conflict(current, discovery, claim_token)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return (
+            self.get_media_discovery(discovery.discovery_id),
+            self.get_manual_preview(plan.preview_id),
+        )
 
     def settle_media_discovery_control(
         self,

@@ -3244,6 +3244,7 @@ class MediaDiscoveryService:
                 source_scope_id=(
                     discovery.resource_library_id if discovery.recovery_source_task_id else None
                 ),
+                persist=False,
             )
         except Exception as error:  # noqa: BLE001 - report one bounded failure
             code = getattr(error, "code", None)
@@ -3255,14 +3256,17 @@ class MediaDiscoveryService:
         preview_id = getattr(preview, "preview_id", None)
         if not isinstance(preview_id, str) or not preview_id:
             return self._fail(discovery, claim_token, "preview_unavailable")
-        # The plan was written against the frozen intent while the Provider call
-        # was in flight, so the run record may since have been paused, resumed,
-        # cancelled or taken over.  The *publication* of that plan is therefore
-        # one fenced commit: the settled projection, the exact plan link and the
-        # claim release are written under the current claim and version, so a
-        # control that won the race keeps deciding the lifecycle and an accepted
-        # pause/cancel can never be followed by a freshly confirmable plan.
-        # Nothing here waits on Storage or a Provider inside the transaction.
+        # The plan was computed against the frozen intent while the Provider
+        # call was in flight, so the run record may since have been paused,
+        # resumed, cancelled or taken over.  The *publication* of that plan is
+        # therefore one atomic commit: the plan rows, the settled projection,
+        # the exact plan link and the claim release are written under the
+        # current claim and version, so a control that won the race keeps
+        # deciding the lifecycle and an accepted pause/cancel can never be
+        # followed by a freshly confirmable plan.  When the atomic boundary is
+        # available the plan never touches the database before the fence: a
+        # lost race leaves *no* plan row at all.  Nothing here waits on Storage
+        # or a Provider inside the transaction.
         now = self._clock()
         complete = (
             discovery.progress.incomplete_reason is DiscoveryIncompleteReason.NONE
@@ -3289,13 +3293,19 @@ class MediaDiscoveryService:
         )
         try:
             return self._publish_prepared_plan(
-                updated, expected_version=discovery.version, claim_token=claim_token
+                updated,
+                plan=preview if complete else None,
+                expected_version=discovery.version,
+                claim_token=claim_token,
             )
         except (DiscoveryConflict, DiscoveryOwnershipLost):
             # The plan this pass analyzed is unpublished work of a control that
-            # already lost: retire it before reporting the refusal so the plan is
-            # neither readable as the intent's current summary nor enterable for
-            # a paused or cancelled run.  It was never linked or confirmed.
+            # already lost.  The atomic boundary leaves no plan row at all; the
+            # degraded legacy path (a repository without the atomic boundary,
+            # or a mixed non-complete plan persisted separately) retires the
+            # plan before reporting the refusal, so it is neither readable as
+            # the intent's current summary nor enterable for a paused or
+            # cancelled run.  It was never linked or confirmed.
             self._discard_uncommitted_plan(discovery.intent_id, preview_id)
             raise
 
@@ -3303,20 +3313,38 @@ class MediaDiscoveryService:
         self,
         discovery: MediaDiscovery,
         *,
+        plan: object | None = None,
         expected_version: int,
         claim_token: str,
     ) -> MediaDiscovery:
         """Publish one analyzed plan and release its claim as one fenced write.
 
-        The repository boundary is authoritative: status, the exact plan link
-        and the claim release commit together, guarded by the version CAS *and*
-        the exact live claim.  A control or a successor that won either fence
-        leaves the prepared projection entirely unpublished.
+        With the atomic repository boundary the plan rows and the discovery
+        publication are the *same* transaction: the plan identity, status, the
+        exact plan link and the claim release commit together, guarded by the
+        version CAS *and* the exact live claim.  A control or a successor that
+        won either fence leaves the prepared plan entirely unwritten.  A
+        repository without that boundary (a bounded test double) degrades to
+        the legacy write plus compensating retirement, which never deletes
+        evidence and never leaves a confirmable current plan behind.
         """
 
-        publisher = getattr(self._repository, "publish_media_discovery_plan", None)
-        if callable(publisher):
-            return publisher(
+        publisher = getattr(self._repository, "publish_media_discovery_plan_with_plan", None)
+        if callable(publisher) and plan is not None:
+            prepared_plan = replace(plan, updated_at=discovery.updated_at)
+            _published_discovery, _published_plan = publisher(
+                discovery,
+                prepared_plan,
+                expected_version=expected_version,
+                claim_token=claim_token,
+            )
+            return _published_discovery
+        legacy_publisher = getattr(self._repository, "publish_media_discovery_plan", None)
+        if callable(legacy_publisher) and plan is not None:
+            persister = getattr(self._preview_service, "_persist_create", None)
+            if callable(persister):
+                persister(replace(plan, updated_at=discovery.updated_at))
+            return legacy_publisher(
                 discovery,
                 expected_version=expected_version,
                 claim_token=claim_token,

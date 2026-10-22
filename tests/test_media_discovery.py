@@ -3061,6 +3061,135 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
             )
             self.assertEqual([], value.source.mutations)
 
+    def test_the_plan_rows_and_the_run_link_are_one_atomic_publication(self) -> None:
+        """The analyzed plan and its discovery link commit — or not — together.
+
+        B's confirmed window: the old path persisted the plan rows first and
+        then fenced the discovery link, so a control that won the version race
+        left a fully persisted current plan behind, readable from the intent
+        and confirmable through the normal admission.  The atomic boundary
+        writes the plan rows *inside* the fenced publication, so a lost race
+        leaves no plan row at all, and a won race publishes the exact plan and
+        releases the claim in the same commit.
+        """
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            frozen = value.discovery.finalize(
+                admitted["discoveryId"],
+                actor="operator",
+                expected_version=settled["version"],
+            )
+            intent = value.intents.get(frozen.intent_id)
+            # The Worker's exact live claim, as the analyzing pass would hold it.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET status=?, claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=? WHERE discovery_id=?",
+                (
+                    "analyzing",
+                    "owner",
+                    "owner-token",
+                    (self.clock.now + timedelta(minutes=10)).isoformat(),
+                    admitted["discoveryId"],
+                ),
+            )
+            value.repository._connection.commit()
+            claimed = value.repository.get_media_discovery(admitted["discoveryId"])
+            plan = value.previews.create(
+                intent.intent_id,
+                [item.item_id for item in intent.items],
+                actor="analysis-worker",
+                expected_version=intent.version,
+                persist=False,
+            )
+            prepared = replace(
+                claimed,
+                status=claimed.status.__class__.COMPLETED,
+                version=claimed.version + 1,
+                preview_id=plan.preview_id,
+                progress=replace(claimed.progress, phase="prepared"),
+            )
+            # A control that won the version race between the analysis and the
+            # publication rolls the whole transaction back: the operator's
+            # pause request bumped the version, so the stale publication matches
+            # no live row — no discovery link AND no plan row was ever written.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET version=version+1, pause_requested=1, "
+                "updated_at=? WHERE discovery_id=?",
+                (self.clock.now.isoformat(), admitted["discoveryId"]),
+            )
+            value.repository._connection.commit()
+            with self.assertRaises(DiscoveryConflict):
+                value.repository.publish_media_discovery_plan_with_plan(
+                    prepared,
+                    plan,
+                    expected_version=claimed.version,
+                    claim_token="owner-token",
+                )
+            self.assertIsNone(value.repository.get_manual_preview(plan.preview_id))
+            self.assertEqual((), value.repository.list_manual_previews(intent.intent_id))
+            durable = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertIsNone(durable.preview_id)
+            self.assertEqual("owner-token", durable.claim_token)
+            self.assertTrue(durable.pause_requested)
+            # The exact owner (after the pause was cleared) re-reads the fresh
+            # record and publishes once: the plan, the link and the claim
+            # release are all durable afterwards.
+            prepared = replace(
+                durable,
+                status=durable.status.__class__.COMPLETED,
+                version=durable.version + 1,
+                preview_id=plan.preview_id,
+                progress=replace(durable.progress, phase="prepared"),
+            )
+            published_discovery, published_plan = (
+                value.repository.publish_media_discovery_plan_with_plan(
+                    prepared,
+                    plan,
+                    expected_version=durable.version,
+                    claim_token="owner-token",
+                )
+            )
+            self.assertEqual(plan.preview_id, published_discovery.preview_id)
+            self.assertEqual(plan.preview_id, published_plan.preview_id)
+            self.assertTrue(published_plan.current)
+            self.assertEqual(
+                plan.preview_id,
+                value.repository.get_latest_manual_preview(intent.intent_id).preview_id,
+            )
+            self.assertIsNone(
+                value.repository.media_discovery_claim(admitted["discoveryId"])["claimToken"]
+            )
+            # A repeated publication cannot publish a second plan: the claim
+            # the first write released is no longer the live owner's.
+            from mediaflow.domain.media_discovery import DiscoveryOwnershipLost
+
+            with self.assertRaises(DiscoveryOwnershipLost):
+                replayed = replace(
+                    plan,
+                    preview_id="1" * 32,
+                    items=tuple(
+                        replace(
+                            item,
+                            preview_id="1" * 32,
+                            preview_item_id="2" * 32,
+                        )
+                        for item in plan.items
+                    ),
+                )
+                value.repository.publish_media_discovery_plan_with_plan(
+                    replace(published_discovery, version=published_discovery.version + 1),
+                    replayed,
+                    expected_version=claimed.version,
+                    claim_token="owner-token",
+                )
+            self.assertEqual(
+                plan.preview_id,
+                value.repository.get_latest_manual_preview(intent.intent_id).preview_id,
+            )
+            self.assertEqual([], value.source.mutations)
+
     def test_finalize_of_an_already_frozen_discovery_is_idempotent(self) -> None:
         """Re-finalizing the frozen record returns its one linked intent."""
 
