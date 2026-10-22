@@ -22,7 +22,10 @@ from mediaflow.application.execution_authorization import ExecutionAuthorization
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
-from mediaflow.application.unattended_execution import UnattendedExecutionGrantService
+from mediaflow.application.unattended_execution import (
+    UnattendedExecutionGrantError,
+    UnattendedExecutionGrantService,
+)
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJobStatus,
@@ -58,6 +61,105 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 
 def example_document() -> dict:
     return json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+
+
+class _SnapshotTMDBProvider:
+    """A synthetic Provider so a real shared analysis needs no external service."""
+
+    provider_id = "tmdb"
+    capabilities = ProviderCapabilities(can_search_movie=True)
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def search_movie(self, query, _policy=None, **_kwargs):
+        title = str(getattr(query, "title_candidate", ""))
+        provider_id = "beta" if "Beta" in title else "alpha"
+        name = "Beta Movie" if provider_id == "beta" else "Alpha Movie"
+        return (
+            MediaCandidate(
+                "tmdb",
+                provider_id,
+                MediaType.MOVIE,
+                name,
+                year=2024,
+                genres=("Animation",),
+                countries=("JP",),
+            ),
+        )
+
+    def get_movie(self, provider_id, _policy=None, **_kwargs):
+        name = "Beta Movie" if provider_id == "beta" else "Alpha Movie"
+        return MediaIdentity(
+            "tmdb",
+            provider_id,
+            MediaType.MOVIE,
+            name,
+            year=2024,
+            genres=("Animation",),
+            countries=("JP",),
+        )
+
+
+def _snapshot_provider_registry(_requested):
+    from mediaflow.application.metadata import MetadataProviderRegistry
+
+    return MetadataProviderRegistry((_SnapshotTMDBProvider(),))
+
+
+def _snapshot_analysis_api(repository, configuration_service, document):
+    """The production API assembly the shared analysis and grant share."""
+
+    return MediaFlowApi(
+        repository,
+        None,
+        principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
+        configuration_service=configuration_service,
+        bootstrap_document=document,
+        metadata_provider_registry_factory=_snapshot_provider_registry,
+    )
+
+
+def _produce_shared_analysis(repository, configuration_service, document, definition_id):
+    """Produce the shared analysis an unattended grant now requires.
+
+    The independent Preview product is retired, so the authorization precedent
+    for one unattended grant is the shared zero-mutation organize analysis a
+    definition-bound Run once produces.  This drives that very production
+    assembly -- bounded discovery, stability observation, freeze, shared
+    analysis -- so the grant is admitted over real persisted evidence instead of
+    bypassing the preflight.  Only Storage reads and a zero-mutation analysis
+    happen here; the separate explicit grant is what makes later media mutation
+    legal.
+
+    Returns the discovery and Preview services that own that analysis, so the
+    caller's grant service resolves exactly the evidence just produced.
+    """
+
+    api = _snapshot_analysis_api(repository, configuration_service, document)
+    discovery = api._media_discovery.admit_definition_run_once(
+        definition_id=definition_id, actor="local-admin"
+    )
+    for index in range(16):
+        result = api._media_discovery.claim_and_run(
+            worker_id=f"analysis-worker-{index}",
+            claim_token=f"analysis-token-{index}",
+        )
+        if result is None:
+            raise AssertionError("shared analysis discovery was not claimable")
+        if result.terminal:
+            break
+    else:
+        raise AssertionError("shared analysis discovery did not settle")
+    current = api._media_discovery.get(discovery.discovery_id)
+    _frozen, preview = api._automation_run_once.finalize(
+        discovery.discovery_id,
+        actor="local-admin",
+        expected_version=current.version,
+    )
+    assert preview.status.value == "previewed", preview.status
+    assert preview.zero_mutation is True
+    return api._media_discovery, api._manual_previews
 
 
 def request(
@@ -2063,21 +2165,66 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     configuration_snapshot_version=pinned.configuration_snapshot_version,
                 ).tick(now)
                 self.assertEqual(len(emitted), 1)
-                grant_service = UnattendedExecutionGrantService(
-                    repository,
-                    permission_authority=_ConfiguredPermissionAuthority(
-                        lambda: _configuration(str(config))
-                    ),
-                )
-                grant_service.grant(
-                    definition,
-                    configuration_snapshot_id=pinned.configuration_snapshot_id,
-                    configuration_snapshot_digest=pinned.configuration_snapshot_digest,
-                    configuration_snapshot_version=pinned.configuration_snapshot_version,
-                    actor="local-admin",
-                    confirmation=True,
-                    storage_id=pinned.resource_libraries[0].storage_id,
-                )
+                # An unattended grant may only be admitted over a real shared
+                # zero-mutation analysis of the exact definition bounds, so
+                # produce it through the retained Run-once assembly under the
+                # same published revision this grant is pinned to.  That
+                # analysis needs a live managed-configuration authority, which
+                # closes again before the checkpoint assertions below (the
+                # pinned-snapshot validator deliberately stays unresolvable).
+                with SQLiteConfigurationRepository(runtime) as analysis_configuration:
+                    analysis_managed = ManagedConfigurationService(
+                        analysis_configuration, bootstrap_database_path=str(runtime)
+                    )
+                    # The preflight is not bypassed: the same confirmed grant is
+                    # still refused while no shared analysis exists, and no
+                    # grant row is written.
+                    analysis_api = _snapshot_analysis_api(repository, analysis_managed, document)
+                    refused = UnattendedExecutionGrantService(
+                        repository,
+                        permission_authority=_ConfiguredPermissionAuthority(
+                            lambda: _configuration(str(config))
+                        ),
+                        discovery_service=analysis_api._media_discovery,
+                        preview_service=analysis_api._manual_previews,
+                    )
+                    with self.assertRaises(UnattendedExecutionGrantError) as unanalyzed:
+                        refused.grant(
+                            definition,
+                            configuration_snapshot_id=pinned.configuration_snapshot_id,
+                            configuration_snapshot_digest=pinned.configuration_snapshot_digest,
+                            configuration_snapshot_version=pinned.configuration_snapshot_version,
+                            actor="local-admin",
+                            confirmation=True,
+                            storage_id=pinned.resource_libraries[0].storage_id,
+                        )
+                    self.assertEqual(
+                        "unattended_execution_analysis_required", unanalyzed.exception.code
+                    )
+                    self.assertEqual(repository.list_unattended_execution_grants(), ())
+                    (
+                        shared_analysis_discovery,
+                        shared_analysis_previews,
+                    ) = _produce_shared_analysis(
+                        repository, analysis_managed, document, definition.definition_id
+                    )
+                    grant_service = UnattendedExecutionGrantService(
+                        repository,
+                        permission_authority=_ConfiguredPermissionAuthority(
+                            lambda: _configuration(str(config))
+                        ),
+                        discovery_service=shared_analysis_discovery,
+                        preview_service=shared_analysis_previews,
+                    )
+                    grant_service.grant(
+                        definition,
+                        configuration_snapshot_id=pinned.configuration_snapshot_id,
+                        configuration_snapshot_digest=pinned.configuration_snapshot_digest,
+                        configuration_snapshot_version=pinned.configuration_snapshot_version,
+                        actor="local-admin",
+                        confirmation=True,
+                        storage_id=pinned.resource_libraries[0].storage_id,
+                    )
 
                 original_execute = OrganizerExecutor.execute
                 effect_calls = []
