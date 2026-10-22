@@ -175,8 +175,11 @@ class AutomationRunOnceService:
             "intentId": discovery.intent_id,
             # The exact durable fixed-plan identity linked to this Run once.  It
             # carries no authority; it lets the same page re-read the plan it
-            # already produced after a reload, reconnect or restart.
-            "previewId": discovery.preview_id,
+            # already produced after a reload, reconnect or restart.  The
+            # inline finalize path writes the plan against the frozen intent, so
+            # the association is resolved from that same durable intent rather
+            # than from the ``preview_id`` column this path never populates.
+            "previewId": self._durable_plan_id(discovery),
             "frozen": discovery.frozen,
             "frozenAt": discovery.frozen_at.isoformat() if discovery.frozen_at else None,
             "zeroMutation": True,
@@ -245,6 +248,11 @@ class AutomationRunOnceService:
             DiscoveryStatus.PAUSED,
         }
         resume = discovery.status is DiscoveryStatus.PAUSED
+        # The exact plan identity the same page re-reads after a reload.  It is
+        # resolved from the durable intent association so the advertised action
+        # path is never published as unavailable-with-a-null-route while the
+        # plan itself is readable.
+        plan_id = self._durable_plan_id(discovery)
         return {
             "pause": {"available": pause, "method": "POST", "sideEffects": "none"},
             "cancel": {"available": cancel, "method": "POST", "sideEffects": "none"},
@@ -278,15 +286,40 @@ class AutomationRunOnceService:
                 # re-analysing the manifest.
                 "available": discovery.frozen and discovery.intent_id is not None,
                 "method": "GET",
-                "path": (
-                    f"/api/v1/operations/organize/previews/{discovery.preview_id}"
-                    if discovery.preview_id
-                    else None
-                ),
+                "path": (f"/api/v1/operations/organize/previews/{plan_id}" if plan_id else None),
                 "sideEffects": "none",
                 "nextAction": "review the frozen manifest's exact plan summary in this Run once",
             },
         }
+
+    def _durable_plan_id(self, discovery: MediaDiscovery) -> str | None:
+        """The exact durable plan this Run once already produced, if any.
+
+        The Run-once finalize freezes the manifest and runs the shared
+        zero-mutation analysis over its linked manual intent, so the plan is
+        addressed by that intent.  Resolving it here means an ordinary GET — a
+        reload, a reconnect or a restart — returns the same plan identity the
+        finalize response published, without re-walking sources, re-running the
+        analysis or guessing from a recent record.  The read is the bounded,
+        non-publishing ``latest_readonly`` projection, so a plain read never
+        marks evidence stale and never creates a second plan.  ``None`` simply
+        means this Run once has not produced a plan yet.
+        """
+
+        if discovery.preview_id:
+            return discovery.preview_id
+        intent_id = discovery.intent_id
+        if not intent_id or self._previews is None:
+            return None
+        latest_readonly = getattr(self._previews, "latest_readonly", None)
+        if not callable(latest_readonly):
+            return None
+        try:
+            preview = latest_readonly(intent_id)
+        except Exception:  # noqa: BLE001 - an unreadable plan is a truthful absence
+            return None
+        preview_id = getattr(preview, "preview_id", None)
+        return preview_id if isinstance(preview_id, str) and preview_id else None
 
     def _next_action(
         self,

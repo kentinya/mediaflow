@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: IN PROGRESS
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER RESTORES DURABLE IN-CONTEXT RUN-ONCE PLAN; B RECHECKS SAME TASK
+Next Action: DEVELOPER HANDS OFF DURABLE RUN-ONCE PLAN CANDIDATE; B RECHECKS SAME TASK
 ```
 
 ## Goal

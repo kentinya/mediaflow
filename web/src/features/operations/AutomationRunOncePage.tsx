@@ -36,6 +36,10 @@ import {
   operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
+import {
+  planContextSearch,
+  readPlanContext,
+} from "../../shared/navigation/plan-context";
 import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 
 const PHASE_LABELS: Readonly<Record<string, string>> = {
@@ -128,7 +132,19 @@ export function AutomationRunOncePage() {
       if (result.action === "finalize" && result.previewId !== null) {
         // The frozen manifest's complete zero-mutation plan is summarized in
         // this page; the operator reviews it and separately confirms execution.
+        // The exact plan identity is also carried by the journey URL so a hard
+        // reload, Back/Forward or a re-opened link restores it; the backend
+        // Run once read remains the durable authority.
         setPlanPreviewId(result.previewId);
+        void navigate({
+          to: "/operations/automation/run-once/$discoveryId",
+          params: { discoveryId },
+          search: {
+            ...operationsReturnSearch(operationsReturn),
+            ...planContextSearch(result.previewId),
+          },
+          replace: true,
+        });
         refresh();
         return;
       }
@@ -205,10 +221,20 @@ export function AutomationRunOncePage() {
             );
           }
           const model: AutomationRunOnceModel = view.data.model;
-          // The plan this page produced is restored from the durable Run once
-          // record after a reload, reconnect or restart: the local identity is
-          // only the faster path to the same fixed plan.
-          const planPreviewId = admittedPlanPreviewId ?? model.previewId;
+          // The plan this Run once produced is restored from the durable
+          // backend association after a reload, reconnect or restart: the
+          // local identity is only the faster path to the same fixed plan, and
+          // a stale URL hint never overrides a newer durable plan.  The plan
+          // itself is re-read from its own authenticated route and checked
+          // against this intent before any summary or control renders.
+          const durablePlanId = model.previewId;
+          const urlPlanId = readPlanContext(searchParams);
+          const planPreviewId =
+            admittedPlanPreviewId ??
+            (urlPlanId !== null &&
+            (durablePlanId === null || durablePlanId === urlPlanId)
+              ? urlPlanId
+              : durablePlanId);
           return (
             <div className="mf-dashboard-body">
               <StatusBanner
@@ -341,6 +367,7 @@ export function AutomationRunOncePage() {
               {planPreviewId !== null ? (
                 <OrganizePlanConfirmation
                   previewId={planPreviewId}
+                  expectedIntentId={model.intentId ?? undefined}
                   heading="本次运行计划的零变更摘要"
                   confirmLabel={(count) => `确认整理本次运行 ${count} 项`}
                   onAdmitted={(admitted) => {

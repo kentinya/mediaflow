@@ -207,6 +207,93 @@ class RetiredPreviewApiTests(unittest.TestCase):
         self.assertIn("manual_preview_items", tables)
 
 
+class RetainedRunOncePlanTests(unittest.TestCase):
+    """The Run once page keeps its exact plan across a reload and a reopen.
+
+    The retired independent Preview was where an operator reviewed a plan.  The
+    retained shared journey is the definition-bound Run once: it freezes the
+    complete bounded manifest and runs the shared zero-mutation analysis over
+    its linked intent.  Because finalize writes the plan against that intent,
+    the plan identity must be re-readable from an ordinary Run once GET and from
+    a reopened runtime store, so a reload, reconnect or restart restores the same
+    plan instead of losing it or re-running the analysis.
+    """
+
+    def test_frozen_run_once_plan_is_reread_from_the_durable_intent(self):
+        from tests.test_v2_automation_operations import (
+            _DEFINITION,
+            AutomationOperatorJourneyTests,
+            _request,
+        )
+
+        journey = AutomationOperatorJourneyTests()
+        with journey._journey() as value:
+            api = value.api
+            status, admitted = _request(
+                api,
+                f"/api/v1/operations/automation/task-definitions/{_DEFINITION['id']}/run-once",
+                method="POST",
+                body={},
+            )
+            self.assertEqual(202, status, admitted)
+            discovery_id = admitted["discoveryId"]
+            path = f"/api/v1/operations/automation/run-once/{discovery_id}"
+            for index in range(16):
+                worked = api._media_discovery.claim_and_run(
+                    worker_id=f"plan-worker-{index}",
+                    claim_token=f"plan-token-{index}",
+                )
+                self.assertIsNotNone(worked)
+                if worked.terminal:
+                    break
+            else:
+                self.fail("the Run once did not settle in the step budget")
+            status, ready = _request(api, path)
+            self.assertEqual(200, status)
+            self.assertTrue(ready["actions"]["finalize"]["available"])
+            # Before the freeze there is no plan identity and no linked intent.
+            self.assertIsNone(ready["previewId"])
+            self.assertIsNone(ready["intentId"])
+
+            status, frozen = _request(
+                api,
+                f"{path}/finalize",
+                method="POST",
+                body={"expectedVersion": ready["version"]},
+            )
+            self.assertEqual(201, status, frozen)
+            preview_id = frozen["previewId"]
+            self.assertIsNotNone(preview_id)
+            self.assertEqual(preview_id, frozen["preview"]["previewId"])
+            self.assertIsNone(frozen["analysisId"])
+
+            # An ordinary read of the same durable run resolves the exact plan.
+            status, reread = _request(api, path)
+            self.assertEqual(200, status)
+            self.assertEqual("frozen", reread["phase"])
+            self.assertEqual(preview_id, reread["previewId"])
+            self.assertEqual(frozen["intentId"], reread["intentId"])
+            self.assertTrue(reread["actions"]["preview"]["available"])
+            self.assertEqual(
+                f"/api/v1/operations/organize/previews/{preview_id}",
+                reread["actions"]["preview"]["path"],
+            )
+            # The frozen manifest offers no second freeze, and the whole read
+            # stayed zero-mutation.
+            self.assertFalse(reread["actions"]["finalize"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+            # The same association survives a reopen of the runtime store.
+            intent_id = frozen["intentId"]
+            database = Path(value.root, "runtime.sqlite3")
+            with SQLiteTaskRepository(database) as reopened:
+                latest = reopened.get_latest_manual_preview(intent_id)
+                self.assertEqual(preview_id, latest.preview_id)
+                self.assertEqual(intent_id, latest.intent_id)
+                self.assertTrue(latest.zero_mutation)
+
+
 class RetainedAuthorizationPrecedentTests(unittest.TestCase):
     """The unattended grant keeps its analysis precedent without the product.
 

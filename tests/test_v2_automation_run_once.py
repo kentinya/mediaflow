@@ -421,6 +421,97 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen(self) -> None:
+        """The exact plan is re-read from the durable intent association.
+
+        Finalize runs the shared zero-mutation analysis over the frozen intent,
+        so the plan is addressed by that intent rather than by the discovery's
+        own ``preview_id`` column.  An ordinary GET — a reload, a reconnect or a
+        restart — must therefore return the exact plan identity the finalize
+        response published, and the same must hold after the runtime database is
+        closed and reopened.  The read performs no second freeze, no second
+        analysis and no mutation.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            _status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            self.drive(value)
+            current = value.run_once.get(body["discoveryId"])
+            status, frozen = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(201, status)
+            preview_id = frozen["previewId"]
+            self.assertIsNotNone(preview_id)
+            self.assertEqual(preview_id, frozen["preview"]["previewId"])
+            # A plain read of the same durable run resolves the same plan.
+            status, reread = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("frozen", reread["phase"])
+            self.assertEqual(preview_id, reread["previewId"])
+            self.assertEqual(frozen["intentId"], reread["intentId"])
+            # The advertised plan route names that exact plan, so the page never
+            # shows an available action with no address.
+            self.assertTrue(reread["actions"]["preview"]["available"])
+            self.assertEqual(
+                f"/api/v1/operations/organize/previews/{preview_id}",
+                reread["actions"]["preview"]["path"],
+            )
+            # The already-frozen manifest offers no second freeze action.
+            self.assertFalse(reread["actions"]["finalize"]["available"])
+            # Re-reading is inert: no plan is created or re-analyzed, and no
+            # mutation happens.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            previews = value.repository.list_manual_previews(frozen["intentId"])
+            self.assertEqual(1, len(previews))
+            self.assertEqual(preview_id, previews[0].preview_id)
+
+        # The same association is durable across a reopen of the runtime store:
+        # a fresh read of the same discovery resolves the same exact plan.
+        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            latest = reopened.get_latest_manual_preview(frozen["intentId"])
+            self.assertEqual(preview_id, latest.preview_id)
+            self.assertEqual(frozen["intentId"], latest.intent_id)
+            self.assertTrue(latest.zero_mutation)
+
+    def test_unfrozen_run_once_publishes_no_plan_identity(self) -> None:
+        """Before the manifest is frozen there is no plan to re-read."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            _status, body = self.request(
+                value,
+                "POST",
+                "/api/v1/operations/automation/task-definitions/nightly/run-once",
+                {},
+            )
+            self.drive(value)
+            status, document = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{body['discoveryId']}",
+            )
+            self.assertEqual(200, status)
+            self.assertEqual("ready", document["phase"])
+            self.assertIsNone(document["previewId"])
+            self.assertIsNone(document["intentId"])
+            self.assertFalse(document["actions"]["preview"]["available"])
+            self.assertTrue(document["actions"]["finalize"]["available"])
+
     def test_finalize_inline_preview_when_analysis_is_unbound(self) -> None:
         """Without the durable analysis service the inline exact Preview is kept."""
 
