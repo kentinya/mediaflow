@@ -15,7 +15,7 @@ Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: SAME TASK — ATOMIC CONFIRMABLE PLAN PUBLICATION; B RETAINS T4 GATES
+Next Action: SAME TASK — ATOMIC PUBLICATION FOR LEGAL PARTIAL PLANS; B RETAINS T4 GATES
 ```
 
 ## Goal
@@ -798,222 +798,73 @@ Provider 释放后同一 Worker 链接精确计划。两个探针均经真实生
 ### Current candidate review — 2026-10-22
 
 ```text
-Reviewed handoff: 98c65b4e6c3db275150fd87497529f68b5f82a25
-Executable candidate: 764291d75cac90cb54fb857c94f23c4101bc2bdb
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..98c65b4e6c3db275150fd87497529f68b5f82a25
-Decision: FIX REQUIRED
-Stage: proven Task blocker; complete Task-range/T4 acceptance remains pending
-Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; no new Task or Slice closure
-```
-
-Governance PASS；`764291d..98c65b4` 仅 `TASK.md`，实现输入与交接声明匹配；
-Task Base..handoff 的 `git diff --check` PASS。main 的既有图片删除、日志、截图、压缩包和
-`.DS_Store` 均保留。本轮没有改实现、Slice、Roadmap 或 Progress。
-
-**已确认的修正：**B 执行现有 `RunOnceJourneyTests` 的 pause/cancel 两条真实 API 回归，
-`Ran 2 tests in 0.183s; OK`。Provider 返回并完成清理后，原竞态的暂停可继续、取消终态
-及 Run once 投影保护生效；该结果不等于所有入口均安全。
-
-**剩余 P1 — 计划先成为 current，运行关联 fence 尚未提交即可从整理意图确认。**
-
-B 沿现有 Run once 页面分析中提供的“打开整理意图”入口复核；使用隔离 SQLite/Local
-Storage、合成 Provider 和生产执行服务/Worker readiness 装配。仅以线程 Event 暂停
-`publish_media_discovery_plan` 的调用时序，放大真实存在的两个提交之间的窗口；未伪造
-数据库状态、计划、路由或 HTTP 返回。实际结果：
-
-1. 真实定义 Run once → 发现 → finalize 返回 analyzing；打开其已关联 intent，GET 200、
-   `latestPlan=null`。Provider 在途时通过现有 `/cancel` 操作取消，返回200 cancelled。
-2. 释放 Provider，在普通计划已保存、运行关联提交前读取同一 intent：GET 200，
-   `latestPlan.current=true/status=previewed`。按它返回的计划 ID 读取摘要，
-   `executionCandidateItemIds` 非空且 `actions.execute.available=true`。
-3. 使用该动作返回的现有 `/execute` 路径和正常确认字段，POST 返回 **202 admitted**，
-   创建1个执行 Task；释放关联提交后，分析 Worker 返回 cancelled，Run once 仍为 cancelled，
-   但这次执行准入已经发生。探针未运行媒体执行 Worker，来源/目标 mutation 调用均为0；
-   不声称自动执行、真实媒体损失或实际复现进程崩溃。
-
-`_analyze` 调用 `ManualOrganizePreviewService.create`，其 `_persist_create` 已先把完整计划
-提交为 current；新增仓储 CAS 仅原子更新 discovery 的链接/状态/claim。意图的 latest-plan
-投影和普通计划确认准入不要求该份计划已通过 discovery 发布 fence。事后
-`discard_uncommitted`（且清理异常被吞）不能阻止窗口内已经发生的确认准入。只保护
-Run once 页不能满足同一计划在支持入口下的一致性，仍属当前 Task 的计划发布/控制义务。
-
-**同一 Task 修正方案：**
-
-1. 分离零变更计划计算与可确认计划提交；复用已有分析服务（已有 `persist=False` 可供评估），
-   在 Provider/Storage 调用完成后，以有效版本/claim/control fence 将完整计划可见性与运行
-   关联一并提交，或采用现有持久模型中等价的强制不可确认保护。不能先公开 current 计划，
-   再靠补偿退役、页面隐藏或最佳努力清理来保障安全；不在网络等待期间持有长事务。
-2. 核对 intent latest-plan、计划 detail 与确认/原子准入共享权威：未获该次运行发布许可的
-   计划不能作为可确认 current 摘要，也不能因已知 ID/已打开页面而获得执行许可或 Task。
-   pause/cancel/successor 先胜出时保持其持久结果；继续后同一 scope/pin 仍能正常出计划。
-3. 在现有 Run once API/Worker 测试中补两个实际边界的并发回归：控制在 Provider 在途时
-   先胜出，返回后计划提交与关联之间仍不得从现有 intent/detail/execute 入口确认；正常
-   分析的完整计划发布后可明确确认一次。覆盖 pause、cancel 和旧 owner 不影响 successor；
-   无直接 upsert 人造状态，不新增队列、Preview 产品或通用开发过程框架。
-4. Developer 跑新增/修改及直接受影响的 `test_media_discovery`、`test_automation_run_once`、
-   `test_v2_automation_run_once`、`test_manual_organize_preview`、
-   `test_manual_organize_execution`、`test_v2_manual_organize` 对应用例/模块和 changed-file
-   检查；若 UI/DTO 有变，仅补对应 Web 用例及 typecheck。交固定实现 SHA 和实际结果，
-   不承担全量 Python/Web/E2E 或发布矩阵。
-
-B 保留 §Required Tests 指定的全部门禁，下一候选先独立复现此窗口，再完成完整
-Task Base..Head 审查和适用 T4。已证明 P1，当前不启动昂贵全量门禁；旧全量结果不冒充
-本候选通过，报告后继只有执行输入相同才可复用。全部 RO 尚未满足，无 Closure Packet。
-
-本机稳定证据（非远程链接）：
-`.git/validation-evidence/98c65b4e6c3db275150fd87497529f68b5f82a25/task45.6/b-review/`
-含 `control-tests.log`、`publication-window.py/.log`。本轮测试/质量检查累计不足5秒，
-低于本轮实际工作时间50%；未等待凑比例。
-
-### Historical review — prior candidate `dfc59a4`
-
-```text
-Reviewed candidate: dfc59a4c65f05941cc30760b179f6546583b2d25
-Implementation: 068fb07 fix(task45.6): restore durable shared analysis and secret-free error logging
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..dfc59a4c65f05941cc30760b179f6546583b2d25
+Reviewed handoff: 58fee6e9bbfff937918d60bd35086923cb9397ef
+Executable candidate: 59c0f6e56ca9ba0f2d06fb6adf63660f1d615296
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..58fee6e9bbfff937918d60bd35086923cb9397ef
 Decision: FIX REQUIRED
 Stage: proven Task blocker; full Task-range/T4 acceptance remains pending
 Required Outcomes / Surfaces all satisfied: NO
 Next: SAME TASK FIX LOOP; no new Task or Slice closure
 ```
 
-治理检查 PASS；`git diff --check` 对 Task Base..candidate PASS。工作区既有图片、日志、截图、压缩包和 `.DS_Store` 保持未改动。
+Governance PASS；候选到交接仅TASK.md，执行输入一致。main/完整HEAD、预存dirty和工作区/
+Git可写已核对；原有图片删除、日志、截图、压缩包及.DS_Store保持原样。本轮只修改B的
+Task审查/修正要求，不改产品、Slice、Roadmap或Progress。此前审查与原始证据指针保留于
+`58fee6e9bbfff937918d60bd35086923cb9397ef:TASK.md`，不改写前项PASS或验证例外。
 
-本轮独立复核确认前两项修正已生效：
+**已确认修正：**B独立沿真实Run once POST→发现→finalize→Worker/fake Provider→现有
+pause/cancel API，在新增原子发布调用前暂停线程调度。控制先胜出的两个分支均无计划行、
+intent latestPlan=null、无可确认入口，Worker分别返回paused/cancelled。正常分支发布唯一
+完整current计划，现有detail可读；另一次显式execute POST才202准入一个Task。分析及
+这些探针均零媒体mutation。没有伪造持久状态、计划或路由；探针未运行媒体执行Worker。
 
-- `test_api_security.ApiSecurityTests.test_audit_failure_blocks_job_creation_before_mutation`：PASS；真实 WSGI `POST /api/v1/jobs` 故障入口仍返回500、零Job准入，响应及stderr不含合成secret。
-- 在真实 Run once API/SQLite/本地Storage夹具中，Provider 被 Worker 阻塞时调用 finalize，API 仍返回 `201 analyzing`；释放Provider后同一运行关联计划，来源/目标零mutation、无人值守grant为零。
+**P1 — 合法部分发现的计划未保存，却发布“摘要就绪”和悬空计划ID。**
 
-### 新阻塞 — pause/cancel 与运行中计划发布未协调
+位置：`mediaflow/application/media_discovery.py:3297`及`_publish_prepared_plan`。
+引入：`59c0f6e56ca9ba0f2d06fb6adf63660f1d615296`，2026-10-22 22:34:49 +0800。
 
-从已存在的定义 Run once 入口开始，等待真实 Worker 进入合成 Provider 调用，再通过现有
-`POST /api/v1/operations/automation/run-once/{id}/pause` 或 `/cancel` 发出控制。两个分支均可复现：
+真实触发：Files混合选择一个文件及一个目录，走已有
+`POST /api/v1/resource-libraries/library/files/discoveries`（autoPrepare=true）；准入后
+该文件被外部移走/删除，目录内仍有合法主文件。真实Worker得到read_failure、无material
+refusal，并按既有允许的已知子集完成分析。实际API返回partial_success、prepared=true、
+phase=prepared和非空previewId，提示打开摘要并确认；该ID的既有计划GET却404，intent
+latestPlan=null、计划行数0，重开SQLite后仍为悬空关联。来源/目标零mutation、零执行Task。
+同一个探针在隔离的父提交`f79bc3e`源码中返回计划GET 200、计划行数1、重开仍存在。
 
-- Pause 返回200，但 Provider 释放后 Worker 以 `DiscoveryConflict` 退出；记录仍为 `ANALYZING` 且 `pause_requested=true`，已持久化1条计划。随后 GET 仍为 `phase=analyzing`，返回非空 `previewId`、`actions.preview.available=true`，而 `resume.available=false`。
-- Cancel 返回200并将运行置为 `CANCELLED`；Provider 释放后 Worker 以 `DiscoveryOwnershipLost` 退出，但同一意图仍持久化1条计划。随后 GET 的 `status=cancelled`、`phase=refused`，仍返回该 `previewId` 且 `actions.preview.available=true`。现有 Run once 页面会在有 `planPreviewId` 时挂载 `OrganizePlanConfirmation`，没有终态取消保护。
+根因：create已改persist=False，但仅complete分支将计划交给原子发布；read_failure的
+合法PARTIAL_SUCCESS分支传None，绕过计划写入后仍保存preview_id/就绪状态。Developer
+报告中“混合非complete也走原子提交”与实际代码/结果不符。此为RO-2/RO-8的摘要→确认
+旅程和持久完整计划义务回归，不是要求放行预算/安全截断或定义Run once的不完整范围。
 
-两种结果均未发生媒体 mutation 或授予执行权限，但控制后的 Worker 仍发布可重新读取的计划；取消运行仍呈现可继续确认的摘要，暂停则不进入可继续状态。原因是 `claim_and_run` 将 `_analyze` 放在并发控制冲突协调的 `try` 之外；`_analyze` 先持久化完整计划，再以旧 discovery 版本/claim 写回。控制请求可在 Provider 阻塞期间更新版本/释放 claim，导致计划已落库而 discovery 写回失败；Run once 投影又从 intent 取最新只读计划，不区分 pause/cancel/terminal 状态。
+**同一Task的修正步骤：**
 
-这不满足 Task Goal 中的失败/取消真实状态与安全恢复，也不满足 durable same-run plan 语义；操作者已明确暂停/取消却仍看到可确认计划，属本 Task 内 P1，范围无需交 A。
+1. 已允许完成分析的合法部分发现也必须把完整计划、逐项证据、运行关联和claim释放交给
+   同一原子发布边界；不得保存不存在的计划ID或以prepared状态冒充计划已持久化。不恢复
+   先写计划再补偿的窗口，不把完整性状态当成是否持久化计划的开关。
+2. 保留read_failure/原finding和明确已知子集复核；预算/安全material refusal及定义来源
+   不完整清单仍拒绝，不为修此问题扩大范围、抹去错误或自动执行。控制/旧owner输掉竞争
+   时，部分计划与完整计划一样不得落库或出现可确认残余。
+3. 在既有`test_organize_preparation`真实API/SQLite/Worker夹具补回归：混合选择准入后
+   文件消失（或普通读故障）→合法已知子集分析→计划GET/intent latest/重开均一致，
+   保留finding；注册真实Worker就绪后显式确认仅合法子集并核对独立结果。补该分支的
+   pause/cancel/旧owner拒绝覆盖，保留完整范围正常发布及material-refusal断言。
+4. Developer只跑新增/修改及直接受影响验证：
+   `PYTHONPATH=tests .venv/bin/python -m unittest test_organize_preparation test_media_discovery test_automation_run_once test_v2_automation_run_once`，
+   以及实际修改所影响的manual计划/执行用例、changed-file ruff与`git diff --check`。
+   UI/DTO如有改动才补相应用例/typecheck；全量和发布矩阵仍由B负责。
 
-**同一 Task 修正要求：**
+**本轮实际验证与门禁边界：**
 
-1. 使计划持久发布/Run once 关联与活动 Worker claim、控制状态协调；pause/cancel 先胜出时不得在之后持久发布或关联该分析结果，旧 Worker 也不能以过期状态越过控制。
-2. 取消态及分析暂停/暂停请求态的 Run once GET 与 Web 不得通过意图上的只读最新计划重新显示该运行的可执行摘要；暂停应在安全边界确认并进入可继续状态。
-3. 增加现有 Run once API + 被阻塞合成 Provider 的回归，覆盖 pause、cancel、Worker 释放/重连；断言最终状态/动作符合控制，已暂停/取消运行不会重新暴露可执行计划确认入口，且零mutation/零授权。保持分析与计划均由现有 Worker/整理流程完成，不增加队列或独立 Preview 产品。
-
-**开发者实施方案（按顺序在本 Task 内完成）：**
-
-1. **围住分析的提交边界。** 保持 Provider 调用在现有 Worker 中，不把网络等待放进长事务/全局锁。Provider 返回后、计划持久发布或关联到 Run once 前，重新读取权威 discovery 并核对当前 claim/fence、版本与控制状态；让该检查和计划发布/运行关联具备同一有效 owner 的原子保护。不能只在 Provider 调用前检查一次，也不能捕获冲突后让旧 Worker 无条件重试写回。
-2. **让先赢的控制成为持久结果。** 若暂停请求先于分析提交生效，Worker 在安全边界确认暂停并保留同一 intent、固定 scope/pin 和可恢复状态；暂停生效期间不发布该轮的可执行计划。页面应区分“暂停请求中”和“已暂停”，后者提供现有恢复动作。若取消先胜出，保持终态 `CANCELLED`；丢弃迟到分析结果，不关联或发布该轮计划，不允许旧 Worker 后续改写终态。若 claim 已转交给 successor，旧 Worker 只退出，不提交任何结果。
-3. **收紧 Run once 的权威投影。** 在 `automation_run_once.py` 以当前持久 lifecycle/control 状态决定 `previewId` 和 `actions.preview`；不得让 intent 的 `latest_readonly` 回退查询绕过 pause、pause-request 或 terminal 状态。只有当前状态允许且确有本次运行已提交的精确计划时，GET 才暴露计划路径。普通 GET/刷新保持只读；不要新增队列、状态机或独立 Preview 生命周期。
-4. **让页面服从后端动作。** 在 `AutomationRunOncePage.tsx` 中，不能只因 query string 或 `planPreviewId` 非空就挂载 `OrganizePlanConfirmation`；同时核对当前 Run once 的可用动作和精确计划路径。分析中如实显示在途阶段；暂停生效后无确认入口且可继续；取消后终态无恢复/确认入口。正常分析完成的运行仍能在同一页面查看精确摘要并由用户明确确认。
-5. **用现有入口验证竞态和正常路径。** 复用真实定义 Run once API、现有 Worker、隔离 SQLite/本地 Storage 和可阻塞的 fake Provider，不猜造路由、不触碰生产 Provider/媒体。暂停与取消各在 Provider 在途时发起，释放 Provider 后通过现有 GET 轮询并重开持久库核对最终状态；另验证未发生竞态的成功分析仍链接同一运行的唯一计划。所有准备/分析阶段仍为零媒体 mutation、零执行许可；执行只可能发生在另一次显式计划确认后。
-
-**开发者本修正轮受影响验证：**新增/扩展 `tests/test_media_discovery.py` 中的 Worker fence/control 覆盖和 `tests/test_automation_run_once.py` / `tests/test_v2_automation_run_once.py` 中的真实 Run once API 竞态；覆盖正常链接、pause/resume、cancel 终态及重开读取。至少执行：
-
-```bash
-PYTHONPATH=tests .venv/bin/python -m unittest \
-  test_media_discovery.FinalizeHandoffFencingTests \
-  test_automation_run_once.RunOnceJourneyTests \
-  test_automation_run_once.RunOnceApiTests \
-  test_v2_automation_run_once.RunOnceApiTests
-cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx src/entities/operations/run-once.test.ts
-```
-
-对实际修改的 Python/Web 文件运行对应的 changed-file lint/format 检查；若改动 DTO/类型连线，运行 `cd web && npm run typecheck`；并运行 `git diff --check`。Developer 只交受影响测试与真实结果，不跑全仓门禁；固定候选的独立竞态复现、T4 门禁和 Task Base..Head 审查仍由 B 按下方计划负责。
-
-### 本轮门禁状态
-
-- Governance：`python3 scripts/check_governance.py` PASS。
-- 关键复现：API错误日志脱敏 PASS；Provider 在途期间 finalize 非阻塞 PASS；pause 与 cancel 竞态 FIX REQUIRED（以上为隔离临时根/fake Provider，非真实媒体或外部服务）。
-- `git diff --check 2687e5b3eaa6f686d54c51930765e0ba904f69b5..HEAD` PASS。
-- 因已证明同 Task P1，依 Workflow 在昂贵门禁前提前退回；当前候选的全量 Python/Web/E2E、逐 spec Python-backed 浏览器、production assets、wheel/安装消费者、Docker/常驻 Worker/restart/release-security 及完整 Task Base..Head 最终验收仍待修正候选，不计 PASS。此前 `cd92a85` 全量 Python 不匹配本候选实现，不复用。
-- 本轮测试/质量检查实际累计不足5秒；从本轮开始时间约7分钟，测试耗时低于50%，没有等待凑时。
-
-### Historical review — prior candidate `cd92a85`
-
-```text
-Reviewed candidate: cd92a85f722ae54c778b2f8eac843b773a886985
-Implementation: 4e23a53403657e8ccb9b5ab36c9fc4ab5fdbcc52
-Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..cd92a85f722ae54c778b2f8eac843b773a886985
-Decision: FIX REQUIRED
-Stage: proven-blocker review; complete Task-range/T4 acceptance remains pending
-Required Outcomes / Surfaces all satisfied: NO
-Next: SAME TASK FIX LOOP; no new Task or Slice closure
-```
-
-### 已核实的本轮交付
-
-- Governance PASS，main、候选及预存dirty已记录；工作区/Git可写。上一候选到本候选仅修改
-  `tests/test_configuration_snapshot.py` 和报告；实现到报告后继仅 `TASK.md`，产品未变化。
-- 上轮失败用例现在通过：真实 Run once 发现/冻结/共享分析后才grant；无分析拒绝、逐effect
-  当前principal核权、成功兄弟项保留的断言未放宽。独立单例 `Ran 1 test; OK`。
-- **B全量Python：2672 tests / OK / skipped=7，264.929s，exit 0。** 原始完整日志保留，
-  包含ResourceWarning；没有隐去skip或将日志安全问题计为全量断言失败。
-- 原授权前分析和同URL固定计划修正保持既有核实事实；本轮未冒称再次完成其全套原生/重启证明。
-  45.5的RO-7 PASS、45.4既有接受/验证例外保持；不改Slice/Roadmap/Progress。
-
-### 阻塞1 — 通用API异常日志绕过脱敏
-
-位置：`mediaflow/interfaces/service_api.py:1430–1436`。Task实现
-`c71ec218ca46efa7d73e53c9c82b29f3af88bd91`（2026-10-21 17:25:39 +0800）新增
-`repr(exception)` stderr输出及 `traceback.print_exc()`，未使用现有脱敏边界。
-
-真实入口：`POST /api/v1/jobs`。复用已有
-`ApiSecurityTests.test_audit_failure_blocks_job_creation_before_mutation` 的审计依赖故障，
-仅使用临时SQLite及合成 `token=secret` 标记。原测试证明响应500、Job=0、响应脱敏，
-但B额外捕获stderr，发现标记出现在原始异常和traceback中；本轮全量原始日志亦可见。
-没有访问或声称泄露任何真实凭据。问题是**错误日志仍能输出未经脱敏的敏感异常内容**，
-不满足AGENTS日志不变量、REQ-LOG-003及Slice安全不变量2；正常JSON脱敏不能抵消它。
-
-修正：删除临时原始输出，恢复安全异常处理；如保留诊断，必须有界且脱敏，不能直接
-输出原始异常链。扩展上述现有测试，覆盖响应、stderr/实际日志均无合成secret，且仍
-返回500、零工作准入、审计失败fail-closed；不要改弱故障或断言来通过。
-
-### 阻塞2 — 共享分析退回HTTP内联，未由现有Task/Worker承接
-
-位置：`mediaflow/application/automation_run_once.py:360–403` 及
-`mediaflow/interfaces/service_api.py:14111–14143`。同一 `c71ec218` 删除耐久分析装配后，
-finalize直接同步调用 `_previews.create`；没有将保留的分析职责承接到现有Task/Worker。
-
-真实入口：定义Run once POST202 → 真实有界发现claim/run → 既有finalize POST。
-B复用生产API装配和既有journey fixture，仅让本地合成Provider用Event暂缓返回，在
-另一线程读取同一真实Run once：HTTP请求仍未完成，Provider正在请求线程中执行，
-Jobs=0、Tasks=0、phase=frozen、intent已持久化、previewId=null，finalize/pause/cancel
-均不可用；现有Worker无Job可取。释放Provider后该请求201，实际来源bytes及目标目录树均未变化。
-探针没有制造预览记录、非法产品状态或假路由，也没有声称已经复现进程崩溃/永久丢失。
-
-这不满足RO-8“长分析使用现有Task/Worker”及页面规范§3的耐久准备/进度要求；慢Provider
-或多项分析仍占用HTTP请求，当前页无法观察或控制这段分析。已耐久保存发现清单/intent
-不能代替分析阶段的耐久工作。**独立Preview退役符合方向，删除共享长分析的承接不符合需求。**
-
-修正：将共享整理分析接回现有持久Task/Worker，在原创建/Run once/恢复旅程内展示
-分析中、完成/失败及合法恢复，完成后持久发布同一固定计划。保持精确scope/pin、零mutation/
-零授权、同页摘要与明确执行确认、去重/fence；不恢复独立Preview页面/API/Job类型/专用
-生命周期/schema，不另建队列或执行引擎。审核其他受影响共享入口，避免仅修Run once。
-
-### Developer受影响验证与B门禁
-
-1. Developer在同Task修正以上两项，运行 `test_api_security`、`test_preview_retirement`、
-   `test_automation_run_once`、`test_v2_automation_run_once`、`test_manual_organize_preview`、
-   `test_configuration_snapshot` 及修改所直接影响的Worker/准入/恢复测试和changed-file质量检查。
-   补充已有入口的Provider在途/失败、准入去重、合法固定pin、计划发布和重开证据；Web改动
-   只跑修改及直接受影响的journey测试。无需Developer全仓回归或发布矩阵。
-2. B固定修正候选，先复现这两项，再完成指定全Python/Web/E2E、独立关键消费者、逐spec
-   Python-backed原生浏览器、桌面/窄屏、clean wheel/安装消费者、Docker/常驻Worker/
-   restart/release-security和完整Task Base..Head审查。未完成门禁仍归B，不因本轮Python
-   通过而豁免；只复用执行输入确实匹配的证据，Slice-final不机械重复。
-3. 本轮已有可证阻塞，未启动剩余昂贵门禁；不把B环境/证据问题作为产品缺陷退给Developer。
-   全部RO尚未满足，不新建Task、不提交Closure Packet、不宣称SLICE READY或自行关闭。
+- 独立atomic-publication探针：pause/cancel/正常明确确认三个分支PASS。
+- 独立partial-plan探针：当前候选复现上述P1；隔离父提交对照证明回归。
+- `PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery.FinalizeHandoffFencingTests test_automation_run_once.RunOnceJourneyTests test_organize_preparation.PreparationJourneyTests`：50 tests、OK、无skip，3.777s；现有绿测未覆盖缺失计划分支。
+- Task Base..handoff的`git diff --check` PASS；治理检查PASS。
+- 按workflow已证明阻塞后提前FIX REQUIRED，本候选全量Python/Web/E2E、逐spec真实浏览器/
+  截图、wheel/安装消费者、Docker/常驻Worker/restart/security及完整Task Base..Head
+  最终验收尚未完成；均留给B在修正固定候选执行，旧执行输入不同的全量不复用为PASS。
+  RO尚未全部满足，不提交Closure Packet，不宣称SLICE READY或关闭。
 
 本机稳定证据（非远程链接）：
-`.git/validation-evidence/cd92a85f722ae54c778b2f8eac843b773a886985/task45.6/b-review/`
-含 `baseline.json`、`fixture-test.log`、`full-python.log`、`runs.jsonl`、
-`log-redaction-probe.py/.json/.stderr.log`、`inline-analysis-probe.py/.json`。
-此前报告与证据边界见 `ffdb318b9a22591e2061a0bf813fd3580024824a:TASK.md`；详细历史保留Git。
-
-本轮自2026-10-22 13:00:16 +0800开始；13:09:22记录实际用时547s，测试/质量检查
-保守上界268s（含失败探针和一次补强重跑），占比低于49.1%；未以等待凑时间。计时见
-`time-allocation.json`。
+`.git/validation-evidence/58fee6e9bbfff937918d60bd35086923cb9397ef/task45.6/b-review/`。
+含预存status、独立脚本/原始日志、父提交对照和focused-tests命令/计时。测试/质量检查含
+父提交准备保守累计低于10秒，低于本轮实际工作时间50%；未等待凑比例。
