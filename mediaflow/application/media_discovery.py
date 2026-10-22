@@ -3256,6 +3256,14 @@ class MediaDiscoveryService:
         preview_id = getattr(preview, "preview_id", None)
         if not isinstance(preview_id, str) or not preview_id:
             return self._fail(discovery, claim_token, "preview_unavailable")
+        # A completed analysis always yields one complete plan, whether the
+        # *walk* proved every admitted source or only a known, explicitly
+        # reviewable subset.  Completeness decides the run status and which
+        # items are ready for confirmation; it must never decide whether the
+        # plan itself is persisted.  Publishing a link without its rows would
+        # hand the operator a "summary ready" state and a plan identity that
+        # resolves to nothing, so the plan rows and the link always travel
+        # together through the same atomic publication.
         # The plan was computed against the frozen intent while the Provider
         # call was in flight, so the run record may since have been paused,
         # resumed, cancelled or taken over.  The *publication* of that plan is
@@ -3294,18 +3302,17 @@ class MediaDiscoveryService:
         try:
             return self._publish_prepared_plan(
                 updated,
-                plan=preview if complete else None,
+                plan=preview,
                 expected_version=discovery.version,
                 claim_token=claim_token,
             )
         except (DiscoveryConflict, DiscoveryOwnershipLost):
             # The plan this pass analyzed is unpublished work of a control that
             # already lost.  The atomic boundary leaves no plan row at all; the
-            # degraded legacy path (a repository without the atomic boundary,
-            # or a mixed non-complete plan persisted separately) retires the
-            # plan before reporting the refusal, so it is neither readable as
-            # the intent's current summary nor enterable for a paused or
-            # cancelled run.  It was never linked or confirmed.
+            # degraded legacy path (a repository without the atomic boundary)
+            # retires the plan before reporting the refusal, so it is neither
+            # readable as the intent's current summary nor enterable for a
+            # paused or cancelled run.  It was never linked or confirmed.
             self._discard_uncommitted_plan(discovery.intent_id, preview_id)
             raise
 
@@ -3313,7 +3320,7 @@ class MediaDiscoveryService:
         self,
         discovery: MediaDiscovery,
         *,
-        plan: object | None = None,
+        plan: object,
         expected_version: int,
         claim_token: str,
     ) -> MediaDiscovery:
@@ -3327,11 +3334,18 @@ class MediaDiscoveryService:
         repository without that boundary (a bounded test double) degrades to
         the legacy write plus compensating retirement, which never deletes
         evidence and never leaves a confirmable current plan behind.
+
+        The plan is mandatory: every analyzed pass produced one, and a link
+        published without its rows would be a summary the operator could never
+        read.  A pass that somehow has no plan fails closed instead of
+        publishing a dangling identity.
         """
 
+        if plan is None:  # pragma: no cover - a programming boundary, not an operator path
+            raise DiscoveryUnavailable("an analyzed plan must be published with its run link")
+        prepared_plan = replace(plan, updated_at=discovery.updated_at)
         publisher = getattr(self._repository, "publish_media_discovery_plan_with_plan", None)
-        if callable(publisher) and plan is not None:
-            prepared_plan = replace(plan, updated_at=discovery.updated_at)
+        if callable(publisher):
             _published_discovery, _published_plan = publisher(
                 discovery,
                 prepared_plan,
@@ -3340,10 +3354,10 @@ class MediaDiscoveryService:
             )
             return _published_discovery
         legacy_publisher = getattr(self._repository, "publish_media_discovery_plan", None)
-        if callable(legacy_publisher) and plan is not None:
+        if callable(legacy_publisher):
             persister = getattr(self._preview_service, "_persist_create", None)
             if callable(persister):
-                persister(replace(plan, updated_at=discovery.updated_at))
+                persister(prepared_plan)
             return legacy_publisher(
                 discovery,
                 expected_version=expected_version,

@@ -19,11 +19,14 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from contextlib import contextmanager
+from dataclasses import replace as _replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -38,6 +41,8 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.domain.media_discovery import (
     DiscoveryBudgets,
+    DiscoveryConflict,
+    DiscoveryOwnershipLost,
     DiscoveryStatus,
 )
 from mediaflow.domain.metadata import MediaCandidate, MediaType
@@ -448,6 +453,308 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertIsNotNone(preview)
             self.assertTrue(preview.zero_mutation)
             self.assertEqual(intent.intent_id, preview.intent_id)
+
+    def _blocked_provider(self, value):
+        """Pause only the outbound Provider call of the real analysis chain."""
+
+        provider = next(iter(value.previews._providers._providers.values()))
+        entered = threading.Event()
+        release = threading.Event()
+        original = type(provider).search_movie
+
+        def blocked_search(inner_self, query, policy=None, **kwargs):
+            entered.set()
+            release.wait(timeout=30)
+            return original(inner_self, query, policy=policy, **kwargs)
+
+        return entered, release, patch.object(type(provider), "search_movie", blocked_search)
+
+    def _partial_analysis_race(self, value, control: str) -> dict:
+        """Let one operator control win while a legal partial analysis runs.
+
+        The whole path is real: the API admission, the Worker claim, the
+        production analysis chain and the operator control all run through
+        their normal entry points; only the outbound Provider call is paused.
+        Returns the operator readback of the settled preparation.
+        """
+
+        gone = self.media("Gone.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        self.admit(value, ["Gone.2001.mkv", "Movies"])
+        gone.unlink()
+        # Stop after the walk froze the reviewed known subset.
+        for index in range(6):
+            result = value.discovery.claim_and_run(
+                worker_id=f"walk-{index}", claim_token=f"walk-token-{index}"
+            )
+            self.assertIsNotNone(result)
+            current = value.repository.get_media_discovery(result.discovery_id)
+            if current.status.value == "analyzing":
+                break
+        self.assertEqual("analyzing", current.status.value, current.status)
+        self.assertEqual("read_failure", current.progress.incomplete_reason.value)
+        entered, release, guard = self._blocked_provider(value)
+        results: list[object] = []
+
+        def analyze() -> None:
+            try:
+                results.append(
+                    value.discovery.claim_and_run(
+                        worker_id="analysis-worker", claim_token="analysis-token"
+                    )
+                )
+            except Exception as error:  # noqa: BLE001 - asserted by the caller
+                results.append(error)
+
+        with guard:
+            thread = threading.Thread(target=analyze, name="partial-analysis")
+            thread.start()
+            self.assertTrue(entered.wait(15), "the Worker never reached the Provider")
+            status, controlled = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{current.discovery_id}/{control}",
+                "POST",
+                {"expectedVersion": current.version},
+            )
+            self.assertEqual(200, status, controlled)
+        release.set()
+        thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
+        self.assertNotIsInstance(results[0], Exception, results)
+        status, readback = self.request(
+            value, f"/api/v1/operations/organize/discoveries/{current.discovery_id}"
+        )
+        self.assertEqual(200, status, readback)
+        return readback
+
+    def test_a_legal_read_failure_subset_publishes_its_complete_plan(self) -> None:
+        """B's P1: a legal partial walk still persists the exact plan it analyzed.
+
+        An explicit file that disappears after admission leaves an openly
+        reviewed known subset (``read_failure``), not a budget/safety refusal.
+        That subset is legal, so its analysis must publish the complete plan —
+        plan rows, per-item evidence, the run link and the claim release —
+        exactly like a complete walk.  Advertising ``prepared`` with a plan
+        identity that resolves to nothing breaks the summary → confirm journey
+        for work the operator may lawfully do.
+        """
+
+        gone = self.media("Gone.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        with self.journey() as value:
+            admitted = self.admit(value, ["Gone.2001.mkv", "Movies"])
+            gone.unlink()
+            settled = self.run_worker(value)
+            self.assertEqual("partial_success", settled["status"], settled)
+            self.assertEqual("read_failure", settled["progress"]["incompleteReason"], settled)
+            self.assertEqual(1, settled["progress"]["errorEntries"], settled)
+            self.assertEqual([], settled["progress"]["refusalReasons"], settled)
+            self.assertTrue(settled["frozen"], settled)
+            # The published summary is a real plan, not a dangling identity.
+            self.assertTrue(settled["prepared"], settled)
+            preview_id = settled["previewId"]
+            self.assertIsInstance(preview_id, str, settled)
+            status, plan = self.request(value, f"/api/v1/operations/organize/previews/{preview_id}")
+            self.assertEqual(200, status, plan)
+            self.assertEqual(preview_id, plan["previewId"])
+            self.assertEqual(
+                ["Movies/Two.2002.mkv"], [item["source"]["path"] for item in plan["items"]]
+            )
+            self.assertEqual({"previewed"}, {item["status"] for item in plan["items"]}, plan)
+            # The intent's latest plan is the same plan across a durable reopen.
+            with SQLiteTaskRepository(self.database) as reopened:
+                stored = reopened.get_media_discovery(settled["discoveryId"])
+                self.assertEqual(preview_id, stored.preview_id)
+                self.assertIsNotNone(reopened.get_manual_preview(preview_id))
+                self.assertEqual(
+                    preview_id, reopened.get_latest_manual_preview(stored.intent_id).preview_id
+                )
+            # Analysis still grants nothing and mutates no media.
+            self.assertEqual(
+                (),
+                tuple(value.repository.list_manual_executions_for_preview(preview_id, limit=10)),
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual(admitted["discoveryId"], settled["discoveryId"])
+
+            # Only the explicitly confirmed item is executed.
+            item = plan["items"][0]
+            self.execute(value, plan, [item["itemId"]])
+            completed = self.run_execution_worker(value)
+            self.assertEqual("completed", completed.status.value, completed)
+            self.assertEqual([("delete", "Movies/Two.2002.mkv")], value.source.mutations)
+            self.assertFalse((self.source_root / "Movies/Two.2002.mkv").exists())
+            self.assertTrue(any(self.target_root.rglob("Two (2002).mkv")))
+
+    def test_a_legal_partial_plan_is_never_published_by_a_losing_write(self) -> None:
+        """B's P1 fence: a legal partial plan and the run link still atomic.
+
+        The plan rows were formerly written only for a complete walk, so the
+        partial branch had no atomic boundary to lose.  With the plan mandatory
+        the same fence covers it: a control that won the version race leaves no
+        plan row at all, and an owner that lost its claim publishes nothing.
+        """
+
+        gone = self.media("Gone.2001.mkv")
+        self.media("Movies/Two.2002.mkv")
+        with self.journey() as value:
+            admitted = self.admit(value, ["Gone.2001.mkv", "Movies"])
+            gone.unlink()
+            for index in range(6):
+                result = value.discovery.claim_and_run(
+                    worker_id=f"walk-{index}", claim_token=f"walk-token-{index}"
+                )
+                self.assertIsNotNone(result)
+                durable = value.repository.get_media_discovery(admitted["discoveryId"])
+                if durable.status.value == "analyzing":
+                    break
+            self.assertEqual("analyzing", durable.status.value, durable.status)
+            self.assertEqual("read_failure", durable.progress.incomplete_reason.value)
+            intent = value.repository.get_manual_intent(durable.intent_id)
+            plan = value.previews.create(
+                intent.intent_id,
+                [item.item_id for item in intent.items],
+                actor="operator",
+                expected_version=intent.version,
+                persist=False,
+            )
+            # The analyzing Worker really holds the live claim at this boundary.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=? WHERE discovery_id=?",
+                (
+                    "analysis-owner",
+                    "analysis-token",
+                    (self.clock_value + timedelta(minutes=10)).isoformat(),
+                    admitted["discoveryId"],
+                ),
+            )
+            value.repository._connection.commit()
+            claimed = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertEqual("analysis-token", claimed.claim_token)
+            # A control that won the race bumped the version: the whole write
+            # is refused and the plan rows never exist.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET version=version+1, pause_requested=1 "
+                "WHERE discovery_id=?",
+                (admitted["discoveryId"],),
+            )
+            value.repository._connection.commit()
+            with self.assertRaises(DiscoveryConflict):
+                value.repository.publish_media_discovery_plan_with_plan(
+                    _replace(
+                        claimed,
+                        status=DiscoveryStatus.PARTIAL_SUCCESS,
+                        version=claimed.version + 1,
+                        preview_id=plan.preview_id,
+                    ),
+                    plan,
+                    expected_version=claimed.version,
+                    claim_token="analysis-token",
+                )
+            self.assertIsNone(value.repository.get_manual_preview(plan.preview_id))
+            self.assertEqual((), value.repository.list_manual_previews(intent.intent_id))
+            self.assertIsNone(value.repository.get_latest_manual_preview(intent.intent_id))
+            refused = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertIsNone(refused.preview_id)
+            self.assertTrue(refused.pause_requested)
+            # A successor cannot publish it either: the exact claim is the
+            # second fence, so a stale owner leaves no confirmable residual.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET pause_requested=0 WHERE discovery_id=?",
+                (admitted["discoveryId"],),
+            )
+            value.repository._connection.commit()
+            current = value.repository.get_media_discovery(admitted["discoveryId"])
+            with self.assertRaises(DiscoveryOwnershipLost):
+                value.repository.publish_media_discovery_plan_with_plan(
+                    _replace(
+                        current,
+                        status=DiscoveryStatus.PARTIAL_SUCCESS,
+                        version=current.version + 1,
+                        preview_id=plan.preview_id,
+                    ),
+                    plan,
+                    expected_version=current.version,
+                    claim_token="not-the-live-claim",
+                )
+            self.assertIsNone(value.repository.get_manual_preview(plan.preview_id))
+            self.assertEqual((), value.repository.list_manual_previews(intent.intent_id))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_pause_that_wins_a_partial_analysis_leaves_no_plan(self) -> None:
+        """B's P1 fence: the known-subset plan is protected by the atomic write.
+
+        While the Worker analyzes the legal partial manifest the operator pauses
+        through the real API.  The accepted control wins the publication, so the
+        plan rows and the run link are refused together: no plan row, no intent
+        summary and no confirmable work.  Continuing then publishes exactly one
+        real plan for that subset.
+        """
+
+        with self.journey() as value:
+            readback = self._partial_analysis_race(value, "pause")
+            self.assertEqual("paused", readback["status"], readback)
+            self.assertTrue(readback["pauseRequested"], readback)
+            self.assertIsNone(readback["previewId"], readback)
+            self.assertFalse(readback["prepared"], readback)
+            intent_id = readback["intentId"]
+            self.assertIsNotNone(intent_id)
+            self.assertEqual((), value.repository.list_manual_previews(intent_id))
+            self.assertIsNone(value.repository.get_latest_manual_preview(intent_id))
+            self.assertIsNone(
+                value.repository.media_discovery_claim(readback["discoveryId"])["claimToken"]
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+            status, resumed = self.request(
+                value,
+                f"/api/v1/operations/organize/discoveries/{readback['discoveryId']}/resume",
+                "POST",
+                {"expectedVersion": readback["version"]},
+            )
+            self.assertEqual(200, status, resumed)
+            finalized = self.run_worker(value)
+            self.assertTrue(finalized["prepared"], finalized)
+            self.assertEqual("partial_success", finalized["status"], finalized)
+            status, plan = self.request(
+                value, f"/api/v1/operations/organize/previews/{finalized['previewId']}"
+            )
+            self.assertEqual(200, status, plan)
+            self.assertEqual(
+                ["Movies/Two.2002.mkv"], [item["source"]["path"] for item in plan["items"]]
+            )
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_a_cancel_that_wins_a_partial_analysis_leaves_no_plan(self) -> None:
+        """B's P1 fence: a cancelled run never leaves a confirmable subset.
+
+        The same race with the terminal control: the accepted cancellation wins,
+        so the analyzed known-subset plan is never written and the run stays
+        cancelled with no plan, no resume and no execution authority.
+        """
+
+        with self.journey() as value:
+            readback = self._partial_analysis_race(value, "cancel")
+            self.assertEqual("cancelled", readback["status"], readback)
+            self.assertIsNone(readback["previewId"], readback)
+            self.assertFalse(readback["prepared"], readback)
+            intent_id = readback["intentId"]
+            self.assertIsNotNone(intent_id)
+            self.assertEqual((), value.repository.list_manual_previews(intent_id))
+            self.assertIsNone(value.repository.get_latest_manual_preview(intent_id))
+            self.assertIsNone(
+                value.repository.media_discovery_claim(readback["discoveryId"])["claimToken"]
+            )
+            self.assertFalse(readback["actions"]["prepare"]["available"], readback)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
 
     def test_preparation_never_creates_execution_authority(self) -> None:
         """RO-2: confirming is separate; the preparation grants nothing."""
