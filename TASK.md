@@ -420,15 +420,108 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: 764291d75cac90cb54fb857c94f23c4101bc2bdb
+Candidate Head: 59c0f6e56ca9ba0f2d06fb6adf63660f1d615296
 Handoff Head: HEAD (all commits above Candidate Head touch TASK.md only, so the
        reviewed executable input is exactly Candidate Head)
 Status: READY FOR B REVIEW
-Round: sixth round; fixes B's FIX REQUIRED on dfc59a4c65f05941cc30760b179f6546583b2d25
-       (pause/cancel issued while the analysis Provider call was in flight did
-       not stop the Worker from publishing and linking a confirmable plan, and
-       the Run once projection re-exposed that plan for a paused/cancelled run)
+Round: seventh round; fixes B's FIX REQUIRED on 98c65b4e6c3db275150fd87497529f68b5f82a25
+       (the plan rows were persisted before the fenced run link, so a control
+       that won the publication window left a confirmable current plan reachable
+       from the linked intent's latest-plan/execute entries)
 ```
+
+### Current round — 计划与运行关联的一次原子提交（B 的当前阻塞）
+
+#### 根因
+
+上一轮的 fence 只保护了 discovery 的链接/状态/claim 写回；计划行本身仍先经
+`ManualOrganizePreviewService._persist_create`（`create_manual_preview`）提交为
+current。Provider 在途期间控制先赢时，窗口内的计划已是持久 current 记录，可从
+intent 的 latest-plan 投影、计划 detail 与普通 `/execute` 准入确认（B 探针 202
+admitted）。
+
+#### 本轮实现（同一 Task，无新队列/状态机/独立 Preview 生命周期）
+
+1. **计划行与运行链接成为一次原子提交**（新仓储边界
+   `SQLiteTaskRepository.publish_media_discovery_plan_with_plan`）：在一条
+   `BEGIN IMMEDIATE` 事务内先写计划行（与 Files 旅程共用同一套 intent/item
+   守卫的 `_publish_manual_preview_rows`），再执行与原 fenced 发布完全相同的
+   discovery UPDATE（`discovery_id + version CAS + 精确 claim_token`）。任一
+   fence 或计划守卫拒绝即整体回滚——输掉竞争的计划**完全没有落库**，不存在可
+   退役或可从 intent 读到的残余。Provider/Storage 调用仍在事务外，无长事务。
+2. **服务层**（`media_discovery.py::_analyze`）：分析改用 `create(..., persist=False)`
+   （既有能力），产出内存计划投影后再经原子边界发布；仅在该仓储无原子边界时
+   （有界测试替身）退回旧路径 `_persist_create` + `publish_media_discovery_plan`
+   + 补偿 `discard_uncommitted`。混合非 complete（PARTIAL_SUCCESS）计划的发布
+   也走原子提交；补偿退役路径保留为降级兜底，不删除任何证据。
+3. **不可确认保护的权威不再是退役**：原子提交下输家的计划行根本不存在，因此
+   intent latest-plan、计划 detail 与 execute 准入读到的都是已获运行发布许可的
+   计划；B 修正方案第2条的共享权威要求由“计划不可见”而非“补偿隐藏”满足。
+4. **更新既有断言与新增回归**（全部真实入口，无人工 upsert）：
+
+| 位置 | 覆盖 |
+|---|---|
+| `test_media_discovery.FinalizeHandoffFencingTests` 新增 `test_the_plan_rows_and_the_run_link_are_one_atomic_publication` | 控制先赢（版本 CAS 拒绝）→ 计划行与 discovery 链接均为零副作用；精确 claim 持有者发布一次 → 计划 current、intent latest、claim 释放同一次写；重复发布不可能产生第二份计划 |
+| `test_automation_run_once.RunOnceJourneyTests` 新增 `test_a_control_that_wins_the_publication_window_leaves_no_confirmable_plan` | 真实 API cancel 在 Provider 在途先胜 → 输家分析返回后 `CANCELLED`、`list_manual_previews` 为空、`get_latest_manual_preview` 为 None、intent 投影 `latestPlan=null`、run GET 无 previewId/plan 动作、零 Task/零 mutation |
+| `test_automation_run_once.RunOnceJourneyTests` 新增 `test_a_normal_analysis_publishes_one_exactly_confirmable_plan` | 无竞态分析 → 恰好一份 current 计划链接到 run、intent latest-plan 指向它、detail `actions.execute.available`（注册真实 resident Worker 后）、显式 POST `/execute` 202 admitted；分析本身零确认/零授权 |
+| 既有 pause/cancel 竞态用例 | 断言从“计划已落库且被标 stale/current=0”更新为更强性质“计划行从未写入”（`list_manual_previews` 为空） |
+
+#### 本轮受影响检查（仓库根除注明外，均为实际结果）
+
+```bash
+python3 scripts/check_governance.py                                  # PASS
+.venv/bin/ruff check mediaflow tests                                 # All checks passed
+.venv/bin/ruff format --check mediaflow tests                        # 320 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests                    # OK
+git diff --check                                                     # clean
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   # no match (exit 1)
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery \
+  test_automation_run_once test_v2_automation_run_once               # Ran 179, OK
+PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_media_discovery.FinalizeHandoffFencingTests \
+  test_automation_run_once.RunOnceJourneyTests                       # Ran 37, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_v2_automation_run_once.RunOnceApiTests  # Ran 21, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
+  test_manual_organize_preview test_manual_organize_execution \
+  test_v2_manual_organize test_organize_preparation                  # Ran 117, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation \
+  test_scope_continuation test_task_center_recovery_lineage \
+  test_metadata_correction_continuation                              # Ran 185, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
+  test_scan_retirement test_file_index_retirement \
+  test_automation_definition_execution \
+  test_automation_authorized_execution_matrix \
+  test_automation_unattended_grant test_configuration_snapshot \
+  test_configuration_organize test_v2_rules_workspace_previews \
+  test_task_persistence                                              # Ran 197, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_task_definition \
+  test_v2_automation_lifecycle test_automation_api \
+  test_manual_operations_contract test_manual_operations \
+  test_manual_preview                                                # Ran 95, OK
+```
+
+（以上为按修改影响的多组运行；合并去重后 Python 受影响总计约 795 例全部通过。）
+
+#### 未执行 / 剩余风险（交 B）
+
+- 全量 Python/Web/E2E、production assets、逐 spec 原生浏览器、wheel/安装消费者/
+  Docker/常驻 Worker/restart/release-security 属 B，本轮未执行。
+- `publish_media_discovery_plan_with_plan` 为新增仓储方法；仓库外测试替身或旧
+  仓储走既有降级路径（`_persist_create` + fenced 发布 + 补偿退役），该路径
+  不具备同事务原子性，属已知的降级边界；本仓 SQLite 实现走原子边界。
+- 混合非 complete 计划同样经原子边界发布；若其发布成功后被控制拒绝，回滚也
+  不留计划行（与 complete 分支一致），既有 `_stale_recovery_preparation`/
+  findings 语义未变。
+- 上一轮的 `discard_manual_preview`/`discard_uncommitted`/`publish_media_discovery_plan`
+  保留为降级兜底与历史退役能力，主保证不依赖补偿退役。
+- 本轮测试/质量检查累计约 4 分钟，低于本轮实际工作时间的 30%（先修后测，
+  未等待凑比例）。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
+
+### 上一轮记录（sixth round — 计划发布与 pause/cancel 协调）
+
+以下为 `764291d`/`98c65b4` 轮的交付与检查记录，保留原样。
 
 ### Current round — 计划发布与 pause/cancel 协调（B 的当前阻塞）
 
