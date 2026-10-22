@@ -420,241 +420,144 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: 4e23a53403657e8ccb9b5ab36c9fc4ab5fdbcc52
+Candidate Head: 068fb07ecc62e61149058898a89dd51238b63797
 Status: READY FOR B REVIEW
-Round: fourth round; fixes B's FIX REQUIRED on 2e84e8883250c3f166f61b978b33a46c641379f6
-       (full-Python fixture lacks the shared-analysis evidence the grant requires)
+Round: fifth round; fixes B's FIX REQUIRED on cd92a85f722ae54c778b2f8eac843b773a886985
+       (raw-exception stderr logging bypassed redaction; Run once finalize
+       analyzed inline inside the HTTP request instead of the existing
+       Task/Worker)
 ```
 
-### 本轮修正交付（对应 B 的 full-Python fixture 阻塞）
+### 本轮修正交付（对应 B 的两个已核实阻塞）
 
-B 在 `2e84e88` 上运行全量 Python 时，`test_configuration_snapshot.py`
-`test_worker_rechecks_current_principal_between_real_effect_boundaries` 在第 2072 行直接调用
-`UnattendedExecutionGrantService.grant`，而该服务现已按 Task 要求拒绝没有真实 Run once
-共享分析证据的授权，于是报 `unattended_execution_analysis_unavailable`。这是被改变的授权前置
-条件未同步到同一 Task 的测试夹具，不是服务校验本身的问题。本轮只修夹具，不改产品行为。
+#### 阻塞1 — 通用API异常日志绕过脱敏
 
-1. **夹具改走真实授权前置。** 新增模块级 `_produce_shared_analysis`（配 `_snapshot_analysis_api`
-   与 `_SnapshotTMDBProvider` 合成 Provider），沿真实生产装配
-   `admit_definition_run_once` → `claim_and_run`（真实有界发现与稳定观察）→
-   `AutomationRunOnceService.finalize`（冻结清单 + 共享零变更整理分析）产出证据，并断言
-   `previewed`/`zero_mutation`。该分析与授权绑定同一份已发布 Active 修订。
-2. **不绕过 preflight。** 同一份确认授权在分析产出前仍被拒绝：断言
-   `unattended_execution_analysis_required` 且 `list_unattended_execution_grants() == ()`；
-   分析产出后同一确认授权成功，随后 Worker 才产生媒体效果。
-3. **原有断言全部保留。** 首项成功后当前 principal 被撤销、后续 effect 前重新核权、
-   Alpha 成功 / Beta 失败的独立结果、`unattended_authority` 类别、
-   `permitted_action_ids == ("investigate",)`、`len(effect_calls) == 1`、目标目录内容与
-   恢复 principal 后无待处理工作，均未放宽、未跳过、未加重试。
+`mediaflow/interfaces/service_api.py` 的通用 `except Exception` 分支删除了
+`repr(exception)` stderr 写出与 `traceback.print_exc()`（`c71ec218` 引入）。操作者可见的
+JSON 错误与持久审计行本就承载有界、无凭据的证据；原始异常链可能含凭据形状内容，不再写入
+任何流/日志（AGENTS 日志不变量、REQ-LOG-003）。扩展既有
+`test_audit_failure_blocks_job_creation_before_mutation`：捕获真实 stderr，断言合成
+`token=secret` 标记不出现在响应、stderr 或 traceback 中，且仍返回 500、零 Job 准入、
+审计失败 fail-closed；未改弱故障或断言。
 
-#### 受影响检查（本轮 Developer 实际结果，仓库根）
+#### 阻塞2 — 共享分析退回HTTP内联，未由现有Task/Worker承接
+
+Run once `finalize` 不再在 HTTP 请求内调用 `previews.create`；共享零变更整理分析重新由
+**现有发现 Worker 的耐久分析阶段**承接（不恢复独立 Preview 产品、不另建队列/执行引擎/专用
+schema）。要点：
+
+1. `MediaDiscoveryService.begin_frozen_analysis`：对已冻结（linked intent）的 Run once
+   发布一次版本化 `ANALYZING` 阶段（与既有 `request_analysis` 共用 `_enter_analysis`）；
+   `run_claimed` 的分析入口从 `auto_prepare` 记录扩展到一切已冻结 intent 的记录，Worker
+   在同一 run 上执行完整生产分析链并回链精确计划。重复/丢响应请求收敛于已排队分析。
+2. `AutomationRunOnceService.finalize`：冻结后委托耐久阶段并返回 `(analyzing, None)`；
+   构造签名移除不再使用的 `intent_service` 参数。投影新增 `analyzing` 相位（计划生成中），
+   ANALYZING 期间 pause/cancel 可用；plan 路由在计划链接前如实为 `available+null path`，
+   链接后由既有 `_durable_plan_id`/`preview_id` 解析同一计划。
+3. API finalize 响应：201 + `phase=analyzing`、`previewId/previewPath/analysisId/
+   analysisPath` 全部为 null；普通 GET（重载/重连/重启）从同一 run 恢复计划身份。
+4. Web：`AutomationRunOncePage` 显示耐久分析阶段说明（冻结清单/运行身份已保存、完成前无
+   可执行范围、零执行授权），按 URL/持久 `previewId` 恢复摘要；分析期间提供"打开整理意图"
+   之外的明确分析中状态。`run-once.ts` 归一化接受 `status=analyzing`。
+5. Harness/E2E：`run-automation-run-once-worker` 推进分析阶段直至 `previewId` 链接；
+   原生 browser proof 在冻结后驱动真实 Worker，混合恢复旅程同。授权前分析/grant 夹具
+   （`test_configuration_snapshot`/`test_automation_unattended_grant`/
+   `test_v2_automation_operations`）改为驱动真实 Worker 旅程取得共享分析。
+6. 未新增任何执行授权：分析全程零 mutation、零 grant/审计行；确认仍须在计划出现后单独
+   明确执行；`latest_frozen_definition_run_once`/授权前校验链不变（分析完成前 fail-closed）。
+
+#### 受影响检查（本轮 Developer 实际结果，仓库根除注明外）
 
 ```bash
 python3 scripts/check_governance.py                                  # PASS
-.venv/bin/ruff check tests/test_configuration_snapshot.py            # All checks passed
-.venv/bin/ruff format --check tests/test_configuration_snapshot.py   # already formatted
-.venv/bin/python -m compileall -q tests/test_configuration_snapshot.py  # OK
-git diff --check                                                     # clean
-PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_snapshot \
-  test_automation_unattended_grant test_v2_automation_operations \
-  test_automation_run_once                                          # Ran 101, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
-  test_v2_automation_run_once test_automation_definition_execution \
-  test_automation_authorized_execution_matrix test_manual_organize_preview \
-  test_media_discovery                                             # Ran 190, OK
-```
-
-失败先于修正复现：父候选 `2e84e88` 上同一用例报
-`unattended_execution_analysis_unavailable`（B 报告一致）；本候选通过。
-
-#### 未执行 / 剩余风险（交 B）
-
-- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
-  release-security 属 B，本轮未执行。
-- 仅改测试夹具，无产品代码、schema 或迁移改动；`UnattendedExecutionGrantService` 的
-  授权前校验保持原样。
-- 夹具新增合成 Provider 只服务该测试的本地临时根，不访问真实 TMDB/私有配置/用户媒体。
-
-本机稳定证据（未声称外部可访问）：
-`.git/validation-evidence/developer/task45.6-fix-shared-analysis-fixture/` 含
-`affected-python.log`、`affected-python-2.log` 与
-`verify_shared_analysis_fixture.py/.log`（独立探针：无分析 grant 被拒且 grant 行数为 0；
-真实 Run once 分析后同一确认 grant 成功；来源 bytes 不变、目标为空；重开数据库后授权仍在）。
-
-不自判 PASS，不关闭 Slice，不规划下一 Task。
-
-### 上一轮修正交付（对应 B 的 shared Automation authorization preflight 阻塞，已被 B 核实修正）
-
-B 在 `5b5f863` 上复现的 P1：删除独立 Preview 后，`UnattendedExecutionGrantService.grant` /
-`project_eligibility` 只校验定义/配置形状、边界与当前权限，任何已激活定义无需任何真实
-分析即可授予无人值守整理权限。本轮在保留的 Automation 授权旅程内承接**共享零变更整理
-分析/完整固定计划**作为授权前证据，不恢复独立 Preview 产品、不另建分析队列/执行引擎。
-
-1. **共享分析权威新增只读解析**。`MediaDiscoveryService.latest_definition_analysis`
-   与仓储 `latest_frozen_definition_run_once` 按“定义身份 + 不可变 Active 配置 pin
-   (revisionId/digest)”返回最近一次定义绑定 Run once 的冻结清单（真实有界发现→稳定
-   观察→内部冻结→共享分析链产出的完整计划）。Run once 的 Preview 经其持久 `intent_id`
-   关联，不依赖 `discovery.preview_id` 列；重新发布 Active 会使旧分析对新授权失效。
-
-2. **授权前校验与准入共用同一后端权威**。`UnattendedExecutionGrantService` 新增
-   `_require_shared_analysis` / `_validate_shared_analysis`（及 `_invalid_analysis_items`），
-   `grant` 与 `project_eligibility` 都调用它：缺失→`unattended_execution_analysis_required`；
-   定义身份/指纹/配置版本/ResourceLibrary/来源范围/run mode/Storage/工作量边界不匹配→
-   `unattended_execution_analysis_mismatch`；过期或非零变更→`unattended_execution_analysis_stale`；
-   非完成态→`unattended_execution_analysis_ineligible`；存在 blocked/failed/stale/unavailable/
-   truncated/cancelled 项→`unattended_execution_analysis_item_blocked`；服务缺失→
-   `unattended_execution_analysis_unavailable`(503)。全部 fail-closed，拒绝时不写 grant/audit/
-   Task/Storage。`project_eligibility` 中把分析校验放在当前权限校验之后，使被禁用主体仍返回
-   `unattended_permission_invalid`（保持既有断言）。
-
-3. **生产装配接通**。`MediaFlowApi` 构造 `UnattendedExecutionGrantService` 时注入
-   `discovery_service=self._media_discovery`、`preview_service=self._manual_previews`。
-   CLI 的 grant 服务只用于 `assert_live`（执行期实时权威重读），不经授权前准入，保持
-   `discovery_service=None`；唯一 `.grant()` 调用点在 `service_api`。
-
-4. **测试与回归**。`test_preview_retirement` 新增 `RetainedAuthorizationPrecedentTests`：
-   经真实 API/Run-once 装配证明“无分析→409 且 grant/audit/Storage 不变；eligibility 同步
-   为不 eligible；真实 Run once 产出共享分析后 eligibility 转 eligible、同一确认 grant 返回
-   201，仍零 mutation”。`test_v2_automation_operations` 与 `test_automation_unattended_grant`
-   的 grant 用例改为先跑共享分析再授予，并新增“无分析被拒”断言；直接单测用
-   `_shared_analysis_stub`/`_grant_service` 承接授权前门（测试 grant 服务自身逻辑）。
-
-### 本轮修正交付（对应 B 的 durable in-context Run-once plan 阻塞）
-
-B 在 `bb0b1f3` 上复现的 P1：Run once finalize 把计划写在 linked intent 上，但
-`AutomationRunOnceService.document` 读取该路径从不写入的 `discovery.preview_id`，
-于是普通 GET 返回 `phase=frozen / previewId=null`，`actions.preview.available`
-为 true 而 `path=null`；同页摘要只靠 React 局部 `admittedPlanPreviewId`，重开即消失。
-本轮只恢复持久权威解析与投影，不恢复独立 Preview 产品、不新建分析/队列/兼容页。
-
-1. **持久权威解析**。`AutomationRunOnceService` 新增 `_durable_plan_id`：优先
-   `discovery.preview_id`（真实 preparation 路径），否则经 linked intent 的
-   `preview_service.latest_readonly` 读取该次运行已产出的精确计划。这是有界、
-   非发布式只读投影：普通 GET 不重新发现、不重新分析、不生成第二份计划、不标记
-   证据过期、不变更 Storage。读取失败是真实的“无计划”，不从最近记录猜测。
-2. **投影与广告一致**。`document()` 的 `previewId` 与 `actions.preview.path`
-   使用同一解析结果，因此不会再出现“可用但没有地址”的动作；已冻结清单仍不提供
-   第二次 finalize。
-3. **同页恢复**。`AutomationRunOncePage` 与意图页同一模式：finalize 成功后把
-   精确计划身份写入旅程 URL（合并保留的 Files/Operations 返回上下文），重载/
-   前进后退/重开链接按 URL 提示恢复；URL 计划不得覆盖更新的持久计划；
-   `OrganizePlanConfirmation` 绑定 `expectedIntentId`，非本运行意图的计划不显示、
-   不提供执行。读取不取得任何权限。
-4. **测试与回归**。`test_v2_automation_run_once` 新增
-   `test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen`（真实 HTTP
-   finalize201→同 URL GET200 同一 previewId、action path、零二次 finalize/分析、
-   source/target mutations 为空、SQLite 重开后 `get_latest_manual_preview` 仍为
-   同一份）与 `test_unfrozen_run_once_publishes_no_plan_identity`；
-   `test_preview_retirement` 新增 `RetainedRunOncePlanTests`，从真实 API/Run once
-   装配复述同一条链路。新增 `web/src/features/operations/AutomationRunOncePage.test.tsx`
-   覆盖同 URL 空 cache 重载恢复、冻结态、陈旧 URL 计划被持久计划取代、冻结前只有
-   finalize。两条 Python 回归与 Web 重载回归在父候选 `bb0b1f3` 上均为红，在本候选为绿。
-
-### 受影响检查（本轮 Developer 实际结果，仓库根除注明外）
-
-```bash
-python3 scripts/check_governance.py                                  # PASS
-.venv/bin/ruff check mediaflow tests                                 # All checks passed
-.venv/bin/ruff format --check mediaflow tests                        # 320 files already formatted
+.venv/bin/ruff check <11 changed py>                                 # All checks passed
+.venv/bin/ruff format --check mediaflow tests scripts                # 349 files already formatted
 .venv/bin/python -m compileall -q mediaflow tests scripts            # OK
+.venv/bin/python -m pip check                                        # No broken requirements found
+.venv/bin/mediaflow --config config/strategy.example.json config validate  # OK
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   # no match (exit 1)
 git diff --check                                                     # clean
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
-  test_scan_retirement test_file_index_retirement                   # Ran 39, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_api_security      # Ran 14, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once \
+  test_v2_automation_run_once test_preview_retirement                # Ran 70, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_v2_automation_operations \
+  test_automation_unattended_grant                                   # Ran 19, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_snapshot  # Ran 45, OK
 PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
   test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize \
   test_organize_preparation                                          # Ran 117, OK
 PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation \
-  test_scope_continuation test_task_center_recovery_lineage \
-  test_metadata_correction_continuation                             # Ran 185, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once \
-  test_v2_automation_run_once test_v2_automation_operations test_preview_retirement \
-  test_automation_definition_execution test_automation_unattended_grant \
-  test_automation_authorized_execution_matrix                       # Ran 121, OK
+  test_scope_continuation test_automation_definition_execution \
+  test_automation_authorized_execution_matrix test_manual_operations_contract \
+  test_media_discovery                                               # Ran 316, OK
 PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_organize \
   test_v2_rules_workspace_previews test_task_persistence test_automation_admission \
-  test_automation_job_fencing test_manual_operations_contract \
-  test_media_discovery                                              # Ran 213, OK
-cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx \
-  src/routes/router.test.tsx src/features/operations/OrganizeRouter.test.tsx \
+  test_automation_job_fencing                                        # Ran 97, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_api \
+  test_processing_worker_readiness test_automation_task_definition \
+  test_v2_automation_lifecycle test_automation_definition_occurrence \
+  test_automation_definition_publication                             # Ran 150, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_sqlite_backup \
+  test_sqlite_restore test_manual_preview                            # Ran 17, OK
+cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx  # 5 tests OK
+cd web && npm run test -- run src/routes/router.test.tsx \
   src/features/operations/OrganizeCreationPage.test.tsx \
   src/features/operations/OperationsInventory.test.tsx \
-  src/features/operations/TaskItemRecoveryPanel.test.tsx            # 6 files, 76 tests OK
-cd web && npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx \
+  src/features/operations/TaskItemRecoveryPanel.test.tsx \
+  src/features/operations/OrganizeDiscoveryPage.test.tsx             # 5 files, 51 tests OK
+cd web && npm run test -- run src/entities/operations/run-once.test.ts \
+  src/features/rules/RulesObjectTestPanel.test.tsx \
   src/features/operations/AutomationRouter.test.tsx \
-  src/features/operations/AutomationLifecyclePage.test.tsx \
-  src/entities/operations/run-once.test.ts                          # 4 files, 52 tests OK
-cd web && npx eslint src/features/operations/AutomationRunOncePage.test.tsx \
-  src/features/operations/AutomationRunOncePage.tsx                 # clean
-cd web && npx prettier --check src/features/operations/AutomationRunOncePage.test.tsx \
-  src/features/operations/AutomationRunOncePage.tsx                 # clean
+  src/features/operations/OrganizeRouter.test.tsx                    # 4 files, 60 tests OK
+cd web && npx eslint <4 changed web files>                           # clean
+cd web && npx prettier --check <4 changed web files>                 # clean
 cd web && npm run typecheck                                          # OK
 ```
+
+失败先于修正复现：父候选 `cd92a85f` 上（a）B 的 stderr 探针出现合成 secret 与原始
+traceback，本候选 stderr 为空且无标记；（b）B 的 inline-analysis 探针 finalize POST 在
+Provider 在途时被阻塞且 `phase=frozen`，本候选同一场景（真实 API 装配、合成 Provider
+Event 暂缓）finalize 在 Provider 在途时返回 201 `phase=analyzing`、`previewId=null`，
+Provider 释放后同一 Worker 链接精确计划。两个探针均经真实生产入口构造，见下。
+
+### 独立探针证据（真实入口，非源码检索）
+
+`.git/validation-evidence/developer/task45.6-fix-durable-analysis-and-log-redaction/`
+含 `verify_fixes.py/.log`：15/15 检查通过。
+
+- 日志脱敏（真实 `MediaFlowApi` WSGI 入口，POST /api/v1/jobs，损坏的审计依赖，
+  合成 `token=secret`）：500、零 Job 准入、JSON 无 secret、**stderr 为空**
+  （无原始异常、无 `INTERNAL ERROR`、无 `Traceback`）。
+- 耐久共享分析（真实 Run once 旅程 + 合成 Provider Event 暂缓）：admission 202 即时；
+  有界遍历完成；**finalize POST 在 Provider 在途时返回 201 `phase=analyzing`、
+  `previewId/analysisId=null`**；持久记录为 `ANALYZING` 且无 linked plan；
+  `manual_previews` 为 0 行；来源/目标 bytes 零变化；grant 表为 0 行；Provider 释放后
+  同一 Worker `claim_and_run` 在同一 run 上链接精确计划；普通 GET 解析同一 `previewId`；
+  SQLite 重开后经 durable intent 仍读到同一份零变更计划。
 
 ### 未执行 / 剩余风险（交 B）
 
-- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
-  release-security 属 B，本轮未执行。
-- 未改 schema/迁移；`_durable_plan_id` 为纯只读查询，历史运行库不受影响。
-- 授权前分析校验（`latest_frozen_definition_run_once`）的 503 fail-closed 行为沿用上轮结论。
-- 共享分析校验依赖 `discovery.intent_id`→`preview_service.latest_readonly`；若某适配
-  服务不提供 `latest_readonly`，Run once 读退化为“无计划身份”（动作 path 为 null），
-  不会伪造计划。
-- 未做冻结 Slice43 的页面/指标/设置重设计；本轮只恢复既有 Run once 同页持久关联。
+- 全量 Python/Web/E2E、production assets、逐 spec 原生浏览器、wheel/安装消费者/Docker/
+  常驻 Worker/restart/release-security 属 B，本轮未执行。
+- Run once 分析期间的暂停/恢复沿既有 discovery 协作控制（ANALYZING 可 pause/cancel，
+  Worker 在安全边界确认）；自动恢复路径与准备旅程共用同一 `_analyze`，语义未改。
+- `UnattendedExecutionGrantService` 与 `latest_frozen_definition_run_once` 未改动；
+  分析进行中（非 terminal）的 run 不会被授权前分析解析到，grant fail-closed。
+- Web 计划恢复依赖轮询（分析中 2s）；`OrganizePlanConfirmation` 仍按精确计划只读渲染，
+  URL plan 提示不覆盖更新的持久计划。
+- `AutomationRunOnceService` 构造签名变更（移除 `intent_service`）影响仅限本仓内三处
+  装配/测试构造，已同步更新。
 
 本机稳定证据（未声称外部可访问）：
-`.git/validation-evidence/da5e80107aae7fe7b93d231ebe8656e53a4ce923/task45.6/developer/`
-含 `verify_positive.py/.log`（真实 API 准入202→Worker→finalize201→同 URL GET200 同一
-previewId 与 action path、零二次 finalize/分析、source/target mutations 为空、SQLite
-重开后同一份计划；同一探针在 `bb0b1f3` 上按 B 报告断言失败）、`web-verify.log` 与
-`web-parent-failure.log`（新 Web 重载回归在本候选 4/4 通过，在父候选按同一断言失败）。
+`.git/validation-evidence/developer/task45.6-fix-durable-analysis-and-log-redaction/`。
 
 不自判 PASS，不关闭 Slice，不规划下一 Task。
 
-### 上一轮记录（授权前分析阻塞，已被 B 核实修正）
+### 上一轮记录
 
-#### 受影响检查（Developer 实际结果，仓库根除注明外）
-
-```bash
-python3 scripts/check_governance.py                                  # PASS
-.venv/bin/ruff check mediaflow tests                                 # All checks passed
-.venv/bin/ruff format --check <8 changed py>                         # already formatted
-.venv/bin/python -m compileall -q mediaflow tests scripts            # OK
-git diff --check                                                     # clean
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
-  test_scan_retirement test_file_index_retirement test_automation_unattended_grant \
-  test_v2_automation_operations test_automation_run_once \
-  test_automation_definition_execution test_automation_authorized_execution_matrix  # Ran 127, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
-  test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize \
-  test_organize_preparation test_automation_admission test_automation_job_fencing \
-  test_manual_operations_contract test_configuration_organize \
-  test_v2_rules_workspace_previews test_task_persistence              # Ran 218, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation \
-  test_scope_continuation test_task_center_recovery_lineage \
-  test_metadata_correction_continuation test_v2_automation_lifecycle \
-  test_automation_definition_occurrence test_v2_automation_run_once   # Ran 247, OK
-cd web && npm run test -- run src/features/operations/AutomationRouter.test.tsx \
-  src/routes/router.test.tsx src/features/operations/AutomationLifecyclePage.test.tsx  # 3 files, 31 tests OK
-cd web && npm run typecheck                                          # OK
-```
-
-本机稳定证据（未声称外部可访问）：
-`.git/validation-evidence/task45.6-fix-preflight/verify_positive.py` 与 `verify_positive.log`，
-用真实 `_journey` 证明：无分析 grant 409（`unattended_execution_analysis_required`，grant/audit=0）；
-真实 Run once 分析后 eligible=true、grant 201、grant/audit=1、`manual_previews>=1`，且来源
-bytes 不变、目标为空、source/target mutations 均为空。
-
-#### 未执行 / 剩余风险（当时交 B）
-
-- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
-  release-security 属 B，当时未执行。
-- 未改 schema/迁移；`latest_frozen_definition_run_once` 为纯只读查询，历史运行库不受影响。
-- 共享分析校验依赖 `discovery.intent_id`→`preview_service.latest_readonly`；若某适配仓储
-  不提供 `latest_frozen_definition_run_once`，授权前门返回 503（fail-closed）而非放行。
-- Web 未改：`AutomationDetailPage` 已按 `grantEligibility.eligible` 渲染说明/隐藏授权按钮，
-  不 eligible 时不显示确认框；当时未新增 Web 分析发起入口（Run once 页面既有的共享分析即
-  授权前分析来源），未做冻结 43 的页面重设计。
-
+更早各轮（授权前分析、同URL固定计划、shared-analysis grant fixture）的
+报告与证据边界保留于 Git（`4e23a53:TASK.md` 及更早）；本机稳定证据保留在
+`.git/validation-evidence/` 下相应目录。
 
 ## B Review Result
 
