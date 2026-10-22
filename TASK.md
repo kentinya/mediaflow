@@ -421,8 +421,8 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Candidate Head: 764291d75cac90cb54fb857c94f23c4101bc2bdb
-       (implementation; the report commit above HEAD is documentation only)
-Reviewed range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..HEAD
+       (implementation checkpoint; the commits above it are this report only)
+Handoff Head: 32d88f521aaf5cb770ce0d3dd2bbd47d4113826e
 Status: READY FOR B REVIEW
 Round: sixth round; fixes B's FIX REQUIRED on dfc59a4c65f05941cc30760b179f6546583b2d25
        (pause/cancel issued while the analysis Provider call was in flight did
