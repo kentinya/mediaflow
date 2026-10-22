@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: B REVIEW — PAUSE/CANCEL PLAN-PUBLICATION FENCE; B RETAINS T4 GATES
+Next Action: SAME TASK — ATOMIC CONFIRMABLE PLAN PUBLICATION; B RETAINS T4 GATES
 ```
 
 ## Goal
@@ -703,6 +703,77 @@ Provider 释放后同一 Worker 链接精确计划。两个探针均经真实生
 ## B Review Result
 
 ### Current candidate review — 2026-10-22
+
+```text
+Reviewed handoff: 98c65b4e6c3db275150fd87497529f68b5f82a25
+Executable candidate: 764291d75cac90cb54fb857c94f23c4101bc2bdb
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..98c65b4e6c3db275150fd87497529f68b5f82a25
+Decision: FIX REQUIRED
+Stage: proven Task blocker; complete Task-range/T4 acceptance remains pending
+Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; no new Task or Slice closure
+```
+
+Governance PASS；`764291d..98c65b4` 仅 `TASK.md`，实现输入与交接声明匹配；
+Task Base..handoff 的 `git diff --check` PASS。main 的既有图片删除、日志、截图、压缩包和
+`.DS_Store` 均保留。本轮没有改实现、Slice、Roadmap 或 Progress。
+
+**已确认的修正：**B 执行现有 `RunOnceJourneyTests` 的 pause/cancel 两条真实 API 回归，
+`Ran 2 tests in 0.183s; OK`。Provider 返回并完成清理后，原竞态的暂停可继续、取消终态
+及 Run once 投影保护生效；该结果不等于所有入口均安全。
+
+**剩余 P1 — 计划先成为 current，运行关联 fence 尚未提交即可从整理意图确认。**
+
+B 沿现有 Run once 页面分析中提供的“打开整理意图”入口复核；使用隔离 SQLite/Local
+Storage、合成 Provider 和生产执行服务/Worker readiness 装配。仅以线程 Event 暂停
+`publish_media_discovery_plan` 的调用时序，放大真实存在的两个提交之间的窗口；未伪造
+数据库状态、计划、路由或 HTTP 返回。实际结果：
+
+1. 真实定义 Run once → 发现 → finalize 返回 analyzing；打开其已关联 intent，GET 200、
+   `latestPlan=null`。Provider 在途时通过现有 `/cancel` 操作取消，返回200 cancelled。
+2. 释放 Provider，在普通计划已保存、运行关联提交前读取同一 intent：GET 200，
+   `latestPlan.current=true/status=previewed`。按它返回的计划 ID 读取摘要，
+   `executionCandidateItemIds` 非空且 `actions.execute.available=true`。
+3. 使用该动作返回的现有 `/execute` 路径和正常确认字段，POST 返回 **202 admitted**，
+   创建1个执行 Task；释放关联提交后，分析 Worker 返回 cancelled，Run once 仍为 cancelled，
+   但这次执行准入已经发生。探针未运行媒体执行 Worker，来源/目标 mutation 调用均为0；
+   不声称自动执行、真实媒体损失或实际复现进程崩溃。
+
+`_analyze` 调用 `ManualOrganizePreviewService.create`，其 `_persist_create` 已先把完整计划
+提交为 current；新增仓储 CAS 仅原子更新 discovery 的链接/状态/claim。意图的 latest-plan
+投影和普通计划确认准入不要求该份计划已通过 discovery 发布 fence。事后
+`discard_uncommitted`（且清理异常被吞）不能阻止窗口内已经发生的确认准入。只保护
+Run once 页不能满足同一计划在支持入口下的一致性，仍属当前 Task 的计划发布/控制义务。
+
+**同一 Task 修正方案：**
+
+1. 分离零变更计划计算与可确认计划提交；复用已有分析服务（已有 `persist=False` 可供评估），
+   在 Provider/Storage 调用完成后，以有效版本/claim/control fence 将完整计划可见性与运行
+   关联一并提交，或采用现有持久模型中等价的强制不可确认保护。不能先公开 current 计划，
+   再靠补偿退役、页面隐藏或最佳努力清理来保障安全；不在网络等待期间持有长事务。
+2. 核对 intent latest-plan、计划 detail 与确认/原子准入共享权威：未获该次运行发布许可的
+   计划不能作为可确认 current 摘要，也不能因已知 ID/已打开页面而获得执行许可或 Task。
+   pause/cancel/successor 先胜出时保持其持久结果；继续后同一 scope/pin 仍能正常出计划。
+3. 在现有 Run once API/Worker 测试中补两个实际边界的并发回归：控制在 Provider 在途时
+   先胜出，返回后计划提交与关联之间仍不得从现有 intent/detail/execute 入口确认；正常
+   分析的完整计划发布后可明确确认一次。覆盖 pause、cancel 和旧 owner 不影响 successor；
+   无直接 upsert 人造状态，不新增队列、Preview 产品或通用开发过程框架。
+4. Developer 跑新增/修改及直接受影响的 `test_media_discovery`、`test_automation_run_once`、
+   `test_v2_automation_run_once`、`test_manual_organize_preview`、
+   `test_manual_organize_execution`、`test_v2_manual_organize` 对应用例/模块和 changed-file
+   检查；若 UI/DTO 有变，仅补对应 Web 用例及 typecheck。交固定实现 SHA 和实际结果，
+   不承担全量 Python/Web/E2E 或发布矩阵。
+
+B 保留 §Required Tests 指定的全部门禁，下一候选先独立复现此窗口，再完成完整
+Task Base..Head 审查和适用 T4。已证明 P1，当前不启动昂贵全量门禁；旧全量结果不冒充
+本候选通过，报告后继只有执行输入相同才可复用。全部 RO 尚未满足，无 Closure Packet。
+
+本机稳定证据（非远程链接）：
+`.git/validation-evidence/98c65b4e6c3db275150fd87497529f68b5f82a25/task45.6/b-review/`
+含 `control-tests.log`、`publication-window.py/.log`。本轮测试/质量检查累计不足5秒，
+低于本轮实际工作时间50%；未等待凑比例。
+
+### Historical review — prior candidate `dfc59a4`
 
 ```text
 Reviewed candidate: dfc59a4c65f05941cc30760b179f6546583b2d25
