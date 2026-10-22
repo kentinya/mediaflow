@@ -439,6 +439,159 @@ class RunOnceApiTests(unittest.TestCase):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def test_pause_request_during_analysis_is_a_continuable_stop_without_a_plan(
+        self,
+    ) -> None:
+        """B's pause race over the real V2 API, without a blocking Provider.
+
+        A pause that arrives while the frozen manifest's analysis is still
+        queued is a real operator state: the run reports the pause request, no
+        plan identity or plan route is published, and the same run continues
+        through the existing Worker after the acknowledgement.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen, discovery_id = self._frozen_analysis(value)
+            status, paused = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{discovery_id}/pause",
+                {"expectedVersion": frozen["version"]},
+            )
+            self.assertEqual(200, status, paused)
+            self.assertEqual("pausing", paused["phase"])
+            self.assertIsNone(paused["previewId"])
+            self.assertFalse(paused["actions"]["preview"]["available"])
+            self.assertFalse(paused["actions"]["resume"]["available"])
+            self.assertFalse(paused["actions"]["pause"]["available"])
+            # The Worker acknowledges the pause at its safe boundary and the
+            # same run becomes continuable with no plan published.
+            acknowledged_run = value.discovery.claim_and_run(
+                worker_id="pause-worker", claim_token="pause-token"
+            )
+            self.assertIsNotNone(acknowledged_run)
+            self.assertEqual(DiscoveryStatus.PAUSED, acknowledged_run.status)
+            self.assertIsNone(acknowledged_run.preview_id)
+            status, acknowledged = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{discovery_id}",
+            )
+            self.assertEqual(200, status, acknowledged)
+            self.assertEqual("paused", acknowledged["phase"])
+            self.assertEqual("paused", acknowledged["status"])
+            self.assertIsNone(acknowledged["previewId"])
+            self.assertFalse(acknowledged["actions"]["preview"]["available"])
+            self.assertTrue(acknowledged["actions"]["resume"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_manual_previews(frozen["intentId"]))
+            # Continue resumes the same frozen analysis; the exact plan appears.
+            status, resumed = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{discovery_id}/resume",
+                {"expectedVersion": acknowledged["version"]},
+            )
+            self.assertEqual(200, status, resumed)
+            self.assertEqual("analyzing", resumed["phase"])
+            analyzed = value.discovery.claim_and_run(
+                worker_id="resume-worker", claim_token="resume-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertIsNotNone(analyzed.preview_id)
+            status, linked = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{discovery_id}",
+            )
+            self.assertEqual(200, status, linked)
+            self.assertEqual("frozen", linked["phase"])
+            self.assertEqual(analyzed.preview_id, linked["previewId"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_cancel_during_analysis_is_terminal_and_never_exposes_the_plan(self) -> None:
+        """B's cancel race over the real V2 API: no plan, no recovery entry."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen, discovery_id = self._frozen_analysis(value)
+            status, cancelled = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{discovery_id}/cancel",
+                {"expectedVersion": frozen["version"]},
+            )
+            self.assertEqual(200, status, cancelled)
+            self.assertEqual("cancelled", cancelled["status"])
+            self.assertEqual("cancelled", cancelled["phase"])
+            self.assertIsNone(cancelled["previewId"])
+            self.assertFalse(cancelled["actions"]["preview"]["available"])
+            # A late Worker pass cannot publish or link a plan for a cancelled
+            # run, and the terminal state is final.
+            late = value.discovery.claim_and_run(worker_id="late-worker", claim_token="late-token")
+            self.assertIsNone(late)
+            status, readback = self.request(
+                value,
+                "GET",
+                f"/api/v1/operations/automation/run-once/{discovery_id}",
+            )
+            self.assertEqual(200, status, readback)
+            self.assertEqual("cancelled", readback["phase"])
+            self.assertIsNone(readback["previewId"])
+            self.assertFalse(readback["actions"]["preview"]["available"])
+            self.assertFalse(readback["actions"]["resume"]["available"])
+            self.assertFalse(readback["actions"]["pause"]["available"])
+            self.assertEqual((), value.repository.list_manual_previews(frozen["intentId"]))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_paused_and_cancelled_runs_stay_terminal_after_a_reopen(self) -> None:
+        """The control outcome, not the intent's latest plan, survives a reopen."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen, discovery_id = self._frozen_analysis(value)
+            status, cancelled = self.request(
+                value,
+                "POST",
+                f"/api/v1/operations/automation/run-once/{discovery_id}/cancel",
+                {"expectedVersion": frozen["version"]},
+            )
+            self.assertEqual(200, status, cancelled)
+            intent_id = frozen["intentId"]
+        with SQLiteTaskRepository(str(self.root / "runtime.sqlite3")) as reopened:
+            durable = reopened.get_media_discovery(discovery_id)
+            self.assertEqual(DiscoveryStatus.CANCELLED, durable.status)
+            self.assertIsNone(durable.preview_id)
+            self.assertEqual((), reopened.list_manual_previews(intent_id))
+
+    def _frozen_analysis(self, value):
+        """Admit, discover and freeze one Run once; the Worker has not analyzed."""
+
+        status, body = self.request(
+            value,
+            "POST",
+            "/api/v1/operations/automation/task-definitions/nightly/run-once",
+            {},
+        )
+        self.assertEqual(202, status, body)
+        self.drive(value)
+        current = value.run_once.get(body["discoveryId"])
+        status, frozen = self.request(
+            value,
+            "POST",
+            f"/api/v1/operations/automation/run-once/{body['discoveryId']}/finalize",
+            {"expectedVersion": current.version},
+        )
+        self.assertEqual(201, status, frozen)
+        self.assertEqual("analyzing", frozen["phase"])
+        self.assertIsNotNone(frozen["intentId"])
+        return frozen, body["discoveryId"]
+
     def test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen(self) -> None:
         """The exact plan is re-read from the durable intent association.
 

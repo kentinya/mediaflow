@@ -1785,6 +1785,28 @@ class MediaDiscoveryService:
         if not discovery.pause_requested:
             return discovery
         now = self._clock()
+        if discovery.frozen and discovery.intent_id is not None:
+            # The acknowledged pause interrupted the frozen manifest's analysis.
+            # Continuing therefore re-enters that same durable analysis stage:
+            # the scope is already frozen and must not be walked again, and the
+            # still-unlinked plan is produced by the same resident Worker.
+            resumed = replace(
+                discovery,
+                status=DiscoveryStatus.ANALYZING,
+                version=discovery.version + 1,
+                pause_requested=False,
+                updated_at=now,
+                error=None,
+                progress=replace(
+                    discovery.progress,
+                    phase="analyzing",
+                    message=(
+                        "resumed by the operator; the resident Worker continues the complete "
+                        "zero-mutation analysis of the same frozen scope"
+                    ),
+                ),
+            )
+            return self._persist(resumed, expected_version=expected_version)
         updated = replace(
             discovery,
             status=DiscoveryStatus.QUEUED,
@@ -2146,7 +2168,16 @@ class MediaDiscoveryService:
             # complete production analysis chain through the existing
             # zero-mutation Preview authority and links the exact read-only plan
             # summary.  No execution authority is created.
-            return self._analyze(discovery, claim_token)
+            try:
+                return self._analyze(discovery, claim_token)
+            except (DiscoveryConflict, DiscoveryOwnershipLost) as error:
+                # The analysis is a publication like any other bounded step: an
+                # operator control (pause/cancel/resume) or a successor Worker
+                # can win the record while the Provider call is in flight.  A
+                # refused analysis is settled by the *fresh* durable state at
+                # this safe boundary instead of escaping the Worker loop (which
+                # would strand an accepted pause) or writing over ownership.
+                return self._settle_after_conflict(discovery_id, claim_token, error)
         try:
             runtime = self._load_runtime(discovery.snapshot_id, discovery.snapshot_digest)
             library = self._runtime_library(runtime, discovery.resource_library_id)
@@ -3224,6 +3255,14 @@ class MediaDiscoveryService:
         preview_id = getattr(preview, "preview_id", None)
         if not isinstance(preview_id, str) or not preview_id:
             return self._fail(discovery, claim_token, "preview_unavailable")
+        # The plan was written against the frozen intent while the Provider call
+        # was in flight, so the run record may since have been paused, resumed,
+        # cancelled or taken over.  The *publication* of that plan is therefore
+        # one fenced commit: the settled projection, the exact plan link and the
+        # claim release are written under the current claim and version, so a
+        # control that won the race keeps deciding the lifecycle and an accepted
+        # pause/cancel can never be followed by a freshly confirmable plan.
+        # Nothing here waits on Storage or a Provider inside the transaction.
         now = self._clock()
         complete = (
             discovery.progress.incomplete_reason is DiscoveryIncompleteReason.NONE
@@ -3236,6 +3275,9 @@ class MediaDiscoveryService:
             preview_id=preview_id,
             updated_at=now,
             error=None,
+            claim_worker_id=None,
+            claim_token=None,
+            claim_expires_at=None,
             progress=replace(
                 discovery.progress,
                 phase="prepared",
@@ -3245,11 +3287,65 @@ class MediaDiscoveryService:
                 ),
             ),
         )
+        try:
+            return self._publish_prepared_plan(
+                updated, expected_version=discovery.version, claim_token=claim_token
+            )
+        except (DiscoveryConflict, DiscoveryOwnershipLost):
+            # The plan this pass analyzed is unpublished work of a control that
+            # already lost: retire it before reporting the refusal so the plan is
+            # neither readable as the intent's current summary nor enterable for
+            # a paused or cancelled run.  It was never linked or confirmed.
+            self._discard_uncommitted_plan(discovery.intent_id, preview_id)
+            raise
+
+    def _publish_prepared_plan(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        claim_token: str,
+    ) -> MediaDiscovery:
+        """Publish one analyzed plan and release its claim as one fenced write.
+
+        The repository boundary is authoritative: status, the exact plan link
+        and the claim release commit together, guarded by the version CAS *and*
+        the exact live claim.  A control or a successor that won either fence
+        leaves the prepared projection entirely unpublished.
+        """
+
+        publisher = getattr(self._repository, "publish_media_discovery_plan", None)
+        if callable(publisher):
+            return publisher(
+                discovery,
+                expected_version=expected_version,
+                claim_token=claim_token,
+            )
         persisted = self._persist(
-            updated, expected_version=discovery.version, claim_token=claim_token
+            discovery, expected_version=expected_version, claim_token=claim_token
         )
         self._release_claim(persisted.discovery_id, claim_token)
         return persisted
+
+    def _discard_uncommitted_plan(self, intent_id: str | None, preview_id: str) -> None:
+        """Retire one analyzed plan whose run lost the publication race.
+
+        The plan was produced by this Worker under the run's pinned scope and
+        configuration but never published, linked to the run or confirmed.  It
+        is marked stale (not deleted) so it stays truthful, non-current history
+        and can never be selected by the plan admission.
+        """
+
+        if not intent_id:
+            return
+        service = self._preview_service
+        discarder = getattr(service, "discard_uncommitted", None)
+        if not callable(discarder):
+            return
+        try:
+            discarder(intent_id, preview_id)
+        except Exception:  # noqa: BLE001 - retiring a never-published plan is best effort
+            return
 
     def _remaining_intent_item_ids(self, intent) -> tuple[str, ...]:
         """The intent items a fresh preparation analysis may still review.

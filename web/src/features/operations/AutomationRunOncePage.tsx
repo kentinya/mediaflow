@@ -45,11 +45,14 @@ import { OrganizePlanConfirmation } from "./OrganizePlanConfirmation";
 const PHASE_LABELS: Readonly<Record<string, string>> = {
   discovering: "正在发现来源",
   analyzing: "正在分析，等待计划摘要",
+  pausing: "正在确认暂停",
+  paused: "分析已暂停",
   ready: "来源清单已发现，等待冻结",
   frozen: "来源清单已冻结",
   refused: "发现未完整，已拒绝执行",
   no_work: "没有可整理的来源",
   failed: "发现失败",
+  cancelled: "本次运行已取消",
 };
 
 const STATUS_LABELS: Readonly<Record<string, string>> = {
@@ -229,14 +232,21 @@ export function AutomationRunOncePage() {
           // a stale URL hint never overrides a newer durable plan.  The plan
           // itself is re-read from its own authenticated route and checked
           // against this intent before any summary or control renders.
-          const durablePlanId = model.previewId;
+          // Only the backend-advertised plan action can expose a confirmable
+          // summary: a paused, pause-pending or cancelled run publishes no plan
+          // action, so neither a durable identity nor a stale URL hint may
+          // resurrect one.  A reload, reconnect or restart still restores the
+          // same exact plan from the durable run read.
+          const planActionAvailable = model.actions.preview.available;
+          const durablePlanId = planActionAvailable ? model.previewId : null;
           const urlPlanId = readPlanContext(searchParams);
-          const planPreviewId =
-            admittedPlanPreviewId ??
-            (urlPlanId !== null &&
-            (durablePlanId === null || durablePlanId === urlPlanId)
-              ? urlPlanId
-              : durablePlanId);
+          const planPreviewId = planActionAvailable
+            ? (admittedPlanPreviewId ??
+              (urlPlanId !== null &&
+              (durablePlanId === null || durablePlanId === urlPlanId)
+                ? urlPlanId
+                : durablePlanId))
+            : null;
           return (
             <div className="mf-dashboard-body">
               <StatusBanner
@@ -258,6 +268,24 @@ export function AutomationRunOncePage() {
                     完成前不会出现可执行范围，也不会产生任何执行授权；完成后摘要会出现在本页。
                   </p>
                 ) : null}
+                {model.phase === "pausing" ? (
+                  <p role="status">
+                    暂停请求已耐久保存，常驻处理 Worker
+                    会在安全边界确认并释放本次运行的分析；确认前不会发布可执行计划，也不会产生执行授权。
+                  </p>
+                ) : null}
+                {model.phase === "paused" ? (
+                  <p role="status">
+                    本次运行的分析已在安全边界暂停，冻结清单、固定配置与已记录的发现保持不变。
+                    未发布可执行计划；使用“继续分析”在同一运行上恢复，仍不会产生执行授权。
+                  </p>
+                ) : null}
+                {model.phase === "cancelled" ? (
+                  <p role="status">
+                    本次运行已取消并保持终态；迟到的分析结果会被丢弃，不会发布或关联可执行计划，
+                    也没有产生任何执行授权。如需同一范围请从已发布定义重新发起运行一次。
+                  </p>
+                ) : null}
                 {model.phase === "refused" ? (
                   <p role="status">
                     发现未完整遍历定义范围
@@ -268,7 +296,9 @@ export function AutomationRunOncePage() {
                     请缩小定义的来源范围或修正不可读的来源，重新发布后再发起运行一次。
                   </p>
                 ) : null}
-                {model.incomplete && model.phase !== "refused" ? (
+                {model.incomplete &&
+                model.phase !== "refused" &&
+                model.phase !== "cancelled" ? (
                   <p role="status">
                     发现未完整遍历定义范围，已知来源只能作为明确复核的子集，
                     不会自动成为可执行的前 N 项。
@@ -346,6 +376,11 @@ export function AutomationRunOncePage() {
                     继续分析
                   </Button>
                 ) : null}
+                {model.phase === "pausing" ? (
+                  <Button variant="secondary" disabled>
+                    等待暂停确认
+                  </Button>
+                ) : null}
                 {model.actions.cancel.available ? (
                   <Button
                     variant="secondary"
@@ -363,9 +398,10 @@ export function AutomationRunOncePage() {
                     冻结清单并生成计划摘要
                   </Button>
                 ) : null}
-                {model.actions.preview.available &&
+                {planActionAvailable &&
                 model.intentId !== null &&
-                planPreviewId === null ? (
+                planPreviewId === null &&
+                model.phase === "analyzing" ? (
                   <Link
                     to="/operations/organize/intent/$intentId"
                     params={{ intentId: model.intentId }}

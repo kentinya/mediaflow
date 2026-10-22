@@ -9818,6 +9818,57 @@ class SQLiteTaskRepository:
                 raise
         return cursor.rowcount
 
+    def discard_manual_preview(self, preview_id: str, reason: str, now: datetime) -> int:
+        """Retire exactly one never-published Preview, and nothing else.
+
+        A Worker may analyze a frozen manifest and then lose the plan
+        publication race to an operator pause/cancel or a successor claim.  The
+        analyzed plan was never linked to its run and never entered a
+        confirmation, so it must stop being the intent's current summary.  The
+        update is scoped to this exact ``preview_id`` and only to rows that are
+        still ``current``: a newer plan (for example a successor's link, or a
+        continued run's re-analysis) is never touched.  Everything stays durable
+        as stale history; nothing is deleted.
+        """
+
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            raise ValueError("manual Preview ID is required")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 512:
+            raise ValueError("manual Preview discard reason is invalid")
+        if now.tzinfo is None:
+            raise ValueError("manual Preview discard timestamp must include timezone")
+        action = "request a fresh Preview for the same scope"
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    "UPDATE manual_preview_items SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE preview_id=? AND current=1",
+                    (
+                        ManualPreviewItemStatus.STALE.value,
+                        reason,
+                        action,
+                        now.isoformat(),
+                        preview_id,
+                    ),
+                )
+                self._connection.execute(
+                    "UPDATE manual_previews SET status=?, error=?, next_action=?, "
+                    "current=0, updated_at=? WHERE preview_id=? AND current=1",
+                    (
+                        ManualPreviewStatus.STALE.value,
+                        reason,
+                        action,
+                        now.isoformat(),
+                        preview_id,
+                    ),
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return cursor.rowcount
+
     # Exact manual execution persistence deliberately reuses the existing
     # tasks/task_items/task_results tables.  These small companion tables hold
     # only the immutable Preview binding and the operation evidence needed to
@@ -11553,6 +11604,71 @@ class SQLiteTaskRepository:
                             ),
                         ),
                     )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return self.get_media_discovery(discovery.discovery_id)
+
+    def publish_media_discovery_plan(
+        self,
+        discovery: MediaDiscovery,
+        *,
+        expected_version: int,
+        claim_token: str,
+    ) -> MediaDiscovery:
+        """Publish one analyzed plan and release its claim as one fenced write.
+
+        The plan identity, the settled lifecycle, the bounded progress and the
+        claim release commit as a single statement guarded by *both* the version
+        CAS and the exact live claim.  An operator control or a successor Worker
+        that won either fence therefore leaves the analyzed plan link entirely
+        unpublished, so a paused, resumed or cancelled run can never be handed a
+        freshly confirmable exact plan.  The Provider/Storage analysis already
+        happened before this call: nothing slow runs inside this transaction.
+
+        The operator-owned ``pause_requested``/``cancel_requested`` flags are not
+        written here, exactly like the ordinary Worker publication path, so an
+        accepted control can never be discarded by the analyzing Worker.
+        """
+
+        if not isinstance(discovery, MediaDiscovery):
+            raise ValueError("media discovery projection is required")
+        if (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("media discovery expected version is invalid")
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("media discovery claim token is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._connection.execute(
+                    "UPDATE media_discoveries SET status=?, version=?, progress_json=?, "
+                    "sources_json=?, attempts=?, error=?, updated_at=?, preview_id=?, "
+                    "claim_worker_id=NULL, claim_token=NULL, claim_expires_at=NULL "
+                    "WHERE discovery_id=? AND version=? AND claim_token=?",
+                    (
+                        discovery.status.value,
+                        discovery.version,
+                        json.dumps(
+                            discovery.progress.document(), ensure_ascii=False, sort_keys=True
+                        ),
+                        json.dumps(list(discovery.sources), ensure_ascii=False, sort_keys=True),
+                        discovery.attempts,
+                        discovery.error,
+                        discovery.updated_at.isoformat(),
+                        discovery.preview_id,
+                        discovery.discovery_id,
+                        expected_version,
+                        claim_token,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = self._load_media_discovery_locked(discovery.discovery_id)
+                    self._raise_discovery_write_conflict(current, discovery, claim_token)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()

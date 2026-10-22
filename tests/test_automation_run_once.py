@@ -664,6 +664,302 @@ class RunOnceJourneyTests(_RunOnceFixture):
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
 
+    def _blocked_provider_analysis(self, value):
+        """Return a Provider patch whose search blocks until the event is set.
+
+        The real production analysis path (RecognitionTypePolicy -> Metadata
+        Provider -> Naming/Classification/Planner) is used; only the outbound
+        Provider call is paused, so the Worker really is mid-analysis when the
+        operator control arrives.
+        """
+
+        import threading
+        from unittest.mock import patch
+
+        provider = next(iter(value.previews._providers._providers.values()))
+        release = threading.Event()
+        entered = threading.Event()
+
+        def blocked_search(inner_self, query, policy=None, **kwargs):
+            inner_self.calls += 1
+            entered.set()
+            release.wait(timeout=30)
+            return inner_self._candidates
+
+        return (
+            provider,
+            release,
+            entered,
+            patch.object(type(provider), "search_movie", blocked_search),
+        )
+
+    def _advance_worker_in_thread(self, value, results, *, worker="analysis-worker", token="t-1"):
+        import threading
+
+        def run():
+            try:
+                results.append(value.discovery.claim_and_run(worker_id=worker, claim_token=token))
+            except Exception as error:  # noqa: BLE001 - surfaced by the assertions below
+                results.append(error)
+
+        thread = threading.Thread(target=run, name="run-once-analysis")
+        thread.start()
+        return thread
+
+    def _frozen_analyzing_run(self, value):
+        """Admit, discover and freeze one Run once, leaving it in ANALYSIS."""
+
+        discovery = value.run_once.admit("nightly", actor="operator")
+        self.drive(value)
+        current = value.run_once.get(discovery.discovery_id)
+        frozen, _preview = value.run_once.finalize(
+            discovery.discovery_id,
+            actor="operator",
+            expected_version=current.version,
+        )
+        self.assertEqual(DiscoveryStatus.ANALYZING, frozen.status)
+        return frozen
+
+    def test_pause_during_analysis_withholds_the_plan_and_reaches_a_continuable_pause(
+        self,
+    ) -> None:
+        """B's pause race: the control wins, so no plan is ever published.
+
+        The operator pauses this real definition-bound Run once *through the
+        real API* while the resident Worker is blocked inside the synthetic
+        Provider.  Releasing the Provider must not hand the paused run a freshly
+        persisted plan: the Worker acknowledges the pause at its safe boundary,
+        the run becomes continuable, and no execution authority or media
+        mutation is created.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen = self._frozen_analyzing_run(value)
+            provider, release, entered, patch_search = self._blocked_provider_analysis(value)
+            results: list[object] = []
+            with patch_search:
+                thread = self._advance_worker_in_thread(value, results)
+                self._wait_for_provider_call(entered)
+                status, paused = self.request(
+                    value,
+                    self._control_path(frozen.discovery_id, "pause"),
+                    "POST",
+                    {"expectedVersion": frozen.version},
+                )
+                self.assertEqual(200, status, paused)
+                # While the pause is only requested the page reports that real
+                # transient stage and already stops advertising a plan.
+                self.assertEqual("pausing", paused["phase"])
+                self.assertIsNone(paused["previewId"])
+                self.assertTrue(paused["actions"]["pause"]["available"] is False)
+                self.assertFalse(paused["actions"]["resume"]["available"])
+                self.assertFalse(paused["actions"]["preview"]["available"])
+                # The pause request is a deliberate operator action; a second
+                # pause converges instead of re-writing the record.
+                status, paused = self.request(
+                    value,
+                    self._control_path(frozen.discovery_id, "pause"),
+                    "POST",
+                    {"expectedVersion": paused["version"]},
+                )
+                self.assertEqual(200, status, paused)
+            release.set()
+            thread.join(timeout=20)
+            self.assertFalse(thread.is_alive())
+            durable = value.repository.get_media_discovery(frozen.discovery_id)
+            # The Worker did *not* publish the analyzed plan it had already
+            # computed: the accepted pause won the race.
+            self.assertEqual(DiscoveryStatus.PAUSED, durable.status)
+            self.assertTrue(durable.pause_requested)
+            self.assertIsNone(durable.preview_id)
+            self.assertIsNone(
+                value.repository.media_discovery_claim(frozen.discovery_id)["claimToken"]
+            )
+            # ... and the unpublished plan is not readable as a current plan.
+            previews = value.repository.list_manual_previews(frozen.intent_id)
+            self.assertEqual(1, len(previews), previews)
+            self.assertFalse(previews[0].current)
+            self.assertEqual("stale", previews[0].status.value)
+            # The paused run is continuable and exposes no confirmable plan.
+            status, readback = self.request(
+                value,
+                f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
+            )
+            self.assertEqual(200, status, readback)
+            self.assertEqual("paused", readback["phase"])
+            self.assertEqual("paused", readback["status"])
+            self.assertIsNone(readback["previewId"])
+            self.assertFalse(readback["actions"]["preview"]["available"])
+            self.assertIsNone(readback["actions"]["preview"]["path"])
+            self.assertTrue(readback["actions"]["resume"]["available"])
+            self.assertFalse(readback["actions"]["pause"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
+            # Continuing the same run re-analyzes the same frozen scope and
+            # links exactly one current plan; the previous attempt stays stale.
+            status, resumed = self.request(
+                value,
+                self._control_path(frozen.discovery_id, "resume"),
+                "POST",
+                {"expectedVersion": readback["version"]},
+            )
+            self.assertEqual(200, status, resumed)
+            self.assertFalse(resumed["pauseRequested"]) if "pauseRequested" in resumed else None
+            analyzed = value.discovery.claim_and_run(
+                worker_id="resume-worker", claim_token="resume-token"
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
+            self.assertIsNotNone(analyzed.preview_id)
+            self.assertNotEqual(previews[0].preview_id, analyzed.preview_id)
+            status, linked = self.request(
+                value,
+                f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
+            )
+            self.assertEqual(200, status, linked)
+            self.assertEqual("frozen", linked["phase"])
+            self.assertEqual(analyzed.preview_id, linked["previewId"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_cancel_during_analysis_discards_the_late_plan_and_stays_terminal(self) -> None:
+        """B's cancel race: the accepted cancellation discards the late plan.
+
+        The operator cancels through the real API while the Worker is blocked in
+        the Provider.  The Worker exits on ownership loss, must not persist or
+        link its in-flight plan, and the cancelled run stays a terminal outcome
+        with no recovery or confirmation entry.
+        """
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen = self._frozen_analyzing_run(value)
+            provider, release, entered, patch_search = self._blocked_provider_analysis(value)
+            results: list[object] = []
+            with patch_search:
+                thread = self._advance_worker_in_thread(value, results)
+                self._wait_for_provider_call(entered)
+                status, cancelled = self.request(
+                    value,
+                    self._control_path(frozen.discovery_id, "cancel"),
+                    "POST",
+                    {"expectedVersion": frozen.version},
+                )
+                self.assertEqual(200, status, cancelled)
+                self.assertEqual("cancelled", cancelled["status"])
+                self.assertEqual("cancelled", cancelled["phase"])
+                self.assertIsNone(cancelled["previewId"])
+                self.assertFalse(cancelled["actions"]["preview"]["available"])
+                self.assertFalse(cancelled["actions"]["resume"]["available"])
+                self.assertFalse(cancelled["actions"]["cancel"]["available"])
+            release.set()
+            thread.join(timeout=20)
+            self.assertFalse(thread.is_alive())
+            durable = value.repository.get_media_discovery(frozen.discovery_id)
+            # The late analysis is discarded: the terminal cancellation wins.
+            self.assertEqual(DiscoveryStatus.CANCELLED, durable.status)
+            self.assertTrue(durable.cancel_requested)
+            self.assertIsNone(durable.preview_id)
+            previews = value.repository.list_manual_previews(frozen.intent_id)
+            self.assertEqual(1, len(previews), previews)
+            self.assertFalse(previews[0].current)
+            self.assertEqual("stale", previews[0].status.value)
+            # The cancelled run never re-exposes a confirmable plan, even though
+            # the linked intent would otherwise resolve a latest plan.
+            status, readback = self.request(
+                value,
+                f"/api/v1/operations/automation/run-once/{frozen.discovery_id}",
+            )
+            self.assertEqual(200, status, readback)
+            self.assertEqual("cancelled", readback["phase"])
+            self.assertEqual("cancelled", readback["status"])
+            self.assertIsNone(readback["previewId"])
+            self.assertFalse(readback["actions"]["preview"]["available"])
+            self.assertIsNone(readback["actions"]["preview"]["path"])
+            # Terminal: no control resurrects the run and no work is queued.
+            self.assertFalse(readback["actions"]["resume"]["available"])
+            self.assertFalse(readback["actions"]["cancel"]["available"])
+            self.assertFalse(readback["actions"]["pause"]["available"])
+            self.assertFalse(readback["actions"]["finalize"]["available"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertIsNone(value.repository.get_active_unattended_execution_grant("nightly"))
+
+    def test_pause_that_loses_a_handover_never_publishes_the_old_owners_plan(self) -> None:
+        """A stale owner only exits; the successor controls the plan publication."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey(source_scope="Movies") as value:
+            frozen = self._frozen_analyzing_run(value)
+            claim_token = "old-owner-token"
+            value.repository.claim_next_media_discovery(
+                self.clock.now - timedelta(seconds=1),
+                worker_id="old-owner",
+                claim_token=claim_token,
+                lease_seconds=1,
+            )
+            provider, release, entered, patch_search = self._blocked_provider_analysis(value)
+            results: list[object] = []
+            with patch_search:
+                thread = self._advance_worker_in_thread(
+                    value,
+                    results,
+                    worker="old-owner",
+                    token=claim_token,
+                )
+                self._wait_for_provider_call(entered)
+                # The lease lapses while the Provider call is in flight and a
+                # successor Worker takes the same run over.
+                self.clock.advance(700)
+                successor = value.repository.claim_next_media_discovery(
+                    self.clock.now,
+                    worker_id="successor",
+                    claim_token="successor-token",
+                    lease_seconds=600,
+                )
+                self.assertIsNotNone(successor)
+                self.assertEqual("successor-token", successor.claim_token)
+            release.set()
+            thread.join(timeout=20)
+            self.assertFalse(thread.is_alive())
+            durable = value.repository.get_media_discovery(frozen.discovery_id)
+            # The superseded owner wrote nothing: the plan link is still absent
+            # and the successor still owns the run.
+            self.assertEqual("successor-token", durable.claim_token)
+            self.assertIsNone(durable.preview_id)
+            self.assertEqual(DiscoveryStatus.ANALYZING, durable.status)
+            previews = value.repository.list_manual_previews(frozen.intent_id)
+            self.assertEqual(
+                [],
+                [item for item in previews if item.current],
+                [item.preview_id for item in previews],
+            )
+            # The successor really can complete the same run under its own
+            # claim; the superseded owner never published anything.
+            analyzed = value.discovery.run_claimed(
+                frozen.discovery_id,
+                worker_id="successor",
+                claim_token="successor-token",
+            )
+            self.assertIsNotNone(analyzed)
+            self.assertEqual(DiscoveryStatus.COMPLETED, analyzed.status)
+            self.assertIsNotNone(analyzed.preview_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    @staticmethod
+    def _control_path(discovery_id: str, action: str) -> str:
+        return f"/api/v1/operations/automation/run-once/{discovery_id}/{action}"
+
+    @staticmethod
+    def _wait_for_provider_call(entered, *, timeout: float = 15.0) -> None:
+        if not entered.wait(timeout=timeout):
+            raise AssertionError("the Worker never reached the Provider call")
+
     def test_frozen_manifest_reaches_linked_execution_and_operations_origin(self) -> None:
         """The complete Run-once journey reaches a real linked execution.
 

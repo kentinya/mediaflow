@@ -2592,6 +2592,46 @@ class ManualOrganizePreviewService:
         if callback is not None:
             callback(phase, visited_entries, analysed_items, total_items)
 
+    def discard_uncommitted(self, intent_id: str, preview_id: str) -> None:
+        """Retire one analyzed plan whose run lost its publication race.
+
+        A Worker that analyzed a frozen manifest may discover at the commit
+        boundary that the operator paused, cancelled or handed the run to a
+        successor.  That plan was never linked to the run and never entered any
+        confirmation, so it must not remain readable as the intent's current
+        summary (or as a plan a paused/cancelled run could still reach).  The
+        items are marked stale with the truthful reason and the aggregate stops
+        being current; nothing is deleted and the exact evidence stays readable
+        as history.  An already-current or missing record is left untouched.
+        """
+
+        if not isinstance(preview_id, str) or not preview_id.strip():
+            return
+        value = self._repository.get_manual_preview(preview_id)
+        if value is None or not value.current:
+            return
+        if intent_id and value.intent_id != intent_id:
+            return
+        reason = "the analysis was not published because the run's control changed first"
+        # The retirement is scoped to this exact Preview identity so a newer
+        # plan (a successor's link or a continued run's re-analysis) is never
+        # affected by the losing owner's cleanup.
+        discarder = getattr(self._repository, "discard_manual_preview", None)
+        if callable(discarder):
+            discarder(preview_id, self._safe_error(reason), self._clock())
+            return
+        # A repository without that exact-scope capability (a bounded test
+        # double) retires the plan through the item-scoped path only while it is
+        # still the intent's latest plan, so a newer plan is never touched.
+        latest = self._latest_preview(value.intent_id)
+        if latest is None or latest.preview_id != preview_id:
+            return
+        self._invalidate_items(
+            tuple(item.item_id for item in value.items),
+            reason,
+            intent_id=value.intent_id,
+        )
+
     def _latest_preview(self, intent_id: str):
         method = getattr(self._repository, "get_latest_manual_preview", None)
         if callable(method):

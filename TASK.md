@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: SAME TASK — RESTORE SECRET-FREE ERROR LOGGING AND DURABLE SHARED ANALYSIS; B RETAINS T4 GATES
+Next Action: B REVIEW — PAUSE/CANCEL PLAN-PUBLICATION FENCE; B RETAINS T4 GATES
 ```
 
 ## Goal
@@ -420,15 +420,132 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: 068fb07ecc62e61149058898a89dd51238b63797
+Candidate Head: <pending this round's commit; parent dfc59a4c65f05941cc30760b179f6546583b2d25>
 Status: READY FOR B REVIEW
-Round: fifth round; fixes B's FIX REQUIRED on cd92a85f722ae54c778b2f8eac843b773a886985
-       (raw-exception stderr logging bypassed redaction; Run once finalize
-       analyzed inline inside the HTTP request instead of the existing
-       Task/Worker)
+Round: sixth round; fixes B's FIX REQUIRED on dfc59a4c65f05941cc30760b179f6546583b2d25
+       (pause/cancel issued while the analysis Provider call was in flight did
+       not stop the Worker from publishing and linking a confirmable plan, and
+       the Run once projection re-exposed that plan for a paused/cancelled run)
 ```
 
-### 本轮修正交付（对应 B 的两个已核实阻塞）
+### Current round — 计划发布与 pause/cancel 协调（B 的当前阻塞）
+
+#### 根因
+
+`MediaDiscoveryService.claim_and_run` 的分析分支位于并发控制冲突协调 `try` 之外：
+`_analyze` 先持久化完整计划、再以旧 discovery 版本/claim 写回。Provider 阻塞期间
+operator control 更新了版本/释放了 claim，于是计划已落库而 run 写回失败——Worker 以
+`DiscoveryConflict`/`DiscoveryOwnershipLost` 逃出循环（记录既不暂停也不终态），
+`AutomationRunOnceService._durable_plan_id` 又从 intent 的 `latest_readonly` 取计划，
+不区分 pause/pause-request/terminal，导致"已暂停/已取消仍可确认摘要"。
+
+#### 本轮实现（同一 Task，无新队列/状态机/独立 Preview 生命周期）
+
+1. **计划发布成为一次受控提交**（`media_discovery.py::_analyze`）：
+   Provider/Storage 分析完成后，用新的仓储边界
+   `SQLiteTaskRepository.publish_media_discovery_plan`
+   在**单条 UPDATE** 中同时写 status/version/progress/sources/preview_id 并清空
+   claim，且以 `discovery_id + version CAS + 精确 claim_token` 三重 fenced。控制或
+   successor 赢得任一 fence 时，计划的链接完全未提交。Provider 调用前后均无长事务、
+   无全局锁。
+2. **分析结果不再逃出 Worker 循环**：`run_claimed` 把 `_analyze` 纳入与遍历同一套
+   `DiscoveryConflict`/`DiscoveryOwnershipLost` 处理，由 `_settle_after_conflict`
+   按**最新持久状态**结算：pause 先胜 → 安全边界确认暂停（同 intent/scope/pin 保留，
+   可 Continue）；cancel 先胜 → 保持终态 `CANCELLED`；claim 转交 → 旧 owner 只退出、
+   不写任何字段。
+3. **未提交的计划被退役而非删除**：新增
+   `ManualOrganizePreviewService.discard_uncommitted`，把落库但未链接/未确认的计划逐项
+   标为 `stale` 并置 `current=0`（证据保留为历史），因此它既不能成为 intent 的最新摘要，
+   也不能被 paused/cancelled run 重新展示。
+4. **Continue 回到同一冻结分析**：`resume` 对已冻结（linked intent）run 直接回到
+   `ANALYZING`，不重走 scope、不重冻结；未冻结记录仍按原 `QUEUED` 继续。
+5. **Run once 投影以控制为先**（`automation_run_once.py`）：
+   - 相位新增 `pausing`（请求已耐久、等安全边界确认）/`paused`（可 Continue）/
+     `cancelled`（终态），不再把 paused 报成 `analyzing`、把 cancelled 报成 `refused`；
+   - `_durable_plan_id` 对 cancel_requested/cancelled/paused/pause_requested 一律返回
+     `None`，不再用 intent 的 `latest_readonly` 绕过控制状态；
+   - `actions.preview.available` 只在确有可发布计划或分析仍在进行且无控制时成立；
+   - pause/resume/cancel 动作按当前相位与请求旗标计算（pending 不再可重复 pause，
+     acknowledged 才有 resume，终态无任何恢复/确认入口）。
+6. **Web 服从后端动作**（`AutomationRunOncePage.tsx`、`run-once.ts`）：只有
+   `actions.preview.available` 才允许从 `previewId`/URL 提示挂载
+   `OrganizePlanConfirmation`；`pausing`/`paused`/`cancelled` 各有明确说明，
+   pending 显示禁用的"等待暂停确认"、acknowledged 显示"继续分析"、cancelled 无确认/恢复。
+7. 未新增执行授权、未新增队列/执行器、未改 schema：确认仍需计划出现后单独显式执行。
+
+#### 本轮受影响检查（仓库根除注明外，均为实际结果）
+
+```bash
+python3 scripts/check_governance.py                                  # PASS
+.venv/bin/ruff check mediaflow tests                                 # All checks passed
+.venv/bin/ruff format --check mediaflow tests                        # 320 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts            # OK
+git diff --check                                                     # clean
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery   # Ran 113, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery.FinalizeHandoffFencingTests  # Ran 8, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once   test_v2_automation_run_once test_preview_retirement                # Ran 73, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent   test_manual_organize_preview test_manual_organize_execution   test_v2_manual_organize test_organize_preparation                  # Ran 117, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation   test_scope_continuation test_task_center_recovery_lineage   test_metadata_correction_continuation                              # Ran 185, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_unattended_grant   test_automation_definition_execution test_automation_authorized_execution_matrix   test_configuration_organize test_v2_rules_workspace_previews test_task_persistence  # Ran 113, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_v2_automation_operations   test_configuration_snapshot test_automation_admission test_automation_job_fencing   test_manual_operations_contract                                    # Ran 85, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement   test_scan_retirement test_file_index_retirement test_automation_task_definition   test_v2_automation_lifecycle                                       # Ran 82, OK
+cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx   src/entities/operations/run-once.test.ts                           # 2 files, 11 tests OK
+cd web && npm run test -- run src/routes/router.test.tsx   src/features/operations/OrganizeCreationPage.test.tsx   src/features/operations/OperationsInventory.test.tsx   src/features/operations/TaskItemRecoveryPanel.test.tsx   src/features/operations/OrganizeDiscoveryPage.test.tsx             # 5 files, 51 tests OK
+cd web && npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx   src/features/operations/AutomationRouter.test.tsx   src/features/operations/OrganizeRouter.test.tsx                    # 3 files, 54 tests OK
+cd web && npm run typecheck                                          # OK
+cd web && npx eslint <3 changed web files>                           # clean
+cd web && npx prettier --check <3 changed web files>                 # clean
+```
+
+新增/扩展的回归（全部走真实 API/Worker/仓储，不 mock 权威）：
+
+| 位置 | 覆盖 |
+|---|---|
+| `test_automation_run_once.RunOnceJourneyTests` | 真实 Run once API + 阻塞合成 Provider：pause → 200 `pausing`、释放 Provider 后持久 `PAUSED`、计划未链接且被退役、GET `paused`、无 confirm/execution、Continue 后同一 run 链接唯一新计划；cancel → `CANCELLED`、迟到计划被退役、GET 终态无 plan/resume/confirm；旧 owner 失去 claim → 不写任何字段、successor 可完成 |
+| `test_v2_automation_run_once.RunOnceApiTests` | 真实 V2 API：pause-request 期间无 plan 身份/动作、Worker 确认后 `paused` 可 Continue 并最终链接计划；cancel 终态、迟到 Worker 无 claimable 工作、无 current plan；重开后仍是 CANCELLED 且无计划 |
+| `test_media_discovery.FinalizeHandoffFencingTests` | 新增 `test_fenced_plan_publication_requires_the_exact_live_claim`：错误 claim → `DiscoveryOwnershipLost` 且零副作用；正确 claim → 计划链接与 claim 释放在同一次写；重复发布不可能产生第二份计划 |
+| `AutomationRunOncePage.test.tsx` | pausing（无 plan、无重复 pause、禁用等待提示）、paused（Continue、无 confirm）、cancelled（含 stale `?plan=` 也不得挂载确认） |
+
+#### 独立探针证据（真实入口，非源码检索）
+
+`.git/validation-evidence/developer/task45.6-fix-pause-cancel-plan-fence/` 含
+`verify_pause_cancel.py/.log`（**40/40 通过**）与 `prefix_dfc59a4_repro.log`（父候选 13 项失败）：
+
+- 真实 `MediaFlowApi` WSGI 路由 + 真实 Run once 服务 + 真实 Worker + 隔离 SQLite/临时
+  Local Storage；仅把 `SyntheticMetadataProvider.search_movie` 用 `Event` 暂缓，
+  Provider 在途时通过真实 `POST .../pause` / `.../cancel` 发控制。
+- 父候选 `dfc59a4c`：pause 后相位仍 `analyzing`；cancel 后相位 `refused`、
+  `actions.preview.available=true` 且返回真实 `path`、`manual_previews` 留有一份
+  `previewed/current` 计划 —— 与 B 的复现一致。
+- 本候选：控制返回 `pausing`/`cancelled` 且无 plan 身份与 plan 动作；Worker 返回后
+  `PAUSED`/`CANCELLED`、`preview_id` 为空、claim 已释放、迟到计划 `current=0`；
+  GET 无 plan、pause 可 Continue、cancel 无恢复与确认；两种分支来源/目标 mutation、
+  Task 行、unattended grant 均为零；无竞态成功路径仍链接唯一 current 计划。
+
+### 未执行 / 剩余风险（交 B）
+
+- 全量 Python/Web/E2E、production assets、逐 spec 原生浏览器、wheel/安装消费者/
+  Docker/常驻 Worker/restart/release-security 属 B，本轮未执行。
+- `publish_media_discovery_plan` 是新增的仓储方法；本仓唯一实现为 SQLite
+  `SQLiteTaskRepository`，服务层保留"无该方法时退回 `_persist` + `_release_claim`"的
+  兼容路径（用于测试替身），该退回路径不具备同事务 fence，属已知的降级边界。
+- provider 阻塞期内的 heartbeat 仍由既有 lease keeper 维持；本轮未改租约/心跳语义。
+- cancelled 的计划退役依赖真实仓储的 `mark_manual_preview_items_stale`；若该能力缺失则
+  不做退役（保持"不链接即可执行"的主保证），不会删除任何证据。
+- 分析期间 Web 仍按 2s 轮询；`pausing`/`paused`/`cancelled` 不轮询。
+- 本轮测试/质量检查累计约 3 分钟（含 3 次全新运行的真实入口探针与一次父候选复现），
+  低于本轮实际工作时间的 30%。
+
+本机稳定证据（未声称外部可访问）：
+`.git/validation-evidence/developer/task45.6-fix-pause-cancel-plan-fence/`。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
+
+### 上一轮记录（fifth round — 日志脱敏与耐久分析承接）
+
+以下为 `068fb07`/`dfc59a4` 轮的交付与检查记录，保留原样。
+
+### 第五轮修正交付（对应 B 的两个已核实阻塞）
 
 #### 阻塞1 — 通用API异常日志绕过脱敏
 
@@ -535,10 +652,10 @@ Provider 释放后同一 Worker 链接精确计划。两个探针均经真实生
   同一 Worker `claim_and_run` 在同一 run 上链接精确计划；普通 GET 解析同一 `previewId`；
   SQLite 重开后经 durable intent 仍读到同一份零变更计划。
 
-### 未执行 / 剩余风险（交 B）
+### 第五轮未执行 / 剩余风险
 
 - 全量 Python/Web/E2E、production assets、逐 spec 原生浏览器、wheel/安装消费者/Docker/
-  常驻 Worker/restart/release-security 属 B，本轮未执行。
+  常驻 Worker/restart/release-security 属 B，该轮未执行。
 - Run once 分析期间的暂停/恢复沿既有 discovery 协作控制（ANALYZING 可 pause/cancel，
   Worker 在安全边界确认）；自动恢复路径与准备旅程共用同一 `_analyze`，语义未改。
 - `UnattendedExecutionGrantService` 与 `latest_frozen_definition_run_once` 未改动；
@@ -553,13 +670,81 @@ Provider 释放后同一 Worker 链接精确计划。两个探针均经真实生
 
 不自判 PASS，不关闭 Slice，不规划下一 Task。
 
-### 上一轮记录
+### 第五轮之前的记录
 
 更早各轮（授权前分析、同URL固定计划、shared-analysis grant fixture）的
 报告与证据边界保留于 Git（`4e23a53:TASK.md` 及更早）；本机稳定证据保留在
 `.git/validation-evidence/` 下相应目录。
 
 ## B Review Result
+
+### Current candidate review — 2026-10-22
+
+```text
+Reviewed candidate: dfc59a4c65f05941cc30760b179f6546583b2d25
+Implementation: 068fb07 fix(task45.6): restore durable shared analysis and secret-free error logging
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..dfc59a4c65f05941cc30760b179f6546583b2d25
+Decision: FIX REQUIRED
+Stage: proven Task blocker; full Task-range/T4 acceptance remains pending
+Required Outcomes / Surfaces all satisfied: NO
+Next: SAME TASK FIX LOOP; no new Task or Slice closure
+```
+
+治理检查 PASS；`git diff --check` 对 Task Base..candidate PASS。工作区既有图片、日志、截图、压缩包和 `.DS_Store` 保持未改动。
+
+本轮独立复核确认前两项修正已生效：
+
+- `test_api_security.ApiSecurityTests.test_audit_failure_blocks_job_creation_before_mutation`：PASS；真实 WSGI `POST /api/v1/jobs` 故障入口仍返回500、零Job准入，响应及stderr不含合成secret。
+- 在真实 Run once API/SQLite/本地Storage夹具中，Provider 被 Worker 阻塞时调用 finalize，API 仍返回 `201 analyzing`；释放Provider后同一运行关联计划，来源/目标零mutation、无人值守grant为零。
+
+### 新阻塞 — pause/cancel 与运行中计划发布未协调
+
+从已存在的定义 Run once 入口开始，等待真实 Worker 进入合成 Provider 调用，再通过现有
+`POST /api/v1/operations/automation/run-once/{id}/pause` 或 `/cancel` 发出控制。两个分支均可复现：
+
+- Pause 返回200，但 Provider 释放后 Worker 以 `DiscoveryConflict` 退出；记录仍为 `ANALYZING` 且 `pause_requested=true`，已持久化1条计划。随后 GET 仍为 `phase=analyzing`，返回非空 `previewId`、`actions.preview.available=true`，而 `resume.available=false`。
+- Cancel 返回200并将运行置为 `CANCELLED`；Provider 释放后 Worker 以 `DiscoveryOwnershipLost` 退出，但同一意图仍持久化1条计划。随后 GET 的 `status=cancelled`、`phase=refused`，仍返回该 `previewId` 且 `actions.preview.available=true`。现有 Run once 页面会在有 `planPreviewId` 时挂载 `OrganizePlanConfirmation`，没有终态取消保护。
+
+两种结果均未发生媒体 mutation 或授予执行权限，但控制后的 Worker 仍发布可重新读取的计划；取消运行仍呈现可继续确认的摘要，暂停则不进入可继续状态。原因是 `claim_and_run` 将 `_analyze` 放在并发控制冲突协调的 `try` 之外；`_analyze` 先持久化完整计划，再以旧 discovery 版本/claim 写回。控制请求可在 Provider 阻塞期间更新版本/释放 claim，导致计划已落库而 discovery 写回失败；Run once 投影又从 intent 取最新只读计划，不区分 pause/cancel/terminal 状态。
+
+这不满足 Task Goal 中的失败/取消真实状态与安全恢复，也不满足 durable same-run plan 语义；操作者已明确暂停/取消却仍看到可确认计划，属本 Task 内 P1，范围无需交 A。
+
+**同一 Task 修正要求：**
+
+1. 使计划持久发布/Run once 关联与活动 Worker claim、控制状态协调；pause/cancel 先胜出时不得在之后持久发布或关联该分析结果，旧 Worker 也不能以过期状态越过控制。
+2. 取消态及分析暂停/暂停请求态的 Run once GET 与 Web 不得通过意图上的只读最新计划重新显示该运行的可执行摘要；暂停应在安全边界确认并进入可继续状态。
+3. 增加现有 Run once API + 被阻塞合成 Provider 的回归，覆盖 pause、cancel、Worker 释放/重连；断言最终状态/动作符合控制，已暂停/取消运行不会重新暴露可执行计划确认入口，且零mutation/零授权。保持分析与计划均由现有 Worker/整理流程完成，不增加队列或独立 Preview 产品。
+
+**开发者实施方案（按顺序在本 Task 内完成）：**
+
+1. **围住分析的提交边界。** 保持 Provider 调用在现有 Worker 中，不把网络等待放进长事务/全局锁。Provider 返回后、计划持久发布或关联到 Run once 前，重新读取权威 discovery 并核对当前 claim/fence、版本与控制状态；让该检查和计划发布/运行关联具备同一有效 owner 的原子保护。不能只在 Provider 调用前检查一次，也不能捕获冲突后让旧 Worker 无条件重试写回。
+2. **让先赢的控制成为持久结果。** 若暂停请求先于分析提交生效，Worker 在安全边界确认暂停并保留同一 intent、固定 scope/pin 和可恢复状态；暂停生效期间不发布该轮的可执行计划。页面应区分“暂停请求中”和“已暂停”，后者提供现有恢复动作。若取消先胜出，保持终态 `CANCELLED`；丢弃迟到分析结果，不关联或发布该轮计划，不允许旧 Worker 后续改写终态。若 claim 已转交给 successor，旧 Worker 只退出，不提交任何结果。
+3. **收紧 Run once 的权威投影。** 在 `automation_run_once.py` 以当前持久 lifecycle/control 状态决定 `previewId` 和 `actions.preview`；不得让 intent 的 `latest_readonly` 回退查询绕过 pause、pause-request 或 terminal 状态。只有当前状态允许且确有本次运行已提交的精确计划时，GET 才暴露计划路径。普通 GET/刷新保持只读；不要新增队列、状态机或独立 Preview 生命周期。
+4. **让页面服从后端动作。** 在 `AutomationRunOncePage.tsx` 中，不能只因 query string 或 `planPreviewId` 非空就挂载 `OrganizePlanConfirmation`；同时核对当前 Run once 的可用动作和精确计划路径。分析中如实显示在途阶段；暂停生效后无确认入口且可继续；取消后终态无恢复/确认入口。正常分析完成的运行仍能在同一页面查看精确摘要并由用户明确确认。
+5. **用现有入口验证竞态和正常路径。** 复用真实定义 Run once API、现有 Worker、隔离 SQLite/本地 Storage 和可阻塞的 fake Provider，不猜造路由、不触碰生产 Provider/媒体。暂停与取消各在 Provider 在途时发起，释放 Provider 后通过现有 GET 轮询并重开持久库核对最终状态；另验证未发生竞态的成功分析仍链接同一运行的唯一计划。所有准备/分析阶段仍为零媒体 mutation、零执行许可；执行只可能发生在另一次显式计划确认后。
+
+**开发者本修正轮受影响验证：**新增/扩展 `tests/test_media_discovery.py` 中的 Worker fence/control 覆盖和 `tests/test_automation_run_once.py` / `tests/test_v2_automation_run_once.py` 中的真实 Run once API 竞态；覆盖正常链接、pause/resume、cancel 终态及重开读取。至少执行：
+
+```bash
+PYTHONPATH=tests .venv/bin/python -m unittest \
+  test_media_discovery.FinalizeHandoffFencingTests \
+  test_automation_run_once.RunOnceJourneyTests \
+  test_automation_run_once.RunOnceApiTests \
+  test_v2_automation_run_once.RunOnceApiTests
+cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx src/entities/operations/run-once.test.ts
+```
+
+对实际修改的 Python/Web 文件运行对应的 changed-file lint/format 检查；若改动 DTO/类型连线，运行 `cd web && npm run typecheck`；并运行 `git diff --check`。Developer 只交受影响测试与真实结果，不跑全仓门禁；固定候选的独立竞态复现、T4 门禁和 Task Base..Head 审查仍由 B 按下方计划负责。
+
+### 本轮门禁状态
+
+- Governance：`python3 scripts/check_governance.py` PASS。
+- 关键复现：API错误日志脱敏 PASS；Provider 在途期间 finalize 非阻塞 PASS；pause 与 cancel 竞态 FIX REQUIRED（以上为隔离临时根/fake Provider，非真实媒体或外部服务）。
+- `git diff --check 2687e5b3eaa6f686d54c51930765e0ba904f69b5..HEAD` PASS。
+- 因已证明同 Task P1，依 Workflow 在昂贵门禁前提前退回；当前候选的全量 Python/Web/E2E、逐 spec Python-backed 浏览器、production assets、wheel/安装消费者、Docker/常驻 Worker/restart/release-security 及完整 Task Base..Head 最终验收仍待修正候选，不计 PASS。此前 `cd92a85` 全量 Python 不匹配本候选实现，不复用。
+- 本轮测试/质量检查实际累计不足5秒；从本轮开始时间约7分钟，测试耗时低于50%，没有等待凑时。
+
+### Historical review — prior candidate `cd92a85`
 
 ```text
 Reviewed candidate: cd92a85f722ae54c778b2f8eac843b773a886985

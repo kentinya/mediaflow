@@ -19,11 +19,19 @@ import {
 export const RUN_ONCE_PHASES = [
   "discovering",
   "analyzing",
+  // A durable pause was requested (``pausing``) and then acknowledged by the
+  // resident Worker at its safe boundary (``paused``); both stop advertising a
+  // confirmable plan for the interrupted analysis.
+  "pausing",
+  "paused",
   "ready",
   "frozen",
   "refused",
   "no_work",
   "failed",
+  // The operator cancelled the run: a terminal outcome, never a recoverable
+  // analysis or a confirmable plan.
+  "cancelled",
 ] as const;
 export type AutomationRunOncePhase = (typeof RUN_ONCE_PHASES)[number];
 

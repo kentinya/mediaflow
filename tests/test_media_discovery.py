@@ -2977,6 +2977,90 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
             self.assertEqual(1, len(durable), [item.intent_id for item in durable])
             self.assertEqual(first["intentId"], durable[0].intent_id)
 
+    def test_fenced_plan_publication_requires_the_exact_live_claim(self) -> None:
+        """The plan link, lifecycle and claim release are one fenced write.
+
+        A prepared plan must never be published by an owner whose claim was
+        taken over, and the publication must release the claim it wrote under in
+        the same statement.  The repository boundary is exercised directly so a
+        future refactor cannot quietly split the fence from the plan link.
+        """
+
+        from mediaflow.domain.media_discovery import DiscoveryOwnershipLost
+
+        self.media("Movies/A.2001.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            frozen = value.discovery.finalize(
+                admitted["discoveryId"],
+                actor="operator",
+                expected_version=settled["version"],
+            )
+            self.assertIsNotNone(frozen.intent_id)
+            # A frozen generic Files record is not claimable by the walk (its
+            # reviewed finalize path owns it), so the live claim this boundary
+            # must fence is written directly, exactly as the analyzing Worker
+            # would hold it.
+            value.repository._connection.execute(
+                "UPDATE media_discoveries SET status=?, claim_worker_id=?, claim_token=?, "
+                "claim_expires_at=? WHERE discovery_id=?",
+                (
+                    "analyzing",
+                    "owner",
+                    "owner-token",
+                    (self.clock.now + timedelta(minutes=10)).isoformat(),
+                    admitted["discoveryId"],
+                ),
+            )
+            value.repository._connection.commit()
+            claimed = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertIsNotNone(claimed)
+            self.assertEqual("owner-token", claimed.claim_token)
+            # A different owner cannot publish the plan or the settled status.
+            prepared = replace(
+                claimed,
+                status=claimed.status.__class__.COMPLETED,
+                version=claimed.version + 1,
+                preview_id="0" * 32,
+                progress=replace(claimed.progress, phase="prepared"),
+            )
+            with self.assertRaises(DiscoveryOwnershipLost):
+                value.repository.publish_media_discovery_plan(
+                    prepared,
+                    expected_version=claimed.version,
+                    claim_token="stolen-token",
+                )
+            durable = value.repository.get_media_discovery(admitted["discoveryId"])
+            self.assertIsNone(durable.preview_id)
+            self.assertEqual(claimed.status, durable.status)
+            self.assertEqual("owner-token", durable.claim_token)
+            # The exact owner publishes it once and the claim is released in
+            # the same durable outcome.
+            published = value.repository.publish_media_discovery_plan(
+                prepared,
+                expected_version=claimed.version,
+                claim_token="owner-token",
+            )
+            self.assertEqual("0" * 32, published.preview_id)
+            self.assertEqual("prepared", published.progress.phase)
+            self.assertIsNone(published.claim_token)
+            self.assertEqual(
+                None, value.repository.media_discovery_claim(admitted["discoveryId"])["claimToken"]
+            )
+            # A repeated publication cannot publish a second plan: the claim
+            # the first write released is no longer the live owner's.
+            with self.assertRaises(DiscoveryOwnershipLost):
+                value.repository.publish_media_discovery_plan(
+                    replace(published, version=published.version + 1, preview_id="1" * 32),
+                    expected_version=claimed.version,
+                    claim_token="owner-token",
+                )
+            self.assertEqual(
+                "0" * 32,
+                value.repository.get_media_discovery(admitted["discoveryId"]).preview_id,
+            )
+            self.assertEqual([], value.source.mutations)
+
     def test_finalize_of_an_already_frozen_discovery_is_idempotent(self) -> None:
         """Re-finalizing the frozen record returns its one linked intent."""
 
@@ -2994,6 +3078,59 @@ class FinalizeHandoffFencingTests(_DiscoveryFixture):
             self.assertEqual(201, second_status, second)
             self.assertEqual(first["intentId"], second["intentId"])
             self.assertEqual(1, len(value.repository.list_manual_intents()))
+
+    def test_discarding_an_unpublished_plan_is_scoped_to_its_own_identity(self) -> None:
+        """Cleanup retires one exact Preview; a sibling plan stays confirmable.
+
+        A Worker that lost the publication race retires only the plan it
+        analyzed.  An unrelated current plan of the same intent (a different
+        still-undecided source) must keep its current identity and its
+        confirmable items, so cleanup can never silently withdraw a legal
+        sibling's summary.
+        """
+
+        self.media("Movies/A.2001.mkv")
+        self.media("Movies/B.2002.mkv")
+        with self.journey() as value:
+            admitted, settled = self._admit_and_settle(value)
+            frozen = value.discovery.finalize(
+                admitted["discoveryId"],
+                actor="operator",
+                expected_version=settled["version"],
+            )
+            intent = value.intents.get(frozen.intent_id)
+            first, second = (item.item_id for item in intent.items)
+            staying = value.previews.create(
+                frozen.intent_id,
+                [first],
+                actor="operator",
+                expected_version=intent.version,
+            )
+            losing = value.previews.create(
+                frozen.intent_id,
+                [second],
+                actor="operator",
+                expected_version=intent.version,
+            )
+            self.assertTrue(staying.current)
+            self.assertTrue(losing.current)
+            # Retiring the losing plan is exact to that plan.
+            value.repository.discard_manual_preview(
+                losing.preview_id, "the run's control changed first", self.clock.now
+            )
+            retired = value.repository.get_manual_preview(losing.preview_id)
+            self.assertFalse(retired.current)
+            self.assertEqual("stale", retired.status.value)
+            self.assertTrue(all(not item.current for item in retired.items))
+            kept = value.repository.get_manual_preview(staying.preview_id)
+            self.assertTrue(kept.current)
+            # This fixture has no Metadata Provider authority, so the plan's own
+            # per-item outcome is "unavailable"; what must survive cleanup is the
+            # sibling's current identity and its still-live item rows.
+            self.assertNotEqual("stale", kept.status.value)
+            self.assertTrue(all(item.current for item in kept.items))
+            self.assertEqual([first], [item.item_id for item in kept.items])
+            self.assertEqual([], value.source.mutations)
 
     def test_a_frozen_link_survives_a_sqlite_reopen_without_duplication(self) -> None:
         """A restart between the finalize commit and the response keeps one intent."""

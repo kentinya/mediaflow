@@ -249,6 +249,78 @@ function analyzingRunOnceDocument(): Json {
   });
 }
 
+/** The durable pause request, before the Worker acknowledged it. */
+function pausingRunOnceDocument(): Json {
+  return runOnceDocument({
+    phase: "pausing",
+    status: "analyzing",
+    intentId: INTENT_ID,
+    previewId: null,
+    frozen: true,
+    frozenAt: "2026-10-21T23:47:21+00:00",
+    version: 6,
+    nextAction:
+      "the cooperative pause is waiting for the resident Processing Worker to " +
+      "acknowledge it at its safe boundary; continue the same Run once after the " +
+      "acknowledgement",
+    actions: {
+      pause: action(),
+      cancel: action({ available: true }),
+      resume: action(),
+      finalize: action(),
+      narrowScope: action(),
+      preview: action({ available: false }),
+    },
+  });
+}
+
+/** The acknowledged pause: the same run is continuable, without a plan. */
+function pausedRunOnceDocument(): Json {
+  return runOnceDocument({
+    phase: "paused",
+    status: "paused",
+    intentId: INTENT_ID,
+    previewId: null,
+    frozen: true,
+    frozenAt: "2026-10-21T23:47:21+00:00",
+    version: 7,
+    nextAction:
+      "continue this Run once to resume the same frozen scope and configuration; " +
+      "no plan was published for the interrupted analysis",
+    actions: {
+      pause: action(),
+      cancel: action({ available: true }),
+      resume: action({ available: true }),
+      finalize: action(),
+      narrowScope: action(),
+      preview: action({ available: false }),
+    },
+  });
+}
+
+/** The terminal cancellation: no plan, no recovery, no confirmation. */
+function cancelledRunOnceDocument(): Json {
+  return runOnceDocument({
+    phase: "cancelled",
+    status: "cancelled",
+    intentId: INTENT_ID,
+    previewId: null,
+    frozen: true,
+    frozenAt: "2026-10-21T23:47:21+00:00",
+    version: 8,
+    nextAction:
+      "start a new Run once from the published definition if the scope is still wanted",
+    actions: {
+      pause: action(),
+      cancel: action(),
+      resume: action(),
+      finalize: action(),
+      narrowScope: action(),
+      preview: action({ available: false }),
+    },
+  });
+}
+
 function previewDocument(): Json {
   const value = JSON.parse(
     JSON.stringify(documents["organizePreviewDetail"]),
@@ -410,6 +482,84 @@ describe("V2 Automation Run once journey", () => {
     ).toBeVisible();
     expect(screen.getByText(new RegExp(`计划 ${PREVIEW_ID}`))).toBeVisible();
     expect(screen.queryByText(/计划 preview-stale/)).toBeNull();
+  });
+
+  it("shows the pause-pending stage without a plan or a second pause", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (call.url === API_PATH && call.method === "GET") {
+        return jsonResponse(pausingRunOnceDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+
+    await screen.findByText("正在确认暂停");
+    expect(
+      screen.getByText(/暂停请求已耐久保存，常驻处理 Worker/),
+    ).toBeVisible();
+    // The pause request already wins: no plan, no execution control and no
+    // duplicate pause action while the safe boundary is acknowledged.
+    expect(
+      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
+    expect(screen.getByRole("button", { name: "等待暂停确认" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "继续分析" })).toBeNull();
+  });
+
+  it("shows an acknowledged pause with Continue and no confirmable plan", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (call.url === API_PATH && call.method === "GET") {
+        return jsonResponse(pausedRunOnceDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp(`/ui-v2/operations/automation/run-once/${DISCOVERY_ID}`);
+
+    await screen.findByText("分析已暂停");
+    expect(screen.getByRole("button", { name: "继续分析" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
+    // A paused run never resurrects the plan its interrupted analysis left.
+    expect(
+      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+  });
+
+  it("keeps a cancelled run terminal with no plan, recovery or confirmation", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (call.url === API_PATH && call.method === "GET") {
+        return jsonResponse(cancelledRunOnceDocument());
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    // A stale plan hint in the URL must not override the terminal outcome.
+    renderApp(
+      `/ui-v2/operations/automation/run-once/${DISCOVERY_ID}?plan=${PREVIEW_ID}`,
+    );
+
+    await screen.findByText("本次运行已取消");
+    expect(screen.getByText(/本次运行已取消并保持终态/)).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "本次运行计划的零变更摘要" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认整理/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "继续分析" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "暂停分析" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消运行" })).toBeNull();
   });
 
   it("offers only the explicit freeze action while the manifest is not frozen", async () => {

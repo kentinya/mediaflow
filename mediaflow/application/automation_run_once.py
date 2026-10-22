@@ -41,10 +41,13 @@ from mediaflow.domain.media_discovery import (
 RUN_ONCE_PHASES = (
     "discovering",
     "analyzing",
+    "pausing",
+    "paused",
     "ready",
     "refused",
     "no_work",
     "failed",
+    "cancelled",
 )
 
 
@@ -152,6 +155,7 @@ class AutomationRunOnceService:
             )
         refusal = discovery_manifest_incomplete(discovery.progress)
         phase = self._phase(discovery, refusal)
+        plan_id = self._durable_plan_id(discovery)
         document: dict[str, object] = {
             "journey": "automation-run-once",
             "discoveryId": discovery.discovery_id,
@@ -177,7 +181,10 @@ class AutomationRunOnceService:
             # inline finalize path writes the plan against the frozen intent, so
             # the association is resolved from that same durable intent rather
             # than from the ``preview_id`` column this path never populates.
-            "previewId": self._durable_plan_id(discovery),
+            # A paused, pause-pending or cancelled run publishes no plan: the
+            # operator's control won the race, so the operator must not be
+            # handed a confirmable summary for work that was stopped.
+            "previewId": plan_id,
             "frozen": discovery.frozen,
             "frozenAt": discovery.frozen_at.isoformat() if discovery.frozen_at else None,
             "zeroMutation": True,
@@ -199,6 +206,19 @@ class AutomationRunOnceService:
         discovery: MediaDiscovery,
         refusal: DiscoveryIncompleteReason | None,
     ) -> str:
+        # The operator's own control decides the phase before anything else: a
+        # paused or pause-pending run is not "analyzing" and a cancelled run is
+        # not a recoverable refusal.  Both must stop advertising the plan they
+        # interrupted.
+        if discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED:
+            return "cancelled"
+        if discovery.status is DiscoveryStatus.PAUSED:
+            return "paused"
+        if discovery.pause_requested:
+            # The pause request is durable and the Worker acknowledges it at its
+            # next safe boundary; the page states that real transient stage
+            # instead of pretending the analysis is still progressing.
+            return "pausing"
         if discovery.status in {DiscoveryStatus.QUEUED, DiscoveryStatus.RUNNING}:
             return "discovering"
         if discovery.status is DiscoveryStatus.ANALYZING:
@@ -206,8 +226,6 @@ class AutomationRunOnceService:
             # Worker; the run identity, progress and pause/cancel stay live.
             return "analyzing"
         if discovery.status is DiscoveryStatus.WAITING_STABILITY:
-            return "analyzing"
-        if discovery.status is DiscoveryStatus.PAUSED:
             return "analyzing"
         if refusal is not None:
             return "refused"
@@ -222,8 +240,6 @@ class AutomationRunOnceService:
             return "refused"
         if discovery.status is DiscoveryStatus.COMPLETED:
             return "ready" if discovery.sources else "no_work"
-        if discovery.status is DiscoveryStatus.CANCELLED:
-            return "failed"
         return "failed"
 
     def _actions(
@@ -242,19 +258,34 @@ class AutomationRunOnceService:
         finalizable = (
             terminal and refusal is None and bool(discovery.sources) and not discovery.frozen
         )
-        pause = discovery.status in {
-            DiscoveryStatus.QUEUED,
-            DiscoveryStatus.RUNNING,
-            DiscoveryStatus.ANALYZING,
-        }
-        cancel = discovery.status in {
+        # The operator's control owns these actions.  A cancellation request is
+        # already a durable terminal settlement, an acknowledged pause is not
+        # pausable again, and a pause that is still pending acknowledgement must
+        # neither be re-requested nor refused as if it were already settled.
+        cancelled = discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED
+        paused = discovery.status is DiscoveryStatus.PAUSED
+        pause = (
+            not cancelled
+            and not paused
+            and not discovery.pause_requested
+            and discovery.status
+            in {
+                DiscoveryStatus.QUEUED,
+                DiscoveryStatus.RUNNING,
+                DiscoveryStatus.ANALYZING,
+            }
+        )
+        cancel = not cancelled and discovery.status in {
             DiscoveryStatus.QUEUED,
             DiscoveryStatus.RUNNING,
             DiscoveryStatus.WAITING_STABILITY,
             DiscoveryStatus.PAUSED,
             DiscoveryStatus.ANALYZING,
         }
-        resume = discovery.status is DiscoveryStatus.PAUSED
+        # Continue is meaningful only after the Worker acknowledged the pause at
+        # a safe boundary; the pending stage is reported through the phase and
+        # next action instead of being advertised as an available action.
+        resume = paused and discovery.pause_requested
         # The exact plan identity the same page re-reads after a reload.  It is
         # resolved from the durable intent association so the advertised action
         # path is never published as unavailable-with-a-null-route while the
@@ -293,8 +324,19 @@ class AutomationRunOnceService:
                 # re-analysing the manifest.  While the resident Worker is still
                 # building the plan the action is available but its route is
                 # honestly null; the page shows the durable analysis stage and
-                # the plan appears here once it completes.
-                "available": discovery.frozen and discovery.intent_id is not None,
+                # the plan appears here once it completes.  A paused, pause-
+                # pending or cancelled run publishes no plan action at all: the
+                # operator's control won, so no confirmable summary is offered.
+                "available": (
+                    bool(plan_id)
+                    or (
+                        not cancelled
+                        and not paused
+                        and not discovery.pause_requested
+                        and discovery.frozen
+                        and discovery.intent_id is not None
+                    )
+                ),
                 "method": "GET",
                 "path": (f"/api/v1/operations/organize/previews/{plan_id}" if plan_id else None),
                 "sideEffects": "none",
@@ -320,6 +362,15 @@ class AutomationRunOnceService:
         means this Run once has not produced a plan yet.
         """
 
+        if (
+            discovery.status is DiscoveryStatus.CANCELLED
+            or discovery.cancel_requested
+            or discovery.status is DiscoveryStatus.PAUSED
+            or discovery.pause_requested
+        ):
+            # The operator's control decides the run, so the intent's latest
+            # read-only plan must never be re-exposed for a stopped run.
+            return None
         if discovery.preview_id:
             return discovery.preview_id
         intent_id = discovery.intent_id
@@ -340,6 +391,19 @@ class AutomationRunOnceService:
         discovery: MediaDiscovery,
         refusal: DiscoveryIncompleteReason | None,
     ) -> str:
+        if discovery.cancel_requested or discovery.status is DiscoveryStatus.CANCELLED:
+            return "start a new Run once from the published definition if the scope is still wanted"
+        if discovery.status is DiscoveryStatus.PAUSED:
+            return (
+                "continue this Run once to resume the same frozen scope and configuration; no "
+                "plan was published for the interrupted analysis"
+            )
+        if discovery.pause_requested:
+            return (
+                "the cooperative pause is waiting for the resident Processing Worker to "
+                "acknowledge it at its safe boundary; continue the same Run once after the "
+                "acknowledgement"
+            )
         if refusal is not None:
             return (
                 "narrow the definition sourceScope or correct the unreadable source so a "
