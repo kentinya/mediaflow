@@ -420,12 +420,13 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: <HEAD>
+Candidate Head: da5e80107aae7fe7b93d231ebe8656e53a4ce923
 Status: READY FOR B REVIEW
-Round: second fix round after B FIX REQUIRED on 5b5f863 (shared Automation authorization preflight)
+Round: third round; fixes B's FIX REQUIRED on bb0b1f314916d316ef384430ce3633e6220b3e21
+       (Run once shared-plan summary/confirmation lost on reread)
 ```
 
-### 修正交付（对应 B 的 shared Automation authorization preflight 阻塞）
+### 上一轮修正交付（对应 B 的 shared Automation authorization preflight 阻塞，已被 B 核实修正）
 
 B 在 `5b5f863` 上复现的 P1：删除独立 Preview 后，`UnattendedExecutionGrantService.grant` /
 `project_eligibility` 只校验定义/配置形状、边界与当前权限，任何已激活定义无需任何真实
@@ -461,7 +462,93 @@ B 在 `5b5f863` 上复现的 P1：删除独立 Preview 后，`UnattendedExecutio
    的 grant 用例改为先跑共享分析再授予，并新增“无分析被拒”断言；直接单测用
    `_shared_analysis_stub`/`_grant_service` 承接授权前门（测试 grant 服务自身逻辑）。
 
-### 受影响检查（Developer 实际结果，仓库根除注明外）
+### 本轮修正交付（对应 B 的 durable in-context Run-once plan 阻塞）
+
+B 在 `bb0b1f3` 上复现的 P1：Run once finalize 把计划写在 linked intent 上，但
+`AutomationRunOnceService.document` 读取该路径从不写入的 `discovery.preview_id`，
+于是普通 GET 返回 `phase=frozen / previewId=null`，`actions.preview.available`
+为 true 而 `path=null`；同页摘要只靠 React 局部 `admittedPlanPreviewId`，重开即消失。
+本轮只恢复持久权威解析与投影，不恢复独立 Preview 产品、不新建分析/队列/兼容页。
+
+1. **持久权威解析**。`AutomationRunOnceService` 新增 `_durable_plan_id`：优先
+   `discovery.preview_id`（真实 preparation 路径），否则经 linked intent 的
+   `preview_service.latest_readonly` 读取该次运行已产出的精确计划。这是有界、
+   非发布式只读投影：普通 GET 不重新发现、不重新分析、不生成第二份计划、不标记
+   证据过期、不变更 Storage。读取失败是真实的“无计划”，不从最近记录猜测。
+2. **投影与广告一致**。`document()` 的 `previewId` 与 `actions.preview.path`
+   使用同一解析结果，因此不会再出现“可用但没有地址”的动作；已冻结清单仍不提供
+   第二次 finalize。
+3. **同页恢复**。`AutomationRunOncePage` 与意图页同一模式：finalize 成功后把
+   精确计划身份写入旅程 URL（合并保留的 Files/Operations 返回上下文），重载/
+   前进后退/重开链接按 URL 提示恢复；URL 计划不得覆盖更新的持久计划；
+   `OrganizePlanConfirmation` 绑定 `expectedIntentId`，非本运行意图的计划不显示、
+   不提供执行。读取不取得任何权限。
+4. **测试与回归**。`test_v2_automation_run_once` 新增
+   `test_frozen_run_once_plan_survives_a_plain_read_and_a_reopen`（真实 HTTP
+   finalize201→同 URL GET200 同一 previewId、action path、零二次 finalize/分析、
+   source/target mutations 为空、SQLite 重开后 `get_latest_manual_preview` 仍为
+   同一份）与 `test_unfrozen_run_once_publishes_no_plan_identity`；
+   `test_preview_retirement` 新增 `RetainedRunOncePlanTests`，从真实 API/Run once
+   装配复述同一条链路。新增 `web/src/features/operations/AutomationRunOncePage.test.tsx`
+   覆盖同 URL 空 cache 重载恢复、冻结态、陈旧 URL 计划被持久计划取代、冻结前只有
+   finalize。两条 Python 回归与 Web 重载回归在父候选 `bb0b1f3` 上均为红，在本候选为绿。
+
+### 受影响检查（本轮 Developer 实际结果，仓库根除注明外）
+
+```bash
+python3 scripts/check_governance.py                                  # PASS
+.venv/bin/ruff check mediaflow tests                                 # All checks passed
+.venv/bin/ruff format --check mediaflow tests                        # 320 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts            # OK
+git diff --check                                                     # clean
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
+  test_scan_retirement test_file_index_retirement                   # Ran 39, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
+  test_manual_organize_preview test_manual_organize_execution test_v2_manual_organize \
+  test_organize_preparation                                          # Ran 117, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation \
+  test_scope_continuation test_task_center_recovery_lineage \
+  test_metadata_correction_continuation                             # Ran 185, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once \
+  test_v2_automation_run_once test_v2_automation_operations test_preview_retirement \
+  test_automation_definition_execution test_automation_unattended_grant \
+  test_automation_authorized_execution_matrix                       # Ran 121, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_configuration_organize \
+  test_v2_rules_workspace_previews test_task_persistence test_automation_admission \
+  test_automation_job_fencing test_manual_operations_contract \
+  test_media_discovery                                              # Ran 213, OK
+cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx \
+  src/routes/router.test.tsx src/features/operations/OrganizeRouter.test.tsx \
+  src/features/operations/OrganizeCreationPage.test.tsx \
+  src/features/operations/OperationsInventory.test.tsx \
+  src/features/operations/TaskItemRecoveryPanel.test.tsx            # 6 files, 76 tests OK
+cd web && npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx \
+  src/features/operations/AutomationRouter.test.tsx \
+  src/features/operations/AutomationLifecyclePage.test.tsx \
+  src/entities/operations/run-once.test.ts                          # 4 files, 52 tests OK
+cd web && npx eslint src/features/operations/AutomationRunOncePage.test.tsx \
+  src/features/operations/AutomationRunOncePage.tsx                 # clean
+cd web && npx prettier --check src/features/operations/AutomationRunOncePage.test.tsx \
+  src/features/operations/AutomationRunOncePage.tsx                 # clean
+cd web && npm run typecheck                                          # OK
+```
+
+### 未执行 / 剩余风险（交 B）
+
+- 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
+  release-security 属 B，本轮未执行。
+- 未改 schema/迁移；`_durable_plan_id` 为纯只读查询，历史运行库不受影响。
+- 授权前分析校验（`latest_frozen_definition_run_once`）的 503 fail-closed 行为沿用上轮结论。
+- 共享分析校验依赖 `discovery.intent_id`→`preview_service.latest_readonly`；若某适配
+  服务不提供 `latest_readonly`，Run once 读退化为“无计划身份”（动作 path 为 null），
+  不会伪造计划。
+- 未做冻结 Slice43 的页面/指标/设置重设计；本轮只恢复既有 Run once 同页持久关联。
+
+不自判 PASS，不关闭 Slice，不规划下一 Task。
+
+### 上一轮记录（授权前分析阻塞，已被 B 核实修正）
+
+#### 受影响检查（Developer 实际结果，仓库根除注明外）
 
 ```bash
 python3 scripts/check_governance.py                                  # PASS
@@ -493,18 +580,17 @@ cd web && npm run typecheck                                          # OK
 真实 Run once 分析后 eligible=true、grant 201、grant/audit=1、`manual_previews>=1`，且来源
 bytes 不变、目标为空、source/target mutations 均为空。
 
-### 未执行 / 剩余风险（交 B）
+#### 未执行 / 剩余风险（当时交 B）
 
 - 全量 Python/Web/E2E、production assets、wheel/安装消费者/Docker/Worker/restart/
-  release-security 属 B，本轮未执行。
+  release-security 属 B，当时未执行。
 - 未改 schema/迁移；`latest_frozen_definition_run_once` 为纯只读查询，历史运行库不受影响。
 - 共享分析校验依赖 `discovery.intent_id`→`preview_service.latest_readonly`；若某适配仓储
   不提供 `latest_frozen_definition_run_once`，授权前门返回 503（fail-closed）而非放行。
 - Web 未改：`AutomationDetailPage` 已按 `grantEligibility.eligible` 渲染说明/隐藏授权按钮，
-  不 eligible 时不显示确认框；本轮未新增 Web 分析发起入口（Run once 页面既有的共享分析即
+  不 eligible 时不显示确认框；当时未新增 Web 分析发起入口（Run once 页面既有的共享分析即
   授权前分析来源），未做冻结 43 的页面重设计。
 
-不自判 PASS，不关闭 Slice，不规划下一 Task。
 
 ## B Review Result
 
