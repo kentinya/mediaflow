@@ -420,7 +420,7 @@ Closure Packet，返回SLICE READY FOR A REVIEW，不机械再跑Final，不自�
 
 ```text
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
-Candidate Head: <pending this round's commit; parent dfc59a4c65f05941cc30760b179f6546583b2d25>
+Candidate Head: 764291d75cac90cb54fb857c94f23c4101bc2bdb
 Status: READY FOR B REVIEW
 Round: sixth round; fixes B's FIX REQUIRED on dfc59a4c65f05941cc30760b179f6546583b2d25
        (pause/cancel issued while the analysis Provider call was in flight did
@@ -481,17 +481,34 @@ python3 scripts/check_governance.py                                  # PASS
 .venv/bin/ruff format --check mediaflow tests                        # 320 files already formatted
 .venv/bin/python -m compileall -q mediaflow tests scripts            # OK
 git diff --check                                                     # clean
-PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery   # Ran 113, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery.FinalizeHandoffFencingTests  # Ran 8, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_run_once   test_v2_automation_run_once test_preview_retirement                # Ran 73, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent   test_manual_organize_preview test_manual_organize_execution   test_v2_manual_organize test_organize_preparation                  # Ran 117, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_recovery_continuation   test_scope_continuation test_task_center_recovery_lineage   test_metadata_correction_continuation                              # Ran 185, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_automation_unattended_grant   test_automation_definition_execution test_automation_authorized_execution_matrix   test_configuration_organize test_v2_rules_workspace_previews test_task_persistence  # Ran 113, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_v2_automation_operations   test_configuration_snapshot test_automation_admission test_automation_job_fencing   test_manual_operations_contract                                    # Ran 85, OK
-PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement   test_scan_retirement test_file_index_retirement test_automation_task_definition   test_v2_automation_lifecycle                                       # Ran 82, OK
-cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx   src/entities/operations/run-once.test.ts                           # 2 files, 11 tests OK
-cd web && npm run test -- run src/routes/router.test.tsx   src/features/operations/OrganizeCreationPage.test.tsx   src/features/operations/OperationsInventory.test.tsx   src/features/operations/TaskItemRecoveryPanel.test.tsx   src/features/operations/OrganizeDiscoveryPage.test.tsx             # 5 files, 51 tests OK
-cd web && npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx   src/features/operations/AutomationRouter.test.tsx   src/features/operations/OrganizeRouter.test.tsx                    # 3 files, 54 tests OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery   # Ran 114, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery.FinalizeHandoffFencingTests  # Ran 9, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_media_discovery \
+  test_automation_run_once test_v2_automation_run_once \
+  test_preview_retirement test_manual_organize_preview               # Ran 203, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_manual_organize_intent \
+  test_manual_organize_execution test_v2_manual_organize \
+  test_organize_preparation test_recovery_continuation \
+  test_scope_continuation test_task_center_recovery_lineage \
+  test_metadata_correction_continuation                              # Ran 289, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_automation_unattended_grant \
+  test_automation_definition_execution test_automation_authorized_execution_matrix \
+  test_configuration_organize test_v2_rules_workspace_previews \
+  test_task_persistence test_v2_automation_operations \
+  test_configuration_snapshot                                        # Ran 175, OK
+PYTHONPATH=tests .venv/bin/python -m unittest test_preview_retirement \
+  test_scan_retirement test_file_index_retirement \
+  test_automation_task_definition test_v2_automation_lifecycle       # Ran 82, OK
+cd web && npm run test -- run src/features/operations/AutomationRunOncePage.test.tsx \
+  src/entities/operations/run-once.test.ts                           # 2 files, 11 tests OK
+cd web && npm run test -- run src/routes/router.test.tsx \
+  src/features/operations/OrganizeCreationPage.test.tsx \
+  src/features/operations/OperationsInventory.test.tsx \
+  src/features/operations/TaskItemRecoveryPanel.test.tsx \
+  src/features/operations/OrganizeDiscoveryPage.test.tsx             # 5 files, 51 tests OK
+cd web && npm run test -- run src/features/rules/RulesObjectTestPanel.test.tsx \
+  src/features/operations/AutomationRouter.test.tsx \
+  src/features/operations/OrganizeRouter.test.tsx                    # 3 files, 54 tests OK
 cd web && npm run typecheck                                          # OK
 cd web && npx eslint <3 changed web files>                           # clean
 cd web && npx prettier --check <3 changed web files>                 # clean
@@ -503,7 +520,7 @@ cd web && npx prettier --check <3 changed web files>                 # clean
 |---|---|
 | `test_automation_run_once.RunOnceJourneyTests` | 真实 Run once API + 阻塞合成 Provider：pause → 200 `pausing`、释放 Provider 后持久 `PAUSED`、计划未链接且被退役、GET `paused`、无 confirm/execution、Continue 后同一 run 链接唯一新计划；cancel → `CANCELLED`、迟到计划被退役、GET 终态无 plan/resume/confirm；旧 owner 失去 claim → 不写任何字段、successor 可完成 |
 | `test_v2_automation_run_once.RunOnceApiTests` | 真实 V2 API：pause-request 期间无 plan 身份/动作、Worker 确认后 `paused` 可 Continue 并最终链接计划；cancel 终态、迟到 Worker 无 claimable 工作、无 current plan；重开后仍是 CANCELLED 且无计划 |
-| `test_media_discovery.FinalizeHandoffFencingTests` | 新增 `test_fenced_plan_publication_requires_the_exact_live_claim`：错误 claim → `DiscoveryOwnershipLost` 且零副作用；正确 claim → 计划链接与 claim 释放在同一次写；重复发布不可能产生第二份计划 |
+| `test_media_discovery.FinalizeHandoffFencingTests` | 新增 `test_fenced_plan_publication_requires_the_exact_live_claim`：错误 claim → `DiscoveryOwnershipLost` 且零副作用；正确 claim → 计划链接与 claim 释放在同一次写；重复发布不可能产生第二份计划。新增 `test_discarding_an_unpublished_plan_is_scoped_to_its_own_identity`：退役只作用于该 `preview_id`，同 intent 的合法 sibling 计划保持 current 与 item 行 |
 | `AutomationRunOncePage.test.tsx` | pausing（无 plan、无重复 pause、禁用等待提示）、paused（Continue、无 confirm）、cancelled（含 stale `?plan=` 也不得挂载确认） |
 
 #### 独立探针证据（真实入口，非源码检索）
@@ -530,9 +547,14 @@ cd web && npx prettier --check <3 changed web files>                 # clean
   `SQLiteTaskRepository`，服务层保留"无该方法时退回 `_persist` + `_release_claim`"的
   兼容路径（用于测试替身），该退回路径不具备同事务 fence，属已知的降级边界。
 - provider 阻塞期内的 heartbeat 仍由既有 lease keeper 维持；本轮未改租约/心跳语义。
-- cancelled 的计划退役依赖真实仓储的 `mark_manual_preview_items_stale`；若该能力缺失则
-  不做退役（保持"不链接即可执行"的主保证），不会删除任何证据。
-- 分析期间 Web 仍按 2s 轮询；`pausing`/`paused`/`cancelled` 不轮询。
+- `discard_manual_preview` 同为新增仓储方法（按精确 `preview_id`、只作用 still-current
+  行）。缺该方法时服务层退回到"仅当仍是该 intent 最新计划才按 item 退役"的保守路径，
+  主保证（未链接即不可确认执行）不依赖退役本身，也不会删除任何证据。
+- E2E harness 的 `run-automation-run-once-worker` 与既有 browser proof 未修改：它们仍以
+  `previewId` 链接作为分析完成信号，与新的 fenced 发布路径一致；B 的原生浏览器门禁需
+  在候选上重新执行。
+- 分析期间 Web 仍按 2s 轮询；`pausing`/`paused`/`cancelled` 停止轮询（`pausing` 的
+  确认需操作者刷新或等待下一次交互，与既有 discovery 协作控制一致）。
 - 本轮测试/质量检查累计约 3 分钟（含 3 次全新运行的真实入口探针与一次父候选复现），
   低于本轮实际工作时间的 30%。
 
