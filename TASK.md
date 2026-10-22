@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: IN PROGRESS
+Status: FIX REQUIRED
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: DEVELOPER HANDS OFF DURABLE RUN-ONCE PLAN CANDIDATE; B RECHECKS SAME TASK
+Next Action: DEVELOPER UPDATES SHARED-GRANT TEST FIXTURE WITH REAL PREFLIGHT; B CONTINUES T4 GATES
 ```
 
 ## Goal
@@ -600,6 +600,56 @@ bytes 不变、目标为空、source/target mutations 均为空。
 
 
 ## B Review Result
+
+### Current review — `2e84e8883250c3f166f61b978b33a46c641379f6`
+
+```text
+Reviewed candidate: 2e84e8883250c3f166f61b978b33a46c641379f6
+Task range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..2e84e8883250c3f166f61b978b33a46c641379f6
+Decision: FIX REQUIRED
+Review stage: durable Run once recovery and focused gates pass; full regression blocker found
+Task blocker: full Python regression fails because a direct grant fixture has no shared-analysis evidence
+Next: SAME TASK FIX LOOP; B owns remaining full/native/packaging/security/restart gates
+```
+
+- 上轮 Run once 刷新阻塞已修复。本轮从真实授权详情动作，经HTTP Run once admission/finalize、
+  同URL GET、 intent计划GET及明确grant再次独立验证通过：planId相同、操作只读、授权需分开确认，
+  来源bytes不变、目标为空、Storage mutation为空。Python受影响组 **84 passed**；Web受影响组
+  **10 files / 128 passed**。候选实现 diff（`bb0b1f3..HEAD`）及新增的同URL刷新/陈旧URL/
+  冻结前保护测试已审，未发现新的生产行为阻塞。此前授权前分析修复保持有效。
+- **全量 Python 失败，夹具欠缺共享分析证据。** `.venv/bin/python -m unittest discover -s tests`
+  结果 `Ran 2672 tests in 253.967s; FAILED (errors=1, skipped=7)`：
+  `tests/test_configuration_snapshot.py::ManagedConfigurationSnapshotTests.test_worker_rechecks_current_principal_between_real_effect_boundaries`
+  在行2072直接调用 `UnattendedExecutionGrantService.grant`，但该服务现在按Task要求拒绝没有真实
+  Run-once共享分析证据的grant（`unattended_execution_analysis_unavailable`）。这是被改变的授权前置
+  条件尚未同步到同一Task测试夹具，不是允许去掉服务校验；要求该测试以合法、真实的共享分析前置
+  建立grant，保留逐effect权限重检断言。无skip/放宽权限/制造内存preview作为替代。
+- Python全量之外的 B 质量门禁通过：ruff format检查（384 files）、ruff check、compileall、
+  pip check、两个示例配置验证、无FFmpeg/FFprobe命中、`git diff --check`。Web typecheck、lint、
+  format和production build通过（有现有bundle >500kB提示）。B已开始但中止全量Web Vitest；
+  因Python全量不绿且本轮测试时间预算接近50%，Web全量及E2E/native/asset/wheel/installed consumer/
+  Docker/Worker/restart/release-security等门禁尚未完成，均保留为B责任，不是豁免或交回Developer。
+- 复核所有入口均基于已存在路由/真实组件；未构造虚假产品状态。未改Slice/Roadmap/Progress，
+  保留预存dirty/private工作，未访问私有配置、用户运行库或真实媒体。治理PASS。
+
+#### Required correction — Task45.6 的测试/夹具修正
+
+1. 修复 `test_configuration_snapshot.py` 上述真实worker权限边界测试的setup：grant写入前使用现有
+   受支持的 Automation Run once 和共享整理分析链，绑定相同定义、Active revision/digest/version、
+   source scope与Storage；不直接省略grant校验。已有共享分析fixture/辅助方法可复用。
+2. 保留原测试“一个文件效果成功后当前principal撤销，后续effect前重新核权并保留已完成项”的
+   原断言。Developer运行此测试、`test_automation_unattended_grant`、`test_v2_automation_operations`、
+   `test_automation_run_once`及changed-file质量检查；仅当共享fixture有改动时补充对应受影响测试。
+   不跑全仓套件；提交同Task连贯handoff。
+3. B重跑修正后的全Python门禁，然后在原固定候选上继续未完成的Web全量、指定Python-backed
+   浏览器journeys、独立关键CLI/API/Worker证明、clean wheel/安装消费者、Docker/restart/security，
+   并完成完整Task Base..Head审查。按执行输入复用本轮通过的匹配证据；Slice-final只补缺项。
+
+本轮开始 `2026-10-22 10:20 +0800`；full Python约254s、受影响Python约11s、受影响Web约13s，
+质量/构建及不完整Web尝试合计仍在本轮实际用时50%以内。所有run实际结果和输出保存在：
+`.git/validation-evidence/2e84e8883250c3f166f61b978b33a46c641379f6/task45.6/b-review/`。
+
+### Previous B review — `bb0b1f314916d316ef384430ce3633e6220b3e21`
 
 ```text
 Reviewed candidate: bb0b1f314916d316ef384430ce3633e6220b3e21
