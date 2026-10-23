@@ -7,11 +7,15 @@ temporary SQLite runtime database, so Playwright drives the exact packaged
 Python stack instead of a Node fake. Every seeded run is created through a
 real supported producer or the real Worker claim/linkage path:
 
-- ``POST /api/v1/jobs`` admits a durable pending Job (pre-Task admission);
+- ``POST /api/v1/jobs`` admits a durable pending Job through the supported
+  remote organize entry (explicit execute intent, enabled checked switch and
+  one issued one-shot execution authorization); the same request from the
+  viewer principal must answer 403, so no permission is bypassed;
 - ``PersistentTaskCoordinator.create`` creates standalone durable Tasks, the
   same coordinator every production task producer uses;
-- ``repository.admit_job`` admits one definition-pinned Job the way the
-  scheduler does, giving the scheduled trigger real evidence;
+- one real ``IntervalScheduler.tick`` over the checked Active definitions emits
+  the definition-pinned Job, giving the scheduled trigger real occurrence
+  evidence instead of a hand-written pin;
 - ``AutomationWorker.run_next`` claims the pending Job and links its Task
   through the real ``complete_claimed_job`` write path.
 
@@ -88,6 +92,9 @@ from mediaflow.application.classification_review import ClassificationReviewServ
 from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
 from mediaflow.application.conflict_resolution import ConfirmationService  # noqa: E402
+from mediaflow.application.execution_authorization import (  # noqa: E402
+    ExecutionAuthorizationService,
+)
 from mediaflow.application.manual_organize_worker import (  # noqa: E402
     ManualOrganizeExecutionWorker,
 )
@@ -337,6 +344,12 @@ def build_managed_fixture(
     # preparation must withhold automatic selection and ground both candidates
     # for a same-page choice.
     (source_root / "Eleventh.2011.mkv").write_bytes(b"ambiguous identity synthetic media")
+    # The managed definition's own reviewed scope.  It stays empty: the
+    # Scheduler only *admits* the occurrence, so the fixture needs a real
+    # ResourceLibrary-relative directory and no media of its own.  Adding a file
+    # here would silently enter the manifest of any definition scoped at the
+    # library root.
+    (source_root / SCHEDULED_SCOPE).mkdir(parents=True, exist_ok=True)
 
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
@@ -481,6 +494,30 @@ def build_managed_fixture(
             "organizePolicy": "overwrite-fixture",
         }
     )
+    # The single supported remote-organize admission is only reachable with the
+    # explicit execute intent, the enabled checked switch and a one-shot
+    # execution authorization.  The harness enables the checked switch here so
+    # the same supported entry the acceptance evidence uses can seed the
+    # pending pre-Task Job, while admission still requires its own issued
+    # token (see ``seed``).
+    document["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
+    # One managed definition whose scope is exactly the fixture's scheduled
+    # review scope.  The harness Scheduler tick emits its one real due
+    # occurrence at seed time, which is where the definition-pinned pending Job
+    # and its scheduled-trigger evidence come from.  No second scheduling
+    # mechanism and no hand-written definition pin are introduced.
+    document["automationTaskDefinitions"] = [
+        {
+            "id": SCHEDULED_DEFINITION_ID,
+            "name": "Harness scheduled review",
+            "enabled": True,
+            "resourceLibraryId": "source",
+            "sourceScope": SCHEDULED_SCOPE,
+            "mode": "automatic-organization",
+            "intervalSeconds": 3600,
+            "itemLimit": 5,
+        }
+    ]
 
     configuration_repository = SQLiteConfigurationRepository(database)
     configuration_service = ManagedConfigurationService(
@@ -769,7 +806,7 @@ class AppState:
         self.managed = managed
         self.manual_run: dict[str, str] | None = None
         self.pipeline_run: dict[str, str] | None = None
-        #: The paused scan Task of the AC-T7 continuation journey.
+        #: The paused organize Task of the AC-T7 continuation journey.
         self.continuation_task_id: str | None = None
         self.recovery_run: dict[str, str] | None = None
         self.recovery_runs: dict[str, dict[str, str]] = {}
@@ -815,6 +852,12 @@ AUTOMATION_LIFECYCLE_DEFINITION_ID = "harness-automation"
 #: published history.
 AUTOMATION_LIFECYCLE_DRAFT_NAME = "NEVER PUBLISHED browser draft"
 
+#: The managed definition of the inventory's scheduled-trigger fixture and the
+#: exact ResourceLibrary-relative scope it reviews.  The Scheduler emits its
+#: occurrence; no database edit fakes the pinned Job.
+SCHEDULED_DEFINITION_ID = "harness-scheduled"
+SCHEDULED_SCOPE = "Scheduled"
+
 STATE: AppState | None = None
 
 
@@ -826,6 +869,7 @@ def wsgi_request(
     query: str = "",
     body: dict | None = None,
     token: str = HARNESS_TOKEN,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, dict]:
     payload = json.dumps(body).encode("utf-8") if body is not None else b""
     statuses: list[str] = []
@@ -838,39 +882,71 @@ def wsgi_request(
         "HTTP_AUTHORIZATION": f"Bearer {token}",
         "wsgi.input": io.BytesIO(payload),
     }
+    for name, value in (headers or {}).items():
+        key = "HTTP_" + name.upper().replace("-", "_")
+        environ[key] = value
     raw = b"".join(app(environ, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(raw)
 
 
 def seed(
-    repository: SQLiteTaskRepository, api: MediaFlowApi
+    repository: SQLiteTaskRepository,
+    api: MediaFlowApi,
+    managed: ManagedHarnessContext | None = None,
 ) -> tuple[SQLiteTaskRepository, MediaFlowApi]:
     """Create one deterministic run population through real producers."""
 
-    # 1. A real durable Job admission: pending, pre-Task, no Worker yet.
-    status, job_document = wsgi_request(api, "POST", "/api/v1/jobs", body={"command": "organize"})
+    # 1. A real durable Job admission through the *supported* remote organize
+    #    entry: the checked switch is enabled for this isolated fixture, the
+    #    operator submits the explicit execute intent and one issued one-shot
+    #    execution authorization.  The same authorization service the CLI issues
+    #    from produces the token, so the pending pre-Task Job carries the real
+    #    admission evidence and no permission is bypassed.  The resident Worker
+    #    has not claimed it yet.
+    issued = state_authorization_service(repository, managed).issue(
+        ttl_seconds=300, max_items=1, actor="harness"
+    )
+    submission = {
+        "body": {"command": "organize", "execute": True, "limit": 1},
+    }
+    # The viewer principal keeps its real refusal: the same submission it may
+    # read but not admit must answer 403 before any Job exists, so the fixture
+    # can never be mistaken for a permission bypass.
+    denied, denial = wsgi_request(
+        api,
+        "POST",
+        "/api/v1/jobs",
+        token=HARNESS_TOKEN,
+        headers={"X-MediaFlow-Execution-Token": issued.token},
+        **submission,
+    )
+    if denied != 403 or "remote_execute" not in json.dumps(denial):
+        raise SystemExit(f"harness: viewer organize admission was not refused: {denied} {denial}")
+    status, job_document = wsgi_request(
+        api,
+        "POST",
+        "/api/v1/jobs",
+        token=HARNESS_ADMIN_TOKEN,
+        headers={"X-MediaFlow-Execution-Token": issued.token},
+        **submission,
+    )
     if status != 202:
         raise SystemExit(f"harness: job admission failed with {status}: {job_document}")
 
-    # 2. A second Job, definition-pinned the way the scheduler admits one, so
-    #    the scheduled trigger carries real admission evidence.
+    # 2. A definition-pinned Job the way the Scheduler admits one: one real due
+    #    occurrence is emitted by the production Scheduler over the checked
+    #    Active definitions, so the scheduled trigger carries real admission
+    #    evidence instead of a hand-written row.
     now = datetime.now(UTC)
-    scheduled = AutomationJob(
-        "harness-scheduled-job",
-        AutomationCommand.PREVIEW,
-        AutomationJobStatus.PENDING,
-        now + timedelta(seconds=1),
-        now + timedelta(seconds=1),
-        definition_id="harness-definition",
-        resource_library_id="harness-library",
-        source_scope="Movies",
-    )
-    repository.admit_job(scheduled, 100)
+    if managed is not None:
+        emitted = run_scheduled_definition_tick(managed, repository)
+        if not emitted:
+            raise SystemExit("harness: scheduled definition occurrence was not emitted")
 
     # 3. Standalone durable Tasks through the production coordinator.
     coordinator = PersistentTaskCoordinator(repository, repository)
     coordinator.create(
-        "preview",
+        "organize",
         execute_authorized=False,
         scope_path="Movies/Harness",
     )
@@ -899,6 +975,61 @@ def seed(
     return repository, api
 
 
+def state_authorization_service(
+    repository: SQLiteTaskRepository, managed: ManagedHarnessContext | None
+) -> ExecutionAuthorizationService:
+    """The production one-shot execution authority the checked switch enables.
+
+    It is constructed exactly as the CLI's ``execution-authorizations issue``
+    command and the API runtime binding construct it, so the token the harness
+    submits was really issued and consumed by the supported boundary.
+    """
+
+    active = managed.active if managed is not None else None
+    return ExecutionAuthorizationService(
+        repository,
+        maximum_active_jobs=100,
+        configuration_snapshot_id=getattr(active, "revision_id", None),
+        configuration_snapshot_digest=getattr(active, "digest", None),
+    )
+
+
+def run_scheduled_definition_tick(
+    managed: ManagedHarnessContext, repository: SQLiteTaskRepository
+) -> tuple[str, ...]:
+    """Emit one real due occurrence of the fixture's managed definition.
+
+    The Scheduler assembly is the resident one: the same ``IntervalScheduler``
+    with the checked Active snapshot resolver, the Active's own
+    ``automation_task_definitions`` and ResourceLibrary identities, and the
+    repository the runtime Task store uses.  The emitted Job and its occurrence
+    row are the production write path, never a fabricated definition pin.
+    """
+
+    from mediaflow.application.automation import IntervalScheduler
+    from mediaflow.domain.automation import SchedulerConfigurationSnapshot
+
+    active = managed.configuration_service.active()
+    if active is None:
+        raise RuntimeError("harness: scheduled fixture has no Active configuration")
+    runtime = managed.runtime
+    scheduler = IntervalScheduler(
+        repository,
+        (),
+        configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+            active.revision_id,
+            active.digest,
+            (),
+            runtime.automation_maximum_active_jobs,
+            tuple(runtime.automation_task_definitions),
+            active.version,
+            tuple(item.library_id for item in runtime.resource_libraries),
+            tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
+        ),
+    )
+    return tuple(job.definition_id or "" for job in scheduler.tick())
+
+
 def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
     """Create durable progress and terminal rows for the live inventory proof."""
 
@@ -908,7 +1039,7 @@ def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
         coordinator = PersistentTaskCoordinator(state.repository, state.repository)
         now = datetime.now(UTC)
         running = coordinator.create(
-            "scan",
+            "organize",
             execute_authorized=False,
             scope_path="Movies/Inventory Live Running",
         )
@@ -956,7 +1087,7 @@ def seed_inventory_poll_population(state: AppState) -> dict[str, object]:
         terminal: list[dict[str, str]] = []
         for index in range(1, 4):
             task = coordinator.create(
-                "scan",
+                "organize",
                 execute_authorized=False,
                 scope_path=f"Movies/Inventory Poll {index:02}",
             )
@@ -1009,7 +1140,7 @@ def append_inventory_poll_failure(state: AppState) -> dict[str, object]:
         if isinstance(existing, dict):
             return dict(existing)
         task = PersistentTaskCoordinator(state.repository, state.repository).create(
-            "scan",
+            "organize",
             execute_authorized=False,
             scope_path="Movies/Inventory Poll 04",
         )
@@ -1374,7 +1505,7 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
             "harness-manual-worker",
             "Harness Manual Organize Worker",
             10.0,
-            ("scan", "preview", "organize"),
+            ("organize", "manual_organize"),
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
             runtime_schema_version=SCHEMA_VERSION,
@@ -1454,7 +1585,7 @@ def register_manual_worker(state: AppState) -> dict[str, object]:
         "harness-manual-worker",
         "Harness Manual Organize Worker",
         10.0,
-        ("scan", "preview", "organize", "media_discovery"),
+        ("organize", "manual_organize", "media_discovery"),
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         runtime_schema_version=SCHEMA_VERSION,
@@ -1669,7 +1800,7 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
             "harness-batch-summary-worker",
             "Harness Batch Summary Worker",
             10.0,
-            ("scan", "preview", "organize"),
+            ("organize", "manual_organize"),
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
             runtime_schema_version=SCHEMA_VERSION,
@@ -1849,7 +1980,7 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
             "harness-recovery-manual-worker",
             "Harness Recovery Manual Worker",
             10.0,
-            ("scan", "preview", "organize"),
+            ("organize", "manual_organize"),
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
             runtime_schema_version=SCHEMA_VERSION,
@@ -2270,7 +2401,7 @@ def run_task_item_recovery_worker_once(
         WORKER_ID,
         "harness-inventory-worker",
         30.0,
-        ("scan", "preview", "organize", "recovery-continuation"),
+        ("organize", "recovery-continuation"),
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         runtime_schema_version=SCHEMA_VERSION,
@@ -2909,13 +3040,13 @@ CONTINUATION_SOURCE_FILE = "C/Continuation/Five.2005.mkv"
 
 
 def seed_continuation_journey(state: AppState) -> dict[str, object]:
-    """Create one real paused Preview Task with one already-recorded source.
+    """Create one real paused organize Task with one already-recorded source.
 
     This is a genuine durable state produced by the real production
-    coordinator: a Preview Task that discovered exactly one source and was then
-    durably paused at a supported item boundary.  Its item budget is two, so
-    exactly one unit of remaining work exists — the continuation must process
-    that one and nothing else.
+    coordinator: an organize Task that discovered exactly one source and was
+    then durably paused at a supported item boundary.  Its item budget is two,
+    so exactly one unit of remaining work exists — the continuation must
+    process that one and nothing else.
     """
 
     active = state.managed.active
@@ -2924,7 +3055,7 @@ def seed_continuation_journey(state: AppState) -> dict[str, object]:
     (source_root / CONTINUATION_SOURCE_FILE).write_bytes(b"continuation synthetic media")
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
     task = coordinator.create(
-        "preview",
+        "organize",
         execute_authorized=False,
         scope_path=str(source_root / "C" / "Continuation"),
         item_limit=2,
@@ -2971,7 +3102,7 @@ def run_continuation_worker_once(state: AppState) -> dict[str, object]:
         WORKER_ID,
         "harness-inventory-worker",
         30.0,
-        ("scan", "preview", "organize", "scope-continuation"),
+        ("organize", "scope-continuation"),
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
         runtime_schema_version=SCHEMA_VERSION,
@@ -3206,7 +3337,7 @@ def seed_authority_refusal(state: AppState, *, missing_snapshot: bool = False) -
         "harness-missing-configuration-revision" if missing_snapshot else active.revision_id
     )
     task = coordinator.create(
-        "preview",
+        "organize",
         execute_authorized=True,
         scope_path=fixture_scope,
         item_limit=2,
@@ -4558,7 +4689,7 @@ def seed_task_center_problem_journey(state: AppState) -> dict[str, object]:
     run_repair_now = datetime.now(UTC)
     run_repair_job = AutomationJob(
         "harness-run-repair",
-        AutomationCommand.PREVIEW,
+        AutomationCommand.ORGANIZE,
         AutomationJobStatus.FAILED,
         run_repair_now,
         run_repair_now,
@@ -5028,7 +5159,7 @@ def main(argv: list[str] | None = None) -> int:
     database.parent.mkdir(parents=True, exist_ok=True)
     managed_root = database.parent / f"{database.stem}-manual-organize"
     repository, managed, api = build_managed_fixture(database, managed_root)
-    seed(repository, api)
+    seed(repository, api, managed)
     # Task45.5 live-parity fixtures: mixed media/non-media/directories, Unicode,
     # a long name and boundary whitespace under one directory of each library,
     # so the production CLI and the production Web/API must list byte-identical

@@ -392,9 +392,15 @@ test("the inventory renders real producer runs with truthful labels", async ({
   // Two real API-admitted Jobs and two coordinator-created Tasks appear as
   // four runs: pre-Task pending admissions and standalone Tasks both visible.
   await expectRunTotal(page, SEEDED_RUN_TOTAL);
-  await expect(page.getByText("预览").first()).toBeVisible();
-  await expect(page.getByText("扫描").first()).toBeVisible();
-  await expect(page.getByText("手动整理").first()).toBeVisible();
+  // Both admitted Jobs are the one supported organize command; the rich detail
+  // Task records the manual organize command. The retired Scan/Preview work
+  // kinds no longer exist, so no run carries their labels.
+  await expect(page.getByRole("cell", { name: /^整理/ }).first()).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: /^手动整理/ }).first(),
+  ).toBeVisible();
+  await expect(page.getByText("预览", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("扫描", { exact: true })).toHaveCount(0);
   // The definition-pinned Job carries the scheduled trigger; the API-admitted
   // Job carries the automation trigger; standalone Tasks are manual.
   await expect(page.getByText("计划任务").first()).toBeVisible();
@@ -907,7 +913,9 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // Select the exact new Task through the visible run inventory and inspect
   // the single durable item/result written by the actual Worker execution.
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  // The supported journey publishes two real runs: the durable zero-mutation
+  // analysis (its own `discovery` run) and the execution Task it links.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
   const row = page.getByRole("row").filter({ hasText: "One.2001.mkv" });
   await expect(row).toHaveCount(1);
   await row.getByRole("button").first().click();
@@ -1077,7 +1085,8 @@ test("new task selection reconciles a lost admission, completes in the Worker, a
 
   await connect(page, ADMIN_TOKEN);
   await openInventory(page);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  // The preceding journey's analysis plus its execution Task.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
   await page.getByLabel("操作类型").fill("manual_organize");
   await expect(page).toHaveURL(/command=manual_organize/);
 
@@ -1521,10 +1530,11 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus the four Manual runs produced by the earlier
-  // new-task journeys (the reviewed-plan journey, the lost-admission journey,
-  // the sibling-independence journey and the new-source ambiguity journey).
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 7);
+  // The seeded population plus the two real runs (durable analysis + execution
+  // Task) each of the four earlier new-task journeys published: the
+  // reviewed-plan journey, the lost-admission journey, the sibling-independence
+  // journey and the new-source ambiguity journey.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -1540,7 +1550,9 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(run.status).toBe("completed");
 
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
+  // This standalone `organize --execute` shape publishes one Task and no
+  // separate analysis run, so exactly one more run appears.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 9);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.
@@ -1701,7 +1713,7 @@ test("the default unfiltered task-center origin selects its admitted run through
     page.getByRole("heading", { name: "任务中心", exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 8);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 9);
 
   // The native entry carries the valid empty origin marker.
   await page.getByRole("link", { name: "新建整理任务" }).click();
@@ -1885,7 +1897,10 @@ test("the default unfiltered task-center origin selects its admitted run through
  * continuation scope logic or the real authority decision.
  */
 
-/** The paused Preview fixture's already-recorded and remaining sources. */
+/** The supported Task command of the paused remaining-scope fixture. */
+const CONTINUATION_COMMAND = "organize";
+
+/** The paused organize fixture's already-recorded and remaining sources. */
 const CONTINUATION_RECORDED_SOURCE = "C/Continuation/Six.2006.mkv";
 const CONTINUATION_REMAINING_SOURCE = "C/Continuation/Five.2005.mkv";
 
@@ -1946,7 +1961,7 @@ test("a paused run continues only its remaining scope through the real Worker", 
   // The operator/API projection is bounded and redacted: it publishes the
   // durable identifiers but never the internal scope path, the pin or the actor.
   expect(admissionBody.continuation.sourceTaskId).toBe(sourceTaskId);
-  expect(admissionBody.continuation.command).toBe("preview");
+  expect(admissionBody.continuation.command).toBe(CONTINUATION_COMMAND);
   expect(admissionBody.continuation.itemLimit).toBe(2);
   expect(admissionBody.continuation.boundary).toBe(
     "paused_remaining_admitted_scope",
