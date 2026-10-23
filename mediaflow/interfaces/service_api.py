@@ -67,6 +67,7 @@ from mediaflow.application.operations_lifecycle import (
     manual_action_matrix_operator_document,
     manual_execution_operator_document,
     manual_execution_plan_evidence_operator,
+    manual_intent_analysis_document,
     manual_intent_latest_plan_document,
     manual_intent_operator_document,
     manual_preview_operator_document,
@@ -1750,29 +1751,25 @@ class MediaFlowApi:
             and parts[6] == "previews"
             and method == "POST"
         ):
+            # The intent-page analysis entry.  The request only records one
+            # versioned durable stage on the intent's own organize run; the
+            # resident Worker runs the complete zero-mutation analysis and
+            # links the exact plan through the same atomic publication as
+            # every other run.  A slow Provider never blocks this request, and
+            # no execution authority is created here.
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
-            if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create", None)
-            ):
+            if self._manual_intents is None:
                 return self._error(
                     start_response,
                     503,
                     "service_unavailable",
-                    "manual Preview service is unavailable",
-                    details={
-                        "durableState": "no_preview_created",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "restore a valid Active runtime and Preview services, then retry"
-                        ),
-                    },
+                    "manual intent service is unavailable",
                 )
-            self._require_empty_query(environ, "operations organize preview")
+            self._require_empty_query(environ, "operations organize intent analysis")
             document = self._document(environ)
             if set(document) != {"expectedVersion"}:
                 raise ValueError(
-                    "operations organize Preview requires only the current intent version"
+                    "operations organize intent analysis requires only the current intent version"
                 )
             expected_version = document["expectedVersion"]
             if (
@@ -1781,20 +1778,41 @@ class MediaFlowApi:
                 or expected_version < 1
             ):
                 raise ValueError(
-                    "operations organize Preview expectedVersion must be a positive integer"
+                    "operations organize intent analysis expectedVersion must be a positive integer"
+                )
+            service = getattr(self, "_media_discovery", None)
+            if service is None or not callable(getattr(service, "begin_intent_analysis", None)):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "the durable organize analysis service is unavailable",
+                    details={
+                        "durableState": "no_analysis_started",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and the bounded organize analysis "
+                            "services, then request the summary again"
+                        ),
+                    },
                 )
             try:
-                preview = self._manual_previews.create(
+                service.begin_intent_analysis(
                     parts[5],
-                    None,
-                    expected_version=expected_version,
                     actor=principal.principal_id,
+                    expected_intent_version=expected_version,
                 )
-            except ManualPreviewError as error:
+            except DiscoveryError as error:
+                return self._discovery_step_error(start_response, error)
+            except ManualIntentError as error:
                 return self._manual_step_error(start_response, error)
-            return self._response(
-                start_response, 201, self._organize_preview_document(preview, principal)
-            )
+            try:
+                intent = self._manual_intents.get(parts[5])
+            except ManualIntentError as error:
+                return self._manual_step_error(start_response, error)
+            operator_document = self._organize_intent_document(intent, principal)
+            return self._response(start_response, 201, operator_document)
         if (
             len(parts) == 6
             and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
@@ -11781,6 +11799,63 @@ class MediaFlowApi:
             "nextAction": readiness.get("nextAction"),
         }
 
+    def _organize_intent_analysis(self, intent_id: object, principal: ResolvedApiPrincipal):
+        """The bounded durable-analysis projection of the intent's organize run.
+
+        The same-page summary is built by the resident Worker on the intent's
+        own durable run, so a reload, return or reconnect shows the real stage
+        (observing/analyzing/paused/cancelled/prepared) instead of admitting a
+        second inline analysis.  Only identity and stage facts are published;
+        the complete plan is read from its own Preview detail route after
+        normal authentication.
+        """
+
+        service = getattr(self, "_media_discovery", None)
+        finder = getattr(service, "discovery_for_intent", None) if service is not None else None
+        if not callable(finder) or not isinstance(intent_id, str) or not intent_id:
+            return None
+        try:
+            discovery = finder(intent_id)
+        except Exception:  # noqa: BLE001 - an unreadable run is a truthful absence
+            return None
+        if discovery is None:
+            return None
+        progress = discovery.progress
+        can_manage = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        terminal = discovery.status in TERMINAL_DISCOVERY_STATUSES
+        base = f"/api/v1/operations/organize/discoveries/{discovery.discovery_id}"
+        return manual_intent_analysis_document(
+            {
+                "discoveryId": discovery.discovery_id,
+                "status": discovery.status.value,
+                "phase": progress.phase,
+                "version": discovery.version,
+                "frozen": discovery.intent_id is not None,
+                "prepared": discovery.prepared,
+                "previewId": discovery.preview_id,
+                "pauseRequested": discovery.pause_requested,
+                "cancelRequested": discovery.cancel_requested,
+                "message": progress.message,
+                "actions": {
+                    "pause": {
+                        "available": can_manage
+                        and not terminal
+                        and not discovery.pause_requested
+                        and not discovery.cancel_requested,
+                        "method": "POST",
+                        "path": f"{base}/pause",
+                        "requiresVersion": True,
+                    },
+                    "cancel": {
+                        "available": can_manage and not terminal and not discovery.cancel_requested,
+                        "method": "POST",
+                        "path": f"{base}/cancel",
+                        "requiresVersion": True,
+                    },
+                },
+            }
+        )
+
     def _organize_intent_latest_plan(self, intent_id: object) -> dict[str, object] | None:
         """Bounded identity of this intent's latest durable organize plan.
 
@@ -11826,6 +11901,12 @@ class MediaFlowApi:
         document["latestPlan"] = (
             manual_intent_latest_plan_document(latest_plan) if latest_plan is not None else None
         )
+        # The durable analysis stage of this intent's own organize run: the
+        # same-page summary request records one versioned stage and the resident
+        # Worker links the exact plan here.  A run without a linked intent is
+        # still observing, and a paused/cancelled run explains its control
+        # instead of re-advertising a superseded summary.
+        document["analysis"] = self._organize_intent_analysis(intent_id, principal)
         items = [item for item in document.get("items") or [] if isinstance(item, dict)]
         open_intent = document.get("status") == "open"
         manage_permitted = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions

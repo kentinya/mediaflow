@@ -334,6 +334,7 @@
       }
     },
     "actor": "contract-operator",
+    "analysis": null,
     "configurationSnapshotId": "active-1",
     "createdAt": "2026-09-04T12:00:00+00:00",
     "execution": "not_available_in_this_task",
@@ -532,6 +533,7 @@
       }
     },
     "actor": "contract-operator",
+    "analysis": null,
     "configurationSnapshotId": "active-1",
     "createdAt": "2026-09-04T12:00:00+00:00",
     "execution": "not_available_in_this_task",
@@ -731,6 +733,34 @@
       }
     },
     "actor": "contract-operator",
+    "analysis": {
+      "actions": {
+        "cancel": {
+          "available": false,
+          "method": "POST",
+          "path": "/api/v1/operations/organize/discoveries/<uuid>/cancel",
+          "requiresVersion": true,
+          "sideEffects": "none"
+        },
+        "pause": {
+          "available": false,
+          "method": "POST",
+          "path": "/api/v1/operations/organize/discoveries/<uuid>/pause",
+          "requiresVersion": true,
+          "sideEffects": "none"
+        }
+      },
+      "cancelRequested": false,
+      "discoveryId": "<uuid>",
+      "frozen": true,
+      "message": "the exact zero-mutation plan summary is ready; review it and explicitly confirm the ready subset to organize",
+      "pauseRequested": false,
+      "phase": "prepared",
+      "prepared": true,
+      "previewId": "<uuid>",
+      "status": "completed",
+      "version": 2
+    },
     "configurationSnapshotId": "active-1",
     "createdAt": "2026-09-04T12:00:00+00:00",
     "execution": "not_available_in_this_task",

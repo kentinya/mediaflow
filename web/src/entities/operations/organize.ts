@@ -366,6 +366,14 @@ export interface OrganizeIntentModel {
    * never be executed.
    */
   readonly latestPlan: OrganizePlanIdentityModel | null;
+  /**
+   * The durable organize analysis stage of this intent's own organize run, or
+   * `null` when the intent has no durable run identity.  The same-page summary
+   * request records one durable stage and the resident Worker links the exact
+   * plan; this projection shows the real stage (observing/analyzing/paused/
+   * cancelled/prepared) instead of pretending the summary already exists.
+   */
+  readonly analysis: OrganizeIntentAnalysisModel | null;
   readonly options: OrganizeOptionsModel;
   readonly items: readonly OrganizeIntentItemModel[];
   readonly actions: {
@@ -385,6 +393,29 @@ export interface OrganizePlanIdentityModel {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly truncated: boolean;
+}
+
+/** One advertised control of the intent's own durable organize run. */
+export interface OrganizeIntentAnalysisActionModel {
+  readonly available: boolean;
+  readonly method: string | null;
+  readonly path: string | null;
+  readonly requiresVersion: boolean;
+}
+
+/** The bounded durable-analysis stage of one intent's own organize run. */
+export interface OrganizeIntentAnalysisModel {
+  readonly discoveryId: string;
+  readonly status: string;
+  readonly phase: string;
+  readonly version: number;
+  readonly frozen: boolean;
+  readonly prepared: boolean;
+  readonly previewId: string | null;
+  readonly pauseRequested: boolean;
+  readonly cancelRequested: boolean;
+  readonly message: string | null;
+  readonly actions: Readonly<Record<string, OrganizeIntentAnalysisActionModel>>;
 }
 
 export interface OrganizeWorkerEvidenceModel {
@@ -763,6 +794,61 @@ function normalizeLatestPlan(value: unknown): OrganizePlanIdentityModel | null {
   };
 }
 
+function normalizeAnalysisAction(
+  value: unknown,
+  field: string,
+): OrganizeIntentAnalysisActionModel | null {
+  const record = optionalRecord(value, field);
+  if (record === null) {
+    return null;
+  }
+  return {
+    available: flag(record, "available"),
+    method: optionalText(record, "method"),
+    path: optionalText(record, "path"),
+    requiresVersion: flag(record, "requiresVersion"),
+  };
+}
+
+function normalizeAnalysis(value: unknown): OrganizeIntentAnalysisModel | null {
+  const source = optionalRecord(value, "analysis");
+  if (source === null) {
+    return null;
+  }
+  const rawActions = source["actions"];
+  const actions: Record<string, OrganizeIntentAnalysisActionModel> = {};
+  if (
+    rawActions !== null &&
+    typeof rawActions === "object" &&
+    !Array.isArray(rawActions)
+  ) {
+    for (const [name, action] of Object.entries(
+      rawActions as Record<string, unknown>,
+    )) {
+      const normalized = normalizeAnalysisAction(
+        action,
+        `analysis.actions.${name}`,
+      );
+      if (normalized !== null) {
+        actions[name] = normalized;
+      }
+    }
+  }
+  return {
+    discoveryId: text(source, "discoveryId"),
+    status: text(source, "status"),
+    phase: text(source, "phase"),
+    version: count(source, "version"),
+    frozen: flag(source, "frozen"),
+    prepared: flag(source, "prepared"),
+    previewId: optionalText(source, "previewId"),
+    pauseRequested: flag(source, "pauseRequested"),
+    cancelRequested: flag(source, "cancelRequested"),
+    message: optionalText(source, "message"),
+    actions,
+  };
+}
+
 export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
   const source = readRecord(payload, "organize_intent");
   let status: OrganizeIntentStatus;
@@ -797,6 +883,7 @@ export function normalizeOrganizeIntent(payload: unknown): OrganizeIntentModel {
         ? false
         : flag(source, "previewRequired"),
     latestPlan: normalizeLatestPlan(source["latestPlan"]),
+    analysis: normalizeAnalysis(source["analysis"]),
     options: normalizeOptions(source["options"]),
     items: rawItems.map((item) => normalizeIntentItem(item)),
     actions: {

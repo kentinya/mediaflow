@@ -53,10 +53,17 @@ import {
   operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
-import {
-  planContextSearch,
-  readPlanContext,
-} from "../../shared/navigation/plan-context";
+import { readPlanContext } from "../../shared/navigation/plan-context";
+
+/** Durable analysis stages that are still real work on the intent's own run. */
+const LIVE_ANALYSIS_PHASES = new Set([
+  "queued",
+  "analyzing",
+  "waiting_stability",
+]);
+
+/** The bounded interval while the page follows one durable analysis stage. */
+const ANALYSIS_POLL_INTERVAL_MS = 3_000;
 
 function displayEnum(value: string): string {
   const labels: Readonly<Record<string, string>> = {
@@ -349,13 +356,22 @@ export function OrganizeIntentPage() {
   const queryClient = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  // The exact plan this page's own analysis produced. It is rendered in this
-  // same page; a refresh or reconnect re-reads the saved plan from its durable
-  // identity instead of admitting a second analysis.
-  const [analysisPreviewId, setAnalysisPreviewId] = useState<string | null>(
-    null,
-  );
-  const intentQuery = useQuery(organizeIntentQueryOptions(token, intentId));
+  const intentQuery = useQuery({
+    ...organizeIntentQueryOptions(token, intentId),
+    // While the intent's own organize run is inside its durable analysis
+    // stage, a bounded poll follows that stage on this same page: the linked
+    // plan appears here once the Worker publishes it, without re-running any
+    // analysis or creating a second request.
+    refetchInterval: (query) => {
+      const intent = query.state.data?.ok ? query.state.data.model : undefined;
+      const analysis = intent?.analysis ?? null;
+      return analysis !== null &&
+        (LIVE_ANALYSIS_PHASES.has(analysis.phase) ||
+          analysis.status === "analyzing")
+        ? ANALYSIS_POLL_INTERVAL_MS
+        : false;
+    },
+  });
   const previewMutation = useMutation({
     mutationFn: (expectedVersion: number) =>
       submitOrganizePreview(token, { intentId, expectedVersion }),
@@ -363,19 +379,13 @@ export function OrganizeIntentPage() {
     onMutate: () => setPreviewError(null),
     onSuccess: (result) => {
       if (result.ok && result.model !== undefined) {
-        setAnalysisPreviewId(result.model.previewId);
-        // The URL carries the exact plan identity so a hard reload, Back/Forward
-        // or a re-opened link restores this plan instead of running another
-        // analysis. The backend intent read is still the durable authority.
-        void navigate({
-          to: "/operations/organize/intent/$intentId",
-          params: { intentId },
-          search: {
-            ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
-            ...operationsReturnSearch(operationsReturn),
-            ...planContextSearch(result.model.previewId),
-          },
-          replace: true,
+        // The response is the refreshed durable intent: the request only
+        // recorded one versioned durable stage on the intent's own organize
+        // run.  The exact plan appears here once the resident Worker links it,
+        // re-read from the same durable association as every other visit.
+        queryClient.setQueryData([organizeIntentQueryKey, intentId], {
+          ok: true,
+          model: result.model,
         });
         void queryClient.invalidateQueries({
           queryKey: [organizeIntentQueryKey, intentId],
@@ -384,7 +394,7 @@ export function OrganizeIntentPage() {
       }
       const code = result.ok ? null : result.code;
       setPreviewError(
-        `整理分析被拒绝(${code ?? "unknown"}),没有保存更改。请刷新意图后重新生成摘要。`,
+        `整理分析被拒绝(${code ?? "unknown"}),没有开始任何分析。请刷新意图后重试。`,
       );
     },
   });
@@ -424,21 +434,19 @@ export function OrganizeIntentPage() {
           );
         }
         const intent = data.model;
-        // Restore the plan this intent already produced. Precedence: the plan
-        // this visit's own analysis just created, then the URL's exact plan
-        // when it still matches the durable association (or the backend
-        // projection is absent), then the backend's durable latest plan.
-        // A stale URL plan never overrides a newer durable plan, and every
-        // candidate is re-read from its own authenticated plan route and
+        // Restore the plan this intent already produced. Precedence: the URL's
+        // exact plan when it still matches the durable association (or the
+        // backend projection is absent), then the backend's durable latest
+        // plan.  A stale URL plan never overrides a newer durable plan, and
+        // every candidate is re-read from its own authenticated plan route and
         // checked against this intent before any summary or control renders.
         const durablePlanId = intent.latestPlan?.previewId ?? null;
         const urlPlanId = readPlanContext(searchParams);
         const planPreviewId =
-          analysisPreviewId ??
-          (urlPlanId !== null &&
+          urlPlanId !== null &&
           (durablePlanId === null || durablePlanId === urlPlanId)
             ? urlPlanId
-            : durablePlanId);
+            : durablePlanId;
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -481,9 +489,10 @@ export function OrganizeIntentPage() {
             <section className="mf-count-section">
               <h3>整理分析</h3>
               <p className="mf-dashboard-meta">
-                生成当前选择的零变更整理分析摘要；分析本身不会修改
-                Storage，也不会取得执行权限。
-                检查下方完整计划后，只有明确确认的就绪子集才会被准入执行。
+                请求生成当前选择的零变更整理分析摘要；请求只记录一次耐久分析阶段，
+                常驻 Worker 会运行完整分析并在此页链接精确计划。
+                分析本身不会修改 Storage，也不会取得执行权限。
+                检查完整计划后，只有明确确认的就绪子集才会被准入执行。
               </p>
               <div className="mf-actions">
                 <Button
@@ -491,7 +500,7 @@ export function OrganizeIntentPage() {
                   disabled={previewMutation.isPending}
                   onClick={() => previewMutation.mutate(intent.version)}
                 >
-                  {previewMutation.isPending ? "正在生成分析…" : "生成分析摘要"}
+                  {previewMutation.isPending ? "正在请求分析…" : "生成分析摘要"}
                 </Button>
                 <Link
                   className="mf-button mf-button-secondary"
@@ -523,12 +532,101 @@ export function OrganizeIntentPage() {
                 )}
               </div>
               {previewError !== null && (
-                <StatusBanner variant="error" title="分析未生成">
+                <StatusBanner variant="error" title="分析未开始">
                   <p>{previewError}</p>
                 </StatusBanner>
               )}
+              {intent.analysis !== null &&
+              (LIVE_ANALYSIS_PHASES.has(intent.analysis.phase) ||
+                intent.analysis.status === "analyzing") ? (
+                <StatusBanner variant="info" title="正在耐久分析">
+                  <p>
+                    常驻 Worker
+                    正在这条整理运行上运行完整分析；完成前不会出现可执行范围。
+                  </p>
+                  {intent.analysis.message !== null && (
+                    <p className="mf-dashboard-meta">
+                      {intent.analysis.message}
+                    </p>
+                  )}
+                  <p className="mf-dashboard-meta">
+                    暂停、取消与进度在同一运行页管理。
+                  </p>
+                  <div className="mf-actions">
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations/organize/discovery/$discoveryId"
+                      params={{ discoveryId: intent.analysis.discoveryId }}
+                      search={{
+                        ...(filesReturn === null
+                          ? {}
+                          : filesReturnSearch(filesReturn)),
+                        ...operationsReturnSearch(operationsReturn),
+                      }}
+                    >
+                      打开分析运行
+                    </Link>
+                  </div>
+                </StatusBanner>
+              ) : null}
+              {intent.analysis !== null &&
+              intent.analysis.pauseRequested &&
+              !LIVE_ANALYSIS_PHASES.has(intent.analysis.phase) ? (
+                <StatusBanner variant="warning" title="分析已暂停">
+                  <p>
+                    这次分析被操作者暂停；Worker
+                    已在安全边界确认，没有发布新的计划。
+                    继续该运行后，再重新生成摘要。
+                  </p>
+                  <div className="mf-actions">
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations/organize/discovery/$discoveryId"
+                      params={{ discoveryId: intent.analysis.discoveryId }}
+                      search={{
+                        ...(filesReturn === null
+                          ? {}
+                          : filesReturnSearch(filesReturn)),
+                        ...operationsReturnSearch(operationsReturn),
+                      }}
+                    >
+                      打开分析运行
+                    </Link>
+                  </div>
+                </StatusBanner>
+              ) : null}
+              {intent.analysis !== null &&
+              intent.analysis.status === "cancelled" ? (
+                <StatusBanner variant="warning" title="分析已取消">
+                  <p>
+                    这次分析所在运行已被取消，没有发布任何可确认计划。
+                    如需相同范围的整理，请重新开始一次有界准备。
+                  </p>
+                </StatusBanner>
+              ) : null}
+              {intent.analysis !== null &&
+              intent.analysis.status === "failed" ? (
+                <StatusBanner variant="error" title="分析失败">
+                  <p>
+                    {intent.analysis.message ??
+                      "分析在耐久运行上失败；没有媒体效果，也没有创建执行权限。"}
+                  </p>
+                  <p className="mf-dashboard-meta">
+                    在运行页查看原因后，可在此页重新请求分析。
+                  </p>
+                  <div className="mf-actions">
+                    <Link
+                      className="mf-button mf-button-secondary"
+                      to="/operations/organize/discovery/$discoveryId"
+                      params={{ discoveryId: intent.analysis.discoveryId }}
+                    >
+                      打开分析运行
+                    </Link>
+                  </div>
+                </StatusBanner>
+              ) : null}
             </section>
-            {planPreviewId !== null && (
+            {planPreviewId !== null ? (
               <OrganizePlanConfirmation
                 previewId={planPreviewId}
                 expectedIntentId={intent.intentId}
@@ -558,7 +656,7 @@ export function OrganizeIntentPage() {
                   });
                 }}
               />
-            )}
+            ) : null}
           </div>
         );
       }}

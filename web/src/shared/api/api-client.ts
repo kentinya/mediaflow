@@ -2447,11 +2447,20 @@ export interface SubmitOrganizePreviewOptions {
   readonly expectedVersion: number;
 }
 
+/**
+ * Request the durable organize analysis of one intent's own organize run.
+ *
+ * The request only records one versioned durable stage: the resident Worker
+ * runs the complete zero-mutation analysis and links the exact plan on the
+ * same run.  The response is the refreshed durable intent document, whose
+ * `analysis` projection carries the real stage and whose `latestPlan` names
+ * the plan once the Worker has linked it.
+ */
 export async function submitOrganizePreview(
   token: string | null,
   options: SubmitOrganizePreviewOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<OrganizeMutationResult<OrganizePreviewModel>> {
+): Promise<OrganizeMutationResult<OrganizeIntentModel>> {
   if (!isSafeIdentifier(options.intentId)) {
     return { ok: false, status: 0, code: "invalid_request" };
   }
@@ -2459,7 +2468,7 @@ export async function submitOrganizePreview(
     token,
     `/api/v1/operations/organize/intents/${encodeURIComponent(options.intentId)}/previews`,
     { expectedVersion: options.expectedVersion },
-    normalizeOrganizePreview,
+    normalizeOrganizeIntent,
     fetchImpl,
   );
 }

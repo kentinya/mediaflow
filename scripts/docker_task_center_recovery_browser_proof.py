@@ -481,6 +481,59 @@ def api(base: str, token: str, method: str, path: str, document: dict | None = N
         return error.code, json.loads(error.read() or b"{}")
 
 
+def _plan_via_durable_analysis(
+    base: str,
+    api_token: str,
+    intent: dict,
+    *,
+    label: str = "intent",
+) -> dict:
+    """Run the durable intent-page analysis and return the linked exact plan.
+
+    The exact plan is the resident Worker's output over the intent's own
+    durable organize run; the API request only records the versioned durable
+    stage.  No production path creates a plan inline, so neither does this
+    browser-proof harness.
+    """
+
+    status, analysis = api(
+        base,
+        api_token,
+        "POST",
+        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        {"expectedVersion": intent["version"]},
+    )
+    if status != 201:
+        raise RuntimeError(f"{label} analysis failed: {status} {analysis}")
+    analysis_run = analysis.get("analysis") or {}
+    discovery_id = analysis_run.get("discoveryId")
+    if not discovery_id or analysis_run.get("phase") != "analyzing":
+        raise RuntimeError(f"{label} analysis did not enter its durable stage: {analysis}")
+    preview_id = None
+    for _ in range(240):
+        status, run = api(
+            base,
+            api_token,
+            "GET",
+            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+        )
+        if status == 200 and run.get("previewId") is not None:
+            preview_id = run.get("previewId")
+            break
+        time.sleep(0.5)
+    if preview_id is None:
+        raise RuntimeError(f"{label} durable analysis never linked its plan")
+    status, preview = api(
+        base,
+        api_token,
+        "GET",
+        f"/api/v1/operations/organize/previews/{preview_id}",
+    )
+    if status != 200:
+        raise RuntimeError(f"{label} plan read failed: {status} {preview}")
+    return preview
+
+
 def prepare(root: Path, api_token: str, port: int) -> tuple[Path, Path, Path, Path]:
     source_root = root / "media" / "incoming"
     target_root = root / "media" / "organized"
@@ -849,15 +902,12 @@ def acceptance(project: str, image: str, keep: bool, *, candidateSha: str) -> No
             )
             if status != 200:
                 raise RuntimeError(f"recovery choice failed: {status} {intent}")
-            status, preview = api(
+            preview = _plan_via_durable_analysis(
                 base,
                 api_token,
-                "POST",
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-                {"expectedVersion": intent["version"]},
+                intent,
+                label="recovery",
             )
-            if status != 201:
-                raise RuntimeError(f"recovery preview failed: {status} {preview}")
             # Stop the resident Worker so the deterministic pre-mutation
             # failure injection owns exactly one claim; the Worker restarts
             # immediately after and serves every later durable job.

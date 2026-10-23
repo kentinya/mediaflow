@@ -56,6 +56,7 @@ from mediaflow.application.task_scope import (
 from mediaflow.domain.automation import AutomationTaskDefinition
 from mediaflow.domain.manual_organize import (
     ManualIntentError,
+    ManualIntentUnavailable,
     ManualSourceIdentity,
 )
 from mediaflow.domain.media_discovery import (
@@ -1619,6 +1620,186 @@ class MediaDiscoveryService:
             ),
         )
 
+    def begin_intent_analysis(
+        self,
+        intent_id: str,
+        *,
+        actor: str,
+        expected_intent_version: int | None = None,
+    ) -> MediaDiscovery:
+        """Enter the durable analysis stage through one intent's own organize run.
+
+        This is the intent-page analysis entry: the request only records one
+        versioned durable stage; the resident Processing Worker runs the
+        complete zero-mutation production analysis chain and links the exact
+        plan.  A slow Provider or a large manifest never blocks the HTTP
+        request, and the plan rows, the run link and the claim release always
+        travel through the same atomic publication boundary as every other
+        analysis.  No execution authority is created here.
+
+        An intent that already has a durable organize run (a Files preparation,
+        an explicit discovery, a definition-bound Run once or a recovery
+        preparation) re-enters the analysis stage on that same run.  A supported
+        intent admitted without one (the single-file Files admission) receives
+        its own durable run record pinned to the intent's exact configuration
+        snapshot, observed and analyzed by the same Worker boundary — never a
+        second queue and never an inline HTTP analysis.
+        """
+
+        actor = self._actor(actor)
+        intent = self._intent_for_analysis(intent_id)
+        if expected_intent_version is not None and intent.version != expected_intent_version:
+            raise DiscoveryConflict(
+                "the intent changed before the analysis was requested; no analysis started",
+                details={"intentId": intent.intent_id, "currentVersion": intent.version},
+            )
+        discovery = self._find_intent_run(intent_id)
+        if discovery is None:
+            return self._admit_intent_analysis(intent, actor)
+        available, code, next_action, pending = self.analysis_availability(discovery)
+        if pending:
+            # A repeated or lost-response request converges on the analysis
+            # already queued for this exact run and intent.
+            return discovery
+        if not available:
+            raise DiscoveryError(
+                next_action or "this intent's run cannot start an analysis in its current state",
+                code=code or "discovery_not_preparation",
+                status=409,
+                next_action=next_action or "start a new organize run if the same scope is wanted",
+            )
+        return self._enter_analysis(
+            discovery,
+            message=(
+                "the frozen source list is durable; the resident Worker is running the "
+                "complete zero-mutation analysis to build the exact plan"
+            ),
+        )
+
+    def _find_intent_run(self, intent_id: str) -> MediaDiscovery | None:
+        finder = getattr(self._repository, "find_media_discovery_for_intent", None)
+        if not callable(finder):
+            return None
+        return finder(intent_id)
+
+    def _intent_for_analysis(self, intent_id: str):
+        try:
+            return self._intent_service.get(intent_id)
+        except ManualIntentUnavailable:
+            raise
+        except ManualIntentError as error:
+            raise DiscoveryError(
+                str(error),
+                code=getattr(error, "code", None) or "intent_not_found",
+                status=int(getattr(error, "status", 404) or 404),
+                next_action=getattr(error, "next_action", None)
+                or "reload the organize intent and retry",
+            ) from error
+
+    def _admit_intent_analysis(self, intent, actor: str) -> MediaDiscovery:
+        """Admit one durable analysis run pinned to an intent without a run.
+
+        The record is created already frozen with its linked intent and enters
+        the durable ``analyzing`` stage directly: the exact admitted sources are
+        the intent's own server-resolved identities, the pin is the intent's
+        exact configuration snapshot (never the current Active revision), and
+        the resident Worker claims the record through the ordinary discovery
+        lease and runs the complete zero-mutation analysis.  A pause or cancel
+        is acknowledged at the same safe boundary as every other run, and a
+        lost publication race leaves no plan row at all.
+        """
+
+        sources = tuple(item.source for item in intent.items)
+        if not sources:
+            raise DiscoveryError(
+                "the organize intent holds no source to analyze",
+                code="selection_empty",
+                status=409,
+                next_action="create a new organize intent from the current Files selection",
+            )
+        libraries = {(value.resource_library_id, value.storage_id) for value in sources}
+        if len(libraries) != 1:
+            raise DiscoveryError(
+                "the durable analysis requires one enabled ResourceLibrary scope",
+                code="malformed_selection",
+                status=409,
+                next_action=("organize each ResourceLibrary's sources in its own bounded run"),
+            )
+        resource_library_id, storage_id = libraries.pop()
+        try:
+            runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
+        except DiscoveryError:
+            # The discovery service may not carry the pinned runtime authority
+            # itself (a composed assembly where the exact-analysis service owns
+            # it).  The preview service is the analysis's own runtime authority;
+            # reuse it instead of refusing a legal intent's analysis.
+            loader = getattr(self._preview_service, "_load_runtime", None)
+            if not callable(loader):
+                raise
+            try:
+                runtime = loader(intent.snapshot_id, intent.snapshot_digest)
+            except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
+                raise DiscoveryUnavailable(
+                    "the intent's pinned configuration snapshot is unavailable or unreadable",
+                    details={"reason": type(error).__name__},
+                ) from error
+        except Exception as error:  # noqa: BLE001 - one bounded unavailable reason
+            raise DiscoveryUnavailable(
+                "the intent's pinned configuration snapshot is unavailable or unreadable",
+                details={"reason": type(error).__name__},
+            ) from error
+        library = self._runtime_library(runtime, resource_library_id)
+        if library.storage_id != storage_id:
+            raise DiscoveryError(
+                "the intent's pinned ResourceLibrary/Storage binding changed",
+                code="source_stale",
+                status=409,
+                next_action="create a new organize intent from the current Files selection",
+            )
+        now = self._clock()
+        record = MediaDiscovery(
+            discovery_id=str(uuid4()),
+            actor=actor,
+            resource_library_id=library.library_id,
+            storage_id=library.storage_id,
+            snapshot_id=intent.snapshot_id,
+            snapshot_digest=intent.snapshot_digest,
+            status=DiscoveryStatus.ANALYZING,
+            version=1,
+            budgets=DiscoveryBudgets(),
+            progress=DiscoveryProgress(
+                "analyzing",
+                tuple(
+                    DiscoveryScopeEntry(value.path, DiscoveryEntryKind.FILE) for value in sources
+                ),
+                DiscoveryCounters(),
+                DiscoveryIncompleteReason.NONE,
+                message=(
+                    "the intent's sources are durable; the resident Worker is running the "
+                    "complete zero-mutation analysis to build the exact plan"
+                ),
+            ),
+            created_at=now,
+            updated_at=now,
+            sources=tuple(value.document() for value in sources),
+            intent_id=intent.intent_id,
+            frozen_at=now,
+            auto_prepare=True,
+        )
+        creator = getattr(self._repository, "create_media_discovery", None)
+        if not callable(creator):
+            raise DiscoveryUnavailable(
+                "the durable organize run store is unavailable",
+                details={"intentId": intent.intent_id},
+            )
+        try:
+            return creator(record)
+        except DiscoveryConflict as error:
+            raise DiscoveryConflict(
+                "this intent analysis already has a durable run",
+                details={"intentId": intent.intent_id},
+            ) from error
+
     def begin_frozen_analysis(
         self, discovery_id: str, *, actor: str, expected_version: int
     ) -> MediaDiscovery:
@@ -1697,22 +1878,16 @@ class MediaDiscoveryService:
     def analysis_availability(
         self, discovery: MediaDiscovery
     ) -> tuple[bool, str | None, str | None, bool]:
-        """Whether one preparation may re-run its zero-mutation analysis.
+        """Whether one frozen run may (re-)run its zero-mutation analysis.
 
-        This is the single predicate the API publishes and ``request_analysis``
-        enforces, so an advertised action can never disagree with the real
-        admission.  Returns ``(available, refusal_code, next_action, pending)``.
-        ``pending`` marks a request that is already queued and simply converges
-        on the same work rather than being refused.
+        This is the single predicate the API publishes and both the discovery
+        ``prepare`` action and the intent-page analysis entry enforce, so an
+        advertised action can never disagree with the real admission.  Returns
+        ``(available, refusal_code, next_action, pending)``.  ``pending`` marks
+        a request that is already queued and simply converges on the same work
+        rather than being refused.
         """
 
-        if not discovery.auto_prepare:
-            return (
-                False,
-                "discovery_not_preparation",
-                "open the discovery and use its own reviewed finalize action",
-                False,
-            )
         if discovery.intent_id is None:
             return (
                 False,
@@ -1720,6 +1895,10 @@ class MediaDiscoveryService:
                 "wait for the bounded discovery to finish, then request the analysis",
                 False,
             )
+        # An explicit-Finalize discovery and a single-file intent's own durable
+        # run re-enter the same analysis stage as a full preparation: the
+        # frozen manifest is the durable source list, so the frozen identity,
+        # not the original admission flag, decides whether an analysis may run.
         if discovery.status in {DiscoveryStatus.FAILED, DiscoveryStatus.CANCELLED}:
             return (
                 False,

@@ -3260,6 +3260,7 @@ const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
 const ORGANIZE_DISCOVERY_ID = "organize-discovery-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
+const ORGANIZE_ANALYSIS_DISCOVERY_ID = "organize-analysis-e2e-001";
 // Durable remaining-scope continuations recorded by the fake population, keyed
 // by the source Task. A run only publishes the evidence it really recorded.
 const CONTINUATIONS = new Map();
@@ -3292,6 +3293,11 @@ function organizeState(session) {
       // The retired standalone plan page is gone, so a test requests its
       // variant here and then reaches it through the real intent journey.
       previewVariant: "default",
+      // The durable organize analysis stage of the intent's own run and its
+      // linked latest plan, populated by the durable analysis POST exactly as
+      // the real backend publishes them.
+      intentAnalysis: null,
+      latestPlan: null,
     };
     ORGANIZE_STATES.set(key, value);
   }
@@ -3650,6 +3656,10 @@ function organizeIntentDocument(state) {
     updatedAt: MANUAL_RECORDED_AT,
     version: state.intentVersion,
     zeroMutation: true,
+    ...(state.intentAnalysis === null
+      ? {}
+      : { analysis: state.intentAnalysis }),
+    ...(state.latestPlan === null ? {} : { latestPlan: state.latestPlan }),
   };
 }
 
@@ -14349,12 +14359,40 @@ const server = createServer(async (req, res) => {
       sendJson(res, 409, {
         error: {
           code: "manual_intent_conflict",
-          message: "manual intent version is stale; no Preview was created",
+          message: "manual intent version is stale; no analysis started",
         },
       });
       return;
     }
-    sendJson(res, 201, organizeVariantPreviewDocument(state));
+    // The durable analysis request records one versioned stage on the
+    // intent's own organize run; the exact plan is linked through the same
+    // durable association the intent read projects, exactly as the real
+    // backend publishes it.
+    const variantDocument = organizeVariantPreviewDocument(state);
+    const variantPreviewId = String(variantDocument.previewId);
+    state.intentAnalysis = {
+      discoveryId: ORGANIZE_ANALYSIS_DISCOVERY_ID,
+      status: "completed",
+      phase: "prepared",
+      version: 2,
+      frozen: true,
+      prepared: true,
+      previewId: variantPreviewId,
+      pauseRequested: false,
+      cancelRequested: false,
+      message: "the exact zero-mutation plan summary is ready",
+      actions: {},
+    };
+    state.latestPlan = {
+      createdAt: MANUAL_RECORDED_AT,
+      current: true,
+      intentVersion: state.intentVersion,
+      previewId: variantPreviewId,
+      status: "previewed",
+      truncated: false,
+      updatedAt: MANUAL_RECORDED_AT,
+    };
+    sendJson(res, 201, organizeIntentDocument(state));
     return;
   }
 

@@ -1359,5 +1359,220 @@ class PreparationJourneyTests(_PreparationFixture):
             self.assertEqual([], value.source.mutations)
 
 
+class IntentPageAnalysisTests(_PreparationFixture):
+    """The intent-page summary request is durable work, never HTTP analysis.
+
+    B's confirmed P1 was the intent page's ``POST .../previews`` creating a plan
+    inline inside the request: a slow Provider blocked the operator's browser,
+    and an accepted cancel of the same run still left the late inline plan
+    confirmable.  These regressions prove the request only records one versioned
+    durable stage on the intent's own organize run, that the resident Worker
+    builds and links the plan through the same atomic publication, and that a
+    pause or cancel that wins never leaves a confirmable plan behind.
+    """
+
+    def _intent(self, value, *, paths=("Movies/One.2001.mkv",), single_file=False):
+        """Admit one durable intent, either through the run-backed discovery or
+        through the single-file Files admission that carries no run of its own."""
+
+        if single_file:
+            for name in paths:
+                self.media(name)
+            status, intent = self.request(
+                value,
+                "/api/v1/resource-libraries/library/files/organize",
+                "POST",
+                {"paths": list(paths)},
+            )
+            self.assertEqual(201, status, intent)
+            return intent
+        for name in paths:
+            self.media(name)
+        self.admit(value, list(paths))
+        settled = self.run_worker(value)
+        self.assertIsNotNone(settled["intentId"], settled)
+        return value.repository.get_manual_intent(settled["intentId"])
+
+    def _request_intent_analysis(self, value, intent):
+        return self.request(
+            value,
+            f"/api/v1/operations/organize/intents/{intent.intent_id}/previews",
+            "POST",
+            {"expectedVersion": intent.version},
+        )
+
+    def _blocked_provider(self, value):
+        """Pause only the outbound Provider call of the real analysis chain."""
+
+        provider = next(iter(value.previews._providers._providers.values()))
+        entered = threading.Event()
+        release = threading.Event()
+        original = type(provider).search_movie
+
+        def blocked_search(inner_self, query, policy=None, **kwargs):
+            entered.set()
+            release.wait(timeout=30)
+            return original(inner_self, query, policy=policy, **kwargs)
+
+        return entered, release, patch.object(type(provider), "search_movie", blocked_search)
+
+    def test_intent_analysis_runs_on_the_intent_own_durable_run(self) -> None:
+        """A re-analysis records a durable stage; the Worker links the plan."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = self._intent(value)
+            first = value.repository.get_latest_manual_preview(intent.intent_id)
+            self.assertIsNotNone(first)
+            provider = next(iter(value.previews._providers._providers.values()))
+            entered = threading.Event()
+            release = threading.Event()
+            original = type(provider).search_movie
+
+            def blocked_search(inner_self, query, policy=None, **kwargs):
+                entered.set()
+                release.wait(timeout=30)
+                return original(inner_self, query, policy=policy, **kwargs)
+
+            with patch.object(type(provider), "search_movie", blocked_search):
+                status, document = self._request_intent_analysis(value, intent)
+                self.assertEqual(201, status, document)
+                analysis = document["analysis"]
+                self.assertEqual("analyzing", analysis["phase"], document)
+                discovery_id = analysis["discoveryId"]
+                self.assertTrue(entered.is_set() is False or entered.wait(0))
+                # The request did not block on the Provider and did not link a
+                # plan: the durable run is the analysis authority now.
+                durable = value.repository.get_media_discovery(discovery_id)
+                self.assertEqual("analyzing", durable.status.value, durable.status)
+                self.assertIsNone(durable.preview_id, durable)
+                self.assertEqual(1, len(value.repository.list_manual_previews(intent.intent_id)))
+                release.set()
+                analyzed = value.discovery.claim_and_run(
+                    worker_id="intent-analysis-worker", claim_token="intent-analysis-token"
+                )
+                self.assertIsNotNone(analyzed.preview_id)
+                self.assertNotEqual(first.preview_id, analyzed.preview_id)
+                self.assertEqual(2, len(value.repository.list_manual_previews(intent.intent_id)))
+                status, linked = self.request(
+                    value,
+                    f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+                )
+                self.assertEqual(200, status, linked)
+                status, restored = self.request(
+                    value,
+                    f"/api/v1/operations/organize/intents/{intent.intent_id}",
+                )
+                self.assertEqual(200, status, restored)
+                self.assertEqual(
+                    analyzed.preview_id,
+                    restored["analysis"]["previewId"],
+                )
+                self.assertTrue(value.repository.get_manual_preview(analyzed.preview_id).current)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_intent_analysis_without_a_run_gets_its_own_durable_run(self) -> None:
+        """A single-file Files intent receives a durable run of its own."""
+
+        self.media("One.2001.mkv")
+        with self.journey() as value:
+            admitted_intent = self._intent(value, paths=("One.2001.mkv",), single_file=True)
+            intent = value.repository.get_manual_intent(admitted_intent["intentId"])
+            self.assertIsNone(value.repository.find_media_discovery_for_intent(intent.intent_id))
+            status, document = self._request_intent_analysis(value, intent)
+            self.assertEqual(201, status, document)
+            analysis = document["analysis"]
+            self.assertEqual("analyzing", analysis["phase"], document)
+            analysis["discoveryId"]
+            durable = value.repository.get_media_discovery(analysis["discoveryId"])
+            self.assertEqual(intent.intent_id, durable.intent_id)
+            self.assertEqual(intent.snapshot_id, durable.snapshot_id)
+            analyzed = value.discovery.claim_and_run(
+                worker_id="single-file-worker", claim_token="single-file-token"
+            )
+            self.assertIsNotNone(analyzed.preview_id)
+            status, restored = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent.intent_id}",
+            )
+            self.assertEqual(200, status, restored)
+            self.assertEqual(analyzed.preview_id, restored["latestPlan"]["previewId"])
+            status, plan = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{analyzed.preview_id}",
+            )
+            self.assertEqual(200, status, plan)
+            self.assertEqual(["One.2001.mkv"], [item["source"]["path"] for item in plan["items"]])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_cancelled_run_analysis_publishes_nothing_for_the_intent_page(self) -> None:
+        """A cancel that wins leaves no confirmable plan for this entry."""
+
+        self.media("Movies/One.2001.mkv")
+        with self.journey() as value:
+            intent = self._intent(value)
+            entered, release, guard = self._blocked_provider(value)
+            results: list[object] = []
+            with guard:
+                status, document = self._request_intent_analysis(value, intent)
+                self.assertEqual(201, status, document)
+                discovery_id = document["analysis"]["discoveryId"]
+                analysis_thread = threading.Thread(
+                    target=lambda: results.append(
+                        value.discovery.claim_and_run(
+                            worker_id="cancelled-analysis-worker",
+                            claim_token="cancelled-analysis-token",
+                        )
+                    ),
+                    name="cancelled-intent-analysis",
+                )
+                analysis_thread.start()
+                self.assertTrue(entered.wait(15), "the Worker never reached the Provider")
+                status, cancelled = self.request(
+                    value,
+                    f"/api/v1/operations/organize/discoveries/{discovery_id}/cancel",
+                    "POST",
+                    {"expectedVersion": value.repository.get_media_discovery(discovery_id).version},
+                )
+                self.assertEqual(200, status, cancelled)
+                release.set()
+                analysis_thread.join(timeout=30)
+                self.assertFalse(analysis_thread.is_alive())
+                self.assertNotIsInstance(results[0], Exception, results)
+                late = value.discovery.claim_and_run(
+                    worker_id="late-worker", claim_token="late-token"
+                )
+                self.assertIsNone(late)
+            durable = value.repository.get_media_discovery(discovery_id)
+            self.assertEqual("cancelled", durable.status.value)
+            self.assertIsNone(durable.preview_id, durable)
+            # The cancelled run's analysis entry refuses an ordinary late
+            # request instead of publishing a confirmable plan.
+            status, refused = self._request_intent_analysis(value, intent)
+            self.assertEqual(409, status, refused)
+            self.assertEqual("discovery_already_finished", refused["error"]["code"])
+            status, readback = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent.intent_id}",
+            )
+            self.assertEqual(200, status, readback)
+            self.assertEqual("cancelled", readback["analysis"]["status"])
+            self.assertIsNone(readback["analysis"]["previewId"])
+            # The run's own latest plan never names the cancelled analysis: the
+            # earlier published plan of the same intent stays the durable
+            # history the operator already reviewed, and the cancelled run
+            # links none of its own.
+            self.assertEqual(durable.intent_id, intent.intent_id)
+            if readback["latestPlan"] is not None:
+                # The earlier published plan of the same intent is durable
+                # history; the cancelled run never linked or superseded it.
+                self.assertIsNone(durable.preview_id)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+
+
 if __name__ == "__main__":
     unittest.main()

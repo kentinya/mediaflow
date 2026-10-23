@@ -1280,6 +1280,52 @@ def seed_run_detail_population(
     )
 
 
+def _request_intent_plan_via_durable_analysis(state: AppState, intent: dict, *, label: str) -> dict:
+    """Run the durable intent-page analysis and return the linked exact plan.
+
+    The exact plan is the resident Worker's output over the intent's own
+    durable organize run; the API request only records the versioned durable
+    stage.  No production path creates a plan inline, so neither does the
+    harness.
+    """
+
+    status, analysis = wsgi_request(
+        state.api,
+        "POST",
+        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        body={"expectedVersion": intent["version"]},
+        token=HARNESS_ADMIN_TOKEN,
+    )
+    if status != 201:
+        raise RuntimeError(f"{label} analysis failed: {status}")
+    analysis_run = analysis.get("analysis") or {}
+    discovery_id = analysis_run.get("discoveryId")
+    if not discovery_id or analysis_run.get("phase") != "analyzing":
+        raise RuntimeError(f"{label} analysis did not enter its durable stage: {analysis}")
+    preview_id = None
+    for index in range(8):
+        claimed = state.api._media_discovery.claim_and_run(
+            worker_id=f"{label}-analysis-{index}",
+            claim_token=f"{label}-analysis-{index}",
+        )
+        if claimed is None:
+            raise RuntimeError(f"{label} analysis was not claimable")
+        if claimed.terminal or claimed.preview_id is not None:
+            preview_id = claimed.preview_id
+            break
+    if not preview_id:
+        raise RuntimeError(f"{label} analysis did not settle")
+    status, preview = wsgi_request(
+        state.api,
+        "GET",
+        f"/api/v1/operations/organize/previews/{preview_id}",
+        token=HARNESS_ADMIN_TOKEN,
+    )
+    if status != 200:
+        raise RuntimeError(f"{label} plan read failed: {status}")
+    return preview
+
+
 def run_worker_once(state: AppState) -> dict:
     """One real Worker claim + Task linkage over the durable pending Job."""
 
@@ -1360,15 +1406,9 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         )
         if status != 200:
             raise RuntimeError(f"Manual Organize policy selection failed: {status}")
-        status, preview = wsgi_request(
-            state.api,
-            "POST",
-            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-            body={"expectedVersion": intent["version"]},
-            token=HARNESS_ADMIN_TOKEN,
+        preview = _request_intent_plan_via_durable_analysis(
+            state, intent, label="harness-manual-organize"
         )
-        if status != 201:
-            raise RuntimeError(f"Manual Organize Preview failed: {status}")
         status, execution = wsgi_request(
             state.api,
             "POST",
@@ -1661,15 +1701,9 @@ def seed_batch_summary_recovery(state: AppState) -> dict[str, object]:
             )
             if status != 200:
                 raise RuntimeError(f"batch summary choice failed: {status}")
-        status, preview = wsgi_request(
-            state.api,
-            "POST",
-            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-            body={"expectedVersion": intent["version"]},
-            token=HARNESS_ADMIN_TOKEN,
+        preview = _request_intent_plan_via_durable_analysis(
+            state, intent, label="harness-batch-summary"
         )
-        if status != 201:
-            raise RuntimeError(f"batch summary Preview failed: {status}")
         status, execution = wsgi_request(
             state.api,
             "POST",
@@ -1847,15 +1881,9 @@ def seed_task_item_recovery_journey(state: AppState, kind: str = "recognition") 
         )
         if status != 200:
             raise RuntimeError(f"recovery Manual Organize choice failed: {status}")
-        status, preview = wsgi_request(
-            state.api,
-            "POST",
-            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-            body={"expectedVersion": intent["version"]},
-            token=HARNESS_ADMIN_TOKEN,
+        preview = _request_intent_plan_via_durable_analysis(
+            state, intent, label="harness-recovery-manual"
         )
-        if status != 201:
-            raise RuntimeError(f"recovery Manual Organize Preview failed: {status}")
         status, execution = wsgi_request(
             state.api,
             "POST",

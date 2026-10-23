@@ -819,6 +819,54 @@ def assert_projection_exports(
         raise RuntimeError(f"cookie-bearing jobs request returned HTTP {status}")
 
 
+def _request_intent_plan_via_durable_analysis(base: str, admin: str, intent: dict) -> dict:
+    """Run the durable intent-page analysis and return the linked exact plan.
+
+    The exact plan is the resident Worker's output over the intent's own
+    durable organize run; the API request only records the versioned durable
+    stage.  No production path creates a plan inline, so neither does this
+    release harness.
+    """
+
+    status, analysis = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        admin,
+        method="POST",
+        body={"expectedVersion": intent["version"]},
+    )
+    if status != 201:
+        raise RuntimeError(f"manual Organize analysis returned HTTP {status}: {analysis}")
+    analysis_run = analysis.get("analysis") or {}
+    discovery_id = analysis_run.get("discoveryId")
+    if not discovery_id or analysis_run.get("phase") != "analyzing":
+        raise RuntimeError(f"manual Organize analysis did not enter its durable stage: {analysis}")
+
+    def plan_linked() -> bool:
+        status, run = json_request(
+            base,
+            f"/api/v1/operations/organize/discoveries/{discovery_id}",
+            admin,
+        )
+        return status == 200 and run.get("previewId") is not None
+
+    wait_until(plan_linked, timeout=120.0, description="manual Organize durable analysis")
+    status, run = json_request(
+        base,
+        f"/api/v1/operations/organize/discoveries/{discovery_id}",
+        admin,
+    )
+    preview_id = run.get("previewId")
+    status, preview = json_request(
+        base,
+        f"/api/v1/operations/organize/previews/{preview_id}",
+        admin,
+    )
+    if status != 200:
+        raise RuntimeError(f"manual Organize plan read returned HTTP {status}: {preview}")
+    return preview
+
+
 def assert_v2_manual_organize(
     base: str,
     admin: str,
@@ -916,14 +964,8 @@ with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
     )
     if status != 200:
         raise RuntimeError(f"manual Organize choice returned HTTP {status}: {intent}")
-    status, preview = json_request(
-        base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-        admin,
-        method="POST",
-        body={"expectedVersion": intent["version"]},
-    )
-    if status != 201 or not preview.get("zeroMutation"):
+    preview = _request_intent_plan_via_durable_analysis(base, admin, intent)
+    if not preview.get("zeroMutation"):
         raise RuntimeError("manual Organize Preview was not exact zero-mutation evidence")
     preview_item = next(
         (
@@ -1084,14 +1126,8 @@ def assert_manual_organize_fails_closed(
     )
     if status != 200:
         raise RuntimeError(f"manual Organize live-policy choice returned HTTP {status}: {intent}")
-    status, preview = json_request(
-        base,
-        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-        admin,
-        method="POST",
-        body={"expectedVersion": intent["version"]},
-    )
-    if status != 201 or not preview.get("zeroMutation"):
+    preview = _request_intent_plan_via_durable_analysis(base, admin, intent)
+    if not preview.get("zeroMutation"):
         raise RuntimeError("manual Organize live-policy Preview was not zero-mutation evidence")
     live_item = next(
         (

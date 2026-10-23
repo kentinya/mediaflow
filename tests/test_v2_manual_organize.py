@@ -450,14 +450,7 @@ class _JourneyFixtureMixin:
         return intent
 
     def _create_preview(self, value, intent):
-        status, preview = self._request(
-            value,
-            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-            "POST",
-            {"expectedVersion": intent["version"]},
-        )
-        self.assertEqual(201, status, preview)
-        return preview
+        return self._preview_via_durable_analysis(value, intent)
 
     def _execute(self, value, preview, intent, *, token=OPERATOR_TOKEN, **overrides):
         body = {
@@ -479,6 +472,54 @@ class _JourneyFixtureMixin:
         for forbidden in _FORBIDDEN_DOCUMENT_SUBSTRINGS:
             self.assertNotIn(forbidden, encoded, f"{label} leaked {forbidden!r}")
         self.assertNotIn("authorizationId", encoded, label)
+
+    def _preview_via_durable_analysis(self, value, intent, *, token=None):
+        """Request the durable intent-page analysis and read the linked plan.
+
+        The exact plan is the production Worker's output over the intent's own
+        durable organize run; the API request only records the versioned
+        durable stage.  No production path creates a plan inline, so neither
+        does this helper.
+        """
+
+        kwargs = {} if token is None else {"token": token}
+        status, document = self._request(
+            value,
+            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            "POST",
+            {"expectedVersion": intent["version"]},
+            **kwargs,
+        )
+        self.assertEqual(201, status, document)
+        analysis = document.get("analysis") or {}
+        discovery_id = analysis.get("discoveryId")
+        self.assertIsNotNone(discovery_id, document)
+        self.assertEqual("analyzing", analysis.get("phase"), document)
+        preview_id = self._drive_intent_analysis(value, discovery_id)
+        status, preview = self._request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview_id}",
+            **kwargs,
+        )
+        self.assertEqual(200, status, preview)
+        return preview
+
+    @staticmethod
+    def _drive_intent_analysis(value, discovery_id, *, steps=8):
+        """Drive the resident Worker until the run links its exact plan."""
+
+        for index in range(steps):
+            result = value.api._media_discovery.claim_and_run(
+                worker_id=f"intent-analysis-worker-{index}",
+                claim_token=f"intent-analysis-token-{index}",
+            )
+            if result is None:
+                raise AssertionError("the intent analysis run was not claimable")
+            if result.terminal or result.preview_id is not None:
+                break
+        else:
+            raise AssertionError("the intent analysis did not settle")
+        return result.preview_id
 
 
 class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
@@ -909,14 +950,7 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
                 token=MANAGER_TOKEN,
             )
             self.assertEqual(200, status)
-            status, preview = self._request(
-                value,
-                f"/api/v1/operations/organize/intents/{error['intentId']}/previews",
-                "POST",
-                {"expectedVersion": error["version"]},
-                token=MANAGER_TOKEN,
-            )
-            self.assertEqual(201, status, preview)
+            preview = self._preview_via_durable_analysis(value, error, token=MANAGER_TOKEN)
             self.assertFalse(preview["actions"]["execute"]["available"])
             status, error = self._request(
                 value,
@@ -2049,7 +2083,7 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
 
-class FilesAdmissionJourneyTests(unittest.TestCase):
+class FilesAdmissionJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
     """Files-originated live-Storage admission, exact identity and reconciliation.
 
     The whole journey runs on one real runtime database shared by the Task
@@ -2323,13 +2357,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                 for name in ("Movies/One.2001.mkv", "Movies/Two.2002.mkv")
             }
             self.assertTrue(all(records.values()), records)
-            status, preview = self.request(
-                value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-                "POST",
-                {"expectedVersion": intent["version"]},
-            )
-            self.assertEqual(201, status, preview)
+            preview = self._preview_via_durable_analysis(value, intent)
             status, execution = self.request(
                 value,
                 f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
@@ -2387,13 +2415,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
         with self.journey(names=("Movies/One.2001.mkv",)) as value:
             status, intent = self.admit(value, ["Movies/One.2001.mkv"])
             self.assertEqual(201, status, intent)
-            status, preview = self.request(
-                value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-                "POST",
-                {"expectedVersion": intent["version"]},
-            )
-            self.assertEqual(201, status, preview)
+            preview = self._preview_via_durable_analysis(value, intent)
             status, execution = self.request(
                 value,
                 f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
@@ -2515,13 +2537,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             status, intent = self.admit(value, ["Movies/One.2001.mkv"])
             self.assertEqual(201, status, intent)
             item = intent["items"][0]
-            status, preview = self.request(
-                value,
-                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
-                "POST",
-                {"expectedVersion": intent["version"]},
-            )
-            self.assertEqual(201, status, preview)
+            preview = self._preview_via_durable_analysis(value, intent)
             self.assertTrue(preview["current"])
 
             # A stale expected version is refused without a durable change.
@@ -2554,7 +2570,7 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
 
-class DefaultAssemblySaveChoiceTests(unittest.TestCase):
+class DefaultAssemblySaveChoiceTests(_JourneyFixtureMixin, unittest.TestCase):
     """Files Save Choice through the automatic ``MediaFlowApi`` composition.
 
     This is the recorded P1 regression: the default API assembly supplies only

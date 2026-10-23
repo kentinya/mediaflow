@@ -1105,6 +1105,51 @@ def manual_intent_operator_document(document: dict[str, object]) -> dict[str, ob
     return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
 
 
+def manual_intent_analysis_document(document: dict[str, object]) -> dict[str, object]:
+    """Bound the durable organize analysis stage of one intent's own run.
+
+    The intent-page analysis request only records a durable stage; the resident
+    Worker builds the plan.  This projection publishes the run identity, its
+    real stage and the operator-facing control facts (pause/cancel requests)
+    so the same page shows the true durable state instead of pretending the
+    summary already exists.  It never carries a claim token, a configuration
+    digest, a fingerprint or a physical Storage path.
+    """
+
+    actions = document.get("actions")
+    bounded_actions: dict[str, object] = {}
+    if isinstance(actions, Mapping):
+        for name, action in actions.items():
+            if not isinstance(name, str) or not isinstance(action, Mapping):
+                continue
+            bounded_actions[name] = {
+                "available": bool(action.get("available", False)),
+                "method": action.get("method"),
+                "path": action.get("path"),
+                "requiresVersion": bool(action.get("requiresVersion", False)),
+                "sideEffects": "none",
+            }
+    preview_identity = document.get("previewId")
+    bounded = {
+        "discoveryId": _bounded_identifier(document.get("discoveryId")),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
+        "phase": _bounded_evidence_text(document.get("phase"), limit=64),
+        "version": _bounded_counter(document.get("version")),
+        "frozen": bool(document.get("frozen")),
+        "prepared": bool(document.get("prepared")),
+        "previewId": (
+            _bounded_identifier(preview_identity)
+            if isinstance(preview_identity, str) and preview_identity
+            else None
+        ),
+        "pauseRequested": bool(document.get("pauseRequested")),
+        "cancelRequested": bool(document.get("cancelRequested")),
+        "message": _bounded_evidence_text(document.get("message")),
+        "actions": bounded_actions,
+    }
+    return _bounded_operator_document(bounded, preserve_manual_source_paths=True)
+
+
 def manual_intent_latest_plan_document(document: dict[str, object]) -> dict[str, object]:
     """Bound the identity of one intent's latest durable organize plan.
 

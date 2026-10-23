@@ -205,10 +205,12 @@ function previewExecuteAction(): Json {
  * Render the real intent route, run its explicit shared analysis and wait for
  * the same-page fixed plan summary.
  *
- * `analysis` is the exact document the analysis POST returns; `detail` is what
- * the plan's own bounded read returns. They are separate because a durable plan
- * is re-read from its own identity, so a malformed read must fail closed on its
- * own without the analysis response hiding it.
+ * The durable analysis request records one versioned stage on the intent's own
+ * organize run and returns the refreshed intent document; the exact plan is
+ * linked by the Worker through the durable association, so the POST response
+ * names the plan in `latestPlan` exactly as the real backend does after the
+ * Worker publishes. `detail` is what the plan's own bounded read returns and
+ * must fail closed on its own without the analysis response hiding it.
  */
 async function openPlan(
   user: ReturnType<typeof userEvent.setup>,
@@ -219,8 +221,8 @@ async function openPlan(
     readonly respond?: (call: Call) => Response | undefined;
   } = {},
 ): Promise<{ calls: Call[]; router: ReturnType<typeof renderApp>["router"] }> {
-  const analysis = options.analysis ?? previewDocument();
-  const detail = options.detail ?? analysis;
+  const detail = options.detail ?? previewDocument();
+  const analysis = options.analysis ?? intentDocumentWithPlan();
   const { calls } = recordingFetch((call) => {
     const custom = options.respond?.(call);
     if (custom !== undefined) return custom;
@@ -234,7 +236,10 @@ async function openPlan(
       return jsonResponse(analysis, 201);
     }
     if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-      return jsonResponse(intentDocument());
+      // A durable analysis invalidates the intent read; the refetch sees the
+      // same durable association the Worker published, exactly like the real
+      // backend re-reading the intent after the run's atomic publication.
+      return jsonResponse(analysis);
     }
     if (
       call.url === "/api/v1/operations/organize/previews/preview-1" &&
@@ -319,6 +324,21 @@ function failedExecutionDocument(): Json {
 describe("V2 manual Organize journey", () => {
   it("renders the durable intent, saves one optimistic choice edit and generates the shared analysis", async () => {
     const user = userEvent.setup();
+    let analyzingRequested = false;
+    const analyzing = intentDocument();
+    analyzing["analysis"] = {
+      discoveryId: "discovery-1",
+      status: "analyzing",
+      phase: "analyzing",
+      version: 3,
+      frozen: true,
+      prepared: false,
+      previewId: null,
+      pauseRequested: false,
+      cancelRequested: false,
+      message: "the frozen source list is durable",
+      actions: {},
+    };
     const { calls } = recordingFetch((call) => {
       if (call.url === "/api/v1/auth/principal") {
         return jsonResponse({ principal_id: "operator" });
@@ -327,13 +347,13 @@ describe("V2 manual Organize journey", () => {
         call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
         call.method === "POST"
       ) {
-        return jsonResponse(previewDocument(), 201);
+        analyzingRequested = true;
+        return jsonResponse(analyzing, 201);
       }
       if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
-        if (call.method === "GET") {
-          return jsonResponse(intentDocument());
-        }
-        return jsonResponse(intentDocument());
+        // The durable stage is read back by every later read of the same
+        // intent, exactly as the real backend projects its own organize run.
+        return jsonResponse(analyzingRequested ? analyzing : intentDocument());
       }
       return undefined;
     });
@@ -407,6 +427,76 @@ describe("V2 manual Organize journey", () => {
         call.method === "POST",
     );
     expect(analysis?.body).toMatchObject({ expectedVersion: 2 });
+    // The request only recorded one durable stage: the page shows the real
+    // analyzing stage of the intent's own organize run, offers its run for
+    // control, and never claims a plan or an execution.
+    await screen.findByText(/正在耐久分析/);
+    const runLink = await screen.findByRole("link", {
+      name: "打开分析运行",
+    });
+    expect(runLink).toHaveAttribute(
+      "href",
+      expect.stringContaining("/operations/organize/discovery/discovery-1"),
+    );
+    expect(screen.queryByRole("heading", { name: /当前整理计划/ })).toBeNull();
+    expect(
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/execute"),
+      ),
+    ).toBe(false);
+  });
+
+  it("shows a paused durable analysis without any confirmable plan", async () => {
+    const user = userEvent.setup();
+    const paused = intentDocument();
+    paused["analysis"] = {
+      discoveryId: "discovery-1",
+      status: "paused",
+      phase: "paused",
+      version: 4,
+      frozen: true,
+      prepared: false,
+      previewId: null,
+      pauseRequested: true,
+      cancelRequested: false,
+      message: "the operator's pause was acknowledged at the safe boundary",
+      actions: {},
+    };
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return jsonResponse({ principal_id: "operator" });
+      }
+      if (
+        call.url === "/api/v1/operations/organize/intents/intent-1/previews" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(paused, 201);
+      }
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(paused);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+    await screen.findByRole("heading", { name: "整理意图" });
+    await user.click(
+      await screen.findByRole("button", { name: "生成分析摘要" }),
+    );
+    // An acknowledged pause explains its control state; no plan summary, no
+    // execution and no second analysis request is offered from this page.
+    await screen.findByText(/分析已暂停/);
+    expect(screen.queryByRole("heading", { name: /当前整理计划/ })).toBeNull();
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && call.url.includes("/previews"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      calls.some(
+        (call) => call.method === "POST" && call.url.endsWith("/execute"),
+      ),
+    ).toBe(false);
   });
 
   it("preserves RecognitionType C while displaying and submitting its pinned A downstream policies", async () => {
@@ -740,7 +830,10 @@ describe("V2 manual Organize journey", () => {
         call.url === "/api/v1/operations/organize/intents/intent-1/previews"
       ) {
         planPersisted = true;
-        return jsonResponse(previewDocument(), 201);
+        // The durable analysis request returns the refreshed intent document;
+        // the exact plan is linked through the same durable association that
+        // every later read (a reload, a return or a reconnect) consumes.
+        return jsonResponse(intentDocumentWithPlan(), 201);
       }
       if (
         call.method === "GET" &&
@@ -760,9 +853,8 @@ describe("V2 manual Organize journey", () => {
       name: "当前整理计划（零变更摘要）",
     });
     const reloadUrl = router.history.location.href;
-    expect(
-      new URLSearchParams(router.history.location.search).get("plan"),
-    ).toBe("preview-1");
+    // The durable intent association, not a URL hint, restores the exact plan
+    // on a reload: the backend re-read names the same fixed plan.
     const postsBefore = calls.filter((call) => call.method === "POST").length;
 
     cleanup();
@@ -1023,7 +1115,7 @@ describe("V2 manual Organize journey", () => {
         variant.implications,
         "COPY",
       );
-      await openPlan(user, { analysis: value, detail: value });
+      await openPlan(user, { detail: value });
       cleanup();
       authStore.clearToken();
       vi.unstubAllGlobals();
@@ -1042,7 +1134,6 @@ describe("V2 manual Organize journey", () => {
     );
     const execution = executionDocument();
     const { calls } = await openPlan(user, {
-      analysis: value,
       detail: value,
       respond: (call) => {
         if (
@@ -1093,7 +1184,7 @@ describe("V2 manual Organize journey", () => {
         statement: "item two replaces and deletes nothing",
       },
     );
-    await openPlan(user, { analysis: value, detail: value });
+    await openPlan(user, { detail: value });
 
     const overwrite = screen.getByRole("checkbox", {
       name: /按已审阅方案替换现有目标文件/,
@@ -1136,7 +1227,7 @@ describe("V2 manual Organize journey", () => {
     policies["recognitionTypePolicyId"] = "type-C";
     policies["namingPolicyId"] = "A";
     policies["classificationPolicyId"] = "A";
-    await openPlan(user, { analysis: value, detail: value });
+    await openPlan(user, { detail: value });
 
     expect(screen.getByText("C")).toBeVisible();
     expect(screen.getByText("移动")).toBeVisible();
@@ -1152,7 +1243,7 @@ describe("V2 manual Organize journey", () => {
       "registered workers are live but report a runtime schema that differs from the active application";
     const worker = preview["worker"] as Json;
     worker["ready"] = false;
-    await openPlan(user, { analysis: preview, detail: preview });
+    await openPlan(user, { detail: preview });
 
     const confirm = screen.getByRole("button", { name: "确认整理 1 项" });
     expect(confirm).toBeDisabled();
