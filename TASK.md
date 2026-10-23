@@ -9,13 +9,13 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
 Required Outcome: RO-8 / S-10 / AC-8; affected RO-1–7 safety and journeys
-Next Action: SAME TASK — ROUTE INTENT-PAGE ANALYSIS THROUGH DURABLE WORKER/FENCE; B RETAINS T4 GATES
+Next Action: SLICE READY FOR A REVIEW; A RETAINS FINAL REVIEW AND CLOSURE
 ```
 
 ## Goal
@@ -966,3 +966,59 @@ B 从已有 UI 链接/按钮对应的真实 API 独立复现，未 upsert 持久
 `.git/validation-evidence/c4c9efc4614493c30126f5468ff7e5178538b5b8/task45.6/b-review/`。
 含脚本、原始日志、全量结果/计时及预存 status；累计测试/质量耗时与本轮占比在该目录
 `review-summary.json` 记录。未改产品/Slice/Roadmap/Progress，不 push，不关闭 Slice。
+
+### Current candidate review — 2026-10-23
+
+```text
+Reviewed range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..0d22fee894fda24b9f01ce97bb6ed631f205ad8e
+Executable candidate: 0d22fee894fda24b9f01ce97bb6ed631f205ad8e
+Decision: PASS
+Required Outcomes / Surfaces: RO-7 / RO-8 / S-1..S-10 complete for A review
+Next: SLICE READY FOR A REVIEW; no new Task and no Slice closure by B
+```
+
+The prior P1 is closed by `be36c28`: intent-page analysis now enters the durable organize
+discovery Worker and the same claim/fence publication used by Files/Run once. Independent real
+entry probes showed prompt `201 phase=analyzing`, Worker-owned slow Provider execution, durable
+cancel winning before late completion, `cancelled` with `preview_id=null`, no plan-count increase,
+and zero source/target mutation. The only later executable change is the inventory test correction
+in `0d22fee`; `be36c28..0d22fee` is test-only.
+
+Fixed-candidate T4 gates:
+
+- Governance, Ruff format/check, compileall, pip check, `git diff --check`, both example config
+  validations, and the FFmpeg/FFprobe forbidden-dependency scan: PASS.
+- Full Python: 2691 tests, 7 skips, OK (267.138s). Full Web: 79 files / 1164 tests, typecheck,
+  lint, format and production build: PASS. Full Playwright E2E: 238 passed.
+- Clean committed-source wheel smoke: PASS; SHA-256
+  `bbc3600b66e381dac1ab3564736d79c0820150052eaa8a405c94e0df81911afd`.
+- Docker image `mediaflow:task45-6-0d22fee` build: PASS; digest
+  `sha256:5bc4597a5be1e74e3c82050827df52439a5029674479f764dc71020f0dcf0ff4`.
+  Scan-retirement browser proof: PASS. Task-center recovery browser proof: PASS (6 cases).
+  Release-security smoke: PASS.
+- The historical `docker_restart_fault_smoke_test.py` was executed and stopped at its legacy
+  Preview-schedule fixture with the bounded `workflow_failure`, no Task, and no media mutation.
+  It is N/A/pending for that obsolete harness only; supported organize Worker stop/start was
+  covered by the passing task-center proof and release-security Worker restart. This is a disclosed
+  harness mismatch, not a product failure or a new scope request.
+
+The worktree still contains only pre-existing dirty files plus no generated validation directory;
+none were staged or reverted. B's testing/quality wall time remained below half of this review turn.
+The Closure Packet is submitted below; A retains independent Slice Final Review and closure.
+
+## Closure Packet
+
+```text
+Slice / Base SHA / Implementation Head:
+  Slice 45 / a72252091d5d46edf3e2114b994036ae21b08e2e /
+  0d22fee894fda24b9f01ce97bb6ed631f205ad8e
+Required Outcomes and Surfaces: complete for B; awaiting A review
+Implemented / Tasks completed: Task45.6 durable intent-page analysis, fenced plan publication,
+  cancellation safety, and unified Organize analysis/plan chain
+Final Tests and Safety Evidence: full Python/Web/E2E, wheel, Docker scan/recovery/security and
+  independent real-entry probes listed above; one obsolete restart harness disclosed pending
+Known Non-blocking Issues / Explicitly Deferred: legacy restart-fault fixture still names a removed
+  Preview schedule; no product or Slice boundary changed
+Documentation Reconciliation Needed: A Final Review and Slice/Roadmap/Progress closure reconciliation
+Decision: SLICE READY FOR A REVIEW
+```
