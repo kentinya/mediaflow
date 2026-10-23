@@ -4,7 +4,7 @@
 Slice ID: 45
 Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: 1f07dc24a06b63930b067f29776eaf53dbcd1db4
 Working Branch: main
@@ -373,6 +373,10 @@ Reviewed Range: a72252091d5d46edf3e2114b994036ae21b08e2e..1f07dc24a06b63930b067f
 Decision: FIX REQUIRED — 2026-10-23
 P0/P1 Product Blockers: none newly proven; mandatory Slice acceptance remains blocked below
 Closure Reconciliation: NOT PERFORMED
+
+Lifecycle note: retain ACTIVE pending B's correction Task. The governance guard requires an
+active Task for Slice status FIX REQUIRED; the submitted B packet currently has NO ACTIVE
+IMPLEMENTATION TASK. This does not change A's FIX REQUIRED decision or authorize closure.
 
 **RO-6 / AC-6 / Final Validation blocker:** the existing real-Python browser gate cannot start.
 After building current production assets, A ran (cwd `web/`):
