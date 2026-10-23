@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import time
 import urllib.parse
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -99,6 +100,10 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
     media.chmod(0o644)
 
     document = json.loads(config_file.read_text(encoding="utf-8"))
+    document.setdefault("api", {})["remoteExecution"] = {
+        "enabled": True,
+        "maximumTtlSeconds": 900,
+    }
     # The standard media overlay mounts the source read-only. Exercise the
     # supported COPY operation rather than granting an impossible MOVE.
     for policy in document.get("organizePolicies", []):
@@ -877,15 +882,47 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "stop", "worker", "notification-worker"], environment=environment)
             wait_for_api(base, token)
 
-            status, submitted = json_request(
-                base,
-                "/api/v1/jobs",
-                token,
-                method="POST",
-                body={"command": "organize", "limit": 1},
+            # Use the supported, explicitly authorized remote Organize entry.
+            # The stopped Worker cannot execute this fencing-only Job.
+            issued = run(
+                [
+                    *command,
+                    "exec",
+                    "-T",
+                    "api",
+                    "mediaflow",
+                    "--config",
+                    "/config/mediaflow.json",
+                    "execution-authorizations",
+                    "issue",
+                    "--ttl-seconds",
+                    "300",
+                    "--max-items",
+                    "1",
+                    "--actor",
+                    "isolated-restart-acceptance",
+                ],
+                environment=environment,
             )
-            if status != 202:
-                raise RuntimeError(f"fault Job submission returned HTTP {status}: {submitted}")
+            execution_token = next(
+                line.removeprefix("Token: ")
+                for line in issued.stdout.splitlines()
+                if line.startswith("Token: ")
+            )
+            request = urllib.request.Request(
+                f"{base}/api/v1/jobs",
+                data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-MediaFlow-Execution-Token": execution_token,
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                if response.status != 202:
+                    raise RuntimeError(f"fault Job submission returned HTTP {response.status}")
+                submitted = json.load(response)
             fence_job_id = submitted["job_id"]
 
             print("Seeding durable notification/uncertain/audit/log evidence...")
@@ -1088,8 +1125,9 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 [*command, "logs", "--no-color", "--tail", "800"],
                 environment=environment,
             )
-            if token in logs_result.stdout or token in logs_result.stderr:
-                raise RuntimeError("service logs contain the deployment API token")
+            for secret in (token, execution_token):
+                if secret in logs_result.stdout or secret in logs_result.stderr:
+                    raise RuntimeError("service logs contain an API or execution token")
             if secrets.token_urlsafe(8) in config_file.read_text(encoding="utf-8"):
                 raise RuntimeError("host configuration fixture leaked a generated secret")
 
