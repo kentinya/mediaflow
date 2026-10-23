@@ -4,6 +4,11 @@
 [SLICE.md](../SLICE.md) RO-8 与 [V2-OPS-013](v2-requirements.md) 是范围和稳定验收 authority。
 本合同已通过 A 的整 Slice 验收；没有把 Task45.4 Scan PASS 代替此结果的验收。
 
+本文关于 Slice43 冻结/延期的表述记录45验收时的范围排除，不是43的当前状态。
+用户于 2026-10-23 单独恢复43；当前开发以 [SLICE.md](../SLICE.md) 为准。
+45完整验收和 Closure Packet 保留于 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`；
+不得以恢复43撤销本文已接受的退役、共享分析或安全边界。
+
 ## 1. 用户旅程
 
 | 环节 | 必需结果 |

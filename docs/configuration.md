@@ -313,7 +313,7 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
 host paths or mutation-based capability probes. Native Settings and Rules are delivered; that does
-not imply V1 cutover or the remaining frozen Automation workspace. Slice45's Task Center,
+not imply V1 cutover or acceptance of the remaining Automation workspace, now active under Slice43. Slice45's Task Center,
 typed recovery and Scan/Preview/FileIndex retirement are accepted CURRENT behavior.
 Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
 See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.

@@ -5,6 +5,11 @@
 稳定要求见 [V2 Requirements](v2-requirements.md) 的任务中心 CURRENT 章节（V2-OPS-009–013）。
 开发与审核只遵循 [Development Workflow](development-workflow.md)。
 
+本文关于 Slice43 冻结/延期的表述记录45验收时的范围排除，不是43的当前状态。
+用户于 2026-10-23 单独恢复43；当前开发以 [SLICE.md](../SLICE.md) 为准。
+45完整验收和 Closure Packet 保留于 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`；
+不得以恢复43撤销本文已接受的退役、共享分析或安全边界。
+
 ## 1. 参考图与适用方式
 
 九张图片均为 `1536 × 1024`，沿用同一共享浅色 Shell、任务中心标题、统计卡片、提示条、

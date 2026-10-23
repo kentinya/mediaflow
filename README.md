@@ -38,7 +38,8 @@ AWS/R2, other OpenList drivers, remote atomic publication, power loss or multi-h
 `main` is the unreleased `2.0.0.dev0` Operator Web development trunk. Python `/api/v1/*` remains the
 business authority and V1 `/ui` remains available. [Roadmap](docs/roadmap.md) records priority/status,
 [Progress](docs/progress.md) accepted closures, and [SLICE.md](SLICE.md)/[TASK.md](TASK.md) current work.
-Do not infer Slice acceptance from code presence. Slice43 remains user-frozen.
+Do not infer Slice acceptance from code presence. Slice43 Automation development resumed by explicit
+user instruction on 2026-10-23; the complete workspace/settings journey remains TARGET pending review.
 
 ## V2 frontend (web/)
 

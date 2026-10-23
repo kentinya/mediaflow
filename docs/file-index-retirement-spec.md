@@ -5,6 +5,11 @@
 本文件为整 Slice 验收后的 CURRENT 合同；[SLICE.md](../SLICE.md) 定义范围和验收记录，
 [V2-FILES-005/006](v2-requirements.md) 定义稳定验收。
 
+本文关于 Slice43 冻结/延期的表述记录45验收时的范围排除，不是43的当前状态。
+用户于 2026-10-23 单独恢复43；当前开发以 [SLICE.md](../SLICE.md) 为准。
+45完整验收和 Closure Packet 保留于 `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`；
+不得以恢复43撤销本文已接受的退役、共享分析或安全边界。
+
 ## 1. 用户旅程与范围
 
 | 环节 | 必需结果 |

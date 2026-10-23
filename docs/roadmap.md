@@ -28,28 +28,30 @@ only in [the development workflow](development-workflow.md).
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
-| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact analysis/plan evidence and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; Scan-mode removal and necessary FileIndex/standalone-Preview coupling cleanup are selected in Slice45 | PLANNED | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
+| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact analysis/plan evidence and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; preserve the Scan/Preview/FileIndex retirement accepted in Slice45 | ACTIVE | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 | 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 
 ## Current boundary
 
-Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — is **PASS / CLOSED**.
-A accepted immutable Slice44 Base `a72252091d5d46edf3e2114b994036ae21b08e2e` through Implementation Head
-`4fcb0028f987f8746f0a8aa7b309e360b07c598e` on 2026-10-23. Nine authoritative task/recovery lists,
-same-page exact summary/selected confirmation and per-item recovery, complete Scan/Preview/FileIndex
-retirement and shared CLI/Files/MediaLibrary live lists are delivered. The original native/evidence
-FIX REQUIRED was corrected by45.7 and independently rechecked; prior Task PASS/validation exceptions
-remain historical. Scope and final evidence are in [SLICE.md](../SLICE.md).
+Slice43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on main following the
+user's explicit 2026-10-23 request to continue Automation-page development. The original immutable
+Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`; the current [Contract](../SLICE.md) restores
+RO-1..RO-7 and T4 acceptance with the accepted45 product amendments. B first reassesses the preserved,
+unstarted Task43.3 with its original ID/Base/Goal/Scope; no implementation is authorized from its
+obsolete snapshot before that explicit continuation/adjustment/replan.
 
-There is no active implementation Task and no next Slice selected. Closure does not start new work.
+`frozen/slice-43-2026-10-15` remains an unchanged historical preservation branch, not the current
+work branch. Historical43.1/43.2 B PASS is not current whole-Slice acceptance. Reference-style
+inventory/records/statistics, current shared-analysis/authorization/Run-once integration and actual
+four-field settings consumption remain required; existing code is reused only after reassessment.
 
-Slice43 remains **PLANNED — Development Hold: FROZEN BY USER** on `frozen/slice-43-2026-10-15`.
-Only Scan-mode removal and necessary index/standalone-Preview coupling cleanup are selected into45.
-User-authorized main integration does not resume its
-other work, require preserving its old UI, or close43. Future Automation redesign needs a new
-confirmed Contract. Exact preservation checkpoints are in the current Slice; accepted closures,
-including44 and retired34–36 boundaries, retain their historical facts in Git/Progress.
+Slice45 remains **PASS / CLOSED**, with Base `a72252091d5d46edf3e2114b994036ae21b08e2e`, reviewed
+Implementation Head `4fcb0028f987f8746f0a8aa7b309e360b07c598e` and closure
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md`. Its Task Center, recovery, live lists and
+Scan/Preview/FileIndex retirement are protected. Resuming43 does not reopen45 or restore retired
+products/compatibility. All accepted closures, original exceptions and preserved refs retain their
+historical facts in Git/[Progress](progress.md).
 
 [Release](release.md) owns release-line facts, [Progress](progress.md) the closure ledger,
 [Architecture](architecture.md)/[Product Experience](product-experience.md) CURRENT behavior,

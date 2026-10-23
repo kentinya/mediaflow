@@ -3,7 +3,8 @@
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
 owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live listing and
-Scan/Preview/FileIndex retirement below are CURRENT. Remaining Slice43 redesign stays frozen.
+Scan/Preview/FileIndex retirement below are CURRENT. Slice43 resumed as ACTIVE on 2026-10-23; its
+remaining workspace/settings contract is TARGET, not newly accepted behavior.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
@@ -627,10 +628,12 @@ replayed.
 
 ### TARGET — V2 Automation workspace and consumed engine settings (Slice 43)
 
-The remaining43 workspace/Run once/metrics/settings redesign stays frozen; its Contract is preserved
-at `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` on `frozen/slice-43-2026-10-15`.
-Scan-mode removal and required index/standalone-Preview coupling cleanup belong to 45. Merged 43 code and historical
-43.2 B PASS do not require preserving that UI, resume43.3 or constitute A acceptance.
+The user explicitly resumed43 workspace/Run once/metrics/settings development on 2026-10-23 under
+the current [Contract](../SLICE.md), retaining original Base/outcomes and B reassessment before
+implementation. The hold Contract `ed974e0df8b263f631bfe48b524da461013d8780:SLICE.md` and preservation
+branch `frozen/slice-43-2026-10-15` remain unchanged. Historical43.1/43.2 B PASS does not certify the
+current changed consumers or constitute A acceptance. Accepted45 Scan/Preview/FileIndex removal
+is an integration invariant, not a reason to restore exclusive models/repos/routes or a second engine.
 
 [V2-AUTO-001–009](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain the
 full target: reuse managed definitions/occurrences/grants, Scheduler/Worker/Operations and exact focused

@@ -4,7 +4,8 @@ This document owns operator journeys and completion semantics. Stable scope/IDs 
 [Requirements](requirements.md) and [V2 Requirements](v2-requirements.md); technical boundaries in
 [Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
 The committed [Slice](../SLICE.md) owns scope. Slice45 is PASS / CLOSED; its accepted Task Center,
-live-list and retirement journeys below are CURRENT. Slice43 remains frozen.
+live-list and retirement journeys below are CURRENT. Slice43 resumed as ACTIVE on 2026-10-23; its
+complete Automation workspace/settings journey remains TARGET until accepted.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
@@ -326,12 +327,36 @@ preparation and do not fabricate execution recovery work.
 Automatic organization is the only supported definition mode in current code; removed Scan intents
 cannot be reinterpreted as execution permission. Independent diagnostic/scheduled Preview is absent;
 necessary analysis/authorization checks use shared organizing behavior.
-The remaining native Automation workspace, Run once, metrics and engine-settings redesign is frozen
-under 43; merged code presence and historical B PASS do not confer current acceptance or resume it.
-[V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain
-complete targets including complete bounded discovery, manual/scheduled authority separation,
-truthful historical metrics and actual resident settings consumption. Necessary45 coupling cleanup
-need not preserve its old UI; future redesign requires a newly confirmed Contract.
+The user resumed the complete native Automation workspace, Run once, metrics and engine-settings
+journey under Slice43 on 2026-10-23. It is ACTIVE / TARGET, not accepted delivery; the historical43
+hold and Task PASS remain unchanged. [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43)
+and the current [Contract](../SLICE.md) preserve complete bounded discovery, separate manual/scheduled
+authority, truthful historical metrics and actual resident settings consumption. B must first
+reassess the changed current consumers and preserved Task43.3; retired45 products stay absent.
+
+### TARGET — Complete native Automation workspace (active Slice43)
+
+- **Entry/state:** shared-shell `自动化` opens the real definition inventory, with `任务列表 / 执行记录 /
+  全局设置`, population metrics, source/scope/schedule/timezone/limit, next/latest outcome and distinct
+  published/enabled/authorized/readiness states. No editor opens automatically or sample data appears.
+- **Configure/authorize:** New/copy starts disabled without authority. One focused checked Save
+  publishes only the intended definition; shared zero-mutation analysis shows the exact same-page
+  plan/scope/effects before explicit revocable unattended permission. Enabling alone grants nothing.
+- **Scheduled success:** each valid due occurrence creates one linked pinned run and executes through
+  the existing Worker/OrganizerExecutor without another per-run click, with independent item results.
+- **Run once:** use the published definition's saved scope to discover/freeze a complete bounded
+  manifest without asking the user to pick files again; review the same-page exact summary and
+  separately confirm one-shot execution. No schedule advancement or reuse of unattended permission.
+  Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
+- **Results/recovery:** bounded authoritative inventory/history queries reach every authorized row;
+  actual admitted runs count once, unavailable/unknown data are not zero/success. Affected items link
+  to existing Task Center decisions/controls/recovery with return context, preserving siblings and
+  uncertain-effect investigation. Stale/failed Save retains Active/input; unknown submission is
+  reconciled before another command. Reads/refresh/paging create no work or Provider/media effects.
+- **Settings:** one four-field Save preserves unrelated Draft/configuration. Capacity is pending+
+  running Job count, stale age is no-update observation, and Worker/Scheduler polling must be
+  adopted by actual resident loops without routine restart. Published/adopted/pending/override/
+  stale or unavailable consumers have truthful readback and concrete repair guidance.
 
 ## Operations administration
 

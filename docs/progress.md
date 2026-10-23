@@ -8,19 +8,21 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — is **PASS / CLOSED**.
-A reviewed immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` through Implementation Head
-`4fcb0028f987f8746f0a8aa7b309e360b07c598e` on 2026-10-23. Task45.7 corrected the earlier real-Python
-acceptance/evidence blocker; A independently rebuilt and reran the previously blocked gate (7 passed).
-Complete B native/full/packaging evidence, input reuse, seven external-environment skips and original
-Task45.4 validation exception are disclosed in the [Slice](../SLICE.md). CURRENT documents now reflect
-RO-1..RO-8 / S-1..S-10. This does not rewrite earlier accepted closures or validate frozen43 UI extras.
-There is no active Task or selected next Slice; work stops after closure.
+Slice43 — **V2 Automation Workspace and Engine Settings** — is **ACTIVE** on main by explicit
+user resumption on 2026-10-23. Original Slice Base `853973dbbf8289fa2ad40657033e94e870a690e4` and
+unstarted Task43.3 Base `78ec108d4473e8c140174c1356d0e88a1ae42b34` are unchanged. The committed
+[Slice](../SLICE.md) preserves full outcomes/T4, aligns the accepted45 retirement amendments, and
+hands the existing Task identity/Goal/Scope to B for current-code reassessment before implementation.
+No new product acceptance or completed43 outcome is claimed by reactivation.
 
-Slice43 remains **PLANNED / FROZEN BY USER** on `frozen/slice-43-2026-10-15`; only Scan-mode
-removal and necessary index/standalone-Preview coupling cleanup moved into45. Main integration does not resume43 or accept its
-current UI. Preserved Contract/Task/review checkpoints are listed in the current Slice.
-Slice44 and all accepted closure entries below remain unchanged.
+The original hold Contract and branch `frozen/slice-43-2026-10-15` remain unchanged; preservation
+checkpoints and historical43.1/43.2 B PASS remain reachable. Current inventory/history/settings gaps,
+changed analysis/Run-once consumers and previously reported native failures need B reassessment.
+
+Slice45 stays **PASS / CLOSED** at implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`.
+Its full Contract/A review/evidence limits and last Task closure are retained at
+`13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` / `TASK.md`. The ledger below records the exact
+accepted facts and deferrals at each closure; later43 resumption does not rewrite those entries.
 
 Testing ownership now follows [Development Workflow](development-workflow.md): Developer runs
 new/changed/affected tests; B owns full acceptance. This process change does not rewrite prior

@@ -35,14 +35,17 @@ scope and delivery state remain in root contracts, [Roadmap](roadmap.md) and [Pr
 | 2026-10-18, `V2-FILES-005/006` | Replace global `REQ-SCAN-004` indexing, `REQ-ORG-012` result sync and indexed `REQ-WEB-003`/`REQ-SAFE-009` exceptions with shared library/live-Storage CLI/Web lists and complete FileIndex exit. Browsing records no catalog/observations/work/authority or Provider/Hash/media effects; explicit work retains exact scoped evidence. No global stand-in, dual write, old FileID/API migration/compatibility or data clearing. `REQ-SCAN-006` source identity/safety remains. |
 | 2026-10-18, `V2-OPS-013` | Retire the standalone Preview product with the same first-deployment standard as Scan: remove Web/API/CLI/Job/scheduled/definition-bound entry, execution/continuation, dedicated schema/composition and compatibility layers. Old inputs ordinarily fail before discovery/Provider/admission/authority, with no conversion, retirement page/410/guard, old-work migration/takeover/history or V1-parity obligation. `REQ-ORG-004/011` zero-mutation analysis, `REQ-SCHED-001` shared planning and `REQ-WEB-004` checks continue through organizing summaries/DryRun and shared Rules/configuration/authorization checks. Exact plans/pins/permissions/results and non-replay remain; no data/media clearing or unrelated Automation redesign. |
 
-These are scope authorization, not implementation or A acceptance. Necessary Slice43 Scan/index/standalone-Preview
-coupling cleanup is allowed by Slice45; remaining Automation redesign is deferred. Accepted V1 facts
+These amendments define authorized scope; actual acceptance is recorded separately. Necessary
+Slice43 Scan/index/standalone-Preview coupling cleanup was accepted within45, not the whole Automation
+workspace. The user explicitly resumed remaining Slice43 development on 2026-10-23; its current
+Contract preserves the original Base/results and requires B reassessment before implementation.
+Accepted V1 facts
 and original amendments remain in Git. `REQ-GEN-004` still requires fail-closed data integrity;
 UX-first does not weaken safety or justify unnecessary CLI/internal-token ceremony.
 
 Slice45 已整体验收为 PASS / CLOSED，交付上述 `V2-OPS-009–013` 与 `V2-FILES-005/006`。
 该验收不改变冻结 V1 定义或原始接受事实；下面 CURRENT 修订及 Product Experience/Architecture
-记录现行行为，剩余 Slice43 自动化工作区仍冻结。
+记录现行行为。剩余 Slice43 自动化工作区现已单独恢复为 ACTIVE，但尚未整体验收；不得恢复45已退役产品。
 
 ## Traceability and derivation rules
 
