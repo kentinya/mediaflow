@@ -18,6 +18,9 @@ No new product acceptance or completed43 outcome is claimed by reactivation.
 The original hold Contract and branch `frozen/slice-43-2026-10-15` remain unchanged; preservation
 checkpoints and historical43.1/43.2 B PASS remain reachable. Current inventory/history/settings gaps,
 changed analysis/Run-once consumers and previously reported native failures need B reassessment.
+The user refined the records boundary on 2026-10-23: Automation reports results/reasons and guides
+repair before safe explicit retry; after formal organizing-task handoff, recovery is in Task Center.
+This is an A Contract revision for B reassessment, not implementation or product acceptance.
 
 Slice45 stays **PASS / CLOSED** at implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`.
 Its full Contract/A review/evidence limits and last Task closure are retained at

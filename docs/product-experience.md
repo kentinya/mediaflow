@@ -348,11 +348,23 @@ reassess the changed current consumers and preserved Task43.3; retired45 product
   manifest without asking the user to pick files again; review the same-page exact summary and
   separately confirm one-shot execution. No schedule advancement or reuse of unattended permission.
   Overflow/incomplete scope refuses execution and explains narrowing/re-analysis, not first-N success.
-- **Results/recovery:** bounded authoritative inventory/history queries reach every authorized row;
-  actual admitted runs count once, unavailable/unknown data are not zero/success. Affected items link
-  to existing Task Center decisions/controls/recovery with return context, preserving siblings and
-  uncertain-effect investigation. Stale/failed Save retains Active/input; unknown submission is
-  reconciled before another command. Reads/refresh/paging create no work or Provider/media effects.
+- **Execution records:** keep the Automation records page read-only, showing status/results, failure
+  stage/reason, known effects and repair/Task Center links; no local file decisions, re-analysis or
+  execution controls. Bounded authoritative queries reach every authorized row; actual admitted runs
+  count once, unavailable/unknown data are not zero/success, and bound reached is not scope exhaustion.
+- **Before organizing starts:** explain the failed prerequisite and link its correction. After repair,
+  explicitly retry through existing supported commands only if durable evidence proves no formal
+  execution/media effects and the old attempt is settled/fenced, with current permissions/context/
+  authority rechecked. Do not duplicate queued work or silently repin a changed definition; unsupported
+  old-context retry instead explains an explicit new Run once or next scheduled evaluation. Unknown
+  submission/handoff reconciles first, never blindly retries.
+- **After organizing starts:** durable formal organizing-task handoff, not the first media mutation,
+  routes all controls and recovery to the exact Task Center run/problem. This includes scanning,
+  recognition or metadata failure before moving any file. A missing link does not prove pre-start;
+  uncertain effects permit investigation only. Preserve return context, successful siblings and
+  independently linked recovery attempts; recovery never rewrites the original run result.
+- **Read/save safety:** stale/failed Save retains Active/input; reads/refresh/paging create no work or
+  Provider/media effects. Preparation-only findings remain distinct from execution failures.
 - **Settings:** one four-field Save preserves unrelated Draft/configuration. Capacity is pending+
   running Job count, stale age is no-update observation, and Worker/Scheduler polling must be
   adopted by actual resident loops without routine restart. Published/adopted/pending/override/

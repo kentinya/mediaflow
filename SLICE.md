@@ -39,6 +39,16 @@ FileIndex 形式及旧产品迁移/兼容义务对齐用户后来明确授权、
 | Accepted Slice45 | Base `a72252091d5d46edf3e2114b994036ae21b08e2e`, implementation `4fcb0028f987f8746f0a8aa7b309e360b07c598e`, closure `13ecfc0e75fc34ff0ae489e655124a178943cba4:SLICE.md` — PASS / CLOSED unchanged |
 | Resumption source checkpoint | `13ecfc0e75fc34ff0ae489e655124a178943cba4` — docs-only successor of the Implementation Head; not Slice43 acceptance |
 
+### User-authorized execution-record boundary
+
+On 2026-10-23 the user refined the design: Automation keeps its own read-only execution records,
+reporting results, failure stage, reasons and repair guidance; it does not embed file recovery.
+Before formal organizing starts, guide repair and an explicit safe retry through existing supported
+commands. After durable organizing-task handoff, all execution controls and per-item recovery belong
+to Task Center. This does not select the earlier proposed replacement of the records page with a
+Task Center filtered list. RO-5/AC-8 below define the boundary and non-replay requirements; original
+Base/outcomes/T4 and accepted45 behavior remain. B must reassess43.3 against this material revision.
+
 ### Actual-code reassessment and B handoff
 
 The current inventory still renders bounded cards, with a truncated-prefix message; it has no complete
@@ -75,7 +85,8 @@ with parameters actually used by resident processes.
   statistics, independent run outcomes, and published
   versus process-consumed settings. Internal IDs remain optional diagnostic details.
 - **Action:** create/copy/edit/enable/disable/reference-safe remove; one checked Save; exact shared analysis/plan summary;
-  grant/revoke; Run once; inspect filtered history and task-linked recovery; save global settings.
+  grant/revoke; Run once; read filtered execution results/reasons and follow repair or Task Center links;
+  save global settings.
 - **Success:** the published definition and current authority govern newly admitted bounded work;
   scheduled occurrences do not require another per-run click; manual real execution retains its
   one-shot intent. Runs and outcomes survive refresh/restart. Settings changes are visibly adopted
@@ -213,8 +224,9 @@ ceiling and the existing 100-primary manual/discovery bound. Show both limits an
 manifest's eligibility/exclusion evidence. If discovery exceeds the effective bound or cannot
 prove a complete bounded manifest, refuse execution and explain how to narrow the definition
 scope, publish and rediscover/re-analyze; never silently take the first N files. Empty discovery
-has a truthful no-work outcome. Human decisions use existing item-specific recovery; changed
-scope or sources require fresh evidence and execution intent. Expensive discovery/analysis is
+has a truthful no-work outcome. Preparation corrections stay in the existing preparation journey;
+admitted-item recovery belongs to Task Center. Changed scope or sources require fresh evidence and
+execution intent. Expensive discovery/analysis is
 durable and cancellable at existing safe boundaries. A preflight is not counted as an admitted
 media execution.
 
@@ -230,7 +242,7 @@ reload/reconnect, including Unicode identities. Manual runs do not advance/reset
 consume a scheduled occurrence. Capacity, authorization, missing pin and readiness failures return
 safe next actions; success immediately links to the selected durable run and back to its definition.
 
-### RO-5 — Cross-definition history, results and native recovery
+### RO-5 — Read-only execution records, pre-start repair and Task Center recovery
 
 Provide bounded server-filtered history by definition, trigger, outcome and time, including
 scheduled occurrences and manually admitted runs. Pending/pre-Task failures remain visible. Keep
@@ -239,11 +251,37 @@ Latest-result projection and statistics must respect linked Task/items, not inte
 as successful organization. History preserves name/scope/mode/version at admission or labels missing
 legacy evidence; current rename/remove cannot rewrite it.
 
-Expose start/end, counts, reached item bound, failure/effect certainty and concrete next action.
-Reached bound does not prove scope exhaustion. Reuse native Operations detail, records/export,
-cooperative controls and per-item decision/analysis/continuation instead of another recovery engine.
-Preserve list/filter/definition context when returning. Original, continuation and sibling results
-remain independently traceable across restart; uncertain effects stay investigation-only.
+Automation retains the reference execution-record surface, rather than replacing it with a Task Center
+list. It reports status/results, start/end, counts, reached item bound, failure stage/reason, known effects
+and concrete repair guidance. Reached bound does not prove scope exhaustion. Reading a record or
+opening its reason never starts work. Records may link to the relevant definition, settings, service
+readiness or exact Task Center run/problem; they contain no local file-decision forms, re-analysis,
+pause/continue/cancel or execution-recovery commands. Reuse existing result/export and Task Center
+behavior, not a second result store, queue or recovery engine.
+
+Before formal organizing starts, explain the failed prerequisite and guide the operator to repair it,
+then explicitly retry using the existing supported occurrence/admission or Run-once journey. Retry is
+allowed only when backend durable evidence proves no organizing execution/media effects started and
+the prior attempt is settled/fenced against later execution. A queued/claimed attempt is not another
+retry candidate. Revalidate current permissions, exact scope/configuration/pins and applicable analysis/
+authority; a changed definition is not silently substituted into an old admitted attempt. If retrying
+the old context is not supported, explain the reason and offer an explicitly distinct new Run once or
+the next scheduled evaluation, retaining the original record and not advancing/replaying an occurrence
+implicitly. Reconcile unknown submissions before another command; no automatic or blanket start-again
+retry of a run. Existing supported in-pipeline retry policies are unchanged.
+
+The user-facing boundary is durable handoff to a formal organizing Task/execution, identified from the
+existing authoritative run/origin links and checkpoints, not the first Move/Copy or a frontend status.
+Preparation-only discovery/analysis is not formal execution. Once formal execution exists, including
+its scanning/recognition/metadata/planning failure before any media mutation, all controls and recovery
+go to the exact native Task Center run/problem. A missing Task link alone does not prove pre-start:
+an ambiguous handoff or uncertain effects require reconciliation/investigation and cannot offer
+start-again retry. Do not invent a Task/Job solely to route the page.
+
+Task Center owns legal per-item decisions, safe re-analysis/summary/explicit continuation and controls.
+Successful siblings and uncertain effects are never retried as ordinary failures. Preserve list/filter/
+definition return context, original outcomes and independently linked recovery attempts across restart;
+later recovery does not overwrite the original result or count as another scheduled trigger.
 
 ### RO-6 — Global settings with actual consumer adoption
 
@@ -303,7 +341,8 @@ transfers and resident service behavior remain protected.
 - Typed authenticated API read/command projections over shared Python application authority.
 - Existing managed configuration, scheduled occurrence and manual admission/Worker/persistence paths.
 - Real resident Worker/Scheduler settings adoption and fresh per-consumer readback.
-- Native Operations detail/recovery and System Settings/ResourceLibrary/Rules return links.
+- Read-only Automation execution records with prerequisite-repair guidance and exact native Task Center
+  detail/recovery links; System Settings/ResourceLibrary/Rules return links.
 - Compatible supported routes and additive durable migration for necessary supported links/consumer evidence.
 
 ## Safety Invariants and UX Constraints
@@ -360,7 +399,7 @@ reference availability must be reported rather than replacing the originals with
 | AC-5 | Due occurrences remain unique across concurrency/restart/DST; scheduled valid grants execute without per-run clicks while current scope/capability/conflict/revocation gates remain enforced. |
 | AC-6 | Automatic-organization Run once automatically discovers and freezes the complete bounded live-source manifest without normal file picking, then completes exact same-page analysis/summary, explicit one-shot execution, duplicate/unknown-admission reconciliation and no schedule advancement. Overflow or incomplete discovery blocks execution with scope-narrowing/re-analysis recovery; no silent first-N truncation. No removed mode or standalone Scan/Preview/FileIndex product is restored through any surface or compatibility path. |
 | AC-7 | Definition, manual/scheduled run, Job/Task/execution and per-item results retain durable links without double count; pre-Task failures and removed-definition history remain reachable. |
-| AC-8 | Latest outcomes/progress/bounds and native task-linked recovery preserve independent results; waiting/partial/unknown effects are not false success or replay candidates. |
+| AC-8 | Automation records expose truthful results/stages/reasons/known effects and actionable links, without embedding file recovery or execution controls. Proven pre-start failures guide repair and explicit safe retry only after the old attempt is settled/fenced and authority/context revalidated. Durable formal organizing-task handoff, not first media mutation, moves all execution recovery to Task Center, including analysis-stage failure. Unknown handoff/effects forbid start-again retry; original/continuation/sibling outcomes and return context remain independent, with no false success or replay. |
 | AC-9 | Settings Save validates/publishes the exact four-field scope; capacity and stale observation retain their real semantics and no setting grants media authority. |
 | AC-10 | Real running Worker/Scheduler adopt new polling values without restart or work arrival; fresh per-consumer evidence distinguishes target/adopted/pending/override/stale state and retains old work pins. |
 | AC-11 | Web/API RBAC, Active/Draft separation, redaction, zero-side-effect reads, C identity and compatible Settings/Rules/Files/Operations/V1 journeys are maintained. |
@@ -377,6 +416,11 @@ the complete corrected-candidate gates or Slice Final; the concrete risk coverag
 - Cover success, invalid/finite/boundary input, missing dependencies, stale/concurrent publication,
   unknown admission, Unicode principal isolation, capacity reduction, revocation during work,
   missing pin/secret, source change, mixed outcomes, current Active A-to-B isolation and restart.
+- Through existing Automation entrances, distinguish provable settled pre-start failure, queued/claimed
+  work, formal Task failure before first media mutation and ambiguous handoff. Verify repair/retry
+  revalidation and request reconciliation, read-only record behavior, exact Task Center handoff/return,
+  retained original results and non-replay of successful or uncertain effects. Do not invent routes
+  or treat an absent Task link as proof that retry is safe.
 - Query fixtures exceed page limits and include scheduled/manual links, pre-Task failure, partial/
   waiting/cancelled/uncertain/no-work runs, removed definitions, legacy missing evidence and calendar
   boundaries. Validate database-level query/metric behavior, not only frontend fixtures.
@@ -418,5 +462,5 @@ resumption is not current product acceptance, Slice readiness or final verificat
 
 ## A Final Review
 
-Not performed. The resumption and document-format reconciliation are not product acceptance.
+Not performed. The resumption and user-authorized scope/document revisions are not product acceptance.
 Final review will cover the original immutable Base through the submitted Implementation Head.

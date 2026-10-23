@@ -643,6 +643,15 @@ min(definition ceiling,100) bounds primaries, incomplete/
 overflow refuses a first-N prefix, schedule due state/grants do not become manual authority.
 Durable origin/request/principal/pin links preserve deduplication and truthful historical metrics.
 
+Automation execution records are a read-only projection of existing results, stages/reasons, known
+effects and repair/Task Center links, not another recovery surface/store/queue. Proven pre-start
+failure may guide explicit supported retry only after the prior attempt is settled/fenced and its
+permissions, context and authority are revalidated. Formal organizing handoff uses existing durable
+Task/execution origin links/checkpoints, not first media mutation; all later controls and per-item
+recovery stay in Task Center, including pre-mutation scanning/metadata failure. A missing link alone
+does not prove non-execution; unknown admission/handoff/effects require reconciliation/investigation,
+not replay or synthetic Tasks. Historical results and recovery-attempt links remain distinct.
+
 Capacity bounds pending+running Jobs; stale age observes updates. Polling adoption must be proved by
 fresh actual consumer values/version at safe resident-loop boundaries, independently of each Job's
 media pin. API runtime binding alone is not proof of another process's cadence. Idle/long waits,
