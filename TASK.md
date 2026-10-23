@@ -27,7 +27,10 @@ navigation/failure surfaces**. RO-6 settings publication/actual resident consump
 separate coherent unit; a settings link is not its completion.
 
 Traceability: V2-AUTO-001/005/006, V2-UX-001/002/003, UX-001/002/003/005/007/010,
-REQ-TASK-008, REQ-RECOVERY-002/006/009, Slice AC-1/2/7/8 and applicable AC-10/11/12.
+REQ-TASK-008, REQ-RECOVERY-002/006/009, the inventory/records portion of Slice AC-1,
+AC-2/7/8/11 and this Task's evidence contribution to AC-12. Settings outcomes RO-6/AC-9/10
+and the settings portion of AC-1 remain outside this Task and incomplete; AC-12's whole-Slice
+T4 gate is not satisfied by this Task's T3 checks.
 Follow the complete [Automation journey](docs/product-experience.md#target--complete-native-automation-workspace-active-slice43)
 and [CURRENT/TARGET architecture](docs/architecture.md#automation-and-unattended-execution).
 
