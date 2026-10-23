@@ -13,7 +13,7 @@ Difficulty: High
 Test Level: T3
 Planner / Reviewer: B — temporary role exception explicitly authorized by user, 2026-10-23
 Reassessment source / Contract: 533a666860a571e61c78ac49b3e45c44acaa419e
-Decision: FIX REQUIRED — candidate 2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede; implementation f0c42784ad3fe6b748cd9457bc440a83e37346e1; same Task/Base/Goal/Scope
+Decision: FIX REQUIRED — candidate 87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12; implementation 29048876f0546efd3ba9c8a5cd5463b7f4b8168f; same Task/Base/Goal/Scope
 Next Action: DEVELOPER CORRECTS THIS TASK; B owns corrected-candidate T3 acceptance; Slice Final stays T4
 ```
 
@@ -465,121 +465,139 @@ the records page uses and returns the numeric total plus one run's result/bound 
 ## B Review Result
 
 ```text
-Reviewed candidate: 2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede (main; report successor)
-Implementation: f0c42784ad3fe6b748cd9457bc440a83e37346e1
-Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede
-Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede
-Correction delta: 7e1aa92889932b50044d14d09115577580bb1529..2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede
-Decision: FIX REQUIRED — remaining in-Task P1 outcome gaps R1/R3
+Reviewed candidate: 87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12 (main; report successor)
+Implementation: 29048876f0546efd3ba9c8a5cd5463b7f4b8168f
+Task range: 78ec108d4473e8c140174c1356d0e88a1ae42b34..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
+Reassessment-source range: 533a666860a571e61c78ac49b3e45c44acaa419e..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
+Correction delta: 383aae3d06e1fb2075d263368d67535e93541fae..87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12
+Decision: FIX REQUIRED — R3 still has two independently reproduced P1 outcome defects; T8 default-E2E gate also fails
 Base / Goal / Scope / Test Level: unchanged; Task T3, Slice Final T4
-Slice Required Outcomes / Surfaces all satisfied: NO (RO-1/5 incomplete; RO-6 outside this unit)
+Slice Required Outcomes / Surfaces all satisfied: NO
 Next: DEVELOPER CORRECTS TASK 43.3; B reviews the next immutable candidate
 ```
 
-The original Base range includes accepted45; its implementation/closure references and retired
-entrances remain intact. B inspected the current correction separately and stopped before expensive
-acceptance after independently confirmed blockers. This is not whole-range acceptance or Slice Final.
-`f0c4278..2b75fe9` changes only `TASK.md`; the tested executable inputs are the submitted candidate's.
-The Developer report above records submitted claims, not B acceptance.
-
-### Observed progress and remaining gates
-
-- Code now supplies backend full-population published/enabled/Draft counts, merges admitted manual
-  history, uses real execution timestamps and carries record paging direction, URL state and time
-  controls. R2/R4 have implementation progress; their assigned native/query/read-consistency and
-  full Web acceptance is still pending. No prior requirement or gate is waived.
-- The real mixed-item journey preserves the original `partial_success` result and the successful
-  sibling's independent result/source state through failed-item analysis, plan confirmation and
-  actual recovery execution. Records retain Task Center ownership and no local recovery control.
-- Remaining R1/R3 failures below prevent the truthful records/statistics outcome. Developer fixes
-  these in the same Task and runs failing/new/changed/directly affected checks. B retains the full
-  assigned integration/native/Web/static matrix and all other acceptance obligations. No next Task,
-  Closure Packet, settings completion or Slice closure follows this verdict.
+B inspected the full Task-range manifest and separated the accepted45 integration from the26-file
+current43.3 delta, then reviewed the current read/query/API/Web/navigation changes and correction.
+`2904887..87ec86f` changes only `TASK.md`; executable inputs match the submitted implementation.
+This is an early FIX REQUIRED on proven blockers, **not** whole-range acceptance, a rerun/override of
+accepted45's A review, or Slice Final. All still-unexecuted acceptance remains B-owned.
+The Developer completion report records submitted claims, not B acceptance.
 
 ### Required corrections — same Task
 
-1. **R1 / P1 — Exclude linked recovery execution even when it inherits definition origin
-   (T3/T4/T5).** The new mandatory predicate accepts every standalone Task with
-   `origin_definition_id`. Existing supported recovery execution inherits that origin through
-   `ManualOrganizeExecutionService._with_definition_origin`; therefore it still becomes another
-   original Automation admission. In the real journey, unfiltered records total stays2 through
-   analysis/preparation, then becomes3 immediately after recovery execution confirmation.
-   The extra row is a new `manual_organize` Task for `harness-run-once`; the other two rows are the
-   original manual run and a genuine scheduled admission, not a recovery analysis Job.
-   Use persisted recovery/preparation/execution lineage to distinguish original from follow-up
-   before LIMIT, total, status-count, metric and per-definition latest selection. Apply one matching
-   population rule across those consumers. Preserve origin/history and existing write semantics;
-   do not remove origin to hide this read bug. Assert numeric totals, identities, metrics and latest
-   before/after actual recovery execution, including after reopen, with ordinary/non-admitted work
-   excluded and genuine manual/scheduled originals retained.
-2. **R3 / P1 — Derive handling from verified relevant resolution, not completed analysis
-   (T3/T5/T6).** `_summarize_handling` treats any completed non-preparation continuation, or any
-   completed linked execution status, as resolution without verifying relevant item/effect evidence.
-   Existing recovery continuation `completed` means successful zero-mutation DryRun analysis.
-   At that point the actual Automation row says `后续处理已完成` and
-   `no further Automation action is needed for this record`, before a new plan is confirmed or
-   executed. Preparing the legitimate plan then changes it to `investigation`; an admitted pending
-   execution also remains `investigation`. Project analysis-ready/prepared/admitted/running progress
-   truthfully within the separate handling model. Require verified linked execution/item/checkpoint
-   outcomes for resolution of the relevant original problems; an older completed attempt cannot
-   hide remaining failed/active/uncertain items. Keep original results unchanged, ambiguous evidence
-   as investigation, and failed reads as unavailable rather than unhandled. Read failure currently
-   falls through `_automation_handling_evidence`'s empty mapping, so preserve the distinction there.
-3. **R3 / P1 — Show the original concrete failure reason and known effects (T3/T5/T6).**
-   `_automation_record_failure_stage` returns `linked_task_stage`, null category/nextAction and a
-   generic Task Center referral for the real formal-Task failure. The page still does not tell the
-   operator why it failed. The exact existing Task Center item read already supplies
-   `storage_failure`, a bounded message, durable failed TaskItem/Result, `sideEffects: none`, safe
-   repeatability and the instruction to inspect source/destination state before explicit retry.
-   Reuse that bounded authoritative evidence for original reason/stage, per-item known/uncertain
-   effects and concrete guidance; render it in records/reason expansion with the exact run/problem
-   link. Keep the successful sibling's effect distinct from the failed item's zero effect.
-   Do not expose raw exceptions or add local commands. The existing reached-bound obligation also
-   remains: `_automation_record_reached_bound` unconditionally returns false; derive supported
-   evidence or explicitly label unavailable, without claiming exhaustion. This review does not
-   claim that the mixed fixture itself reached its bound.
+1. **R3 / P1 — Resolve the original problem population, not just the newest execution
+   (T3/T5/T6).** `_summarize_handling` selects the newest linked execution and treats its own
+   positive success count/zero failed count as resolution of the entire original record. A real
+   Run once with three recognized files produces one successful sibling and two zero-effect
+   failures. Recovering only `Two.2002.mkv` through Task Center analysis → plan summary → explicit
+   confirmation → real Worker leaves `Three.2003.mkv` failed with its source still present, yet
+   Automation displays `后续处理已完成` and `no further Automation action is needed for this record`.
+   Carry the existing durable source-item/continuation/preparation/execution relations into the
+   handling read; reconcile relevant outcomes **per original affected item** before aggregating the
+   record. A successful subset must not hide an unhandled, failed, active or uncertain sibling,
+   nor may an unrelated older/latest attempt prove another item's resolution. Preserve original
+   results and conservative investigation when coverage cannot be proved. Reuse existing states
+   and lineage; no new workflow, schema, write semantics or local record commands are authorized.
+   Add the actual multi-failure/subset journey and prove all affected items must independently
+   resolve before the whole record may say resolved, including durable reopen.
+2. **R3 / P1 — Read actual durable Result statuses and retain original reason/effect evidence
+   (T3/T5/T6).** `automation_record_failure_evidence` filters `task_results.status` with lower-case
+   `failed`/`partial`, while the real Manual execution producer persists `ExecutionStatus.value`
+   as upper-case `FAILED`/`PARTIAL`. Its TaskItem fallback initially shows a reason but discards the
+   known Result certainty: the native fixture's two known-zero-effect failures publish
+   `effects.partial=2`, `effects.none=0`, and per-item `effectCertainty=unknown`, despite
+   `sideEffects=none`. As soon as recovery analysis moves Two's TaskItem off failed, Two's original
+   failure evidence disappears: the original record's reason sample/count drops2→1 before any
+   recovery execution. The durable failure Result was not removed. Match the actual existing
+   Result vocabulary at the read boundary, keep TaskItem and Result status meanings distinct,
+   and derive the bounded historical failure population/effect partitions from those Results.
+   Preserve the original stage/reason/known effects while current handling changes; do not rewrite
+   stored outcomes, synthesize Results or change the execution producer. Use real producer-backed
+   coverage, not only lower-case manually seeded Result fixtures. Assert initial `none=2`, no false
+   partial/unknown effect, both original reasons through analysis/preparation/execution and reopen,
+   per-Task sample/count isolation, and no successful-sibling effect attributed to a failed item.
+3. **T8 — Isolate the real-Python workspace spec from the default fake-server suite.**
+   `web/playwright.config.ts` explicitly excludes the other real-Python specs but not the new
+   `automation-workspace.python.spec.ts`; the ordinary `npm run test:e2e` therefore collects all
+   five of its Python-only journeys against the Node fake. Independently running its first test
+   under that default config fails at the existing Create-definition entry after10seconds.
+   Add this spec to the established exclusion (or an equivalent minimal existing convention),
+   keeping it included under `playwright.python.automation.config.ts`. Verify both configurations'
+   test inventories and rerun the affected real native journey. Do not add fake versions of Python
+   harness controls, skip the spec everywhere, weaken assertions/timeouts or remove B's default gate.
 
-### Independent native evidence
+### Independent reproduction and evidence
 
-The reproduction adapts the **existing** `Run once preserves a successful sibling while one failed
-item is recovered` journey, using the existing Automation/Task Center UI and supported records/item
-reads. It adds passive captures at real workflow checkpoints and one assertion excluding resolution
-after analysis alone. All original steps through actual recovery and successful-sibling assertions
-completed; the added assertion fails as expected. No guessed route, user media or runtime database
-was used. The isolated real Python/SQLite/Local Storage/Scheduler/Worker harness ran on port4190
-against rebuilt production assets and was stopped after the test.
+The reproduction adapts the **existing** `a record keeps its original result while a handled item
+shows separate progress` browser journey. Only the temporary fixture/fault seam changes: add the
+already-supported `Three.2003.mkv` candidate beside One/Two, and return the same known-zero-effect
+Executor failure for Two and Three. The existing harness driver still claims the browser-admitted
+execution and runs the real Manual Worker/OrganizerExecutor. Task Center still handles only Two
+through the original UI and supported commands. No product source, route, persisted status or
+recovery relation is fabricated or changed for this probe. Passive captures read the real records
+responses; the existing per-item harness read confirms the untouched failed sibling and successful
+sibling independently. All original journey assertions through confirmed recovery completed; the
+added assertion that the record must not claim resolution fails.
 
-| Actual checkpoint | Unfiltered original-run total | Original outcome | Reported handling |
-|---|---:|---|---|
-| Failed-item recovery admitted | 2 | partial_success | handling |
-| Zero-mutation analysis completed | 2 | partial_success | **resolved — incorrect** |
-| New plan prepared | 2 | partial_success | investigation |
-| Recovery execution admitted | **3 — incorrect** | partial_success | investigation |
-| Recovery execution completed | 3 | partial_success | resolved |
+| Real checkpoint | Original admission total | Original outcome | Reason items / effects | Handling |
+|---|---:|---|---|---|
+| Before handling | 1 | partial_success | Two + Three; partial2/none0 incorrectly | unhandled |
+| Zero-mutation analysis of Two complete | 1 | partial_success | Three only; Two's historical reason missing | investigation |
+| Confirmed recovery of Two complete | 1 | partial_success | Three only; Three still failed/source present | **resolved — incorrect** |
 
-Required affected coverage is the existing read-model Python module, changed Web projection tests
-and lifecycle/Run-once/workspace native journeys from the plan. Extend the real mixed-item test to
-assert each intermediate handling state, exact numeric totals and concrete failure reasons, then
-actual verified recovery with the sibling untouched. The shipped workspace spec currently compares
-occurrences of the text `条执行记录`, not its numeric total, and accepts any of three handling labels
-before executing recovery; those assertions do not prove the claimed outcome. Keep the original
-safety assertions and make the new checks exact, without retries or weakened guards.
+The successful One sibling stays `success`, its source is gone and its Result ID remains present.
+The original admission identities/count remain unchanged through recovery: this is meaningful R1
+progress, not acceptance of every population/metric/latest case. Analysis alone no longer resolves
+this record. Concrete failure category and Task Center ownership render, but the two R3 obligations
+above remain unmet. No source/media outside the isolated temporary harness is touched.
 
-### B checks and evidence
+Actual B checks on this candidate:
 
-- Governance **PASS**; rebuilt production Web **PASS**; Task Base..candidate `git diff --check`
-  clean. The independent native reproduction is **1 FAILED** at
-  `analysis completion is not recovery resolution`; its full raw trace includes the count and
-  reason defects above. No other assigned B gate is claimed as executed on this candidate.
-- Durable local evidence (not claimed remotely available):
-  `.git/validation-evidence/2b75fe98362a58aaf4c7b4b01e19d1a1fd76dede/b-review-20261024/`.
-  Read `recovery-checkpoints.json`, `native-record-responses.json`,
-  `native-run-item-responses.json`, `original-failure-evidence.json`,
-  `independent-recovery.log` and `native-output/.../trace.zip` plus
-  `analysis-only-automation.png`; input/artifact digests and final check/timing records accompany
-  them. Both reference PNG digests still match. Pre-existing dirty/untracked/private files remain
-  untouched; only this B-owned Task review is checkpointed.
-- Build/native execution took approximately6.3seconds, with governance/check overhead recorded
-  separately; total measured verification remains below50% of this review's elapsed time.
-  Required expensive gates remain pending under workflow's proven-blocker early-stop rule, with
-  no transfer to Developer. B performs them on the corrected fixed candidate.
+- Governance **PASS**; production Web build **PASS** (≈0.60s).
+- `.venv/bin/python -m unittest tests.test_automation_workspace_read_model`: **31 tests OK**
+  (≈2.39s). Its manually seeded lower-case failure Result cases do not prove the production format.
+- Independent real-Python/UI multi-failure journey: **1 FAILED** (13.85s including assertion wait),
+  specifically whole-record resolution while an original failed sibling remains. No retries.
+- Default config's existing workspace inventory test: **1 FAILED** (11.26s), Python-only fixture
+  running against Node fake. `--list` independently confirms all five Python workspace tests are
+  incorrectly collected there. This is not a new product-route probe or an unavailable environment.
+- Full Task Base..candidate `git diff --check` clean; both reference PNG digests match the Contract;
+  private config remains untracked/unstaged and all pre-existing dirty/untracked files are preserved.
+- All other assigned full Web/static/default-E2E/integration/native and visual-reference acceptance
+  remains **pending**, not waived or transferred to Developer. Proven-blocker early stop applies.
+  No full Python/Docker/packaging run or Slice T4 PASS is claimed.
+
+Durable local evidence (not claimed remotely available):
+`.git/validation-evidence/87ec86f0cdbd3c84e901594e5f0dd034f4e0cf12/b-review-20261024/`.
+It contains the exact range manifests/diffs, fixture-only driver/spec/config, build/focused logs,
+`independent-two-failures.log`, `two-failure-record-responses.json`, screenshot/trace under
+`native-output/`, `default-registration.log`/trace, and input/artifact/check timing identities.
+The first independent launch encountered an already-occupied port; no existing process was touched;
+B switched to an OS-selected free port and then ran the isolated journey. That launch is not a
+product failure. Review execution/testing remains below50% of this round's elapsed time.
+
+### Developer affected tests and B retained gates
+
+Correct only these in-Task read/aggregation/test-registration gaps. Run new/changed cases in
+`tests.test_automation_workspace_read_model`, the affected Operations/read modules from Required
+Tests, and changed Web projection/component tests (`automation.test.ts`,
+`AutomationWorkspaceReadModel.test.tsx` as applicable). Use actual produced Result states and
+existing source-item lineage. After building production assets, run the three existing Automation
+Python specs using `playwright.python.automation.config.ts`, with the mixed test extended to the
+multi-failure/subset and exact original-reason/effect assertions above. Check both Playwright test
+inventories and changed-file quality checks. Developer does **not** own the full Web/default-E2E or
+Slice T4 sweep; B runs the retained assigned acceptance on the corrected candidate.
+
+### All Slice outcomes reassessed
+
+| Outcome / surface | Current B assessment |
+|---|---|
+| RO-1 inventory/statistics | Implementation progress and31 focused cases; complete query/metric/latest/native acceptance still pending. Settings portion remains outside43.3. |
+| RO-2 typed lifecycle/checked Save | Existing implementation reused; this native Create/Save entrance works. Full current lifecycle acceptance is not claimed by this one journey. |
+| RO-3 shared analysis/grant/scheduled execution | Shared analysis is reached without retired products; current full grant/scheduled authority acceptance remains pending. |
+| RO-4 deliberate Run once | Real three-item discovery/analysis/one-shot admission and execution reached; all other current boundary/reconciliation acceptance remains pending. |
+| RO-5 read-only records/recovery | **Incomplete:** false whole-record resolution plus loss/misclassification of original failure evidence above. Task Center ownership and original admission identity are retained. |
+| RO-6 settings/real consumer adoption | **Incomplete/outside this Task:** resident loop still retains startup `_poll_seconds`; CLI constructs Worker/Scheduler cadence at startup. A settings link does not complete this outcome. |
+| RO-7 shared authority/navigation/failure | Current read surfaces still have R3 defects and the assigned default-E2E gate fails; complete integration acceptance remains pending. |
+
+No next Task, Closure Packet, Roadmap/Progress change or Slice closure follows this FIX REQUIRED.
