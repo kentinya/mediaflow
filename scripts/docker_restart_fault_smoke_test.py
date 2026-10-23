@@ -3,8 +3,8 @@
 
 The script builds the exact image, starts an isolated four-service stack on
 temporary ``/data`` and media mounts, activates a managed runtime containing one
-enabled Preview schedule, proves the Scheduler emits one durable Job across
-restart, lets the Worker produce Task
+enabled automatic-organization definition, proves the Scheduler emits one
+durable definition-bound Job across restart, lets the Worker produce Task
 and Result evidence, and then injects bounded durable fault fixtures through the installed
 package repository inside the container.  It restarts API, Worker, Scheduler and
 Notification Worker and verifies durable identities, Worker fencing,
@@ -27,6 +27,7 @@ import time
 import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from docker_health_smoke_test import (
     activate_runtime,
@@ -48,7 +49,7 @@ from docker_smoke_test import (
 ROOT = Path(__file__).resolve().parents[1]
 RESTART_PROJECT_PREFIX = f"{PROJECT_PREFIX}-restart"
 IMAGE_TAG = "mediaflow:task29.4-local"
-SCHEDULE_ID = "fault-preview"
+DEFINITION_ID = "fault-automatic"
 UNCERTAIN_TASK_ID = "fault-uncertain-task"
 UNCERTAIN_ITEM_ID = "fault-uncertain-item"
 NOTIFICATION_IDS = {
@@ -85,7 +86,7 @@ def wait_services_healthy(
 
 
 def add_fault_schedule(config_file: Path, source_root: Path) -> None:
-    """Add one enabled Preview schedule and one stable media file."""
+    """Add one enabled definition and one stable media file."""
 
     media_dir = source_root / "电影"
     media_dir.mkdir(parents=True, exist_ok=True)
@@ -98,11 +99,18 @@ def add_fault_schedule(config_file: Path, source_root: Path) -> None:
     media.chmod(0o644)
 
     document = json.loads(config_file.read_text(encoding="utf-8"))
+    # The standard media overlay mounts the source read-only. Exercise the
+    # supported COPY operation rather than granting an impossible MOVE.
+    for policy in document.get("organizePolicies", []):
+        policy["operation"] = "COPY"
     automation = document.setdefault("automation", {})
-    automation["schedules"] = [
+    automation["schedules"] = []
+    document["automationTaskDefinitions"] = [
         {
-            "id": SCHEDULE_ID,
-            "command": "organize",
+            "id": DEFINITION_ID,
+            "name": "Fault restart automatic organization",
+            "resourceLibraryId": "source",
+            "mode": "automatic-organization",
             "enabled": True,
             "intervalSeconds": 3600,
             "itemLimit": 10,
@@ -194,23 +202,143 @@ def exec_python(
     return result.stdout
 
 
-def active_identity(base: str, token: str) -> dict[str, str]:
+def active_identity(base: str, token: str) -> dict[str, object]:
     status, management = json_request(base, "/api/v1/management/readiness", token)
     if status != 200:
         raise RuntimeError(f"management readiness returned HTTP {status}")
     active = management.get("active") or {}
     revision_id = active.get("revisionId")
     digest = active.get("digest")
-    if not revision_id or not digest:
+    version = active.get("version") or active.get("revisionSequence")
+    if not revision_id or not digest or not isinstance(version, int):
         raise RuntimeError(f"management readiness lacks an exact Active identity: {management}")
-    return {"revisionId": revision_id, "digest": digest}
+    return {"revisionId": revision_id, "digest": digest, "version": version}
+
+
+def definition_projection(base: str, token: str) -> dict:
+    status, document = json_request(base, "/api/v1/automation/task-definitions", token)
+    if status != 200:
+        raise RuntimeError(f"Automation Task Definition list returned HTTP {status}: {document}")
+    definition = next(
+        (item for item in document.get("items", []) if item.get("id") == DEFINITION_ID),
+        None,
+    )
+    if definition is None:
+        raise RuntimeError(f"Active Automation Task Definition {DEFINITION_ID!r} is missing")
+    return definition
+
+
+def prepare_definition_grant(base: str, token: str, identity: dict[str, object]) -> dict:
+    """Create the exact analysis evidence and explicit grant used by scheduling."""
+
+    definition = definition_projection(base, token)
+    request_id = str(uuid4())
+    status, admitted = json_request(
+        base,
+        f"/api/v1/operations/automation/definitions/{urllib.parse.quote(DEFINITION_ID)}/run-once",
+        token,
+        method="POST",
+        body={
+            "admissionRequestId": request_id,
+            "expectedDefinitionFingerprint": definition["definitionFingerprint"],
+            "expectedRevisionId": identity["revisionId"],
+            "expectedRevisionVersion": identity["version"],
+            "expectedRevisionDigest": identity["digest"],
+        },
+    )
+    if status != 202:
+        raise RuntimeError(f"definition Run once admission returned HTTP {status}: {admitted}")
+    discovery_id = admitted.get("discoveryId")
+    if not discovery_id:
+        raise RuntimeError(f"definition Run once admission lacks discovery identity: {admitted}")
+
+    def discovery_complete() -> dict | None:
+        current_status, current = json_request(
+            base,
+            f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}",
+            token,
+        )
+        if current_status != 200:
+            return None
+        if current.get("status") in {"completed", "partial_success"}:
+            return current
+        return None
+
+    completed = wait_until(
+        discovery_complete,
+        timeout=180.0,
+        description="definition Run once discovery completion",
+    )
+    status, finalized = json_request(
+        base,
+        f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}/finalize",
+        token,
+        method="POST",
+        body={"expectedVersion": completed["version"]},
+    )
+    if status != 201:
+        raise RuntimeError(f"definition Run once finalize returned HTTP {status}: {finalized}")
+
+    def analysis_complete() -> dict | None:
+        current_status, current = json_request(
+            base,
+            f"/api/v1/operations/automation/run-once/{urllib.parse.quote(discovery_id)}",
+            token,
+        )
+        if current_status != 200:
+            return None
+        if current.get("previewId"):
+            return current
+        return None
+
+    analyzed = wait_until(
+        analysis_complete,
+        timeout=180.0,
+        description="definition Run once analysis completion",
+    )
+    status, grant = json_request(
+        base,
+        f"/api/v1/automation/task-definitions/{urllib.parse.quote(DEFINITION_ID)}/grant",
+        token,
+        method="POST",
+        body={
+            "revisionId": identity["revisionId"],
+            "expectedVersion": identity["version"],
+            "confirmation": True,
+            "maxItemsPerRun": definition["itemLimit"],
+            "reason": "isolated restart/fault acceptance",
+            "previewId": analyzed["previewId"],
+        },
+    )
+    if status != 201 or (grant.get("grant") or {}).get("status") != "active":
+        _, preview = json_request(
+            base,
+            f"/api/v1/operations/organize/previews/{urllib.parse.quote(analyzed['previewId'])}",
+            token,
+        )
+        _, eligibility = json_request(
+            base,
+            f"/api/v1/automation/task-definitions/{urllib.parse.quote(DEFINITION_ID)}/grant-state",
+            token,
+        )
+        raise RuntimeError(
+            "definition unattended grant returned "
+            f"HTTP {status}: grant={grant}; preview={preview}; eligibility={eligibility}"
+        )
+    return {
+        "discoveryId": discovery_id,
+        "previewId": analyzed["previewId"],
+        "grantId": (grant.get("grant") or {}).get("grantId"),
+    }
 
 
 def scheduled_jobs(base: str, token: str) -> list[dict]:
     status, document = json_request(base, "/api/v1/jobs?limit=100", token)
     if status != 200:
         raise RuntimeError(f"Job list returned HTTP {status}: {document}")
-    return [item for item in document.get("items", []) if item.get("schedule_id") == SCHEDULE_ID]
+    return [
+        item for item in document.get("items", []) if item.get("definition_id") == DEFINITION_ID
+    ]
 
 
 def collection_ids(base: str, token: str, path: str) -> list[dict]:
@@ -230,7 +358,7 @@ def wait_scheduled_jobs(
     def reached() -> bool:
         return len(scheduled_jobs(base, token)) == expected
 
-    wait_until(reached, timeout=timeout, description=f"{expected} scheduled Preview Jobs")
+    wait_until(reached, timeout=timeout, description=f"{expected} definition-bound Jobs")
     return scheduled_jobs(base, token)
 
 
@@ -241,7 +369,7 @@ def wait_job_linked_task(base: str, token: str, job_id: str) -> dict:
             f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
             token,
         )
-        return bool(document.get("task_id")) or document.get("status") in {
+        return document.get("status") in {
             "completed",
             "failed",
             "cancelled",
@@ -525,7 +653,7 @@ with (
         "fault-worker-a",
         "fault worker a",
         5.0,
-        ("preview",),
+        ("organize",),
         snapshot_id,
         snapshot_digest,
         SCHEMA_VERSION,
@@ -552,7 +680,7 @@ with (
         "fault-worker-b",
         "fault worker b",
         5.0,
-        ("preview",),
+        ("organize",),
         snapshot_id,
         snapshot_digest,
         SCHEMA_VERSION,
@@ -612,7 +740,13 @@ with (
 def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
     token = secrets.token_urlsafe(24)
     api_port = free_port()
-    with tempfile.TemporaryDirectory(prefix=f"{RESTART_PROJECT_PREFIX}-") as directory:
+    temp_parent = os.environ.get("MEDIAFLOW_SMOKE_TEMP_DIR")
+    if temp_parent:
+        Path(temp_parent).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f"{RESTART_PROJECT_PREFIX}-",
+        dir=temp_parent,
+    ) as directory:
         root = Path(directory)
         os.chmod(root, 0o755)
         config_file, environment_file, source_root, target_root = prepare_files(root, token)
@@ -679,12 +813,23 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             run([*command, "stop", "worker", "scheduler"], environment=environment)
             wait_for_api(base, token)
 
-            print("Activating the managed runtime with one Preview schedule...")
+            print("Activating the managed runtime with one automatic-organization definition...")
             add_fault_schedule(config_file, source_root)
             activate_runtime(base, token, config_file)
             identity = active_identity(base, token)
 
-            print("Starting the Scheduler and waiting for one Job...")
+            print("Starting the Worker and establishing explicit definition authority...")
+            run([*command, "start", "worker"], environment=environment)
+            wait_services_healthy(command, environment, services={"api", "worker"})
+            wait_worker_ready(base, token)
+            source_file = source_root / "电影" / "One.2001.mkv"
+            source_bytes = source_file.read_bytes()
+            grant_evidence = prepare_definition_grant(base, token, identity)
+            if source_file.read_bytes() != source_bytes or any(target_root.rglob("*")):
+                raise RuntimeError("definition analysis or grant mutated source/destination media")
+            run([*command, "stop", "worker"], environment=environment)
+
+            print("Starting the Scheduler and waiting for one definition-bound Job...")
             run([*command, "start", "scheduler"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler"})
             first_occurrence = wait_scheduled_jobs(base, token, expected=1)
@@ -699,7 +844,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ]:
                 raise RuntimeError("Scheduler restart changed the scheduled Job identity")
 
-            print("Starting the Worker and waiting for scheduled Preview Task evidence...")
+            print("Starting the Worker and waiting for definition-bound Task evidence...")
             run([*command, "start", "worker"], environment=environment)
             wait_services_healthy(command, environment, services={"api", "scheduler", "worker"})
             wait_worker_ready(base, token)
@@ -711,8 +856,22 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             scheduled_task_id = scheduled_job.get("task_id")
             if scheduled_job.get("status") != "completed" or not scheduled_task_id:
                 raise RuntimeError(
-                    f"scheduled Preview did not produce durable Task evidence: {scheduled_job}"
+                    f"definition-bound Job did not produce durable Task evidence: {scheduled_job}"
                 )
+            outputs = list(target_root.rglob("*.mkv"))
+            if (
+                len(outputs) != 1
+                or outputs[0].read_bytes() != source_bytes
+                or source_file.read_bytes() != source_bytes
+            ):
+                raise RuntimeError("scheduled COPY did not preserve exact source/destination bytes")
+            occurrence = definition_projection(base, token).get("lastOccurrence") or {}
+            if (
+                not occurrence.get("occurrenceId")
+                or occurrence.get("jobId") != scheduled_job["job_id"]
+                or occurrence.get("taskId") != scheduled_task_id
+            ):
+                raise RuntimeError(f"scheduled occurrence lost its Job/Task linkage: {occurrence}")
 
             print("Stopping Worker and Notification Worker before fault fixtures...")
             run([*command, "stop", "worker", "notification-worker"], environment=environment)
@@ -749,6 +908,8 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 "tasks": collection_ids(base, token, "/api/v1/tasks?limit=100"),
                 "scheduledJobs": second_occurrence,
                 "scheduledTaskId": scheduled_task_id,
+                "occurrence": occurrence,
+                "grantEvidence": grant_evidence,
                 "notifications": collection_ids(base, token, "/api/v1/notifications?limit=100"),
                 "logs": collection_ids(base, token, "/api/v1/logs?limit=100"),
                 "audits": collection_ids(base, token, "/api/v1/security-audit?limit=100"),
@@ -757,7 +918,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             if UNCERTAIN_TASK_ID not in baseline_task_ids:
                 raise RuntimeError("uncertain fault Task is missing from the API projection")
             if scheduled_task_id not in baseline_task_ids:
-                raise RuntimeError("scheduled Preview Task is missing from the API projection")
+                raise RuntimeError("definition-bound Task is missing from the API projection")
             baseline_delivery_ids = {item["deliveryId"] for item in baseline["notifications"]}
             if set(NOTIFICATION_IDS.values()) - baseline_delivery_ids:
                 raise RuntimeError("seeded notification identities are not visible before restart")
@@ -793,13 +954,24 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ]:
                 raise RuntimeError("Scheduler restart changed the scheduled Job identity")
             if final_occurrence[0].get("task_id") != scheduled_task_id:
-                raise RuntimeError("Scheduler restart changed the scheduled Preview Task link")
+                raise RuntimeError("Scheduler restart changed the definition-bound Task link")
             final_task_ids = {
                 item.get("task_id")
                 for item in collection_ids(base, token, "/api/v1/tasks?limit=100")
             }
             if scheduled_task_id not in final_task_ids:
-                raise RuntimeError("scheduled Preview Task disappeared after service restarts")
+                raise RuntimeError("definition-bound Task disappeared after service restarts")
+            final_definition = definition_projection(base, token)
+            if final_definition.get("lastOccurrence") != baseline["occurrence"]:
+                raise RuntimeError("service restarts changed the durable occurrence evidence")
+            if (final_definition.get("grant") or {}).get("grantId") != grant_evidence["grantId"]:
+                raise RuntimeError("service restarts changed the explicit unattended grant")
+            if list(target_root.rglob("*.mkv")) != outputs or (
+                outputs[0].read_bytes() != source_bytes or source_file.read_bytes() != source_bytes
+            ):
+                raise RuntimeError(
+                    "service restarts replayed or changed the scheduled media effect"
+                )
 
             print("Restarting Notification Worker and preserving targetless durable evidence...")
             run([*command, "start", "notification-worker"], environment=environment)
