@@ -40,8 +40,10 @@ The committed [Contract](../SLICE.md), [task-center design](task-center-page-spe
 [FileIndex retirement design](file-index-retirement-spec.md) and
 [Preview retirement design](preview-retirement-spec.md) own its selected scope. Nine task/recovery
 lists, same-page exact summary/confirmation and first-deployment Scan removal are in the current
-implementation; complete FileIndex retirement/live-list parity, standalone Preview retirement and
-final acceptance remain pending. Preview uses the same first-deployment removal standard as Scan,
+implementation; FileIndex retirement/live-list parity and standalone Preview retirement have B PASS.
+A Final Review of `a722520..1f07dc2` on 2026-10-23 is **FIX REQUIRED** because the mandatory real-Python
+browser harness cannot start and current native/visual acceptance and final raw evidence remain
+pending with B. The Slice stays unclosed. Preview uses the same first-deployment removal standard as Scan,
 without retirement pages/guards or old-work compatibility; shared organizing analysis and plans remain.
 ACTIVE is not A acceptance. Necessary shared safety, exact pins/results and non-replay remain required.
 

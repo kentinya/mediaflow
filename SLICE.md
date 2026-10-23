@@ -4,14 +4,14 @@
 Slice ID: 45
 Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: FIX REQUIRED
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
 Implementation Head: 1f07dc24a06b63930b067f29776eaf53dbcd1db4
 Working Branch: main
 Development Authorization: USER-AUTHORIZED A CONTRACT REVISION; B PLANS IN COMMITTED SCOPE
 Risk: High
 Final Test Level: T4
-Next Action: A FINAL REVIEW AND CLOSURE RECONCILIATION
+Next Action: B CORRECTION / COMPLETE FINAL ACCEPTANCE, THEN RETURN TO A
 ```
 
 ## Current authority and progress
@@ -364,12 +364,45 @@ wheel and Docker scan/recovery/security evidence is reused for unchanged executi
 The supplemental supported-definition restart/fault harness passed on this head: explicit analysis
 and grant, scheduled COPY, occurrence/Job/Task persistence, four-service restarts, stale-owner fence,
 uncertain-effect non-replay and read-only projections. The previous harness mismatch is resolved.
-Decision: SLICE READY FOR A REVIEW. A Final Review/closure reconciliation remains unperformed;
-this factual packet does not close the Slice or change its Contract/status/Roadmap boundaries.
+Decision submitted by B: SLICE READY FOR A REVIEW. A's independent review below withholds
+acceptance; B's Task results and earlier disclosed exceptions remain unchanged.
 
 ## A Final Review
 
-Reviewed Range: NOT REVIEWED
-Decision: NOT REVIEWED
-P0/P1 Blockers: NOT ASSESSED
+Reviewed Range: a72252091d5d46edf3e2114b994036ae21b08e2e..1f07dc24a06b63930b067f29776eaf53dbcd1db4
+Decision: FIX REQUIRED — 2026-10-23
+P0/P1 Product Blockers: none newly proven; mandatory Slice acceptance remains blocked below
 Closure Reconciliation: NOT PERFORMED
+
+**RO-6 / AC-6 / Final Validation blocker:** the existing real-Python browser gate cannot start.
+After building current production assets, A ran (cwd `web/`):
+
+```sh
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/1f07dc24a06b63930b067f29776eaf53dbcd1db4/a-final-20261023/native
+```
+
+Exit 1 before browser tests: `operations_inventory_harness.py:851–853` submits `organize` through
+the normal viewer principal; the real API correctly returns `403 remote_execute`. Inventory and
+Unicode gates share this startup. The cited default 238-test E2E run explicitly excludes these
+real-Python inventory/visual/live-list/Unicode specs, so it cannot cover their required journeys.
+The final packet also lacks recoverable exact-candidate raw evidence/asset and screenshot references
+for these gates. Different-input historical screenshots or PASS labels do not complete acceptance.
+
+**B next action:** repair the affected acceptance harness using supported explicit organizing
+admissions and actual Worker-produced plans; remove its remaining retired-product fixture dependencies
+without bypassing permissions or weakening equivalent assertions. Complete the assigned real-Python
+inventory/live-list/Unicode/visual gates and inspect desktop/narrow interaction and screenshots.
+Retain exact commands, candidate/served-artifact identities, results/skips and durable raw evidence
+for all final gates; recover matching prior runs or execute missing coverage under workflow reuse
+rules. This is B-owned acceptance/evidence work, not Developer full-regression work or a rescope.
+Return to A with the corrected fixed candidate and Closure Packet; no closure or next Slice yet.
+
+**Verified evidence:** A governance/build and complete-range whitespace passed; focused preparation/
+FileIndex/Preview-retirement Python tests passed (50 tests, no skips). B's recovered full-Python
+raw log reports 2691 tests, 7 skips, OK; A did not repeat that full run. The supplemental restart/fault
+log and reported image ID match. `0d22fee..1f07dc2` changes only the two governance documents and the
+restart harness, supporting input-based reuse without proving the missing native runs. Complete
+manifest, inspection scope, raw A failure/positive logs, recovered B log provenance and limitations:
+`.git/validation-evidence/1f07dc24a06b63930b067f29776eaf53dbcd1db4/a-final-20261023/` (local only).
+Final native/visual acceptance and document closure remain pending; no production defect is inferred
+solely from this harness failure, and existing Task PASS/validation exceptions are not rewritten.

@@ -9,10 +9,13 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — remains **ACTIVE** on main,
-with immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` and A Implementation Head NOT SET.
+with immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` and reviewed Implementation Head
+`1f07dc24a06b63930b067f29776eaf53dbcd1db4`. A Final Review on 2026-10-23 is **FIX REQUIRED**:
+the mandatory real-Python browser harness fails before startup; current native/visual acceptance
+and recoverable final raw evidence remain pending with B. This is not a Slice closure.
 [SLICE.md](../SLICE.md) owns current scope; [TASK.md](../TASK.md) owns implementation/review status.
-Complete FileIndex retirement/shared CLI/Web live listing (RO-7) and standalone Preview retirement
-(RO-8, same first-deployment standard as Scan) remain pending. Preview's dedicated compatibility,
+RO-7/RO-8 implementation has B PASS; A acceptance remains pending with the rest of the Slice.
+Preview's dedicated compatibility,
 old-work migration/takeover/history are not required; organizing analysis/plans and shared checks stay.
 Task45.4 Scan PASS remains its existing reviewed result and disclosed validation exception; no Slice delivery,
 final validation or closure is claimed. Shared discovery/stability, exact work evidence, permissions,
