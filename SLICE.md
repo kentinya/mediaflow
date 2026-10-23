@@ -4,14 +4,14 @@
 Slice ID: 45
 Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
-Implementation Head: NOT SET
+Implementation Head: cd01879af0bd46374a0bafe8fcf5e1d66cfe3c5e
 Working Branch: main
 Development Authorization: USER-AUTHORIZED A CONTRACT REVISION; B PLANS IN COMMITTED SCOPE
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS RO-7 / RO-8; COMPLETE ALL OUTCOMES BEFORE SLICE FINAL
+Next Action: A FINAL REVIEW AND CLOSURE RECONCILIATION
 ```
 
 ## Current authority and progress
@@ -32,9 +32,9 @@ Next Action: B PLANS RO-7 / RO-8; COMPLETE ALL OUTCOMES BEFORE SLICE FINAL
   OrganizePolicy。未知效果只核查，不新增附件-only 自动恢复或为附件重放主文件。
 - 已合并 Slice43 页面、Run once、指标和设置消费不是45保留/验收前提；可清理45必需耦合，
   自动化页重新设计留到45后，不主动恢复43后续开发。共享支持流程的权限/pin/结果/审计保持。
-- Task45.1–45.4 已 B PASS；45.4 reviewed Head 为 `479518e4aff0419da82c667bef6f127936774cec`，
-  按用户当轮指令仅审实现、未核验全部 T4 证据。RO-7、RO-8 未交付，无活动实现 Task，
-  B 在 A 提交后核对新范围再规划；未进行 Slice-final 或 A 验收，不倒改45.4 Goal/Base/PASS。
+- Task45.1–45.4 已 B PASS；45.4 reviewed Head 为 `479518e4aff0419da82c667bef6f127936774cec`。
+  Task45.6 在 `cd01879af0bd46374a0bafe8fcf5e1d66cfe3c5e` 提交 B PASS 与 Closure Packet，
+  RO-7/RO-8 及 S-1..S-10 已交 A Final Review；未关闭 Slice，不倒改45.4 Goal/Base/PASS。
 - 现行测试分工为 Developer 只跑新增/修改及直接受影响测试，B 负责全量和最终验收；旧的
   Developer 全量分配由 B 承接。此前接受/例外不重写，不倒记完整验证。
 
@@ -357,7 +357,11 @@ B 记录实际结果、必要日志/截图/产物身份和未提供外部门禁�
 
 ## Closure Packet
 
-Not submitted. RO-7 and RO-8 remain incomplete; no Slice-final validation or closure is claimed.
+Submitted by B in `TASK.md` for implementation head
+`cd01879af0bd46374a0bafe8fcf5e1d66cfe3c5e`.
+RO-7/RO-8 and S-1..S-10 are complete for A review. The historical restart-fault harness remains
+explicitly pending/N/A because it still seeds a removed legacy Preview schedule; supported organize
+Worker stop/start and release-security restart passed. This is not Slice closure.
 
 ## A Final Review
 
