@@ -58,11 +58,10 @@ The development listener is trusted-loopback only; production exposure/TLS/proxy
 
 ## CLI
 
-### Slice45 target: live file lists
+### Current live file lists
 
-[Slice45](SLICE.md) selects library-scoped live Storage lists shared by CLI, Files and MediaLibrary.
-The following commands are **TARGET, pending implementation**, with no catalog/observation/work
-recording or execution authority from listing:
+[Slice45](SLICE.md) delivers library-scoped live Storage lists shared by CLI, Files and MediaLibrary,
+with no catalog/observation/work recording or execution authority from listing:
 
 ```bash
 mediaflow files list --resource-library source --path "incoming" --limit 100
@@ -70,22 +69,21 @@ mediaflow files list --media-library media --path "Movies" --limit 100
 ```
 
 Choose exactly one library, omit `--path` for its root and use the returned `--cursor` for the next
-page. Global indexed filters/detail/statistics are outside this target. Complete FileIndex removal
+page. Global indexed filters/detail/statistics are removed. Complete FileIndex removal
 and the prelaunch/no-old-migration boundary are in [the retirement design](docs/file-index-retirement-spec.md).
 Task-scoped sources/results/audit remain durable. No existing data/media is automatically cleared.
 
 Standalone Scan and scan-only/scan-and-plan modes have been removed from the current implementation;
 old inputs receive ordinary not-found/argument errors. Shared internal discovery, filters, genuine
-stability observations and zero-mutation planning remain. Independent Preview is still in the
-baseline implementation and is selected for complete retirement by the target below.
+stability observations and zero-mutation planning remain. Independent Preview is also removed.
 
-### Slice45 target: standalone Preview removal
+### Current organizing analysis and confirmation
 
-[The Preview retirement design](docs/preview-retirement-spec.md) selects the same first-deployment
-absence standard as Scan: remove independent Preview pages/API/CLI/Jobs/schedules/dispatch/continuation,
-exclusive persistence/composition and compatibility layers. Old inputs use ordinary not-found or
+[The Preview retirement contract](docs/preview-retirement-spec.md) uses the same first-deployment
+absence standard as Scan: independent Preview pages/API/CLI/Jobs/schedules/dispatch/continuation,
+exclusive persistence/composition and compatibility layers are removed. Old inputs use ordinary not-found or
 unsupported-argument/type errors; no retirement page/410, automatic conversion or old production
-migration/history/takeover framework. This is TARGET, not implemented or accepted behavior.
+migration/history/takeover framework. Task Center creation and recovery passed Slice45 final review.
 
 Organizing keeps same-page analysis, exact plan summary and separate explicit confirmation.
 `mediaflow organize` without `--execute`, Rules/configuration checks and Automation authorization
@@ -95,7 +93,7 @@ formal execution backlog. Exact plans/pins/results/audit stay durable; no existi
 ### Baseline command reference
 
 Use `mediaflow --help` and `mediaflow <command> --help` for the complete current argument reference.
-Common baseline workflows (the independent Preview commands below are pending removal under Slice45):
+Common current workflows:
 
 ```bash
 mediaflow config validate
@@ -103,10 +101,8 @@ mediaflow config status
 mediaflow storage list
 mediaflow storage check
 mediaflow analyze --offline "/path/to/movie.mkv"
-mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
-mediaflow jobs submit preview --limit 20
 mediaflow worker run
 mediaflow tasks list
 mediaflow tasks show TASK_ID
@@ -114,14 +110,14 @@ mediaflow scheduler run
 mediaflow notification-worker run
 ```
 
-No-path Preview/Organize uses enabled ResourceLibraries. Preview and Organize without `--execute`
-are zero-mutation. Overwrite requires enabling policy and fresh explicit consent; conflict/capability
+No-path Organize uses enabled ResourceLibraries. Organize without `--execute`
+is zero-mutation. Overwrite requires enabling policy and fresh explicit consent; conflict/capability
 checks remain mandatory. Link operations never silently fall back. The `strategy-test` inspector
 remains available for local development diagnostics.
 
 | Operation | Safe behavior / next action |
 |---|---|
-| Recognition/Metadata/Classification review | Resolve only backend-offered type/candidate/rule choices; saving never executes. Continue through the supported Task/Preview recovery path. No arbitrary target or Provider DTO injection. |
+| Recognition/Metadata/Classification review | Resolve only backend-offered type/candidate/rule choices; saving never executes. Continue through the Task's same-page analysis, summary and explicit confirmation. No arbitrary target or Provider DTO injection. |
 | Conflict decision | Persist an allowed decision, re-analyze and separately authorize execution. Successful/uncertain items are never replayed. Retired direct re-recognition/re-match/re-plan/review-retry surfaces stay absent. |
 | Pause/resume/retry | Cooperative boundaries preserve in-flight outcomes and prior scope/pin; a continuation cannot upgrade DryRun or regain consumed authority. CLI mutation continuation needs explicit current execution authority. |
 | Stale Job | Inspect Worker and Storage effects before explicit permitted recovery; stale age is no-update evidence, not proof of death or permission to replay uncertain mutation. |
@@ -174,8 +170,8 @@ all-process stop, destination/sidecar absence and advisory-lease rules in
 SQLite persists managed configuration, Task/Job/item/results, work evidence, locks, authority,
 notifications and audit. JSONL operation history remains supported. Managed Active overrides JSON
 bootstrap after activation and work pins immutable snapshots. Config validation creates no runtime
-database. FileIndex still has pending retirement dependencies; listing without database
-initialization/migration is the selected target, not a completed claim.
+database. FileIndex is removed; live listing reads the existing managed Active and internal cursor
+key without database initialization/migration. Missing initialization provides setup guidance.
 
 **Concurrent Local directory Delete:** pause other writers before confirming deletion. Some
 filesystems can reuse an inode between final metadata revalidation and deletion, making a same-name

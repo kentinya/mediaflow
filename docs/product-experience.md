@@ -3,8 +3,8 @@
 This document owns operator journeys and completion semantics. Stable scope/IDs live in
 [Requirements](requirements.md) and [V2 Requirements](v2-requirements.md); technical boundaries in
 [Architecture](architecture.md). [Progress](progress.md) records accepted baselines and deferrals.
-The committed [Slice](../SLICE.md) owns active changes. Slice45's B-reviewed implementation is not
-A closure; its complete target specifications below remain the acceptance authority.
+The committed [Slice](../SLICE.md) owns scope. Slice45 is PASS / CLOSED; its accepted Task Center,
+live-list and retirement journeys below are CURRENT. Slice43 remains frozen.
 Detailed superseded delivery notes are retained at
 `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/product-experience.md`.
 
@@ -189,7 +189,7 @@ loaded-content digest. External replacement/check-to-write windows remain provid
 limits. Delete asks once after current bounded scope/impact. Long/batch commands persist independent
 Task/results and cooperative controls; unknown admission is read back by exact request. Correct a
 name/destination, refresh/reopen changed input or explicitly continue only known-safe remaining work.
-Uncertain effects are investigated; index reconciliation failure never replays a mutation.
+Uncertain effects are investigated; result persistence or display failure never replays a mutation.
 
 ### Library Add/Edit/removal
 
@@ -223,25 +223,24 @@ stale authority and explicitly resubmit only after unknown outcomes have been ve
 No MediaLibrary Organize/Scan/Preview, general cross-kind direct transfer, browser Upload/Download or
 arbitrary media edit. Source Files retains its separate organization and return context.
 
-## FileIndex and Media
+## CURRENT — Live lists without FileIndex
 
-FileIndex is still a separate baseline catalog/runtime dependency pending complete Slice45 RO-7
-retirement. It is never physical listing or Files-originated execution authority. Do not present
-retirement as delivered merely because Files already reads live Storage.
+CLI `mediaflow files list`, ResourceLibrary Files and MediaLibrary share the same bounded live
+Storage browse. Select exactly one library kind/ID and relative directory; preserve exact names,
+kind-bound pagination and unknown totals. Missing Active/library, confinement, stale cursor,
+permission and Storage failures explain the next safe read/configuration action, never an empty
+index fallback. Listing creates no catalog/observation/work/result/authority or Provider/Hash/media
+effects and does not initialize or upgrade a database.
 
-The baseline catalog distinguishes discovery/stability, processing disposition, current occurrence
-and current/historical/unverified Results. Search/filter/detail explains parser/recognition/metadata,
-policies/target/history, blockers/checkpoint and allowed next actions. Missing/truncated/unavailable
-evidence stays labelled. Exact eligible Reprocess records intent only, never processing/mutation.
-Retired direct re-recognition/re-match/re-plan/review-retry surfaces remain absent. Reads neither
-rebuild plans nor contact Providers; use current legal review/Preview/Task recovery when needed.
-Optional existing index sync is an independent recovery state, never permission to replay media.
+FileIndex products, global catalogs, repositories, schema and sync/reprocess/repair dependencies
+are removed. Old indexed inputs provide library-browse/Task Center guidance without a compatibility
+engine. Explicit organizing/maintenance/recovery retains work-scoped source evidence, plans, pins,
+results and audit; no existing runtime data or media is cleared.
 
 ## Manual organize
 
 - **Goal/entry:** explicitly organize selected live ResourceLibrary files or bounded folders from
-  Files/Operations. MediaLibrary is not a new source. Legacy indexed paths are separate and cannot
-  authorize physical Files selection.
+  Files/Task Center. MediaLibrary is not a source, and indexed paths provide no admission.
 - **State/action:** exact source identities, durable intent, allowed recognition/metadata/classification
   choices, zero-mutation plan/attachments/conflicts/capabilities/effects and selected items. Review
   the plan and separately confirm exact execution plus any permitted overwrite/source cleanup.
@@ -256,7 +255,7 @@ Optional existing index sync is an independent recovery state, never permission 
 V1's explicit one-shot token remains an administration/API-automation/support mechanism, never a
 replacement for the normal V2 journey. Source preparation cannot accept browser-provided raw Storage
 paths, fingerprints, occurrences or IDs as execution authority. In-context summary/confirmation is
-the active Task Center target below; separate Preview is no longer a required organizing-page action.
+the CURRENT Task Center journey below; no independent Preview product remains.
 
 ### CURRENT — Bounded folder organization with safe discovery restart
 
@@ -316,18 +315,17 @@ preparation and do not fabricate execution recovery work.
 - **Goal/entry:** configure reusable bounded ResourceLibrary/schedule intent in Automation and inspect
   due occurrences, granted authority and linked results.
 - **State/action:** enabled/published/readiness/grant/revocation are distinct; inspect interval/Cron/
-  timezone/next due, run exact zero-mutation Preview and separately grant scoped revocable unattended
+  timezone/next due, run exact shared zero-mutation analysis and separately grant scoped revocable unattended
   authority. Valid due runs need no repeated per-run click. Enable alone is not authority.
 - **Success:** Scheduler emits idempotent snapshot-pinned Jobs; existing Worker/Task/Result pipeline
   checks current authority/scope/capability/conflicts before each unperformed mutation.
 - **Failure/recovery:** invalid pin/reference/secret/provider, instability, conflict or revoked grant
-  stops affected work with next action. Correct/publish/Preview and regrant when scope changed;
+  stops affected work with next action. Correct/publish/re-analyze and regrant when scope changed;
   inspect independent checkpoints without replaying known/uncertain effects.
 
 Automatic organization is the only supported definition mode in current code; removed Scan intents
-cannot be reinterpreted as execution permission. Diagnostic/supported scheduled Preview stays separate.
-This is the implementation baseline. Slice45's Preview-retirement TARGET below removes that independent
-product and carries necessary analysis/authorization checks into shared organizing behavior.
+cannot be reinterpreted as execution permission. Independent diagnostic/scheduled Preview is absent;
+necessary analysis/authorization checks use shared organizing behavior.
 The remaining native Automation workspace, Run once, metrics and engine-settings redesign is frozen
 under 43; merged code presence and historical B PASS do not confer current acceptance or resume it.
 [V2-AUTO requirements](v2-requirements.md#automation-workspace-requirements--target-slice-43) retain
@@ -374,7 +372,7 @@ Show loading/empty/success/transport/malformed/unauthorized/forbidden/unavailabl
 Dashboard/refresh/list/navigation are read-only, with no Provider/work/mutation. No independent Node
 production service, replacement identity model or implicit V1 cutover is introduced.
 
-### TARGET — 任务中心与分类恢复（Slice45）
+### CURRENT — 任务中心与分类恢复（Slice45 PASS / CLOSED）
 
 The complete selected journey is [Task Center page specification](task-center-page-spec.md),
 `V2-OPS-009–012` and the committed Slice: nine sibling task/recovery lists; bounded live selection;
@@ -388,19 +386,19 @@ transitions, precise confirmation and refresh/restart/unknown-response behavior.
 definition modes and dedicated retirement/compatibility layers are absent on first deployment;
 old routes/commands/types ordinarily reject before discovery/admission/authority. Shared internal
 filtering/real stability/planning/diagnostics and supported-work safety stay intact. No old Scan
-migration/history/settlement obligation or existing media/runtime clearing. This target selection
-and B Task PASS do not declare the whole Slice delivered.
+migration/history/settlement obligation or existing media/runtime clearing. This journey passed A's
+complete Slice review; the final validation and bounded skips are recorded in the Closure Packet.
 
-### TARGET — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
+### CURRENT — FileIndex 退出与 CLI/两种库页实时列表（Slice45）
 
 [FileIndex retirement design](file-index-retirement-spec.md) and `V2-FILES-005/006` define the complete
 CLI/ResourceLibrary/MediaLibrary same-library live list journey and removal of all global-index
 products/consumers/schema/sync/repair/stand-ins. Browse/refresh/page creates no catalog/observations/
 work/authority, Provider/Hash or media effects; explicit work retains exact evidence/results/audit.
 Old indexed inputs offer library browsing/Task Center guidance, no compatibility engine or data clear.
-No-index real stability→summary→confirmation→execution→recovery/reopen is required before acceptance.
+No-index real stability→summary→confirmation→execution→recovery/reopen is covered by acceptance.
 
-### TARGET — 独立 Preview 首次部署退出与分析统一（Slice45）
+### CURRENT — 独立 Preview 首次部署退出与分析统一（Slice45）
 
 [Preview 退役设计](preview-retirement-spec.md)、`V2-OPS-013` 和 RO-8 将独立 Preview 产品按
 Scan 相同的首次部署标准移除：独立 V1/V2 页面、CLI/API、Job/Task/定时/Worker/继续路径、
@@ -415,7 +413,7 @@ Scan 相同的首次部署标准移除：独立 V1/V2 页面、CLI/API、Job/Tas
 Rules、配置检查和 Automation 授权前校验复用共享分析/精确计划，并保持原候选配置/定义/
 权限边界；无需用户管理独立 Preview Task。支持工作的计划/pin/结果/审计和正常重启恢复
 保留，不清空媒体/运行库；只清理必要 Automation 耦合，不恢复冻结工作区重设计。
-这是新增 TARGET，不把 Task45.4 Scan PASS 当成 Preview 退役验收。
+这是整 Slice 验收后的 CURRENT；没有把 Task45.4 Scan PASS 代替 Preview 退役验收。
 
 ## V1 and post-V1 boundary
 

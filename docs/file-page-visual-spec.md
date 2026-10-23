@@ -43,8 +43,8 @@ The accepted baseline covers the replacement shared light shell, Files body/Add 
 live browse/selection/common maintenance and ResourceLibrary organization. No browser Upload/Download.
 Other pages' business behavior was frozen only for that historical Slice, not every later Contract.
 V1/API authority, exact source/pin, RBAC, capability/confinement and OrganizerExecutor-only mutation
-remain protected. Pending FileIndex retirement follows active45; its compatibility/sync obligations
-must not be inferred from old visual acceptance after that target is implemented and accepted.
+remain protected. Slice45 has accepted complete FileIndex retirement and same-page organizing
+analysis/confirmation; former index compatibility/sync obligations are superseded by V2-FILES-005/006.
 
 ## Reference State
 
@@ -287,17 +287,17 @@ The page must be documented and later implemented as one vertical journey:
 
 Viewing, refreshing, browsing and selecting are read-only. Common mutation commands are
 explicit and do not start merely by viewing or selecting. Any organize action continues
-through the existing Preview, explicit intent and backend authority boundaries. The Files page must
+through same-page analysis/plan summary, explicit intent and backend authority boundaries. The Files page must
 never use FileIndex to enumerate physical entries, resolve a selected path, construct source
 authority, expose credentials or grant execution authority, and it does not present
-recognition/business-status feedback. After a terminal Organize result, the backend
-automatically synchronizes that item outcome to FileIndex. A known direct file-operation result may
-also reconcile display state, but FileIndex never authorizes the operation and reconciliation
-failure never replays Storage mutation.
+recognition/business-status feedback. After a terminal Organize or direct file-operation result,
+durable Task/results remain the outcome authority and live Storage refresh supplies directory state.
+There is no FileIndex sync/reconciliation consumer; result/display failure never replays Storage mutation.
 
 ## Acceptance
 
-Slice 37 was accepted only when all of the following were true:
+Slice 37 was accepted only when all of the following were true. Item 6's historical index-sync
+obligation is superseded for CURRENT V2 by Slice45; the original acceptance remains historical:
 
 1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
    `docs/pics/文件页.png` in the controlled browser/font environment. The report records observed

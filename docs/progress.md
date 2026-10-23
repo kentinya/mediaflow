@@ -8,21 +8,17 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — remains **ACTIVE** on main,
-with immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` and reviewed Implementation Head
-`1f07dc24a06b63930b067f29776eaf53dbcd1db4`. A Final Review on 2026-10-23 is **FIX REQUIRED**:
-the mandatory real-Python browser harness fails before startup; current native/visual acceptance
-and recoverable final raw evidence remain pending with B. This is not a Slice closure.
-[SLICE.md](../SLICE.md) owns current scope; [TASK.md](../TASK.md) owns implementation/review status.
-RO-7/RO-8 implementation has B PASS; A acceptance remains pending with the rest of the Slice.
-Preview's dedicated compatibility,
-old-work migration/takeover/history are not required; organizing analysis/plans and shared checks stay.
-Task45.4 Scan PASS remains its existing reviewed result and disclosed validation exception; no Slice delivery,
-final validation or closure is claimed. Shared discovery/stability, exact work evidence, permissions,
-results/audit and non-replay remain required; no existing media/runtime data is cleared.
+Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — is **PASS / CLOSED**.
+A reviewed immutable Base `a72252091d5d46edf3e2114b994036ae21b08e2e` through Implementation Head
+`4fcb0028f987f8746f0a8aa7b309e360b07c598e` on 2026-10-23. Task45.7 corrected the earlier real-Python
+acceptance/evidence blocker; A independently rebuilt and reran the previously blocked gate (7 passed).
+Complete B native/full/packaging evidence, input reuse, seven external-environment skips and original
+Task45.4 validation exception are disclosed in the [Slice](../SLICE.md). CURRENT documents now reflect
+RO-1..RO-8 / S-1..S-10. This does not rewrite earlier accepted closures or validate frozen43 UI extras.
+There is no active Task or selected next Slice; work stops after closure.
 
 Slice43 remains **PLANNED / FROZEN BY USER** on `frozen/slice-43-2026-10-15`; only Scan-mode
-removal moved into45. Main integration and necessary coupling cleanup do not resume43 or accept its
+removal and necessary index/standalone-Preview coupling cleanup moved into45. Main integration does not resume43 or accept its
 current UI. Preserved Contract/Task/review checkpoints are listed in the current Slice.
 Slice44 and all accepted closure entries below remain unchanged.
 
@@ -38,6 +34,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | PASS / CLOSED | `a72252091d5d46edf3e2114b994036ae21b08e2e` | `4fcb0028f987f8746f0a8aa7b309e360b07c598e` | A Final Review PASS / CLOSED — 2026-10-23 | Nine authoritative task/recovery lists; same-page exact organizing summary/selected confirmation; typed independent recovery, results/controls and attachment guidance; first-deployment Scan/Preview removal; complete FileIndex exit and shared CLI/Files/MediaLibrary live listing | Frozen43 Automation workspace/Run once/metrics/settings redesign; cross-Task bulk mutation; attachment-only automatic recovery; arbitrary historical Reprocess; universal rollback/uncertain replay; old retired-product production migration/compatibility; other Contract deferrals unchanged |
 | 44 — Existing V2 Pages Functional Improvements | PASS / CLOSED | `853973dbbf8289fa2ad40657033e94e870a690e4` | `8be263ea778df08aa374e9433f138a218c1d4af9` | A Final Review PASS / CLOSED — 2026-10-12 | Shared ordinary maintenance with optional fingerprints and durable Delete on both library kinds; reference-aligned Rules forms and object-local tests/separate complete flow; MediaLibrary-plus-path classification with explicit legacy conversion; long-name list/grid navigation/toolbars; bounded ResourceLibrary folder/mixed discovery through frozen primary/attachment Preview and confirmed execution | Seamless exceptional discovery crash/control/activation/legacy continuity, frozen Slice 43, unselected pages/providers, Upload/Download, MediaLibrary Organize, larger/split manifests, implicit destructive authority and automatic uncertain replay; other Contract deferrals unchanged |
 | 42 — V2 Operations and Tasks Workspace | PASS / CLOSED | `ffee77348cebcb05e356c8111c5861ed64ca0388` | `ce3fc2a3e70d40279fa725b5d7dc838d11123980` | A Final Review PASS / CLOSED — 2026-10-06 | Native unified task center, authoritative queries/counts and historical progress/evidence, live-file exact organize return, cooperative controls, durable safe Web continuation and task-linked single/bounded decision and analysis recovery | Global Review/cross-task bulk, history retention/deletion, unbounded or MediaLibrary organize, arbitrary historical Reprocess, Automation/Notifications redesign, new authority/providers, uncertain replay, universal rollback and V1 retirement; other Contract deferrals unchanged |
 | 41 — V2 Organizing Rules Workspace | PASS / CLOSED | `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` | `8433319168272ecf7ccde017afc36525e8c62ea0` | A Final Review PASS / CLOSED — 2026-09-30 | Native V2 Rules graph workspace, typed editors, reference-safe lifecycle, exact-candidate zero-mutation analysis, one-Save checked publication and Settings readiness/recovery with preserved RecognitionType identity | Provider switching/new providers, Review/Recovery redesign, media execution from Rules, new rule/naming/classification domains, bulk/diff/rollback, V1 retirement/auth redesign and other unchanged Contract deferrals |

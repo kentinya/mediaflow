@@ -2,8 +2,8 @@
 
 This document owns component/dependency boundaries and distinguishes accepted CURRENT baselines
 from TARGET design. [Progress](progress.md) owns closure facts; committed [SLICE.md](../SLICE.md)
-owns active changes. Slice45 has B-reviewed Task Center/Scan-removal implementation but no A closure;
-FileIndex exit remains pending. No wording cleanup here grants acceptance or changes scope.
+owns scope. Slice45 is PASS / CLOSED: Task Center/typed recovery, shared live listing and
+Scan/Preview/FileIndex retirement below are CURRENT. Remaining Slice43 redesign stays frozen.
 Detailed former delivery notes remain at `865ebdce47b0b323064fd8e05fbfaa54546e6269:docs/architecture.md`.
 
 ## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
@@ -73,7 +73,7 @@ API-principal Bearer/RBAC, exact immutable Active/pinned work, explicit effect a
 claim/lease/fence and completed/uncertain non-replay remain unchanged. V1 does not add a password DB,
 cookie session, OIDC or implicit proxy identity. TMDB stays behind MetadataProvider; unavailable
 credentials fail closed with no implicit Provider fallback. Closed shell/page/engine milestones and
-frozen43/active45 status are not duplicated here; use [Roadmap](roadmap.md).
+frozen/closed Slice status is maintained in [Roadmap](roadmap.md).
 
 ### Interactive execution authorization: CURRENT V1 and V2
 
@@ -87,9 +87,9 @@ mechanism may continue to support API automation, local administration, debuggin
 and emergency/support workflows.
 
 **CURRENT V2:** the routine operator-facing Web journey does not require CLI issuance or raw-token
-transfer. After the operator reviews an exact durable Preview and confirms the selected items and
+transfer. After the operator reviews an exact durable organizing plan and confirms the selected items and
 any permitted destructive effects, the backend creates server-held, short-lived, single-use
-authority bound to the authenticated principal, Preview/configuration/item set and effect scope.
+authority bound to the authenticated principal, plan/configuration/item set and effect scope.
 Admission and authority consumption are atomic; the resident Worker later claims the durable
 execution under a fence before OrganizerExecutor may perform Storage mutation. The browser neither
 receives nor submits the raw authority or its digest.
@@ -110,7 +110,7 @@ The production path is:
 
 ```text
 ResourceLibrary
-  → Scan / FileIndex
+  → bounded Scan / Discovery with work-scoped source evidence
   → Parse / optional NFO evidence
   → RecognitionRule
   → RecognitionType
@@ -172,7 +172,7 @@ The current runtime can load all supported Storage kinds from JSON. Managed Web/
 now exposes one provider-neutral, read-only bounded Storage Browser and directory picker for every
 configured Storage kind. Its browser paths are Storage-relative and its continuation is bound to
 the exact managed revision, Storage, directory and page request. It remains a read-only bounded
-Storage browser, while the separate File Catalog is the FileIndex surface.
+Storage browser. Library-level live browsing is shared with CLI/Files/MediaLibrary; FileIndex is absent.
 
 For Local Storage, `rootPath` is an absolute path visible inside the execution environment. In a
 self-hosted Docker deployment the path must be explicitly bind-mounted with the intended
@@ -341,8 +341,9 @@ shared shell navigation/authentication and other business routes retain their be
 
 ## Persistence
 
-The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, locks, review queues,
-manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
+The runtime SQLite repository persists Tasks, TaskItems, Results, locks, review queues,
+organizing intents/plans/executions, work-scoped discovery/stability/source evidence,
+Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
 Compatibility versions are declared by the runtime/configuration repositories and managed-document
@@ -352,22 +353,20 @@ Runtime database initialization is additive and refuses a newer unsupported sche
 migration rehearsal and upgrade preflight are read-only or explicitly isolated boundaries; they do
 not construct Storage/Provider workflows or grant media execution authority.
 
-## File index and libraries
+## Libraries and work-scoped source evidence
 
 `ResourceLibrary` defines where source media is discovered, including Storage identity, relative
-path, extension/include/exclude rules, depth, scan mode and file stability policy. Scanning is
-read-only and records durable FileIndex state. Temporary/actively written files remain excluded by
-configured stability rules.
+path, extension/include/exclude rules, depth and file stability policy. Internal discovery is
+read-only; durable observations and source identities belong only to explicit work. Temporary/actively
+written files remain excluded by configured rules, including real elapsed unchanged-size observation.
 
-The current Operator **FileIndex** page is a File Catalog over those indexed records, not a Storage
-browser. `FileIndexRecord.scan_status` and `change` describe discovery/stability only; the separate
-processing disposition is persisted on the current source occurrence. Storage-derived
-occurrence/fingerprint evidence and historical occurrence rows bind TaskItem and Result records to
-the observed occurrence, while path-only legacy rows are explicitly unverified. The FileIndex
-projection exposes current versus historical Result relevance. Explicit Reprocess is an audited,
-exact-occurrence admission marker for later supported preparation; it creates no Task, Provider
-request or Storage mutation. Supported preparation uses bounded current-source identity and authority
-rules; the removed standalone Scan product is not a prerequisite.
+FileIndex and its global occurrence/disposition catalog, repositories, product surfaces, schema and
+sync/reprocess/repair paths are absent. Shared library browsing reads bounded Storage list/stat,
+never Task/Result membership, and creates no observations or work. Explicit work retains exact
+Storage/path/metadata/fingerprint, plan/version/pin, claims/locks and known/uncertain effects for
+admission/revalidation/recovery; these are not a substitute global file directory. Results do not
+permanently suppress a later new source merely because its path matches. No old-index production
+migration or automatic user-data clear/drop/rebuild is introduced.
 
 `MediaLibrary` defines a destination Storage and relative root. Classification selects the library
 and relative path; Naming supplies directory and filename. The final target is composed from the
@@ -399,7 +398,7 @@ operator from a resolved conflict or review through exact-source re-analysis, co
 and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
 investigation-only.
 
-## CURRENT — V2 Operations and Tasks Workspace (Slice 42)
+## Accepted foundation — V2 Operations and Tasks Workspace (Slice 42)
 
 The existing Job/Task/TaskItem/Result, manual execution and recovery services remain execution
 authority. A shared Python application projection joins only explicit durable links into one
@@ -433,8 +432,8 @@ The existing secret-free result-package service remains export authority.
 
 Creation reuses live ResourceLibrary Files selection, exact intent/Preview and existing explicit
 manual execution admission, preserving contextual return to the selected run. FileIndex is not
-physical source authority; MediaLibrary is not a new organizing source. Existing routes/links remain
-compatible, and the shared shell/authentication boundary is unchanged.
+physical source authority; MediaLibrary is not a new organizing source. Slice45 supersedes the
+separate Preview product and its routes; supported Task/Job links and authentication stay intact.
 
 `ScopeContinuationService` durably admits supported safely paused asynchronous work to the
 existing queue. Schema43 `scope_continuations` links the original Task, exact admitted command,
@@ -457,11 +456,11 @@ retired direct file retry/re-recognition/rematch/re-plan APIs stay retired.
 Bounded active-work polling and manual refresh are read-only; unknown mutation outcomes are queried
 before another explicit command. API/Web share permission/version/duplicate checks, redaction,
 readiness and safe recovery behavior. No additional scheduler, Worker supervisor, Provider, global
-Review inbox, history cleanup, universal rollback or automatic uncertain replay is introduced.
-These are accepted CURRENT facts at Implementation Head
+Review inbox, history cleanup, universal rollback or automatic uncertain replay was introduced by42.
+Slice45 adds the typed cross-Task lists below. These are accepted foundation facts at Implementation Head
 `ce3fc2a3e70d40279fa725b5d7dc838d11123980`, reviewed by A on 2026-10-06.
 
-## TARGET — Task Center query, summary confirmation and typed recovery (Slice45)
+## CURRENT — Task Center query, summary confirmation and typed recovery (Slice45)
 
 [The Task Center specification](task-center-page-spec.md), stable `V2-OPS-009–012` and the committed
 Contract own complete page/journey acceptance. Compose existing authorities:
@@ -487,18 +486,18 @@ Scan is absent on first deployment, including definition modes and dedicated com
 ordinary route/argument/shared type validation rejects before discovery/admission/authority. Shared
 Scanner/filtering/real elapsed observation/planning remain inside supported workflows, without a
 manual Scan prerequisite. No old Scan migration/history/takeover obligation or runtime/media clearing.
-Supported same-version restart/results/pins/claims/non-replay remain required.
+Supported same-version restart/results/pins/claims/non-replay remain required and validated.
 
-## TARGET — FileIndex retirement and shared live listing (Slice45)
+## CURRENT — FileIndex retirement and shared live listing (Slice45)
 
 [The FileIndex retirement design](file-index-retirement-spec.md) owns `V2-FILES-005/006` and complete
 consumer/removal acceptance. CLI, ResourceLibrary Files and MediaLibrary resolve the same exact Active
 library kind/ID/root through shared bounded live Storage list/stat behavior. Browsing persists no
 catalog/observations/work, grants no authority and calls no Provider/Hash/mutation.
 
-Remove global index/occurrence/disposition tables, repositories/stand-ins, product APIs/CLI,
-initialization, sync/reprocess/repair and all actual consumers. Do not rename it as a cache or install
-a no-op repository. Exact source/plan/pin/observation/results/locks remain bounded to explicit work;
+Global index/occurrence/disposition tables, repositories/stand-ins, product APIs/CLI,
+initialization, sync/reprocess/repair and all actual consumers are removed, without a renamed cache
+or no-op repository. Exact source/plan/pin/observation/results/locks remain bounded to explicit work;
 reopen/recovery cannot replay known or uncertain effects. Fresh deployments have no index schema;
 no old-index migration/dual-write/API compatibility and no automatic clear/drop/rebuild of user data.
 Necessary shared Automation coupling may be cleaned without preserving43 UI or resuming its redesign.
@@ -510,7 +509,7 @@ exported) so a cursor issued by one CLI/API process stays verifiable by a later 
 read-only listing reads the key without creating or upgrading the store and refuses an uninitialized
 store explicitly rather than minting a one-off process key.
 
-## TARGET — Standalone Preview retirement and shared analysis (Slice45)
+## CURRENT — Standalone Preview retirement and shared analysis (Slice45)
 
 [The Preview retirement design](preview-retirement-spec.md) owns `V2-OPS-013` / RO-8. Use the Scan
 first-deployment standard: no standalone Preview Web/V1/API/CLI/aliases/help, Job/Task/command,
@@ -530,42 +529,43 @@ Preserve current candidate/definition/scope/permission boundaries, elapsed stabi
 attachments, capabilities and source revalidation. Analysis grants no permission and creates no
 formal execution waiting/recovery backlog. Plan publication, pins/claims/fences and non-replay remain.
 
-Some baseline Preview storage/services currently serve shared exact plans and recovery/authority.
-Consolidate those responsibilities into existing organizing/Task/plan data before removing independent
-product lifecycle and exclusive persistence; no blind table deletion, renamed product or second engine.
-The queued Preview analysis-only behavior must survive in shared analysis; removing the old command
-is not permission to convert scheduled Preview into execution or grant automatic authority.
+Shared exact-plan and recovery/authority records remain under organizing/Task responsibilities.
+Internal `manual_previews` names and organize-plan API paths describe fixed plan data, not an
+independently runnable Preview product. Long analysis uses the existing discovery Worker and durable
+publication fence; no second queue/engine or automatic authority is introduced. Analysis-only
+findings do not create formal execution blockers; delayed publication after accepted cancellation
+cannot create a new confirmable plan.
 
 No old Preview migration/takeover/history/cancel/export/V1-parity framework; no runtime/media clear or
 automatic rebuild. Fresh deployments contain no independent Preview schema, while supported organizing
-work reopens and recovers safely. Current descriptions below remain implementation baseline until
-this TARGET passes. Necessary merged43 coupling cleanup is allowed; its broader redesign stays frozen.
+work reopens and recovers safely. These Slice45 contracts passed final review; necessary merged43
+coupling cleanup does not accept or resume its broader redesign.
 
 ## Manual organize
 
-Manual organization uses a durable intent and exact immutable Preview before execution. The Preview
+Manual organization uses a durable intent and exact immutable organizing plan before execution. The plan
 contains the selected source identity, reviewed Storage ID, Storage-relative source path,
 Storage-derived source fingerprint, choices, pinned configuration, destination, operation,
 attachments, conflict and capability evidence. A separate one-shot authority and explicit
-confirmation admits only the exact selected Preview items.
+confirmation admits only the exact selected plan items.
 
 Admission rechecks versions, reviewed source fingerprint, conflicts, capabilities and authority in
 one SQLite transaction, then acquires source/destination/attachment locks. Execution does not
-resolve the source through FileIndex: the service reconstructs the plan from persisted Preview data,
+resolve the source through a catalog: the service reconstructs the plan from persisted organizing data,
 opens the reviewed Storage ID, calls `stat(source_path)`, and compares the live Storage fingerprint
 with `preview.source_fingerprint`. Missing sources and fingerprint mismatches fail closed before any
 mutation; request bodies cannot supply arbitrary paths, operations or provider payloads.
 `OrganizerExecutor` performs the actual mutation and persists each effect/result/checkpoint
 independently.
 
-The compatibility file-level execute endpoint calls that bounded execution service synchronously
-inside the API request. The V2 Operations flow instead atomically admits an exact Preview selection
+Explicit manual-authorization API endpoints retain their bounded execution service. The V2 Operations
+flow atomically admits an exact plan selection
 with server-held one-shot authority, returns a durable execution/Task identity, and lets the
-resident processing Worker claim it under a persisted fence before any mutation. Legacy Files and
-FileIndex provide separate bounded compatibility entry points, while the current V2
-ResourceLibrary Files path uses live Storage for its exact Preview and explicit manual Organize
-admission. The general Jobs API supports bounded `preview` and `organize` submission. Preview remains
-DryRun/zero-mutation. Organize requires explicit confirmation
+resident processing Worker claim it under a persisted fence before any mutation. V2 ResourceLibrary
+Files uses live Storage for exact preparation and explicit manual Organize admission; indexed
+compatibility entry points are removed. The general Jobs API admits only supported `organize`
+submissions with its explicit execute/permission/one-shot-authority boundary. CLI organize without
+--execute and Web preparation remain zero-mutation analysis. Execution requires explicit confirmation
 and the relevant destructive-effect permissions; revalidation, RBAC, conflict and capability gates
 remain in force, and only `OrganizerExecutor` mutates Storage.
 
@@ -617,10 +617,10 @@ Result evidence.
 
 The current implementation accepts automatic-organization only; removed Scan modes have no
 compatible executor or dedicated history layer. Broader Automation redesign remains TARGET below;
-this factual Scan-removal note is not Slice45 closure.
+Slice45 closure does not accept the remaining Slice43 workspace redesign.
 
-Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Preview
-eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
+Unattended authority is persistent, scoped, revocable and separate from schedule enablement. Exact
+shared analysis eligibility and authority are required before a due run may reach mutation. The Worker rechecks live
 authority, scope, capabilities, conflicts and current snapshot at each mutation boundary. Revocation
 blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
 replayed.
@@ -656,10 +656,10 @@ at the shared service boundary; 401/403 behavior and Web/API projections are tes
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
 Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
-Settings, Rules and the Operations route family for Tasks, Jobs, Preview/Organize,
+Settings, Rules and the Operations route family for Tasks, Jobs and Organize,
 Automation and Notifications. The unified Operations task center provides native task-linked
-decision/recovery and supported paused-scope continuation. Global Review and arbitrary historical
-Reprocess remain compatibility/deferred journeys; Advanced JSON and the general configuration
+decision/recovery, cross-Task problem-type lists and supported paused-scope continuation. Cross-Task
+bulk mutation and arbitrary historical Reprocess remain deferred; Advanced JSON and the general configuration
 lifecycle retain their support/compatibility surfaces alongside native V2 Settings. Both UIs use the
 shared `/api/v1/*` application
 authority. The browser holds the API token only in memory and does not provide built-in account
@@ -784,12 +784,12 @@ ResourceLibrary ID + exact relative path
 → separately confirmed durable execution → Worker live-source revalidation → OrganizerExecutor
 ```
 
-`RuntimeFilesBrowserService` does not consult its compatibility `file_index` argument for physical
+`RuntimeFilesBrowserService` has no FileIndex dependency or compatibility argument for physical
 listing/authority. The frontend supplies library/path/cursor, not Storage paths, FileID, occurrence
 or fingerprints as authority. `create_current_from_storage` derives evidence from live stat and
 `create_from_sources`; execution opens the reviewed Storage/path directly, never re-resolves via
-FileIndex. Bounded index feedback/sync remains a pending-retirement dependency outside authority;
-its failure cannot replay media. The current Files page shows no recognition/organize-status feedback.
+FileIndex. Index feedback/sync is removed; result/display failure cannot replay media.
+The current Files page shows no recognition/organize-status feedback.
 
 ## UI-V2 direct file-management authority update — 2026-09-14
 
@@ -805,8 +805,8 @@ is explicit Copy→destination digest verification→Delete-source; failed verif
 source, known partial effects retain both-copy diagnosis and uncertain effects require investigation.
 Long/batch work uses durable per-item Tasks/checkpoints; live listing stays authoritative after work.
 Rename/Delete use metadata-only evidence with optional provider fingerprint: once observed it remains
-binding. Text Edit separately binds loaded content digest and is capped at 512 KiB. Optional known
-index reconciliation never admits/replays a command. The durable Delete/fencing detail follows.
+binding. Text Edit separately binds loaded content digest and is capped at 512 KiB.
+Result/display failure never admits/replays a command. The durable Delete/fencing detail follows.
 
 ## CURRENT — Slice 44 RO-1 metadata fences and durable Delete
 

@@ -4,14 +4,14 @@
 Slice ID: 45
 Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
-Implementation Head: 1f07dc24a06b63930b067f29776eaf53dbcd1db4
+Implementation Head: 4fcb0028f987f8746f0a8aa7b309e360b07c598e
 Working Branch: main
-Development Authorization: USER-AUTHORIZED A CONTRACT REVISION; B PLANS IN COMMITTED SCOPE
+Development Authorization: CLOSED; NO ACTIVE IMPLEMENTATION AUTHORIZATION
 Risk: High
 Final Test Level: T4
-Next Action: B CORRECTION / COMPLETE FINAL ACCEPTANCE, THEN RETURN TO A
+Next Action: A SELECTS THE NEXT LARGE SLICE (SEPARATE USER-AUTHORIZED ACTION)
 ```
 
 ## Current authority and progress
@@ -20,7 +20,7 @@ Next Action: B CORRECTION / COMPLETE FINAL ACCEPTANCE, THEN RETURN TO A
 `479518e4aff0419da82c667bef6f127936774cec:SLICE.md`。用户进一步明确要求独立 Preview 产品
 按 Scan 的首次部署方式完整退役；本次 A 实质修订新增 RO-8 / S-10 / AC-8，替换此前保留
 独立 diagnostic/scheduled Preview 产品的义务，保留共享零变更分析和固定计划能力。
-原 Slice ID/Base/ACTIVE、45.4 的已审范围与 PASS/验证例外保持；不是实现声明或 A Final Review。
+原 Slice ID/Base、45.4 的已审范围与 PASS/验证例外保持；最终验收和关闭另见下方 A Final Review。
 
 - 在 main 继续；用户授权过 main/Slice45 整合，双方非冲突工作保留、冲突采用 Slice45。
 - Scan 按首次部署不存在处理，含定义绑定模式和退役兼容层；不要求旧 Scan/V1 迁移或历史兼容。
@@ -32,9 +32,11 @@ Next Action: B CORRECTION / COMPLETE FINAL ACCEPTANCE, THEN RETURN TO A
   OrganizePolicy。未知效果只核查，不新增附件-only 自动恢复或为附件重放主文件。
 - 已合并 Slice43 页面、Run once、指标和设置消费不是45保留/验收前提；可清理45必需耦合，
   自动化页重新设计留到45后，不主动恢复43后续开发。共享支持流程的权限/pin/结果/审计保持。
-- Task45.1–45.4 已 B PASS；45.4 reviewed Head 为 `479518e4aff0419da82c667bef6f127936774cec`。
-  Task45.6 在 `cd01879af0bd46374a0bafe8fcf5e1d66cfe3c5e` 提交 B PASS 与 Closure Packet，
-  RO-7/RO-8 及 S-1..S-10 已交 A Final Review；未关闭 Slice，不倒改45.4 Goal/Base/PASS。
+- Task45.1–45.7 已 B PASS；最后 reviewed Head 为 `4fcb0028f987f8746f0a8aa7b309e360b07c598e`，
+  Closure Packet 在 `e3fdcdcdb444cc604e5f46b40ed800def03e96c1:TASK.md`。
+  A 已完成原始 Base..修复后 Head 的最终审查，RO-1..RO-8 / S-1..S-10 验收通过。
+  前次 `1f07dc2` 的 FIX REQUIRED 保留于 `172b628:SLICE.md`，由45.7修复验收链路后复审；
+  不倒改45.4 Goal/Base/PASS 或此前披露的验证例外，不豁免原门槛。
 - 现行测试分工为 Developer 只跑新增/修改及直接受影响测试，B 负责全量和最终验收；旧的
   Developer 全量分配由 B 承接。此前接受/例外不重写，不倒记完整验证。
 
@@ -64,8 +66,8 @@ CLI 文件列表、文件页和媒体库页共用实时 Storage 浏览，文件�
 
 ## Applicable Requirements
 
-- V2-OPS-001–008 的既有统一工作、结果、权限及恢复基线，按 V2-OPS-009–012 的显式
-  TARGET 产品修订实现新的入口、九标签、同页摘要与跨任务类型视图。
+- V2-OPS-001–008 的既有统一工作、结果、权限及恢复基线，按 V2-OPS-009–012 的
+  显式产品修订实现新的入口、九标签、同页摘要与跨任务类型视图。
 - V2-UX-001–003、V2-AUTH-001–003、V2-SAFE-001、V2-MIG-001–003。
 - V2-OPS-013；REQ-ORG-004/011、REQ-SCHED-001、REQ-WEB-004 的独立 Preview 产品形式按显式修订退役，
   完整零变更分析、解释、精确计划和执行权限分离不降低。
@@ -183,7 +185,7 @@ Web/API/Worker 使用同一应用行为、权限、固定来源/计划和恢复�
 
 九页面、创建→摘要→确认→执行、各类恢复、Scan/独立 Preview 退役及其他受支持任务的历史路径
 通过自动化和原生浏览器验证。
-CURRENT 文档只在实际验收后更新；本次文档和图仍是 TARGET，不宣称实现。
+CURRENT 文档记录本次整 Slice 验收后的能力；参考图仍是结构/层级/风格规范，不是运行数据。
 
 ### RO-7 — FileIndex 完全退役与实时文件列表统一
 
@@ -357,56 +359,61 @@ B 记录实际结果、必要日志/截图/产物身份和未提供外部门禁�
 
 ## Closure Packet
 
-Submitted by B in `TASK.md` for implementation head
-`1f07dc24a06b63930b067f29776eaf53dbcd1db4`.
-RO-1..RO-8 and S-1..S-10 are complete for A review. Full regression, native journeys,
-wheel and Docker scan/recovery/security evidence is reused for unchanged execution inputs.
-The supplemental supported-definition restart/fault harness passed on this head: explicit analysis
-and grant, scheduled COPY, occurrence/Job/Task persistence, four-service restarts, stale-owner fence,
-uncertain-effect non-replay and read-only projections. The previous harness mismatch is resolved.
-Decision submitted by B: SLICE READY FOR A REVIEW. A's independent review below withholds
-acceptance; B's Task results and earlier disclosed exceptions remain unchanged.
+B submitted Task45.7 PASS / SLICE READY FOR A REVIEW in
+`e3fdcdcdb444cc604e5f46b40ed800def03e96c1:TASK.md`, reviewing
+`4fcb0028f987f8746f0a8aa7b309e360b07c598e` (executable test-fixture candidate `bcd17c2`).
+RO-1..RO-8 / S-1..S-10 are complete. No scope or safety gate was waived.
+
+B's durable local evidence:
+`.git/validation-evidence/4fcb0028f987f8746f0a8aa7b309e360b07c598e/task45.7/README.md`.
+It includes commands, raw results, 67 screenshots, input reuse and served/build/wheel/image identities.
+Real-Python inventory 41, live-files 5, visual 2 and Unicode 1 passed without skips; full Web unit
+1164 and default fake E2E 238 passed separately. Full Python reuses the matching 2691-test run
+(7 dedicated external Storage/endurance skips), with the changed harness's sole Python test consumer
+freshly passing 5 tests. Quality/examples, clean wheel/installed recovery, production Docker
+stability/confirmation/recovery/security passed; matching four-service restart/fault evidence was
+reused with actual image/content identity. No external production Storage acceptance is claimed.
+
+Existing deferrals and Task45.4 validation exception retain their historical meaning. Developer's
+seven extra frozen43 Automation-native failures remain disclosed, not independently rerun or claimed
+PASS by B/A; remaining43 UI/Run once/metrics/settings redesign is explicitly outside this Slice.
+Supported shared analysis/grant/Scheduler/Worker safety is covered by current/matching evidence.
 
 ## A Final Review
 
-Reviewed Range: a72252091d5d46edf3e2114b994036ae21b08e2e..1f07dc24a06b63930b067f29776eaf53dbcd1db4
-Decision: FIX REQUIRED — 2026-10-23
-P0/P1 Product Blockers: none newly proven; mandatory Slice acceptance remains blocked below
-Closure Reconciliation: NOT PERFORMED
+Reviewed Range: a72252091d5d46edf3e2114b994036ae21b08e2e..4fcb0028f987f8746f0a8aa7b309e360b07c598e
+Reporting Successor: e3fdcdcdb444cc604e5f46b40ed800def03e96c1 (TASK.md only)
+Decision: PASS / CLOSED — 2026-10-23
+P0/P1 Blockers: none remaining within the committed Slice
+Closure Reconciliation: COMPLETED
 
-Lifecycle note: retain ACTIVE pending B's correction Task. The governance guard requires an
-active Task for Slice status FIX REQUIRED; the submitted B packet currently has NO ACTIVE
-IMPLEMENTATION TASK. This does not change A's FIX REQUIRED decision or authorize closure.
+A combined the prior complete-range manifest/material implementation review with the entire45.7
+correction diff, all outcomes/surfaces and the corrected raw Closure Packet. Production source,
+Python tests, dependencies and configuration are unchanged since the prior reviewed candidate;
+45.7 changes only the acceptance harness/spec and Task reports. The original FIX REQUIRED at
+`1f07dc2` is preserved in `172b628:SLICE.md`;45.7 resolves its native/evidence blocker without
+permission relaxation, retired executors, weaker assertions or a rescope.
 
-**RO-6 / AC-6 / Final Validation blocker:** the existing real-Python browser gate cannot start.
-After building current production assets, A ran (cwd `web/`):
+A independently rebuilt production assets and reran the exact previously blocked native command:
 
 ```sh
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/1f07dc24a06b63930b067f29776eaf53dbcd1db4/a-final-20261023/native
+# cwd web/
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-task-center-visual.python.spec.ts tests/e2e/live-files.python.spec.ts --output ../.git/validation-evidence/e3fdcdcdb444cc604e5f46b40ed800def03e96c1/a-final-20261023/native
 ```
 
-Exit 1 before browser tests: `operations_inventory_harness.py:851–853` submits `organize` through
-the normal viewer principal; the real API correctly returns `403 remote_execute`. Inventory and
-Unicode gates share this startup. The cited default 238-test E2E run explicitly excludes these
-real-Python inventory/visual/live-list/Unicode specs, so it cannot cover their required journeys.
-The final packet also lacks recoverable exact-candidate raw evidence/asset and screenshot references
-for these gates. Different-input historical screenshots or PASS labels do not complete acceptance.
+Result: 7 passed, no skips. A inspected all nine desktop views, narrow navigation, same-page
+creation summary, typed recovery/overwrite/problem pagination and primary-complete attachment
+warning captures against the reference hierarchy. B's keyboard/return/interaction and real
+Worker/independent outcome results support the complete journey; screenshots alone are not execution
+proof. A verified historical raw-log hashes, report-only/input diffs, all 161 wheel Python modules,
+all four current build/served asset digests and both Docker image IDs against the accepted evidence.
+A did not mechanically repeat B's full suites or claim the frozen43 extras passed.
 
-**B next action:** repair the affected acceptance harness using supported explicit organizing
-admissions and actual Worker-produced plans; remove its remaining retired-product fixture dependencies
-without bypassing permissions or weakening equivalent assertions. Complete the assigned real-Python
-inventory/live-list/Unicode/visual gates and inspect desktop/narrow interaction and screenshots.
-Retain exact commands, candidate/served-artifact identities, results/skips and durable raw evidence
-for all final gates; recover matching prior runs or execute missing coverage under workflow reuse
-rules. This is B-owned acceptance/evidence work, not Developer full-regression work or a rescope.
-Return to A with the corrected fixed candidate and Closure Packet; no closure or next Slice yet.
-
-**Verified evidence:** A governance/build and complete-range whitespace passed; focused preparation/
-FileIndex/Preview-retirement Python tests passed (50 tests, no skips). B's recovered full-Python
-raw log reports 2691 tests, 7 skips, OK; A did not repeat that full run. The supplemental restart/fault
-log and reported image ID match. `0d22fee..1f07dc2` changes only the two governance documents and the
-restart harness, supporting input-based reuse without proving the missing native runs. Complete
-manifest, inspection scope, raw A failure/positive logs, recovered B log provenance and limitations:
-`.git/validation-evidence/1f07dc24a06b63930b067f29776eaf53dbcd1db4/a-final-20261023/` (local only).
-Final native/visual acceptance and document closure remain pending; no production defect is inferred
-solely from this harness failure, and existing Task PASS/validation exceptions are not rewritten.
+A's current review/provenance/logs and copied screenshots are local ignored evidence at
+`.git/validation-evidence/e3fdcdcdb444cc604e5f46b40ed800def03e96c1/a-final-20261023/`;
+prior review evidence remains at the original `1f07dc2` directory.
+CURRENT requirements/journeys/architecture, three design contracts, operator guidance, Roadmap,
+Progress and no-active-Task notice are reconciled in the closure checkpoint. All three role
+experiences were reviewed; existing guidance already covers the reusable lessons, so none was added.
+No product/runtime/private data change, push, next-Slice selection or Slice43 resumption is authorized
+by this closure. Work stops after closure; original Base, accepted history and dirty files remain.

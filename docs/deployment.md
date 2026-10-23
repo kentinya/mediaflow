@@ -278,7 +278,7 @@ Provider call, Job/Task creation, notification or media mutation.
 
 Every durable MediaFlow state lives under `/data`. Stopping or restarting the
 API, Worker, Scheduler or Notification Worker service must therefore preserve
-the exact managed Active identity, FileIndex records, Jobs,
+the exact managed Active identity, work-scoped source/plan evidence, Jobs,
 Tasks/TaskItems/Results, schedule states and occurrence history, notification
 deliveries, security audits and operational logs. The application restart
 contract is:
@@ -557,7 +557,7 @@ The restart harness verifies durable restart and fault behavior:
 python3 scripts/docker_restart_fault_smoke_test.py
 ```
 
-It records managed configuration, FileIndex, Job/Task/TaskItem/Result,
+It records managed configuration, work-scoped source/plan evidence, Job/Task/TaskItem/Result,
 schedule/occurrence, notification, audit and operational-log evidence, restarts
 each service, and verifies scheduler idempotence, stale-owner fencing,
 uncertain-mutation refusal and notification at-least-once behavior on temporary

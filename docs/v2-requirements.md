@@ -21,6 +21,10 @@ requirement IDs and acceptance meanings are unchanged; CURRENT details and excep
 recovery deferrals are recorded in Product Experience/Architecture. Suspended work is not accepted
 delivery or an implicit dependency. Reference images define business/style, never runtime authority.
 
+Slice45 is PASS / CLOSED for `V2-OPS-009–013` and `V2-FILES-005/006`. Its nine Task Center views,
+in-context confirmation/recovery and Scan/Preview/FileIndex retirement are CURRENT; the remaining
+Slice43 Automation workspace targets are still frozen.
+
 ## Stable V2 requirements
 
 | ID | Requirement | Acceptance meaning |
@@ -76,7 +80,7 @@ delivery or an implicit dependency. Reference images define business/style, neve
 These requirements extend the existing Operations foundation and are delivered within Slice 42's
 accepted boundary. CURRENT behavior and explicit deferrals are documented in Architecture and
 Product Experience. Task-linked recovery is delivered; cross-Task recovery lists were deferred by
-that baseline and are selected separately by the Slice45 TARGET amendment below.
+that baseline and are delivered by the accepted Slice45 amendment below.
 This factual status update does not change the stable requirement IDs or acceptance meaning below.
 
 | ID | Requirement | Acceptance meaning |
@@ -90,9 +94,9 @@ This factual status update does not change the stable requirement IDs or accepta
 | V2-OPS-007 | Task controls and continuation are backend-authoritative, cooperative and Web-completable for supported paused asynchronous work. | Pause/cancel requests do not undo effects or interrupt in-flight calls. Continue queues the exact remaining safe scope with pins/fences and current authority; no CLI fallback, consumed-token reissue, revoked-grant bypass or successful/uncertain replay. |
 | V2-OPS-008 | Task-linked decisions and single/bounded failed-analysis recovery complete in native V2 with per-item safety. | Recognition, Metadata, Classification and conflict decisions use existing gates; saving decisions does not execute. Exact analysis/Preview and separate execution intent link back to the original item. Mixed selections preserve accepted/refused outcomes; uncertain mutation stays investigation-only and retired retry APIs stay retired. |
 
-## Operations and Tasks redesign — TARGET (Slice 45)
+## Operations and Tasks redesign — CURRENT (Slice 45 PASS / CLOSED)
 
-The user-approved 2026-10-15 amendment extends the accepted baseline without claiming implementation.
+The user-approved 2026-10-15 amendment extends the accepted baseline and passed Slice45 final review.
 The final journey and nine reference images are in [task-center-page-spec.md](task-center-page-spec.md).
 It supersedes the mandatory separate Preview-page realization of `V2-OPS-006/008` and the former
 standalone Scan-entry obligation; exact zero-mutation plans, explicit execution authority and all
@@ -124,13 +128,13 @@ new Active; unavailable pinned context refuses continuation with guidance. Unkno
 responses reconcile the exact durable request; uncertain effects have evidence/investigation only,
 and preparation-only unready items are not fabricated execution failures.
 
-## FileIndex retirement and shared live lists — TARGET (Slice45)
+## FileIndex retirement and shared live lists — CURRENT (Slice45 PASS / CLOSED)
 
 The user-approved 2026-10-18 amendment adds complete FileIndex retirement to current Slice45.
 It supersedes V1 global indexing, FileIndex catalog/detail/statistics, automatic result sync and
 optional indexed Files feedback; it preserves supported Task/Result/pin/audit/permission/source
 safety and actual internal stability. [The retirement design](file-index-retirement-spec.md)
-defines the CLI and end-to-end journey. No implementation is claimed.
+defines the accepted CLI and end-to-end journey. Closure facts live in Progress and the Slice.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|

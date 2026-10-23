@@ -1,8 +1,8 @@
-# 任务中心最终方案 — Slice45（TARGET）
+# 任务中心最终方案 — Slice45（CURRENT / PASS / CLOSED）
 
-本文件记录用户确认的任务中心页面、整理创建与恢复旅程，仍为 **TARGET / 待整 Slice 验收**。
-部分实现已获 B Task PASS，不代表 A 交付或关闭；实际状态、业务边界与验收以 [SLICE.md](../SLICE.md) 为准；
-稳定要求见 [V2 Requirements](v2-requirements.md) 的任务中心 TARGET 章节（V2-OPS-009–012）。
+本文件记录用户确认并经 A 整 Slice 验收的任务中心页面、整理创建与恢复旅程。
+实际状态、业务边界、Implementation Head 与验收证据以 [SLICE.md](../SLICE.md) 为准；
+稳定要求见 [V2 Requirements](v2-requirements.md) 的任务中心 CURRENT 章节（V2-OPS-009–013）。
 开发与审核只遵循 [Development Workflow](development-workflow.md)。
 
 ## 1. 参考图与适用方式
@@ -233,9 +233,9 @@ Preview 产品的安排已由下方第 8 节的完整退役修订取代；必要
 首次部署无旧 Scan/V1 parity、停止/接管、升级迁移、转换或专用历史/取消/导出兼容义务。
 不自动清空/重建现存数据库、媒体、用户文件或改写 Git；其他支持工作仍须同版本重启/重开/恢复，
 并保留逐项结果、精确来源/计划/pin、权限/fence、审计和未知效果非重放。不是 V1 整体 cutover。
-FileIndex 完全退出仍在同一 Slice 的后续连贯单元，详细边界见下节及独立退役设计。
+FileIndex 完全退出已随同一 Slice 验收，详细边界见下节及独立退役设计。
 
-## 7. FileIndex 完全退役与列表统一（追加的 Slice45 TARGET）
+## 7. FileIndex 完全退役与列表统一（Slice45 CURRENT）
 
 用户于 2026-10-18 将 FileIndex 退出加入当前 Slice，取消此前延期。
 `mediaflow files list`、文件页和媒体库页复用库级 live Storage 应用逻辑；列表/分页/刷新不保存
@@ -246,7 +246,7 @@ FileIndex 的专用产品、运行依赖、全局目录仓储/schema、同步/�
 完整使用方式、三入口边界、Automation 共享依赖与验证见
 [FileIndex 退役设计](file-index-retirement-spec.md)，验收为 V2-FILES-005/006 和 Contract RO-7。
 
-## 8. 独立 Preview 按 Scan 相同方式退役（Slice45 TARGET）
+## 8. 独立 Preview 按 Scan 相同方式退役（Slice45 CURRENT）
 
 按 [Preview 退役设计](preview-retirement-spec.md)、V2-OPS-013 与 Contract RO-8 完整退出独立
 Preview 页面/API/CLI/Job/Task/定时/Worker/重试/继续和专用持久化/装配，包括 diagnostic/

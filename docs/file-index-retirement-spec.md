@@ -1,9 +1,9 @@
-# FileIndex 完全退役与实时文件列表统一 — Slice45（TARGET）
+# FileIndex 完全退役与实时文件列表统一 — Slice45（CURRENT / PASS / CLOSED）
 
 用户于 2026-10-18 将 FileIndex 完全退役加入当前 Slice45，并要求 `mediaflow files list`
 与文件页、媒体库页使用相同的实时 Storage 列表逻辑，只列举、不建立文件记录。
-本文件为 TARGET 设计；已提交的 [SLICE.md](../SLICE.md) 定义范围，
-[V2-FILES-005/006](v2-requirements.md) 定义稳定验收，不表示已经实现或通过 A 验收。
+本文件为整 Slice 验收后的 CURRENT 合同；[SLICE.md](../SLICE.md) 定义范围和验收记录，
+[V2-FILES-005/006](v2-requirements.md) 定义稳定验收。
 
 ## 1. 用户旅程与范围
 
@@ -45,7 +45,7 @@ ResourceLibrary 与 MediaLibrary 的同名 ID、同 Storage/root 仍是不同作
 有界结果、截断、下一页及未知总量真实表达；Storage 故障不显示为零。
 实时目录变化可能使后续分页失效，不承诺未建立快照的跨请求完整快照一致性。
 
-## 3. CLI 的 TARGET 使用方式
+## 3. CLI 的 CURRENT 使用方式
 
 ```bash
 mediaflow files list --resource-library SOURCE_ID --path "relative/directory" --limit 100
@@ -71,13 +71,13 @@ Active；不为列举自动创建业务配置、任务、文件目录数据库�
 及无消费者代码；新建运行数据库不创建 FileIndex 专用表/索引。不能把同一长期文件目录改名
 为缓存、观察服务或把旧仓储改成 no-op 来宣称退役。
 
-当前实际依赖需在同一个完整退出业务单元中收敛：
+原运行依赖已在同一个完整退出业务单元中收敛：
 
-下表列的是当前代码依赖。独立 Preview 产品另按同 Slice RO-8 的
+下表列的是已移除的旧依赖及当前替代边界。独立 Preview 产品另按同 Slice RO-8 的
 [Preview 退役设计](preview-retirement-spec.md) 完整退出；RO-7 不为它新建索引兼容或修复服务。
 需要保留的是整理/恢复/配置/授权校验的共享分析和精确计划证据，不是独立 Preview 生命周期。
 
-| 当前依赖 | TARGET 行为 |
+| 已退出的依赖 | CURRENT 行为 |
 |---|---|
 | `files list` → FileCatalog → SQLiteFileIndex；show/stats 和 `/files`、`/file-index` 索引接口 | list 改为共享库级 live browse；索引产品接口/命令删除或薄拒绝 |
 | StorageScanner/ResourceLibraryScanner 的全局索引写入、New/Modified/Unchanged/Missing 对账 | 保留内部发现/过滤/稳定性；不再维护全局文件目录或 Missing 对账产品 |
@@ -102,7 +102,7 @@ stable-size 必须跨真实配置区间的未变观察；大小/mtime/有效指�
 长工作沿用现有 Task/Worker 和 lease/fence，配置 pin、范围/时间/条目限制保留；
 无 FileIndex 仍能新建→分析→同页摘要→明确确认→执行，并从 Task/checkpoint 完成恢复。
 
-FileIndex 在当前已接受的 Automation 基础实现中也有消费者；去掉这些共享依赖属于本 Outcome。
+FileIndex 原先在已接受的 Automation 基础实现中也有消费者；这些共享依赖已随本 Outcome 移除。
 可修改必要装配与共用发现/来源验证，不能因 Slice43 冻结而留下可运行 Index。
 此 FileIndex Outcome 不扩展自动化业务；Scan 模式删除已由 2026-10-18 首次部署修订另行选入
 同 Slice 的 RO-5 / Task45.4，作为冻结边界窄例外。其余页面、Run once、指标和全局设置消费
@@ -117,7 +117,7 @@ FileIndex 在当前已接受的 Automation 基础实现中也有消费者；去�
 历史 FileID/API 兼容、在途接管或索引同步修复机制。以新建环境和受支持工作为验收基础。
 无需为开发 fixture 保留已退役代码；fixture 应使用 live Storage 和显式 Task/Result。
 
-删除源码中的废弃 schema/装配不等于授权操作当前数据库或媒体。本次规划不清空、drop、
+删除源码中的废弃 schema/装配不等于授权操作当前数据库或媒体。本次退役不清空、drop、
 重建任何用户/开发运行库，不通过启动自动清库来绕过旧版本。遇到不支持的开发旧 schema，
 明确报错并说明使用隔离新数据目录；不新增复杂生产迁移旅程。
 当前支持版本的普通 Task/Result/pin/许可及其重开/重启/故障原子性仍受正常安全规则保护。
@@ -136,6 +136,5 @@ FileIndex 在当前已接受的 Automation 基础实现中也有消费者；去�
   API/常驻 Worker，不使用“未配置文件索引”拒绝、空结果或 no-op mock 代替完成。
 - 通过完整 T4、实际三入口原生检查及依赖/死代码清单审查；不要求旧 FileIndex 生产迁移矩阵。
 
-实际命令与独立关键复现由 B 在当前 Task 完成后，按已提交 Contract 规划下一个连贯 Task。
-FileIndex 退出和 CLI 统一不能按单个字段、文件或测试拆碎。整个 Slice45 需要 RO-7 通过，
-不能在独立 Scan 退役后提前提交 Closure Packet。
+RO-7 已随整个 Slice45 通过验收。实际三入口原生结果、wheel/安装消费者、生产 Docker/
+Worker/recovery/restart、输入复用和外部环境 skips 见 Closure Packet；不宣称旧索引生产迁移。

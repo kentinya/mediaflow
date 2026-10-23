@@ -1,8 +1,8 @@
-# 独立 Preview 产品退役 — Slice45（TARGET）
+# 独立 Preview 产品退役 — Slice45（CURRENT / PASS / CLOSED）
 
 用户要求将独立 Preview 完整退役加入当前 Slice，退役方式与 Scan 相同。
 [SLICE.md](../SLICE.md) RO-8 与 [V2-OPS-013](v2-requirements.md) 是范围和稳定验收 authority。
-本设计尚未实现或验收；现有 Task45.4 Scan PASS 不覆盖此新增结果。
+本合同已通过 A 的整 Slice 验收；没有把 Task45.4 Scan PASS 代替此结果的验收。
 
 ## 1. 用户旅程
 
@@ -43,38 +43,31 @@ API 直接调用该应用服务，不启动 CLI 命令，不另建分析引擎�
 Web 流程为 Organize DryRun 分析→持久保存完整固定计划→投影同页摘要→精确确认→
 重验该计划/来源/权限→现有 Worker/OrganizerExecutor 执行。
 仅保存摘要文本不能作为执行依据；计划或来源实质变化须重新分析、更新摘要并重新确认。
-现有 DryRun 路径需适配下方 analysis-only 规则，确保仅分析不创建正式执行待办或权限。
+共享 DryRun 遵循下方 analysis-only 规则，仅分析不创建正式执行待办或权限。
 保留 Scanner/真实稳定观察、Parser/Recognition/Metadata/Naming/Classification/Planner、
 主文件/附件计划和策略解释，以及精确来源、固定配置/计划、版本、许可、锁/fence、Result/审计。
 
-当前内部 Preview 记录有一部分承载已被摘要/确认使用的固定计划、附件和恢复关联。
-按真实职责把这些收敛到整理自己的分析/计划数据和现有持久 Task/Worker；不能简单删表丢失
-计划，也不能只改名后继续保留可独立创建/调度/续跑的 Preview 产品或另建分析队列/执行引擎。
+整理内部计划记录承载摘要/确认使用的固定计划、附件和恢复关联，复用现有持久 Task/Worker。
+内部 `manual_previews` 名称及整理计划 API 不代表独立产品；没有可独立创建/调度/续跑的
+Preview 生命周期，也没有另一套分析队列/执行引擎。
 对象局部试算方法或历史结果中的 Preview 字样不等于可运行产品，不要求全仓字符串零匹配。
 
-直接 CLI `preview` 和不执行的 `organize` 当前共用大部分处理路径；后台 Preview 另有
-analysis-only 分支。合并时必须保留：分析发现只留 findings/未就绪，不产生正式执行的
+独立 CLI `preview` 已删除，不执行的 `organize` 和后台整理分析共用生产分析/计划路径。
+分析发现只留 findings/未就绪，不产生正式执行的
 WAITING_CONFIRM/Review/Conflict/Recovery 待办，不自动执行、不授予权限。
 不得仅将 `preview` 映射到 `organize`，也不得把分析失败/取消或 DryRun 改写成整理成功。
 
-## 4. 实际依赖和简单实施顺序
+## 4. 当前消费者与运行边界
 
-以下是同一完整退出目标的步骤，具体 Task 由 B 在已提交 Contract 内规划：
+新建整理/Files、五类恢复、Rules/配置检查和 Automation 授权前校验复用共享生产分析与
+固定计划服务，保持各入口原 scope/pin/策略/权限；Web 不通过 CLI 绕行。长分析使用既有
+discovery Worker，完整计划原子发布后才生成摘要，已生效的取消不接受迟到的新计划。
+原来源重验、精确许可、成功兄弟项及未知效果非重放保持。
 
-1. 沿实际调用列清单：`final_cli.py` 的命令/Job/schedule/continuation 与
-   `_analysis_only_preview`；`service_api.py` 的独立 Preview 和整理摘要接口；V2 router 的
-   PreviewNew/Detail、OrganizePreview、AutomationPreview 及 V1 UI；区分独立产品与共享分析。
-2. 找到需要承接的消费者：新建整理/Files、五类恢复、Rules/配置检查、Automation 授权前校验、
-   Worker 与安装/容器 harness。先统一接入 Organize DryRun 的共享应用层分析/固定计划服务，
-   保留原 scope/pin/策略选择/权限，Web 不通过 CLI 绕行。
-3. 将内部计划数据、版本和确认/恢复关联收敛到真实整理职责，保留原子发布、来源再验和有效
-   许可绑定；长分析复用现有 Task/Worker。不得用新 Active 替换旧合法 pin。
-4. 删除独立入口/类型/调度/dispatch/继续路径；清理专属服务/模型/仓储/schema/装配和无消费者
-   代码。普通不支持类型错误要在发现/Provider/准入前发生，不新增 Preview 识别兼容层。
-5. 去掉页面/DTO/导航/指标中的独立 Preview 产品；原配置/Rules/授权校验仍能解释并完成其
-   用户结果。只清理必要 Automation 耦合，不展开冻结 Slice43 的页面/Run once/指标/设置重设计。
-6. 把依赖独立 Preview 播种的测试、安装/镜像/Worker fixture 改为合法整理分析或显式 Task/计划。
-   原分析零变更、权限分离、pin/来源变化、冲突/未就绪和非重放断言必须有等义覆盖。
+Web/API/CLI/Job/调度/dispatch/继续的独立产品及专用模型/仓储/schema/装配已退出。
+fixture 使用受支持准入、实际 Worker 或明确的投影 Task/Result，不通过放开权限、删除安全
+断言或恢复退役执行器满足验收。支持的共享 Automation 授权/执行仍需明确许可；这不接受或
+恢复冻结 Slice43 的页面/Run once/指标/设置重设计。
 
 ## 5. 验收边界
 
@@ -89,4 +82,4 @@ WAITING_CONFIRM/Review/Conflict/Recovery 待办，不自动执行、不授予权
 - fresh schema、wheel/实际安装消费者、生产 Docker/常驻 Worker 和 served assets 无独立
   产品，真实整理分析→确认→执行→结果可运行；不要求旧 Preview 生产迁移/历史/V1 parity 矩阵。
 - Developer 跑新增/修改与直接受影响检查；B 按 workflow 负责 T4 全量/原生/安全/产物验收。
-  本次范围文档仅做治理/文档检查，不借文档变更宣称实现、T4 或 Slice 关闭。
+  本文状态依据整 Slice 的实际验收及产物身份更新，原始证据与复用/跳过说明见 Closure Packet。

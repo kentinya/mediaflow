@@ -117,7 +117,7 @@ loading cannot be proven.
 The UI's Active identity is derived from the same managed revision used to build the runtime binding.
 It must not display a Draft, an arbitrary database row or a stale process snapshot as Active. A
 checked activation publishes no scan, Job, Task, Automation occurrence or media mutation; a later
-explicit Preview or execution request is required.
+explicit organizing analysis or execution request is required.
 
 ## Current managed object families
 
@@ -255,12 +255,13 @@ that the guided safety checks passed.
 
 Authenticated surfaces share application behavior/RBAC/audit: exact Active/successor lifecycle,
 objects/reference impact, versioned secret-free configuration/result exchange, Settings and Rules,
-bounded tests/checks/Preview, library Save, live Files/maintenance, Task/Job/results, review/recovery,
+bounded tests/checks/organizing analysis, library Save, live Files/maintenance, Task/Job/results, review/recovery,
 Worker readiness, Automation/grants/occurrences and Webhook delivery recovery.
 [Product Experience](product-experience.md) owns complete ordinary journeys; [Architecture](architecture.md)
 owns execution and [Deployment](deployment.md) runtime administration. Configuration reads/tests/
 publication create no media work. Notification retry/requeue changes only that delivery, not media.
-FileIndex still has separate pending-retirement dependencies; it is never live Files authority.
+FileIndex is removed. CLI/Files/MediaLibrary share live Storage browsing; exact source and plan
+evidence remains scoped to explicit work. No independent Scan or Preview product remains.
 
 ## Secret boundary
 
@@ -280,12 +281,11 @@ The production CLI workflow remains explicit and DryRun-first:
 
 ```bash
 mediaflow config validate
-mediaflow preview --limit 20
 mediaflow organize --limit 20
 mediaflow organize --execute --limit 20
 ```
 
-Parsing, recognition, metadata lookup, naming, classification, planning and Preview do not mutate
+Parsing, recognition, metadata lookup, naming, classification, planning and Organize DryRun do not mutate
 media. Only an explicit execute boundary can reach `OrganizerExecutor`, and conflict,
 capability, overwrite and deletion rules remain in force.
 
@@ -313,7 +313,8 @@ Do not infer a feature or permission to rebuild user data from an old schema num
 Provider switching/new Providers, built-in users/sessions/OIDC, general Secret Store/Docker Secrets,
 automatic uncertain replay and historical rollback remain outside the accepted baseline. No arbitrary
 host paths or mutation-based capability probes. Native Settings and Rules are delivered; that does
-not imply V1 cutover, the remaining frozen Automation workspace or active45 completion.
+not imply V1 cutover or the remaining frozen Automation workspace. Slice45's Task Center,
+typed recovery and Scan/Preview/FileIndex retirement are accepted CURRENT behavior.
 Production uses Waitress `api serve-production`; standard-library `api serve` stays trusted-loopback.
 See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.md) for their own facts.
 
@@ -324,6 +325,6 @@ See [Roadmap](roadmap.md), [Progress](progress.md) and [Deployment](deployment.m
 | `workflowRetry` | `enabled` defaults false; `baseDelaySeconds`/`maxDelaySeconds` bound backoff. Read-only retry covers normalized timeout/connection/rate-limit/temporary-provider failures before planning/execution. `maxAttempts` 1–10, `maxDelaySeconds` ≤300, `jitterRatio` 0–1; never retries mutation/uncertain effects or grants execute authority. |
 | `automation.maximumActiveJobs` | Default 100; atomic shared Pending+Running backlog bound, not worker parallelism. Terminal Jobs release capacity. |
 | `automation.staleJobAgeSeconds` | Default 3600, range 60–604800; no-update diagnostic, not total-runtime timeout or death/replay authority. Stale lists are bounded 100; inspect Worker and effects before permitted explicit recovery. |
-| Preview Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Definitions/scheduled organizing use their separate explicit grant boundary. |
+| Organizing Cron schedules | Validated five numeric fields with IANA timezone; `*`, lists, inclusive ranges and positive steps, no seconds/names/macros/shell/catch-up backlog. Missing DST wall times skip; ambiguous wall time fires once. Scheduling/enablement never grants execution authority; supported execution retains its separate explicit authority boundary. Independent Preview schedules are unsupported. |
 | Organize Hash/attachments | Hash defaults NONE with zero reads; FAST is bounded prefix evidence, FULL is bounded streaming. Failed/unknown comparison adds a conflict and never authorizes overwrite/delete. Opt-in attachments are matched only in the primary directory; unknown files are not included/cleaned. |
 | Source cleanup / rollback | Cleanup defaults none; only fully verified successful MOVE may clean bounded ancestors below the exclusive ResourceLibrary root. `rollback.enabled` defaults false, `cleanupCreatedDirectories` true; compensation covers only this invocation's verified effects, never changed targets, reappeared sources or older executions. Complete policy constraints remain in Requirements. |

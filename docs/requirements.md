@@ -40,6 +40,10 @@ coupling cleanup is allowed by Slice45; remaining Automation redesign is deferre
 and original amendments remain in Git. `REQ-GEN-004` still requires fail-closed data integrity;
 UX-first does not weaken safety or justify unnecessary CLI/internal-token ceremony.
 
+Slice45 已整体验收为 PASS / CLOSED，交付上述 `V2-OPS-009–013` 与 `V2-FILES-005/006`。
+该验收不改变冻结 V1 定义或原始接受事实；下面 CURRENT 修订及 Product Experience/Architecture
+记录现行行为，剩余 Slice43 自动化工作区仍冻结。
+
 ## Traceability and derivation rules
 
 - `Canonical Source` 使用下方完整产品定义的章节标题；章节正文仍是最终解释来源。
@@ -636,7 +640,8 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 
 #### **V2 操作与任务工作区（CURRENT；Slice 42 PASS / CLOSED）**
 
-本节记录 A 于 2026-10-06 验收的 CURRENT 事实，不改变下方冻结的 V1 需求及此前 Slice 的验收事实。
+本节保留 A 于 2026-10-06 验收的基础事实；任务中心入口、独立 Preview 和 FileIndex 的
+现行义务由下方 Slice45 CURRENT 修订替换，不改变冻结 V1 或此前 Slice 的验收事实。
 该闭合 Slice 的原始参考图保留在其 Git 检查点；参考中的名称、数量、日期、路径、
 海报、进度与剩余时间均不是实际数据或固定验收样本。稳定 V2 要求见 `V2-OPS-001` 至
 `V2-OPS-008`；当前范围与验收以 `SLICE.md` 为准。
@@ -660,11 +665,11 @@ Review/Recovery 改造、Rules 页面媒体执行、批量导入/diff/rollback �
 - 操作记录以持久结果和逐步效果为准，关联有界日志/审计与无 secret JSON 导出。恢复链保留
   原项、决策、续作与新结果；读取/刷新/导出不创建任务、不调用 Provider、不变更 Storage。
 
-全局 Review 收件箱、跨任务批量审核、任务历史删除/保留策略、无限整库手工整理、任意历史
+Slice42 未交付全局 Review 收件箱；Slice45 另已交付五类跨任务问题列表。跨任务批量审核、任务历史删除/保留策略、无限整库手工整理、任意历史
 Reprocess、自动化/通知页面重设计、通用回滚、V1 退役和不确定 mutation 自动重放仍未交付。
 已退役的文件级重新识别、metadata rematch、re-plan 与 recognition retry-pending 接口不恢复。
 
-#### **V2 任务中心重构（TARGET；Slice45）**
+#### **V2 任务中心重构（CURRENT；Slice45 PASS / CLOSED）**
 
 用户确认 [任务中心最终方案](task-center-page-spec.md) 及其九张 `docs/pics/任务中心-标签名.png`
 参考图。九个横向标签是全部任务、进行中、需要处理、已结束、识别恢复、元数据恢复、分类恢复、
@@ -690,7 +695,8 @@ Scan 产品按 2026-10-18 首次部署修订视为从未存在：独立入口及
 整理内分析/固定计划/同页摘要、CLI organize 不执行模式及 Rules/配置/授权校验继续复用共享能力；
 仅分析不制造正式执行待办或权限。范围见 [Preview 退役设计](preview-retirement-spec.md)。
 零变更分析/DryRun 能力、Rules 测试与冻结 Slice43 的自动化业务工作区重设计不在删除范围。
-这些是明确的 TARGET 产品修订；上方 CURRENT Slice42 和下方冻结 V1 事实不因此改写为已交付。
+这些明确授权的产品修订已通过整 Slice 验收；上方 Slice42 原始接受事实和下方冻结 V1 定义
+不被倒改，未选择的能力不因本次关闭而被宣称交付。
 
 #### **安全预览与直接文件命令**
 
@@ -3699,11 +3705,12 @@ TMDB等Provider信息
 最近更新时间
 ```
 
-当前 V2 TARGET：`mediaflow files list`、文件页和媒体库页共用所选库的实时有界 Storage 列表，
-不记录文件目录；索引 CLI/API/页面/同步完全退役，详情见退役设计。下文是尚待该修订替换的
-已接受实现基线，不能作为继续保留 FileIndex 的新范围授权。
+当前 V2（Slice45 PASS / CLOSED）：`mediaflow files list`、文件页和媒体库页共用所选库的
+实时有界 Storage 列表，不记录文件目录；索引 CLI/API/页面/同步完全退役，详情见退役设计。
+下面关于索引列表/游标/同步的文字保留其历史接受含义，已由 V2-FILES-005/006 替换，
+不是当前产品入口或继续保留 FileIndex 的授权。
 
-当前实现基线：认证 Web/API 的 **Files** 提供配置 Storage 的有界真实目录/文件浏览，**FileIndex**
+历史实现基线：认证 Web/API 的 **Files** 提供配置 Storage 的有界真实目录/文件浏览，**FileIndex**
 CLI/Web/API 提供有界索引列表、单项详情和统计；两者都使用 Storage-relative identity，Files
 不递归扫描、不接受任意主机路径。读取不构造 Provider，也不读取文件内容；列表和详情使用
 稳定的 keyset cursor，`--after/--before` 配合 `--cursor-file-id` 使用
@@ -3714,10 +3721,10 @@ V2 Files 页面当前实现（Slice 37 PASS / CLOSED，2026-09-23）：实时物
 页的可见状态。FileIndex 的 `fileId`、occurrence、fingerprint、claim、plan hash 等内部标识
 不能成为 Files 页的操作权限或 Preview authority。Exact Storage entry name/path identity,
 including leading/trailing whitespace, survives the Web projection and navigation; boundary
-whitespace is visibly disambiguated. FileIndex remains a separate indexed route and a bounded
-post-mutation reconciliation target.
-Files-originated Preview 仍只提交 ResourceLibrary 和相对路径，由后端通过 Storage 生成 source
-identity；Organize item 完成后自动同步 FileIndex，其他 Files 功能不得引入 FileIndex。
+whitespace is visibly disambiguated. At that acceptance FileIndex remained a separate indexed route
+and bounded post-mutation reconciliation target; both are removed from CURRENT V2 by Slice45.
+Files-originated 整理准备只提交 ResourceLibrary 和相对路径，由后端通过 Storage 生成 source
+identity；CURRENT 结果保存在 Task/Result/checkpoint，不再同步 FileIndex。
 Manual Organize Web choice editor 以 RecognitionType 作为操作员选择来源，按 pinned snapshot
 自动投影 NamingPolicy、ClassificationPolicy 和 OrganizePolicy；RecognitionType C 的身份保持为
 C，即使复用 A 的下游策略，映射不可用时 fail closed 并提供重新加载恢复。
@@ -3741,8 +3748,8 @@ V2 Files 常用文件管理要求（Slice 37 PASS / CLOSED，2026-09-23）：
   execution-token 流程，但后端仍检查 RBAC、Active source/destination 绑定、路径 confinement、
   capability、limits 和 stale/conflict；CreateDirectory/Copy/Move/Delete/Write mutation 只允许
   OrganizerExecutor 执行。未来若恢复浏览器传输能力，也必须保持同一边界。
-- 成功后以 live Storage 刷新为准，可对 FileIndex 展示投影做 best-effort reconciliation；同步失败
-  必须独立记录，禁止自动重放已完成或结果不确定的 Storage mutation。
+- 成功后以 live Storage 刷新为准；Slice37 原有 FileIndex best-effort reconciliation 已在45退役。
+  结果或展示失败仍禁止自动重放已完成或结果不确定的 Storage mutation。
 
 V2 Files 与共享 Shell 视觉要求（Slice 37 PASS / CLOSED，2026-09-20）：`docs/pics/文件页.png` 是
 `1536 x 1024` 成功态的唯一视觉权威。其浅色左侧导航栏和顶部栏必须作为统一共享 AppShell 替换

@@ -30,22 +30,19 @@ only in [the development workflow](development-workflow.md).
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned automatic-organization-only definitions with checked Save, exact analysis/plan evidence and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; Scan-mode removal and necessary FileIndex/standalone-Preview coupling cleanup are selected in Slice45 | PLANNED | 42 closure, accepted 44 improvements and existing Automation/managed-configuration/Operations/resident-service foundations |
 | 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | PASS / CLOSED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
-| 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | ACTIVE | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
+| 45 — V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement | Deliver nine authoritative task/recovery lists, in-context exact plan-summary confirmation, durable per-item results/controls, first-deployment absence of Scan and standalone Preview products/compatibility layers, complete FileIndex retirement, and shared CLI/Files/MediaLibrary live lists without catalog recording | PASS / CLOSED | Accepted Slice44 baseline; existing Operations/Files/Task/Worker/recovery foundations; explicit user priority change and required retirement-coupling exceptions before Slice43 closure |
 
 ## Current boundary
 
-Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — is **ACTIVE** on main,
-with immutable accepted Slice44 Base `a72252091d5d46edf3e2114b994036ae21b08e2e`.
-The committed [Contract](../SLICE.md), [task-center design](task-center-page-spec.md) and
-[FileIndex retirement design](file-index-retirement-spec.md) and
-[Preview retirement design](preview-retirement-spec.md) own its selected scope. Nine task/recovery
-lists, same-page exact summary/confirmation and first-deployment Scan removal are in the current
-implementation; FileIndex retirement/live-list parity and standalone Preview retirement have B PASS.
-A Final Review of `a722520..1f07dc2` on 2026-10-23 is **FIX REQUIRED** because the mandatory real-Python
-browser harness cannot start and current native/visual acceptance and final raw evidence remain
-pending with B. The Slice stays unclosed. Preview uses the same first-deployment removal standard as Scan,
-without retirement pages/guards or old-work compatibility; shared organizing analysis and plans remain.
-ACTIVE is not A acceptance. Necessary shared safety, exact pins/results and non-replay remain required.
+Slice45 — **V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement** — is **PASS / CLOSED**.
+A accepted immutable Slice44 Base `a72252091d5d46edf3e2114b994036ae21b08e2e` through Implementation Head
+`4fcb0028f987f8746f0a8aa7b309e360b07c598e` on 2026-10-23. Nine authoritative task/recovery lists,
+same-page exact summary/selected confirmation and per-item recovery, complete Scan/Preview/FileIndex
+retirement and shared CLI/Files/MediaLibrary live lists are delivered. The original native/evidence
+FIX REQUIRED was corrected by45.7 and independently rechecked; prior Task PASS/validation exceptions
+remain historical. Scope and final evidence are in [SLICE.md](../SLICE.md).
+
+There is no active implementation Task and no next Slice selected. Closure does not start new work.
 
 Slice43 remains **PLANNED — Development Hold: FROZEN BY USER** on `frozen/slice-43-2026-10-15`.
 Only Scan-mode removal and necessary index/standalone-Preview coupling cleanup are selected into45.
