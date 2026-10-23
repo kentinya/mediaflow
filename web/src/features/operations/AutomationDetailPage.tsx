@@ -33,6 +33,7 @@ import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import { describeAutomationRunMode } from "../../entities/operations/automation";
+import { useAutomationListReturn } from "../../shared/navigation/automation-list-return";
 
 function displayEnum(value: string): string {
   return value
@@ -48,6 +49,9 @@ export function AutomationDetailPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // The exact workspace list state this page was opened from, so the back
+  // link restores the same tab/filters/page instead of the workspace default.
+  const listReturn = useAutomationListReturn();
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detailQuery = useQuery(
@@ -156,6 +160,7 @@ export function AutomationDetailPage() {
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations/automation"
+                  search={listReturn.search}
                 >
                   Back to Automation
                 </Link>
@@ -444,6 +449,7 @@ export function AutomationDetailPage() {
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/automation"
+                search={listReturn.search}
               >
                 Back to Automation
               </Link>

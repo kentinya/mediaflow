@@ -543,6 +543,9 @@ export function isDestinationPath(value: string): value is DestinationPath {
   );
 }
 
+/** The three closed Automation workspace tabs. */
+const AUTOMATION_TAB_TOKENS = new Set(["definitions", "records", "settings"]);
+
 /** A backend-submitted Operations status filter is a bounded lowercase token. */
 const STATUS_FILTER_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
 /** A backend-submitted delivery status filter is hyphenated (`dead-letter`). */
@@ -596,6 +599,64 @@ export function allowlistedDestinationSearch(
    * both bounded server cursors and their directions. Anything else — a
    * credential-like token, a foreign disposition or a cursor outside the
    * grammar — is dropped instead of being replayed against the API. */
+  /**
+   * The Automation workspace list context (`任务列表` / `执行记录`) that must
+   * survive authentication continuation and a definition / Task Center round
+   * trip: one closed tab, the bounded inventory filters, the record
+   * definition/trigger/status/time filters and the one server cursor page with
+   * its direction. A value outside these grammars is dropped instead of being
+   * replayed against the API.
+   */
+  const setAutomationListTokens = (
+    allowed: URLSearchParams,
+    current: URLSearchParams,
+  ) => {
+    const tab = current.get("tab");
+    if (tab !== null && AUTOMATION_TAB_TOKENS.has(tab)) {
+      allowed.set("tab", tab);
+    }
+    setFilterToken(allowed, "q", current.get("q"), /^.{0,128}$/);
+    for (const key of ["enabled", "state", "sort"] as const) {
+      setFilterToken(allowed, key, current.get(key), /^[a-z-]{0,32}$/);
+    }
+    setFilterToken(
+      allowed,
+      "library",
+      current.get("library"),
+      /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/,
+    );
+    setFilterToken(
+      allowed,
+      "rstatus",
+      current.get("rstatus"),
+      /^[a-z_]{0,32}$/,
+    );
+    setFilterToken(
+      allowed,
+      "rtrigger",
+      current.get("rtrigger"),
+      /^[a-z]{0,32}$/,
+    );
+    setFilterToken(
+      allowed,
+      "rdefinition",
+      current.get("rdefinition"),
+      /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/,
+    );
+    for (const key of ["rfrom", "rto"] as const) {
+      setFilterToken(
+        allowed,
+        key,
+        current.get(key),
+        /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/,
+      );
+    }
+    setFilterToken(allowed, "cursor", current.get("cursor"), CURSOR_TOKEN);
+    const direction = current.get("dir");
+    if (direction === "next" || direction === "previous") {
+      allowed.set("dir", direction);
+    }
+  };
   const setRunDetailTokens = (
     allowed: URLSearchParams,
     current: URLSearchParams,
@@ -760,6 +821,24 @@ export function allowlistedDestinationSearch(
       "command",
       current.get("command"),
       COMMAND_FILTER_TOKEN,
+    );
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/operations/automation") {
+    // The Automation workspace carries only its own bounded list state, so a
+    // reload/reconnect and a definition or Task Center round trip restore the
+    // exact tab, filters, time window and server page the operator left.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setAutomationListTokens(allowed, current);
+    // A definition/lifecycle page returns to this list through `returnTab` and
+    // the same bounded list state; only the closed tab token is replayed as a
+    // return hint.
+    setFilterToken(
+      allowed,
+      "returnTab",
+      current.get("returnTab"),
+      /^(?:definitions|records|settings)$/,
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
@@ -939,7 +1018,22 @@ export function allowlistedDestinationSearch(
     path === "/operations/notifications/editor/$webhookId" ||
     path === "/operations/notifications/deliveries/$deliveryId"
   ) {
-    // Detail routes carry no search state.
+    // The Automation definition/lifecycle pages carry exactly the bounded
+    // workspace list state they must return to, and nothing else: a tampered
+    // or credential-like value is dropped by the same grammars above.
+    if (path.startsWith("/operations/automation/")) {
+      const allowed = new URLSearchParams();
+      const current = new URLSearchParams(search);
+      setAutomationListTokens(allowed, current);
+      setFilterToken(
+        allowed,
+        "returnTab",
+        current.get("returnTab"),
+        /^(?:definitions|records|settings)$/,
+      );
+      return allowed.toString().length > 0 ? allowed.toString() : null;
+    }
+    // Notification detail routes carry no search state.
     return null;
   }
   return null;

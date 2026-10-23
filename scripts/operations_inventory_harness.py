@@ -4255,6 +4255,68 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     }
 
 
+def seed_automation_record_page(state: AppState, *, runs: int = 26) -> dict[str, object]:
+    """Emit many real scheduled occurrences of the fixture definition.
+
+    The native records journey must traverse *beyond* one page through the real
+    UI controls, and must do so over genuinely admitted runs rather than a
+    fabricated row set. Each call advances the Scheduler clock by one interval
+    so the resident Scheduler emits one more due occurrence through its own
+    production path; the returned count is the durable occurrence population
+    the Automation records read now sees.
+    """
+
+    from mediaflow.application.automation import IntervalScheduler
+    from mediaflow.domain.automation import SchedulerConfigurationSnapshot
+
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if active is None:
+        return {"error": "no Active configuration"}
+    runtime = with_managed_snapshot(
+        load_managed_runtime_configuration(
+            active.document,
+            bootstrap_database_path=str(state.database),
+        ),
+        snapshot_id=active.revision_id,
+        digest=active.digest,
+        version=active.version,
+    )
+    emitted: list[str] = []
+    # Every emitted occurrence is dated in the *past*: a future-dated population
+    # would outrank genuinely newer records on the newest-first page and make an
+    # unrelated journey's record unreachable.
+    clock = datetime.now(UTC) - timedelta(seconds=3601 * (max(1, min(60, int(runs))) + 1))
+    for _ in range(max(1, min(60, int(runs)))):
+        scheduler = IntervalScheduler(
+            state.repository,
+            (),
+            configuration_snapshot_resolver=lambda: SchedulerConfigurationSnapshot(
+                active.revision_id,
+                active.digest,
+                (),
+                runtime.automation_maximum_active_jobs,
+                tuple(runtime.automation_task_definitions),
+                active.version,
+                tuple(item.library_id for item in runtime.resource_libraries),
+                tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
+            ),
+        )
+        clock = clock + timedelta(seconds=3601)
+        jobs = scheduler.tick(clock)
+        if not jobs:
+            break
+        emitted.extend(job.job_id for job in jobs)
+    # The admitted-run population is read through the same bounded window the
+    # Automation records page uses, so this reports the real record total the
+    # browser will see rather than one definition's occurrence count.
+    window = state.repository.operations_runs_window(limit=100, automation_admissions=True)
+    return {
+        "emitted": emitted,
+        "recordTotal": int(window.total),
+    }
+
+
 def crowd_automation_command_trail(state: AppState, *, edits: int) -> dict[str, object]:
     """Publish ordinary focused Automation edits to crowd the command trail.
 
@@ -4358,13 +4420,21 @@ def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
     }
 
 
-def run_automation_definition_worker_once(state: AppState) -> dict[str, object]:
-    """Run one emitted definition occurrence through the production Worker."""
+def run_automation_definition_worker_once(
+    state: AppState, *, definition_id: str | None = None
+) -> dict[str, object]:
+    """Run one emitted definition occurrence through the production Worker.
+
+    The definition identity defaults to the lifecycle fixture, but a journey
+    that publishes its own definition passes the exact id it published so the
+    Worker claims *that* occurrence and not an unrelated one.
+    """
 
     from mediaflow.final_cli import _run_queued_workflow
 
+    resolved_definition_id = definition_id or AUTOMATION_LIFECYCLE_DEFINITION_ID
     occurrence = state.repository.get_latest_automation_definition_occurrence(
-        AUTOMATION_LIFECYCLE_DEFINITION_ID
+        resolved_definition_id
     )
     if occurrence is None:
         return {"ran": False, "reason": "no emitted definition occurrence"}
@@ -4403,7 +4473,7 @@ def run_automation_definition_worker_once(state: AppState) -> dict[str, object]:
             "jobId": completed.job_id,
         }
     persisted_occurrence = state.repository.get_latest_automation_definition_occurrence(
-        AUTOMATION_LIFECYCLE_DEFINITION_ID
+        resolved_definition_id
     )
     return {
         "ran": True,
@@ -5240,10 +5310,18 @@ def application(environ, start_response):
             document = seed_run_once_mixed_scope(STATE)
         elif path == "/__harness__/open-automation-definition-draft" and method == "POST":
             document = open_automation_definition_draft(STATE)
+        elif path == "/__harness__/seed-automation-record-page" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = seed_automation_record_page(
+                STATE, runs=int((query.get("runs") or ["26"])[0] or 26)
+            )
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
             document = run_automation_scheduler_tick(STATE)
         elif path == "/__harness__/run-automation-definition-worker" and method == "POST":
-            document = run_automation_definition_worker_once(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            document = run_automation_definition_worker_once(
+                STATE, definition_id=(query.get("definitionId") or [None])[0]
+            )
         elif path == "/__harness__/corrupt-automation-published-history" and method == "POST":
             document = corrupt_automation_published_history(STATE)
         elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":

@@ -238,6 +238,12 @@ function metricsDocument(
     comparisonUnavailableReason: "no_comparable_previous_period",
     monthToDateTerminal: 3,
     monthToDateActive: 1,
+    monthToDateNoWork: 1,
+    monthToDatePartial: 0,
+    monthToDateFailed: 0,
+    monthToDateCancelled: 0,
+    monthToDateUncertain: 0,
+    inventory: inventoryCountsDocument(),
     denominatorStatement:
       "terminal admitted runs in the current local month (3)",
     successRate: 2 / 3,
@@ -282,6 +288,20 @@ function inventoryQueryDocument(
   };
 }
 
+function inventoryCountsDocument(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    published: 1,
+    enabled: 1,
+    draftOnly: 0,
+    total: 1,
+    basis: "exact_current_active_and_open_drafts",
+    scope: "full_authorized_population",
+    ...overrides,
+  };
+}
+
 function listDocument(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -296,6 +316,8 @@ function listDocument(
     total: 1,
     truncated: false,
     metrics: metricsDocument(),
+    inventoryCounts: inventoryCountsDocument(),
+    latestAdmittedRuns: {},
     query: inventoryQueryDocument(),
     itemsTruncatedByCap: false,
     next_cursor: null,

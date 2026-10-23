@@ -53,6 +53,7 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import { useAutomationListReturn } from "../../shared/navigation/automation-list-return";
 
 interface FormState {
   readonly id: string;
@@ -360,6 +361,9 @@ registerPrincipalSessionDataCleaner(() => {
 
 export function AutomationLifecyclePage() {
   const token = useAuthToken();
+  // The exact workspace list state this page was opened from, so every back
+  // link restores the same tab/filters/page instead of the workspace default.
+  const listReturn = useAutomationListReturn();
   // The principal identity the backend confirms for this token: the pending
   // Copy/Run-once intent's session key is scoped to it, so another principal's
   // unknown outcome can never be reconciled as this one's result. The
@@ -934,6 +938,7 @@ export function AutomationLifecyclePage() {
                   <Link
                     className="mf-button mf-button-secondary"
                     to="/operations/automation"
+                    search={listReturn.search}
                   >
                     Back to Automation
                   </Link>
@@ -964,6 +969,7 @@ export function AutomationLifecyclePage() {
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations/automation"
+                  search={listReturn.search}
                 >
                   Back to Automation
                 </Link>
@@ -1362,6 +1368,7 @@ export function AutomationLifecyclePage() {
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/automation"
+                search={listReturn.search}
               >
                 Back to Automation
               </Link>
@@ -1491,6 +1498,7 @@ export function AutomationLifecyclePage() {
                       <Link
                         className="mf-button mf-button-secondary"
                         to="/operations/automation"
+                        search={listReturn.search}
                       >
                         Refresh the Automation inventory
                       </Link>

@@ -5218,6 +5218,14 @@ export interface AutomationRecordsQueryOptions {
   readonly to?: string | null;
   readonly limit?: number;
   readonly cursor?: string | null;
+  /**
+   * The paging direction of the submitted cursor.
+   *
+   * The backend refuses a cursor whose direction does not match, so the client
+   * must carry it: a "previous" turn that submitted only the cursor was
+   * rejected, and backwards paging through the real UI never worked.
+   */
+  readonly direction?: "next" | "previous" | null;
 }
 
 export function automationRecordsUrl(
@@ -5229,6 +5237,7 @@ export function automationRecordsUrl(
   if (options.status) params.set("status", options.status);
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
+  if (options.direction) params.set("direction", options.direction);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
   const qs = params.toString();

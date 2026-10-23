@@ -453,6 +453,97 @@ def _safe_json_object(raw: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _summarize_handling(entries) -> dict:
+    """Summarize exactly-linked follow-up handling for one original run.
+
+    The summary never upgrades an admission to a resolution: a completed
+    execution still needs a verified effect, and an ambiguous entry stays
+    ``investigation``.  No entry means ``unhandled`` — which the caller only
+    publishes when the durable read itself succeeded.
+    """
+
+    if not entries:
+        return {
+            "state": "unhandled",
+            "attempts": 0,
+            "latestKind": None,
+            "latestStatus": None,
+            "nextAction": "open the exact Task Center run to review and handle it",
+        }
+    attempts = len(entries)
+    entries = sorted(
+        entries,
+        key=lambda entry: (
+            str(entry["started_at"] or entry["completed_at"] or ""),
+            str(entry["kind"]),
+        ),
+    )
+    latest = entries[-1]
+    statuses = {str(entry["status"]) for entry in entries}
+    # A preparation row carries its linked execution's status in the same
+    # effect column, so one read reports both the follow-up lifecycle and the
+    # proven effect.
+    execution_statuses = {
+        str(entry["effect_status"])
+        for entry in entries
+        if entry["kind"] == "preparation" and entry["effect_status"]
+    }
+    latest_kind = str(latest["kind"])
+    latest_status = str(latest["status"])
+    if statuses & {"queued", "running"}:
+        return {
+            "state": "handling",
+            "attempts": attempts,
+            "latestKind": latest_kind,
+            "latestStatus": latest_status,
+            "nextAction": "wait for the linked follow-up to settle, then re-read this record",
+        }
+    if "completed" in execution_statuses or (
+        "completed" in statuses and latest_kind != "preparation"
+    ):
+        return {
+            "state": "resolved",
+            "attempts": attempts,
+            "latestKind": latest_kind,
+            "latestStatus": latest_status,
+            "nextAction": "no further Automation action is needed for this record",
+        }
+    if statuses & {"failed", "cancelled", "superseded", "stale"}:
+        return {
+            "state": "recovery_failed",
+            "attempts": attempts,
+            "latestKind": latest_kind,
+            "latestStatus": latest_status,
+            "nextAction": (
+                "the linked follow-up did not succeed; open the exact Task Center run "
+                "to review it before any further decision"
+            ),
+        }
+    return {
+        "state": "investigation",
+        "attempts": attempts,
+        "latestKind": latest_kind,
+        "latestStatus": latest_status,
+        "nextAction": (
+            "linked follow-up evidence is ambiguous; inspect the exact Task Center run "
+            "before any further command"
+        ),
+    }
+
+
+def _bounded_item_count(raw: object) -> int:
+    """A persisted item count as a non-negative integer, ``0`` when unknown.
+
+    The value is a ``COUNT(*)`` over the exact linked Task's own rows, so it
+    cannot be negative; a legacy/None projection publishes ``0`` items of
+    proven evidence rather than a fabricated count.
+    """
+
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    return max(raw, 0)
+
+
 def _bounded_int_mapping(raw: object) -> dict[str, int]:
     """A small bounded ``{name: count}`` mapping from persisted scan progress."""
 
@@ -5332,6 +5423,7 @@ class SQLiteTaskRepository:
         source: str | None = None,
         definition_id: str | None = None,
         trigger: str | None = None,
+        automation_admissions: bool = False,
     ) -> tuple[list[str], list[object]]:
         """Bounded WHERE clauses shared by the page and the count queries.
 
@@ -5412,6 +5504,21 @@ class SQLiteTaskRepository:
         if trigger is not None:
             clauses.append("derived_trigger = ?")
             parameters.append(trigger)
+        if automation_admissions:
+            # The mandatory Automation-original-admission population predicate.
+            # One original admitted Automation run is either a Scheduler-emitted
+            # occurrence (its own Job carries the definition/schedule identity)
+            # or a deliberate definition Run once (the admission-written manual
+            # origin on the exact admitted execution's Task).  An ordinary
+            # Files/CLI Job, a standalone manual organize Task, a preparation-
+            # only discovery/analysis, a rejected or blocked attempt (never
+            # admitted at all) and a recovery follow-up Task (which carries no
+            # definition origin of its own) are therefore excluded from
+            # original-run counts, pages and metrics.
+            clauses.append(
+                "((run_kind = 'job' AND (schedule_id IS NOT NULL OR definition_id IS NOT NULL)) "
+                "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+            )
         return clauses, parameters
 
     def _run_query_document(self) -> str:
@@ -5671,6 +5778,46 @@ class SQLiteTaskRepository:
                    display.origin_kind AS origin_kind,
                    COALESCE(task_status.updated_at, runs.job_updated_at, runs.sort_at)
                        AS updated_at,
+                   -- The real execution window, published only when the durable
+                   -- stage was actually reached.  ``created_at``/
+                   -- ``updated_at`` are admission/bookkeeping timestamps and
+                   -- are never reused as a fake execution start or end.
+                   COALESCE(task_status.started_at, runs.job_started_at)
+                       AS execution_started_at,
+                   COALESCE(task_status.completed_at, runs.job_completed_at)
+                       AS execution_finished_at,
+                   -- Durable item evidence behind the published outcome: a
+                   -- ``success`` item whose latest Result proves the effect
+                   -- (or carries no uncertainty) is organized work; a
+                   -- success item whose latest Result still declares an
+                   -- uncertain effect is counted separately and never
+                   -- treated as proven success.
+                   (SELECT COUNT(*) FROM task_items success_items
+                    WHERE success_items.task_id = {task_identity}
+                    AND success_items.status = 'success'
+                    AND COALESCE((
+                        SELECT latest_success.effect_certainty
+                        FROM task_results latest_success
+                        WHERE latest_success.item_id = success_items.item_id
+                          AND latest_success.task_id = success_items.task_id
+                        ORDER BY latest_success.created_at DESC,
+                                 latest_success.result_id DESC
+                        LIMIT 1
+                    ), 'unknown') NOT IN ('attempted_unverified', 'unknown')
+                   ) AS organization_success_items,
+                   (SELECT COUNT(*) FROM task_items uncertain_items
+                    WHERE uncertain_items.task_id = {task_identity}
+                    AND uncertain_items.status = 'success'
+                    AND COALESCE((
+                        SELECT latest_uncertain.effect_certainty
+                        FROM task_results latest_uncertain
+                        WHERE latest_uncertain.item_id = uncertain_items.item_id
+                          AND latest_uncertain.task_id = uncertain_items.task_id
+                        ORDER BY latest_uncertain.created_at DESC,
+                                 latest_uncertain.result_id DESC
+                        LIMIT 1
+                    ), 'unknown') IN ('attempted_unverified', 'unknown')
+                   ) AS uncertain_success_items,
                    CASE
                        WHEN task_status.status = 'paused' THEN 'paused'
                        WHEN task_status.status = 'pending' THEN 'pending'
@@ -5743,6 +5890,8 @@ class SQLiteTaskRepository:
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
                        jobs.updated_at AS job_updated_at,
+                       jobs.started_at AS job_started_at,
+                       jobs.completed_at AS job_completed_at,
                        jobs.failure_category AS anchor_failure_category,
                        jobs.failure_durable_state AS anchor_failure_durable_state,
                        jobs.failure_next_action AS anchor_failure_next_action
@@ -5790,6 +5939,7 @@ class SQLiteTaskRepository:
         source: str | None = None,
         definition_id: str | None = None,
         trigger: str | None = None,
+        automation_admissions: bool = False,
     ) -> tuple[OperationsRunOverview, ...]:
         """One bounded, deterministic page of the unified run population.
 
@@ -5814,6 +5964,7 @@ class SQLiteTaskRepository:
             source=source,
             definition_id=definition_id,
             trigger=trigger,
+            automation_admissions=automation_admissions,
         )
         return page
 
@@ -5834,6 +5985,7 @@ class SQLiteTaskRepository:
         source: str | None = None,
         definition_id: str | None = None,
         trigger: str | None = None,
+        automation_admissions: bool = False,
     ) -> OperationsRunsWindow:
         """One page window plus filter-scoped totals from one read snapshot.
 
@@ -5876,6 +6028,7 @@ class SQLiteTaskRepository:
             source=source,
             definition_id=definition_id,
             trigger=trigger,
+            automation_admissions=automation_admissions,
         )
         filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
         page_clauses = list(filter_clauses)
@@ -6015,6 +6168,7 @@ class SQLiteTaskRepository:
         source: str | None = None,
         definition_id: str | None = None,
         trigger: str | None = None,
+        automation_admissions: bool = False,
     ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
         """Page, filtered total and status counts from one consistent basis.
 
@@ -6037,6 +6191,7 @@ class SQLiteTaskRepository:
             source=source,
             definition_id=definition_id,
             trigger=trigger,
+            automation_admissions=automation_admissions,
         )
         return window.page, window.total, window.status_counts
 
@@ -6156,13 +6311,23 @@ class SQLiteTaskRepository:
         counted exactly once.
 
         Each original admitted run counts once: the population is the same
-        deduplicated Job/Task/discovery document the inventory reads, so a Job
-        acquiring its Task never becomes a second run and a Task Center
-        recovery execution is a separate admission of its own (never a second
-        count of the original).  The denominator is the terminal cohort only
+        deduplicated Job/Task document the inventory reads, restricted to
+        *original Automation admissions* (a Scheduler-emitted occurrence or a
+        deliberate definition Run once).  A Job acquiring its Task never
+        becomes a second run, an ordinary Files/CLI run, a standalone manual
+        organize Task, a preparation-only discovery, a rejected/blocked attempt
+        and a Task Center recovery follow-up are all excluded, so the cards
+        report Automation work only.
+
+        The denominator is the terminal cohort only
         (``completed``/``partial_success``/``failed``/``cancelled``); active and
         waiting runs are reported separately and excluded from the rate, so a
-        still-running schedule never depresses or inflates success.
+        still-running schedule never depresses or inflates success.  A
+        successful numerator requires durable proof of organized work: a
+        terminal ``completed`` run with at least one genuinely successful
+        primary item and no uncertain success item.  A completed queue or
+        preparation row, a no-work completion and a skipped-only run are
+        therefore never counted as organizing success.
         """
 
         for value in (current_start, current_end, previous_start, previous_end):
@@ -6172,6 +6337,19 @@ class SQLiteTaskRepository:
             raise ValueError("automation metric window is inverted")
         document = self._run_query_document()
         terminal = "('completed', 'partial_success', 'failed', 'cancelled')"
+        admission_predicate = (
+            "WHERE ((run_kind = 'job' AND (schedule_id IS NOT NULL "
+            "OR definition_id IS NOT NULL)) "
+            "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+        )
+        organized = (
+            "derived_status = 'completed' AND organization_success_items > 0 "
+            "AND uncertain_success_items = 0"
+        )
+        no_work = (
+            "derived_status = 'completed' AND organization_success_items = 0 "
+            "AND uncertain_success_items = 0"
+        )
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -6185,17 +6363,42 @@ class SQLiteTaskRepository:
                             AND derived_status IN {terminal}
                             THEN 1 ELSE 0 END), 0) AS current_terminal,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
-                            AND derived_status = 'completed'
+                            AND {organized}
                             THEN 1 ELSE 0 END), 0) AS current_completed,
                         COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND {no_work}
+                            THEN 1 ELSE 0 END), 0) AS current_no_work,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
                             AND derived_status NOT IN {terminal}
-                            THEN 1 ELSE 0 END), 0) AS current_active
-                    FROM ({document})""",
+                            THEN 1 ELSE 0 END), 0) AS current_active,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status = 'partial_success'
+                            THEN 1 ELSE 0 END), 0) AS current_partial,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status = 'failed'
+                            THEN 1 ELSE 0 END), 0) AS current_failed,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND derived_status = 'cancelled'
+                            THEN 1 ELSE 0 END), 0) AS current_cancelled,
+                        COALESCE(SUM(CASE WHEN sort_at >= ? AND sort_at < ?
+                            AND uncertain_success_items > 0
+                            THEN 1 ELSE 0 END), 0) AS current_uncertain
+                    FROM ({document}) {admission_predicate}""",
                     (
                         current_start.isoformat(),
                         current_end.isoformat(),
                         previous_start.isoformat(),
                         previous_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
+                        current_start.isoformat(),
+                        current_end.isoformat(),
                         current_start.isoformat(),
                         current_end.isoformat(),
                         current_start.isoformat(),
@@ -6214,9 +6417,174 @@ class SQLiteTaskRepository:
             "previousAdmitted": int(row["previous_admitted"] or 0),
             "currentTerminal": int(row["current_terminal"] or 0),
             "currentCompleted": int(row["current_completed"] or 0),
+            "currentNoWork": int(row["current_no_work"] or 0),
+            "currentPartial": int(row["current_partial"] or 0),
+            "currentFailed": int(row["current_failed"] or 0),
+            "currentCancelled": int(row["current_cancelled"] or 0),
+            "currentUncertain": int(row["current_uncertain"] or 0),
             "currentActive": int(row["current_active"] or 0),
             "sideEffects": "none",
         }
+
+    def automation_latest_admitted_runs(self) -> dict[str, dict[str, object]]:
+        """The latest original admitted run per definition, from one snapshot.
+
+        The inventory needs one "latest processing outcome/time" per
+        definition that reflects the *newest original admitted run*, whether
+        the Scheduler emitted it or the operator deliberately started it once.
+        Reading only the scheduled-occurrence projection silently hid a
+        manual-only history, and reading the browser page hid every definition
+        outside it.  This method therefore returns one bounded row per durable
+        definition identity written by an admission (the Job's own
+        ``definition_id`` plus the durable manual origin), newest first, and
+        the caller merges it per definition.
+
+        Only durable evidence is used: the aggregate outcome is the same
+        derived status the records population publishes, and ``organized``
+        requires proven successful organization — a completed queue or
+        preparation row never becomes ``completed`` organization.
+        """
+
+        document = self._run_query_document()
+        admission_predicate = (
+            "WHERE ((run_kind = 'job' AND (schedule_id IS NOT NULL "
+            "OR definition_id IS NOT NULL)) "
+            "OR (run_kind = 'task' AND origin_definition_id IS NOT NULL))"
+        )
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                rows = self._connection.execute(
+                    f"""SELECT definition_key, sort_at, derived_status, derived_trigger,
+                            organization_success_items, uncertain_success_items,
+                            execution_started_at, execution_finished_at, anchor_id,
+                            COALESCE(
+                                CASE WHEN run_kind = 'task' THEN anchor_id END,
+                                linked_task_id, transfer_task_id
+                            ) AS linked_task_key,
+                            origin_definition_id, origin_definition_name
+                    FROM (
+                        SELECT *,
+                               COALESCE(definition_id, origin_definition_id)
+                                   AS definition_key
+                        FROM ({document})
+                        {admission_predicate}
+                    )
+                    WHERE definition_key IS NOT NULL
+                    ORDER BY definition_key ASC, sort_at DESC, anchor_id DESC"""
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        latest: dict[str, dict[str, object]] = {}
+        for row in rows:
+            key = str(row["definition_key"])
+            if key in latest:
+                continue
+            status = str(row["derived_status"])
+            success_items = _bounded_item_count(row["organization_success_items"])
+            uncertain = _bounded_item_count(row["uncertain_success_items"])
+            latest[key] = {
+                "definitionId": key,
+                "runId": str(row["anchor_id"]),
+                "taskId": (str(row["linked_task_key"]) if row["linked_task_key"] else None),
+                "admittedAt": str(row["sort_at"]),
+                "status": status,
+                "trigger": str(row["derived_trigger"]),
+                "organized": (status == "completed" and success_items > 0 and uncertain == 0),
+                "noWork": (status == "completed" and success_items == 0 and uncertain == 0),
+                "successItems": success_items,
+                "uncertainSuccessItems": uncertain,
+                "startedAt": (
+                    str(row["execution_started_at"]) if row["execution_started_at"] else None
+                ),
+                "finishedAt": (
+                    str(row["execution_finished_at"]) if row["execution_finished_at"] else None
+                ),
+                "definitionName": (
+                    str(row["origin_definition_name"]) if row["origin_definition_name"] else None
+                ),
+            }
+        return latest
+
+    def automation_linked_handling(self, run_ids: tuple[str, ...]) -> dict[str, dict]:
+        """Durable follow-up handling evidence for the given original runs.
+
+        One record's *original* result is a historical fact and is never
+        rewritten.  Whether the operator has since handled it is a separate,
+        exactly-linked question.  Every branch below joins through a persisted
+        identity only (source Task/Item, `recovery_continuations`,
+        `manual_recovery_preparations`, `scope_continuations`,
+        `manual_recovery_links`) — never a name, timestamp proximity or the
+        current status of some other Task.
+
+        The returned state is one of the closed set below, derived from the
+        linked continuation/preparation/execution evidence:
+
+        - ``handling``: a linked follow-up is queued/claimed/running;
+        - ``resolved``: a linked follow-up completed with a verified effect;
+        - ``recovery_failed``: the linked follow-up settled without success;
+        - ``investigation``: linked evidence exists but is ambiguous/unknown;
+        - ``unhandled``: no linked follow-up exists at all.
+
+        A continuation that admits work but never proves an effect is not
+        resolution, and an unavailable read is reported by the caller rather
+        than silently reading as ``unhandled``.
+        """
+
+        wanted = [value for value in run_ids if isinstance(value, str) and value][:100]
+        if not wanted:
+            return {}
+        placeholders = ", ".join("?" for _ in wanted)
+        handling: dict[str, dict] = {}
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                rows = self._connection.execute(
+                    f"""
+                    WITH sources(source_task_id) AS (
+                        SELECT task_id FROM tasks WHERE task_id IN ({placeholders})
+                    )
+                    SELECT 'recovery' AS kind, c.source_task_id AS source_task_id,
+                           c.status AS status, c.started_at AS started_at,
+                           c.completed_at AS completed_at,
+                           c.new_task_id AS new_task_id,
+                           c.recovery AS effect_status
+                    FROM recovery_continuations c
+                    JOIN sources s ON s.source_task_id = c.source_task_id
+                    UNION ALL
+                    SELECT 'scope', c.source_task_id, c.status, c.started_at,
+                           c.completed_at, c.new_task_id, NULL
+                    FROM scope_continuations c
+                    JOIN sources s ON s.source_task_id = c.source_task_id
+                    UNION ALL
+                    SELECT 'metadata-correction', c.source_task_id, c.status,
+                           c.started_at, c.completed_at, c.new_task_id, NULL
+                    FROM metadata_correction_continuations c
+                    JOIN sources s ON s.source_task_id = c.source_task_id
+                    UNION ALL
+                    SELECT 'preparation', p.source_task_id, p.status, p.created_at,
+                           p.updated_at, NULL, e.status
+                    FROM manual_recovery_preparations p
+                    JOIN sources s ON s.source_task_id = p.source_task_id
+                    LEFT JOIN manual_executions e ON e.execution_id = p.execution_id
+                    """,
+                    tuple(wanted),
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        grouped: dict[str, list] = {}
+        for row in rows:
+            grouped.setdefault(str(row["source_task_id"]), []).append(row)
+        for run_id in wanted:
+            entries = grouped.get(run_id)
+            handling[run_id] = _summarize_handling(entries)
+        return handling
 
     def _run_summary_files_locked(self, document: str) -> dict[str, int]:
         """Distinct affected primary files per recovery problem type.
@@ -7186,6 +7554,26 @@ class SQLiteTaskRepository:
                 str(row["origin_definition_name"]) if row["origin_definition_name"] else None
             ),
             origin_kind=(str(row["origin_kind"]) if row["origin_kind"] else None),
+            execution_started_at=(
+                datetime.fromisoformat(row["execution_started_at"])
+                if row["execution_started_at"]
+                else None
+            ),
+            execution_finished_at=(
+                datetime.fromisoformat(row["execution_finished_at"])
+                if row["execution_finished_at"]
+                else None
+            ),
+            organization_success_items=(
+                _bounded_item_count(row["organization_success_items"])
+                if run_kind != "discovery"
+                else 0
+            ),
+            uncertain_success_items=(
+                _bounded_item_count(row["uncertain_success_items"])
+                if run_kind != "discovery"
+                else 0
+            ),
         )
 
     def claim_next_job(

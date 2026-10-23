@@ -407,6 +407,16 @@ function optionalCount(
   return count(source, field);
 }
 
+function optionalFlag(
+  source: Record<string, unknown>,
+  field: string,
+): boolean | null {
+  if (source[field] === null || source[field] === undefined) {
+    return null;
+  }
+  return flag(source, field);
+}
+
 function optionalFiniteNumber(
   source: Record<string, unknown>,
   field: string,
@@ -1437,6 +1447,85 @@ export function normalizeAutomationDraftDocument(
   };
 }
 
+/**
+ * The full-population definition aggregates the inventory cards publish.
+ *
+ * They are computed by the backend over the exact current Active configuration
+ * and every open Draft, never from the current page or the submitted filters:
+ * a Draft-only correction entry is counted separately and is never counted as a
+ * published or enabled definition.
+ */
+export interface AutomationInventoryCountsModel {
+  readonly published: number;
+  readonly enabled: number;
+  readonly draftOnly: number;
+  readonly total: number;
+  readonly basis: string;
+  readonly scope: string;
+}
+
+export function normalizeInventoryCounts(
+  value: unknown,
+  field = "inventoryCounts",
+): AutomationInventoryCountsModel | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const source = readRecord(value, field);
+  return {
+    published: count(source, "published"),
+    enabled: count(source, "enabled"),
+    draftOnly: count(source, "draftOnly"),
+    total: count(source, "total"),
+    basis: text(source, "basis"),
+    scope: text(source, "scope"),
+  };
+}
+
+/** One definition's newest original admitted run, from durable evidence. */
+export interface AutomationLatestRunModel {
+  readonly definitionId: string;
+  readonly runId: string | null;
+  readonly taskId: string | null;
+  readonly admittedAt: string | null;
+  readonly status: string | null;
+  readonly trigger: string | null;
+  readonly organized: boolean | null;
+  readonly noWork: boolean | null;
+  readonly successItems: number | null;
+  readonly uncertainSuccessItems: number | null;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly definitionName: string | null;
+  readonly unavailable: boolean;
+  readonly nextAction: string | null;
+}
+
+function normalizeLatestRun(
+  value: unknown,
+  field: string,
+): AutomationLatestRunModel {
+  const source = readRecord(value, field);
+  const unavailable = source["unavailable"] === true;
+  return {
+    definitionId: text(source, "definitionId"),
+    runId: optionalText(source, "runId"),
+    taskId: optionalText(source, "taskId"),
+    admittedAt: optionalText(source, "admittedAt"),
+    status: optionalText(source, "status"),
+    trigger: optionalText(source, "trigger"),
+    organized: unavailable ? null : optionalFlag(source, "organized"),
+    noWork: unavailable ? null : optionalFlag(source, "noWork"),
+    successItems: optionalCount(source, "successItems"),
+    uncertainSuccessItems: optionalCount(source, "uncertainSuccessItems"),
+    startedAt: unavailable ? null : optionalText(source, "startedAt"),
+    finishedAt: unavailable ? null : optionalText(source, "finishedAt"),
+    definitionName: optionalText(source, "definitionName"),
+    unavailable,
+    nextAction: optionalText(source, "nextAction"),
+  };
+}
+
 /** One full-population Automation metric card set (RO-1 metric contract). */
 export interface AutomationMetricsModel {
   readonly available: boolean;
@@ -1453,6 +1542,13 @@ export interface AutomationMetricsModel {
   readonly completedCount: number | null;
   readonly monthToDateTerminal: number | null;
   readonly monthToDateActive: number | null;
+  readonly monthToDateNoWork: number | null;
+  readonly monthToDatePartial: number | null;
+  readonly monthToDateFailed: number | null;
+  readonly monthToDateCancelled: number | null;
+  readonly monthToDateUncertain: number | null;
+  /** The linked inventory aggregates, independent of the page/filters. */
+  readonly inventory: AutomationInventoryCountsModel | null;
   readonly noWorkStatement: string;
   readonly nextAction: string | null;
   readonly windows: {
@@ -1534,6 +1630,15 @@ export function normalizeAutomationMetrics(
     completedCount: optionalCount(source, "completedCount"),
     monthToDateTerminal: terminal,
     monthToDateActive: optionalCount(source, "monthToDateActive"),
+    monthToDateNoWork: optionalCount(source, "monthToDateNoWork"),
+    monthToDatePartial: optionalCount(source, "monthToDatePartial"),
+    monthToDateFailed: optionalCount(source, "monthToDateFailed"),
+    monthToDateCancelled: optionalCount(source, "monthToDateCancelled"),
+    monthToDateUncertain: optionalCount(source, "monthToDateUncertain"),
+    inventory: normalizeInventoryCounts(
+      source["inventory"],
+      `${field}.inventory`,
+    ),
     noWorkStatement: text(source, "noWorkStatement"),
     nextAction: optionalText(source, "nextAction"),
     windows,
@@ -1582,6 +1687,12 @@ export interface AutomationDefinitionsPage {
   readonly total: number;
   readonly truncated: boolean;
   readonly metrics: AutomationMetricsModel;
+  /** Full-population published/enabled/Draft aggregates (page-independent). */
+  readonly inventoryCounts: AutomationInventoryCountsModel;
+  /** Newest original admitted run per definition, keyed by definition ID. */
+  readonly latestAdmittedRuns: Readonly<
+    Record<string, AutomationLatestRunModel>
+  >;
   readonly query: AutomationInventoryQueryModel;
   readonly itemsTruncatedByCap: boolean;
   readonly nextCursor: string | null;
@@ -1619,6 +1730,14 @@ export function normalizeAutomationDefinitionsPage(
     total: count(source, "total"),
     truncated: flag(source, "truncated"),
     metrics: normalizeAutomationMetrics(source["metrics"]),
+    inventoryCounts:
+      normalizeInventoryCounts(source["inventoryCounts"]) ??
+      normalizeInventoryCounts(
+        readRecord(source["metrics"] ?? {}, "metrics")["inventory"],
+        "metrics.inventory",
+      ) ??
+      fail("inventoryCounts"),
+    latestAdmittedRuns: normalizeLatestRuns(source["latestAdmittedRuns"]),
     query: normalizeInventoryQuery(source["query"]),
     itemsTruncatedByCap: flag(source, "itemsTruncatedByCap"),
     nextCursor: optionalText(source, "next_cursor"),
@@ -1645,6 +1764,25 @@ export function normalizeAutomationDefinitionsPage(
       ),
     },
   };
+}
+
+function normalizeLatestRuns(
+  value: unknown,
+): Readonly<Record<string, AutomationLatestRunModel>> {
+  if (value === null || value === undefined) {
+    return {};
+  }
+  const source = readRecord(value, "latestAdmittedRuns");
+  const entries = Object.entries(source);
+  if (entries.length > 10000) {
+    return fail("latestAdmittedRuns");
+  }
+  const runs: Record<string, AutomationLatestRunModel> = {};
+  for (const [key, entry] of entries) {
+    if (entry === null || entry === undefined) continue;
+    runs[key] = normalizeLatestRun(entry, `latestAdmittedRuns.${key}`);
+  }
+  return runs;
 }
 
 export interface AutomationOccurrencesPage {
@@ -1694,6 +1832,44 @@ export type AutomationRecordOwnership =
 export const AUTOMATION_RECORD_OWNERSHIPS: readonly AutomationRecordOwnership[] =
   ["task_center", "prestart_repair", "reconcile"];
 
+/** The separately linked follow-up handling state of one original record. */
+export const AUTOMATION_HANDLING_STATES = [
+  "unhandled",
+  "handling",
+  "recovery_failed",
+  "resolved",
+  "investigation",
+  "unavailable",
+] as const;
+export type AutomationHandlingState =
+  (typeof AUTOMATION_HANDLING_STATES)[number];
+
+/** One bounded next action a read-only record may point at. */
+export interface AutomationRecordNextActionModel {
+  readonly kind: string;
+  readonly statement: string;
+  readonly runId: string | null;
+  readonly definitionId: string | null;
+  readonly category: string | null;
+}
+
+/** The original outcome plus the durable item evidence behind it. */
+export interface AutomationRecordResultModel {
+  readonly organized: boolean;
+  readonly noWork: boolean;
+  readonly successItems: number;
+  readonly uncertainSuccessItems: number;
+  readonly statement: string;
+}
+
+/** The bounded failure stage/reason of one record, when there is one. */
+export interface AutomationRecordFailureStageModel {
+  readonly stage: string;
+  readonly category: string | null;
+  readonly nextAction: string | null;
+  readonly statement: string;
+}
+
 export interface AutomationRecordModel {
   readonly recordId: string;
   readonly runKind: string;
@@ -1702,6 +1878,9 @@ export interface AutomationRecordModel {
   readonly commandLabel: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** The real execution window; `null` while that stage was not reached. */
+  readonly executionStartedAt: string | null;
+  readonly executionFinishedAt: string | null;
   readonly jobId: string | null;
   readonly taskId: string | null;
   readonly definitionId: string | null;
@@ -1711,6 +1890,16 @@ export interface AutomationRecordModel {
   readonly completedItems: number | null;
   readonly failedItems: number | null;
   readonly definitionName: string | null;
+  readonly result: AutomationRecordResultModel;
+  readonly failureStage: AutomationRecordFailureStageModel | null;
+  readonly nextAction: AutomationRecordNextActionModel | null;
+  readonly handling: {
+    readonly state: AutomationHandlingState;
+    readonly attempts: number;
+    readonly latestKind: string | null;
+    readonly latestStatus: string | null;
+    readonly nextAction: string | null;
+  };
   readonly handoff: {
     readonly ownership: AutomationRecordOwnership;
     readonly formalExecution: boolean;
@@ -1746,6 +1935,16 @@ function normalizeAutomationRecord(
     // or in the existing supported definition command, never in the record.
     return fail(`${field}.handoff.startAgainAllowed`);
   }
+  const result = readRecord(source["result"], `${field}.result`);
+  const failureStage = optionalRecord(
+    source["failureStage"],
+    `${field}.failureStage`,
+  );
+  const nextAction = optionalRecord(
+    source["nextAction"],
+    `${field}.nextAction`,
+  );
+  const handling = readRecord(source["handling"], `${field}.handling`);
   return {
     recordId: text(source, "recordId"),
     runKind: text(source, "run_kind"),
@@ -1754,6 +1953,8 @@ function normalizeAutomationRecord(
     commandLabel: optionalText(source, "command_label"),
     createdAt: text(source, "created_at"),
     updatedAt: text(source, "updated_at"),
+    executionStartedAt: optionalText(source, "executionStartedAt"),
+    executionFinishedAt: optionalText(source, "executionFinishedAt"),
     jobId: optionalText(source, "job_id"),
     taskId: optionalText(source, "task_id"),
     definitionId: optionalText(history, "definitionId"),
@@ -1762,6 +1963,43 @@ function normalizeAutomationRecord(
     totalItems: optionalCount(source, "total_items"),
     completedItems: optionalCount(source, "completed_items"),
     failedItems: optionalCount(source, "failed_items"),
+    result: {
+      organized: flag(result, "organized"),
+      noWork: flag(result, "noWork"),
+      successItems: count(result, "successItems"),
+      uncertainSuccessItems: count(result, "uncertainSuccessItems"),
+      statement: text(result, "statement"),
+    },
+    failureStage:
+      failureStage === null
+        ? null
+        : {
+            stage: text(failureStage, "stage"),
+            category: optionalText(failureStage, "category"),
+            nextAction: optionalText(failureStage, "nextAction"),
+            statement: text(failureStage, "statement"),
+          },
+    nextAction:
+      nextAction === null
+        ? null
+        : {
+            kind: text(nextAction, "kind"),
+            statement: text(nextAction, "statement"),
+            runId: optionalText(nextAction, "runId"),
+            definitionId: optionalText(nextAction, "definitionId"),
+            category: optionalText(nextAction, "category"),
+          },
+    handling: {
+      state: enumOrFail(
+        handling["state"],
+        `${field}.handling.state`,
+        AUTOMATION_HANDLING_STATES,
+      ),
+      attempts: count(handling, "attempts"),
+      latestKind: optionalText(handling, "latestKind"),
+      latestStatus: optionalText(handling, "latestStatus"),
+      nextAction: optionalText(handling, "nextAction"),
+    },
     definitionName:
       optionalText(history, "definitionName") ??
       optionalText(origin ?? {}, "definitionName"),

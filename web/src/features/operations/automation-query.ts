@@ -92,6 +92,10 @@ export function automationRecordsQueryOptions(
       options.status ?? null,
       options.from ?? null,
       options.to ?? null,
+      // The paging direction is part of the key: the backend refuses a cursor
+      // whose direction does not match, so a page reached backwards must never
+      // be served from the forward page's cache entry.
+      options.direction ?? null,
       options.limit ?? null,
       options.cursor ?? null,
     ],

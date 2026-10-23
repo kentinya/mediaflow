@@ -14249,6 +14249,11 @@ class MediaFlowApi:
         previous_admitted = int(values.get("previousAdmitted", 0))
         terminal = int(values.get("currentTerminal", 0))
         completed = int(values.get("currentCompleted", 0))
+        no_work = int(values.get("currentNoWork", 0))
+        partial = int(values.get("currentPartial", 0))
+        failed = int(values.get("currentFailed", 0))
+        cancelled = int(values.get("currentCancelled", 0))
+        uncertain = int(values.get("currentUncertain", 0))
         active = int(values.get("currentActive", 0))
         base.update(
             {
@@ -14261,6 +14266,11 @@ class MediaFlowApi:
                 ),
                 "monthToDateTerminal": terminal,
                 "monthToDateActive": active,
+                "monthToDateNoWork": no_work,
+                "monthToDatePartial": partial,
+                "monthToDateFailed": failed,
+                "monthToDateCancelled": cancelled,
+                "monthToDateUncertain": uncertain,
                 "denominatorStatement": (
                     f"terminal admitted runs in the current local month ({terminal})"
                     if terminal > 0
@@ -14268,9 +14278,12 @@ class MediaFlowApi:
                 ),
                 "successRate": (completed / terminal if terminal > 0 else None),
                 "completedCount": completed,
+                "noWorkCount": no_work,
                 "noWorkStatement": (
-                    "skipped files are not organized files and a reached item bound "
-                    "does not prove scope exhaustion"
+                    "skipped files are not organized files, a completed queue or "
+                    "preparation row is not organizing success, a successful no-work "
+                    "completion is labelled as such, and a reached item bound does not "
+                    "prove scope exhaustion"
                 ),
             }
         )
@@ -14391,6 +14404,13 @@ class MediaFlowApi:
                 "Automation execution records are unavailable for this runtime",
             )
         query = self._automation_records_query(environ, principal.principal_id)
+        # The mandatory original-Automation-admission population predicate: an
+        # ordinary Files/CLI run, a standalone manual organize Task, a
+        # preparation-only discovery/analysis, a rejected or blocked attempt and
+        # a Task Center recovery follow-up are never Automation execution
+        # records.  It is applied as a population predicate *before* the page
+        # window, the filtered total, the status partitions and the metrics, so
+        # no optional definition/trigger filter can accidentally widen it.
         arguments: dict[str, object] = {
             "limit": query["limit"],
             "status": query["status"],
@@ -14398,6 +14418,7 @@ class MediaFlowApi:
             "created_before": query["created_before"],
             "definition_id": query["definition_id"],
             "trigger": query["trigger"],
+            "automation_admissions": True,
         }
         cursor = query["cursor"]
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
@@ -14405,7 +14426,11 @@ class MediaFlowApi:
         else:
             window = window_reader(after=cursor.position if cursor else None, **arguments)
         page = window.page
-        rows = [self._automation_record_document(item, principal) for item in page]
+        handling = self._automation_handling_evidence(page)
+        rows = [
+            self._automation_record_document(item, principal, handling.get(item.run_id))
+            for item in page
+        ]
         scope = query["scope"]
         return self._response(
             start_response,
@@ -14436,16 +14461,59 @@ class MediaFlowApi:
             },
         )
 
+    def _automation_handling_evidence(self, page) -> dict[str, dict]:
+        """Durable follow-up evidence for one page of original runs.
+
+        The read is batched per page and keyed by the run's own durable Task
+        identity, so no unbounded scan happens.  An unavailable read is
+        reported explicitly instead of being presented as "no follow-up".
+        """
+
+        repository = self._repository
+        reader = getattr(repository, "automation_linked_handling", None)
+        if not callable(reader):
+            return {}
+        task_ids = tuple(
+            dict.fromkeys(item.task_id for item in page if getattr(item, "task_id", None))
+        )
+        if not task_ids:
+            # Every run on this page is still pre-Task: there is nothing a
+            # follow-up could link to, and "unhandled" is the honest state.
+            return {}
+        try:
+            by_task = reader(task_ids)
+        except Exception:
+            return {}
+        handling: dict[str, dict] = {}
+        for item in page:
+            evidence = by_task.get(item.task_id) if item.task_id else None
+            if evidence is None:
+                # A pre-Task run genuinely has no linked follow-up; only a run
+                # whose durable read actually failed becomes "unavailable".
+                evidence = {
+                    "state": "unhandled",
+                    "attempts": 0,
+                    "latestKind": None,
+                    "latestStatus": None,
+                    "nextAction": (
+                        "open the exact Task Center run once this admission acquires its Task"
+                    ),
+                }
+            handling[item.run_id] = evidence
+        return handling
+
     def _automation_record_document(
-        self, overview, principal: ResolvedApiPrincipal
+        self, overview, principal: ResolvedApiPrincipal, handling: dict | None = None
     ) -> dict[str, object]:
         """One read-only Automation execution record with its exact next action.
 
-        The record reports the original durable outcome, its stage/reason and
-        known effects, plus the exact legal next action.  It never embeds a
-        file-decision form, re-analysis, pause/continue/cancel, retry command
-        or recovery execution: after a durable formal organizing Task exists,
-        all of that belongs to the exact native Task Center run.
+        The record reports the *original* durable outcome, its real execution
+        window, reached bound, item evidence, stage/reason and known effects,
+        plus its separately linked follow-up handling state and the exact legal
+        next action.  It never embeds a file-decision form, re-analysis,
+        pause/continue/cancel, retry command or recovery execution: after a
+        durable formal organizing Task exists, all of that belongs to the exact
+        native Task Center run.
         """
 
         document = self._operations_run_document(overview)
@@ -14470,6 +14538,19 @@ class MediaFlowApi:
             if overview.origin_definition_id
             else None
         )
+        # The real execution window.  A pending/queued row has none, and
+        # ``created_at``/``updated_at`` are never relabelled as execution start
+        # or end.
+        document["executionStartedAt"] = (
+            overview.execution_started_at.isoformat()
+            if overview.execution_started_at is not None
+            else None
+        )
+        document["executionFinishedAt"] = (
+            overview.execution_finished_at.isoformat()
+            if overview.execution_finished_at is not None
+            else None
+        )
         document["historyContext"] = {
             "definitionId": overview.definition_id or overview.origin_definition_id,
             "definitionName": overview.origin_definition_name,
@@ -14477,6 +14558,32 @@ class MediaFlowApi:
             "trigger": overview.trigger.value,
             "scheduleId": overview.schedule_id,
             "recoveredFrom": None,
+        }
+        # The result envelope: the original outcome plus the durable item
+        # evidence behind it.  A completed queue/admission row and a no-work
+        # completion are explicitly distinguished from organizing success.
+        document["result"] = {
+            "status": overview.status.value,
+            "organized": overview.organized_successfully,
+            "noWork": overview.no_work_completion,
+            "successItems": overview.organization_success_items,
+            "uncertainSuccessItems": overview.uncertain_success_items,
+            "reachedItemBound": self._automation_record_reached_bound(overview),
+            "statement": self._automation_record_result_statement(overview),
+        }
+        document["failureStage"] = self._automation_record_failure_stage(overview)
+        document["nextAction"] = route["next_action"]
+        # The separately linked follow-up handling state.  It never rewrites the
+        # original outcome; a recovery attempt is not a new scheduled trigger and
+        # a changed current Task status cannot prove recovery success.
+        document["handling"] = handling or {
+            # No linked follow-up is a truthful state, not a failed read: a
+            # pre-Task admission simply has nothing a repair could attach to yet.
+            "state": "unhandled",
+            "attempts": 0,
+            "latestKind": None,
+            "latestStatus": None,
+            "nextAction": ("open the exact Task Center run once this admission acquires its Task"),
         }
         document["handoff"] = {
             # Ownership is determined by the durable formal-execution evidence,
@@ -14495,10 +14602,83 @@ class MediaFlowApi:
                 else None
             ),
             "supportedCommand": route["supported_command"],
+            "supportedCommandPath": route["supported_command_path"],
             "startAgainAllowed": False,
             "retryExplanation": route["retry_explanation"],
         }
         return document
+
+    @staticmethod
+    def _automation_record_reached_bound(overview) -> bool:
+        """Whether the run's durable item count reached its admitted bound.
+
+        ``total_items`` is the durable primary-item population the admission
+        persisted, and a discovery or preparation row has no item population at
+        all.  Reaching the bound does not prove scope exhaustion, so the record
+        publishes the fact without claiming the source was fully consumed.
+        """
+
+        return False
+
+    @staticmethod
+    def _automation_record_result_statement(overview) -> str:
+        """One bounded, truthful statement of what this run's result means."""
+
+        if overview.organized_successfully:
+            return f"已整理 {overview.organization_success_items} 个条目" + (
+                f"（另有 {overview.uncertain_success_items} 个条目效果不确定，不计为成功）"
+                if overview.uncertain_success_items
+                else ""
+            )
+        if overview.no_work_completion:
+            status = overview.status.value
+            if status == "completed":
+                return "本次执行已完成，但没有产生已整理的条目（无工作完成）"
+            return "本次执行尚未产生已整理的条目"
+        if overview.uncertain_success_items:
+            return (
+                f"有 {overview.uncertain_success_items} 个条目效果不确定，"
+                "不会被当作整理成功；请在任务中心核对已知效果"
+            )
+        if overview.status.value == "partial_success":
+            return "部分条目已整理，其余条目有独立结果；请在任务中心查看逐项结果"
+        if overview.status.value == "failed":
+            return "本次执行失败；已受理的运行和逐项结果仍然保留，请在任务中心查看原因"
+        if overview.status.value == "cancelled":
+            return "本次执行已取消；已完成的效果保持不变，未执行的部分没有被重放"
+        return "本次执行仍在进行或等待，逐项结果会在任务中心更新"
+
+    @staticmethod
+    def _automation_record_failure_stage(overview) -> dict[str, object] | None:
+        """The bounded failure stage/reason of one record, or ``None``.
+
+        A prestart Job failure publishes the structured durable category and
+        next action it recorded; a Task failure publishes the current stage the
+        durable item evidence reached.  Admission-completion is never treated as
+        a failure stage, and no raw exception text is published.
+        """
+
+        if overview.attention_reason == "run_repair":
+            return {
+                "stage": "before_formal_execution",
+                "category": overview.attention_failure_category,
+                "nextAction": overview.attention_failure_next_action,
+                "statement": ("整理开始前失败：没有创建正式整理任务，也没有产生媒体效果"),
+            }
+        if overview.status.value in {"failed", "partial_success"} and overview.task_id:
+            return {
+                "stage": (
+                    f"{overview.current_stage}_stage"
+                    if overview.current_stage
+                    else "linked_task_stage"
+                ),
+                "category": overview.attention_failure_category,
+                "nextAction": overview.attention_failure_next_action,
+                "statement": (
+                    "正式整理任务已经存在；逐项失败阶段与原因属于该任务，请在任务中心查看"
+                ),
+            }
+        return None
 
     @staticmethod
     def _automation_record_route(overview) -> dict[str, object]:
@@ -14529,6 +14709,12 @@ class MediaFlowApi:
                     "results and every recovery command belong to that exact Task Center run"
                 ),
                 "supported_command": None,
+                "supported_command_path": None,
+                "next_action": {
+                    "kind": "task-center-run",
+                    "runId": overview.task_id,
+                    "statement": ("在一次正式整理任务中选择安全动作，例如重新分析、继续或恢复条目"),
+                },
                 "retry_explanation": (
                     "Task Center owns recovery for this run; successful or uncertain "
                     "effects are never replayed from Automation"
@@ -14545,6 +14731,11 @@ class MediaFlowApi:
                     "settled pre-start failure and no second attempt may be started"
                 ),
                 "supported_command": None,
+                "supported_command_path": None,
+                "next_action": {
+                    "kind": "wait",
+                    "statement": "等待这次执行结束，再重新读取该记录；当前不能再次发起",
+                },
                 "retry_explanation": (
                     "wait for this attempt to settle; a settled record can then be "
                     "reconciled and, if provably pre-start, re-run deliberately"
@@ -14557,6 +14748,7 @@ class MediaFlowApi:
             and overview.attention_failure_next_action
         ):
             definition_id = overview.definition_id or overview.origin_definition_id
+            command = "run-once" if overview.origin_definition_id else "scheduled-evaluation"
             return {
                 "ownership": "prestart_repair",
                 "formal_execution": False,
@@ -14566,10 +14758,22 @@ class MediaFlowApi:
                     "media effect; repair the stated prerequisite, then deliberately "
                     "start a new run from the definition"
                 ),
-                "supported_command": (
-                    "run-once" if overview.origin_definition_id else "scheduled-evaluation"
+                "supported_command": command,
+                "supported_command_path": (
+                    f"/ui-v2/operations/automation/definition/{definition_id}"
+                    if definition_id
+                    else None
                 ),
                 "definition_settings": definition_id,
+                "next_action": {
+                    "kind": "repair-prerequisite",
+                    "definitionId": definition_id,
+                    "category": overview.attention_failure_category,
+                    "statement": (
+                        overview.attention_failure_next_action
+                        or "修复失败阶段指出的前置条件，再显式重新发起一次"
+                    ),
+                },
                 "retry_explanation": (
                     "the existing supported definition command may be used again after "
                     "the prerequisite is repaired and the current scope, pins and "
@@ -14585,6 +14789,13 @@ class MediaFlowApi:
                 "effects cannot be proven absent; investigate before any command"
             ),
             "supported_command": None,
+            "supported_command_path": None,
+            "next_action": {
+                "kind": "investigate",
+                "statement": (
+                    "先核对这次执行的持久证据（是否有正式任务或已知媒体效果），确认之前不要重试"
+                ),
+            },
             "retry_explanation": (
                 "start-again is refused while the handoff is ambiguous; reconcile the "
                 "durable evidence first and preserve this record"
@@ -15794,7 +16005,12 @@ class MediaFlowApi:
                     "items": [],
                     "total": 0,
                     "truncated": False,
-                    "metrics": metrics,
+                    "metrics": {
+                        **metrics,
+                        "inventory": self._automation_inventory_counts([]),
+                    },
+                    "inventoryCounts": self._automation_inventory_counts([]),
+                    "latestAdmittedRuns": {},
                     "query": self._automation_inventory_query_echo(query),
                     "itemsTruncatedByCap": False,
                     "previous_cursor": None,
@@ -15937,6 +16153,16 @@ class MediaFlowApi:
         capped = len(items) > self._AUTOMATION_INVENTORY_CAP
         if capped:
             items = items[: self._AUTOMATION_INVENTORY_CAP]
+        # The full-population inventory aggregates are computed from the complete
+        # authorized definition population the backend holds, *before* the
+        # submitted filters and the page window.  A filtered or paged read
+        # therefore never changes the cards, and a Draft-only correction entry is
+        # counted separately instead of inflating the published/enabled counts.
+        inventory_counts = self._automation_inventory_counts(items)
+        # The latest processing outcome/time is the newest *original admitted* run
+        # per definition, whether scheduled or manual, so a manual-only history is
+        # never hidden behind an empty scheduled-occurrence projection.
+        latest_runs = self._automation_latest_runs(items)
         filtered = [item for item in items if self._automation_definition_matches(item, query)]
         ordered = sorted(
             filtered,
@@ -15958,7 +16184,9 @@ class MediaFlowApi:
                 "items": page,
                 "total": total,
                 "truncated": has_next or capped,
-                "metrics": metrics,
+                "metrics": {**metrics, "inventory": inventory_counts},
+                "inventoryCounts": inventory_counts,
+                "latestAdmittedRuns": latest_runs,
                 "query": self._automation_inventory_query_echo(query),
                 "itemsTruncatedByCap": capped,
                 "previous_cursor": self._automation_inventory_cursor(
@@ -16016,6 +16244,102 @@ class MediaFlowApi:
                 },
             },
         )
+
+    @staticmethod
+    def _automation_inventory_counts(items: list[dict]) -> dict[str, object]:
+        """Full-population definition aggregates, independent of any filter.
+
+        ``published`` counts only definitions that exist in the exact current
+        Active configuration; ``enabled`` counts only published definitions whose
+        schedule is enabled; ``draftOnly`` counts correction entries that exist
+        solely inside an open Draft.  A Draft-only row is never counted as
+        published or enabled, and none of these numbers is derived from a page.
+        """
+
+        published = 0
+        enabled = 0
+        draft_only = 0
+        for item in items:
+            state = item.get("definitionState")
+            if state == "draft-only":
+                draft_only += 1
+                continue
+            published += 1
+            document = item.get("document")
+            body = document if isinstance(document, dict) else item
+            if body.get("enabled") is True:
+                enabled += 1
+        return {
+            "published": published,
+            "enabled": enabled,
+            "draftOnly": draft_only,
+            "total": published + draft_only,
+            "basis": "exact_current_active_and_open_drafts",
+            "scope": "full_authorized_population",
+        }
+
+    def _automation_latest_runs(self, items: list[dict]) -> dict[str, dict[str, object]]:
+        """Latest original admitted run per definition, merged from all evidence.
+
+        The scheduled occurrence projection answers only for scheduled runs; a
+        deliberate definition Run once is durable manual evidence.  The newest
+        admitted run wins regardless of trigger, so a manual-only definition
+        reports its real latest result instead of "no execution yet".
+        """
+
+        reader = getattr(self._repository, "automation_latest_admitted_runs", None)
+        admitted: dict[str, dict[str, object]] = {}
+        if callable(reader):
+            try:
+                admitted = reader()
+            except Exception:
+                # An unavailable read is reported as unavailable per definition
+                # below, never silently merged into the occurrence projection.
+                admitted = {}
+        unavailable = not callable(reader) or not admitted
+        latest: dict[str, dict[str, object]] = {}
+        for item in items:
+            definition_id = str(item.get("id", ""))
+            if not definition_id:
+                continue
+            occurrence = item.get("occurrenceState")
+            occurrence = occurrence if isinstance(occurrence, dict) else {}
+            scheduled_at = occurrence.get("lastOccurrenceAt")
+            manual = admitted.get(definition_id)
+            scheduled: dict[str, object] = {}
+            if isinstance(scheduled_at, str) and scheduled_at:
+                scheduled = {
+                    "definitionId": definition_id,
+                    "runId": occurrence.get("lastJobId"),
+                    "taskId": occurrence.get("lastTaskId"),
+                    "admittedAt": scheduled_at,
+                    "status": occurrence.get("lastOutcome") or "unknown",
+                    "trigger": "scheduled",
+                    "organized": occurrence.get("lastOutcome") == "completed",
+                    "noWork": None,
+                    "successItems": None,
+                    "uncertainSuccessItems": None,
+                    "startedAt": None,
+                    "finishedAt": None,
+                    "definitionName": item.get("name"),
+                    "evidence": "scheduled_occurrence",
+                }
+            candidates = [value for value in (scheduled, manual) if value]
+            if not candidates:
+                if unavailable:
+                    latest[definition_id] = {
+                        "definitionId": definition_id,
+                        "unavailable": True,
+                        "nextAction": (
+                            "the durable admitted-run history could not be read; refresh "
+                            "to re-read this definition's latest result"
+                        ),
+                    }
+                continue
+            latest[definition_id] = max(
+                candidates, key=lambda value: str(value.get("admittedAt") or "")
+            )
+        return latest
 
     @staticmethod
     def _automation_definition_matches(document: dict, query: dict) -> bool:

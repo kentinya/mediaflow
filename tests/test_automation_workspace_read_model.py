@@ -33,6 +33,7 @@ No production media, credentials or external service is used.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import json
 import tempfile
@@ -51,8 +52,12 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
     PersistentTask,
+    PersistentTaskItem,
     PersistentTaskStatus,
+    RunDisplayContext,
+    TaskItemStatus,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -181,8 +186,161 @@ def _job(
     )
 
 
+def _run_item(
+    task_id: str,
+    item_id: str,
+    status: TaskItemStatus,
+    *,
+    created_at: datetime = _NOW,
+) -> PersistentTaskItem:
+    return PersistentTaskItem(
+        item_id=item_id,
+        task_id=task_id,
+        storage_id="source-storage",
+        resource_library_id="source",
+        source_path=f"Media/电影/{item_id}.mkv",
+        source_display=f"Media/电影/{item_id}.mkv",
+        status=status,
+        stage="organizing",
+        attempts=1,
+        created_at=created_at,
+        updated_at=created_at,
+        destination_storage_id="target-storage" if status is TaskItemStatus.SUCCESS else None,
+        destination_path=(f"Movies/{item_id}.mkv" if status is TaskItemStatus.SUCCESS else None),
+    )
+
+
+def _run_result(
+    task_id: str,
+    item_id: str,
+    *,
+    created_at: datetime = _NOW,
+    effect_certainty: str = "verified_complete",
+    status: str = "success",
+) -> PersistentResultRecord:
+    return PersistentResultRecord(
+        f"result-{item_id}",
+        task_id,
+        item_id,
+        "source-storage",
+        f"Media/电影/{item_id}.mkv",
+        "target-storage" if status == "success" else None,
+        f"Movies/{item_id}.mkv" if status == "success" else None,
+        "C",
+        "tmdb",
+        "603",
+        None,
+        "A",
+        "A",
+        None,
+        "MOVE",
+        status,
+        created_at,
+        title="Example",
+        effect_certainty=effect_certainty,
+        primary_completed=status == "success",
+    )
+
+
+def _bare_discovery(discovery_id: str, created_at: datetime):
+    """A preparation-only bounded discovery with no linked Task and no origin."""
+
+    from mediaflow.domain.media_discovery import (
+        DiscoveryBudgets,
+        DiscoveryCounters,
+        DiscoveryEntryKind,
+        DiscoveryIncompleteReason,
+        DiscoveryProgress,
+        DiscoveryScopeEntry,
+        DiscoveryStatus,
+        MediaDiscovery,
+    )
+
+    return MediaDiscovery(
+        discovery_id,
+        "admin",
+        "source",
+        "source-storage",
+        "revision-active",
+        "d" * 64,
+        DiscoveryStatus.COMPLETED,
+        1,
+        DiscoveryBudgets(),
+        DiscoveryProgress(
+            "completed",
+            (DiscoveryScopeEntry("Media", DiscoveryEntryKind.DIRECTORY),),
+            DiscoveryCounters(),
+            DiscoveryIncompleteReason.NONE,
+            (),
+            (),
+        ),
+        created_at,
+        created_at,
+    )
+
+
 class AutomationWorkspaceReadModelTests(unittest.TestCase):
     """One real managed runtime with real SQLite persistence."""
+
+    def _admitted_automation_run(
+        self,
+        value,
+        identity: str,
+        *,
+        created_at: datetime = _NOW,
+        status: PersistentTaskStatus = PersistentTaskStatus.COMPLETED,
+        job_status: AutomationJobStatus = AutomationJobStatus.COMPLETED,
+        succeeded_items: int = 0,
+        uncertain_items: int = 0,
+        definition_id: str = _DEFINITION["id"],
+        schedule_id: str = "schedule-1",
+    ) -> None:
+        """One real original Automation admission: Job + its admitted Task.
+
+        The Job carries the durable ``definition_id``/``schedule_id`` identity a
+        Scheduler emission writes, and its Task carries durable ``success``
+        items whose Results prove the effect — the exact evidence the cards and
+        the record rows must read instead of treating a finished queue row as
+        organized work.
+        """
+
+        task_id = f"{identity}-task"
+        value.runtime.create_task(
+            _task(task_id, status=status, created_at=created_at),
+            display=RunDisplayContext(
+                source_scope="Media/电影",
+                labels=("电影库",),
+            ),
+        )
+        value.runtime.create_job(
+            _job(
+                f"{identity}-job",
+                status=job_status,
+                created_at=created_at,
+                task_id=task_id,
+                definition_id=definition_id,
+                schedule_id=schedule_id,
+            )
+        )
+        for index in range(succeeded_items):
+            item_id = f"{identity}-ok-{index}"
+            value.runtime.upsert_item(
+                _run_item(task_id, item_id, TaskItemStatus.SUCCESS, created_at=created_at)
+            )
+            value.runtime.append_result(_run_result(task_id, item_id, created_at=created_at))
+        for index in range(uncertain_items):
+            item_id = f"{identity}-uncertain-{index}"
+            value.runtime.upsert_item(
+                _run_item(task_id, item_id, TaskItemStatus.SUCCESS, created_at=created_at)
+            )
+            value.runtime.append_result(
+                _run_result(
+                    task_id,
+                    item_id,
+                    created_at=created_at,
+                    effect_certainty="attempted_unverified",
+                )
+            )
 
     @contextlib.contextmanager
     def _runtime(self):
@@ -374,30 +532,39 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
         with self._runtime() as value:
             zone = ZoneInfo(SYSTEM_TIMEZONE)
             # Two completed runs and one active run inside the current local
-            # month; one cancelled run in the previous comparable period.
+            # month; one cancelled run in the previous comparable period.  Each
+            # one is a *real original Automation admission* (a Scheduler-style
+            # definition-pinned Job with its own admitted Task and durable
+            # successful item evidence) rather than an unrelated standalone
+            # Task: an ordinary Files/CLI or manual organize Task is not
+            # Automation work and must never move these cards.
             current = datetime(2026, 3, 2, 1, 0, tzinfo=zone).astimezone(UTC)
             previous = datetime(2026, 2, 2, 1, 0, tzinfo=zone).astimezone(UTC)
             for index in range(2):
-                value.runtime.create_task(
-                    _task(
-                        f"done-{index}",
-                        created_at=current + timedelta(hours=index),
-                    )
+                admitted_at = current + timedelta(hours=index)
+                self._admitted_automation_run(
+                    value,
+                    f"done-{index}",
+                    created_at=admitted_at,
+                    succeeded_items=2,
                 )
-            value.runtime.create_task(
-                _task(
-                    "active-1",
-                    status=PersistentTaskStatus.RUNNING,
-                    created_at=current + timedelta(hours=3),
-                )
+            self._admitted_automation_run(
+                value,
+                "active-1",
+                created_at=current + timedelta(hours=3),
+                status=PersistentTaskStatus.RUNNING,
+                job_status=AutomationJobStatus.RUNNING,
             )
-            value.runtime.create_task(
-                _task(
-                    "cancelled-prev",
-                    status=PersistentTaskStatus.CANCELLED,
-                    created_at=previous,
-                )
+            self._admitted_automation_run(
+                value,
+                "cancelled-prev",
+                created_at=previous,
+                status=PersistentTaskStatus.CANCELLED,
+                job_status=AutomationJobStatus.CANCELLED,
             )
+            # Unrelated non-Automation work that must not contribute at all.
+            value.runtime.create_task(_task("files-run", created_at=current + timedelta(hours=4)))
+            value.runtime.create_job(_job("plain-job", created_at=current + timedelta(hours=5)))
 
             status, metrics = _request(value.api, METRICS_ROUTE)
             self.assertEqual(status, 200)
@@ -478,8 +645,6 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
                 )
             )
             # A deliberate Run once admission with its durable manual origin.
-            from mediaflow.domain.task_persistence import RunDisplayContext
-
             value.runtime.create_task(
                 _task("manual-task", created_at=_NOW - timedelta(minutes=1)),
                 display=RunDisplayContext(
@@ -629,8 +794,11 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
     def test_record_cursors_are_principal_and_filter_scoped(self) -> None:
         with self._runtime() as value:
             for index in range(3):
-                value.runtime.create_task(
-                    _task(f"run-{index}", created_at=_NOW - timedelta(minutes=index))
+                self._admitted_automation_run(
+                    value,
+                    f"run-{index}",
+                    created_at=_NOW - timedelta(minutes=index),
+                    succeeded_items=1,
                 )
             status, first = _request(value.api, RECORDS_ROUTE, query="limit=1")
             self.assertEqual(status, 200)
@@ -661,6 +829,325 @@ class AutomationWorkspaceReadModelTests(unittest.TestCase):
                 with self.subTest(query=query):
                     status, _body = _request(value.api, RECORDS_ROUTE, query=query)
                     self.assertEqual(status, 400)
+
+    # -- R1: original Automation admissions only ----------------------------
+
+    def test_records_and_metrics_exclude_non_automation_work(self) -> None:
+        """Only original Automation admissions count as Automation runs.
+
+        An ordinary Files/CLI Job, a standalone manual organize Task, a
+        preparation-only discovery and a recovery follow-up Task belong to
+        other journeys and must never appear in the Automation records page,
+        its totals or the four cards.  The same mixed population keeps the one
+        genuine scheduled admission fully visible.
+        """
+
+        with self._runtime() as value:
+            # Genuine original Automation admission.
+            self._admitted_automation_run(
+                value,
+                "scheduled",
+                created_at=_NOW - timedelta(hours=5),
+                succeeded_items=2,
+            )
+            # Ordinary Files/CLI Job (no definition/schedule identity).
+            value.runtime.create_job(
+                _job("plain-files-job", created_at=_NOW - timedelta(minutes=1))
+            )
+            # Standalone manual organize Task (execute-authorized, no origin).
+            value.runtime.create_task(
+                _task(
+                    "manual-organize-task",
+                    created_at=_NOW - timedelta(minutes=2),
+                    command="manual_organize",
+                )
+            )
+            # A preparation-only discovery carries no Task and no definition
+            # origin of its own shape here: it is a bare discovery admission.
+            value.runtime.create_media_discovery(
+                _bare_discovery("preparation-discovery", _NOW - timedelta(minutes=3))
+            )
+            # A Task Center recovery continuation Job (no definition identity).
+            value.runtime.create_job(
+                _job(
+                    "recovery-continuation-job",
+                    created_at=_NOW - timedelta(minutes=4),
+                )
+            )
+
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            self.assertEqual(page["total"], 1)
+            self.assertEqual([item["recordId"] for item in page["items"]], ["scheduled-job"])
+            # The status partitions describe the same restricted population.
+            self.assertEqual(sum(page["statusCounts"].values()), 1)
+
+            status, metrics = _request(value.api, METRICS_ROUTE)
+            self.assertEqual(status, 200)
+            self.assertEqual(metrics["monthToDateAdmitted"], 1)
+            self.assertEqual(metrics["monthToDateTerminal"], 1)
+            self.assertEqual(metrics["completedCount"], 1)
+            self.assertEqual(metrics["successRate"], 1.0)
+
+    def test_completed_queue_row_is_not_counted_as_organized_success(self) -> None:
+        """A finished admission without proven item success is no success.
+
+        A definition-pinned Job whose linked Task completed with zero durable
+        ``success`` items is a *successful no-work completion*, not organized
+        work; a Task whose success item still carries an uncertain latest Result
+        is terminal-uncertain and never proves success.  Both stay in the
+        denominator and are published with their real meaning.
+        """
+
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "no-work",
+                created_at=_NOW - timedelta(hours=5),
+                succeeded_items=0,
+            )
+            self._admitted_automation_run(
+                value,
+                "uncertain",
+                created_at=_NOW - timedelta(minutes=1),
+                succeeded_items=0,
+                uncertain_items=1,
+            )
+            self._admitted_automation_run(
+                value,
+                "organized",
+                created_at=_NOW - timedelta(minutes=2),
+                succeeded_items=1,
+            )
+
+            status, metrics = _request(value.api, METRICS_ROUTE)
+            self.assertEqual(status, 200)
+            self.assertEqual(metrics["monthToDateAdmitted"], 3)
+            self.assertEqual(metrics["monthToDateTerminal"], 3)
+            self.assertEqual(metrics["completedCount"], 1)
+            self.assertEqual(metrics["noWorkCount"], 1)
+            self.assertEqual(metrics["monthToDateUncertain"], 1)
+            self.assertAlmostEqual(metrics["successRate"], 1 / 3)
+
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            records = {item["recordId"]: item for item in page["items"]}
+            no_work = records["no-work-job"]["result"]
+            self.assertFalse(no_work["organized"])
+            self.assertTrue(no_work["noWork"])
+            self.assertIn("没有产生已整理的条目", no_work["statement"])
+            organized = records["organized-job"]["result"]
+            self.assertTrue(organized["organized"])
+            self.assertEqual(organized["successItems"], 1)
+            uncertain = records["uncertain-job"]["result"]
+            self.assertFalse(uncertain["organized"])
+            self.assertEqual(uncertain["uncertainSuccessItems"], 1)
+
+    # -- R3: result/reason and separate handling state ----------------------
+
+    def test_record_reports_real_execution_window_and_reason(self) -> None:
+        with self._runtime() as value:
+            # A real started/finished execution window on the Job.
+            started = _NOW - timedelta(minutes=9)
+            finished = _NOW - timedelta(minutes=7)
+            value.runtime.create_job(
+                dataclasses.replace(
+                    _job(
+                        "windowed-job",
+                        status=AutomationJobStatus.FAILED,
+                        created_at=_NOW,
+                        definition_id=_DEFINITION["id"],
+                        schedule_id="schedule-1",
+                    ),
+                    started_at=started,
+                    completed_at=finished,
+                )
+            )
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            record = page["items"][0]
+            self.assertEqual(record["executionStartedAt"], started.isoformat())
+            self.assertEqual(record["executionFinishedAt"], finished.isoformat())
+            # The admission timestamps stay distinct from the execution window.
+            self.assertNotEqual(record["created_at"], record["executionStartedAt"])
+
+    def test_pending_record_publishes_no_fake_execution_window(self) -> None:
+        with self._runtime() as value:
+            value.runtime.create_job(
+                _job(
+                    "queued-job",
+                    status=AutomationJobStatus.PENDING,
+                    definition_id=_DEFINITION["id"],
+                    schedule_id="schedule-1",
+                )
+            )
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            record = page["items"][0]
+            self.assertIsNone(record["executionStartedAt"])
+            self.assertIsNone(record["executionFinishedAt"])
+            # The row carries a real created_at, but it is never relabelled.
+            self.assertTrue(record["created_at"])
+
+    def test_record_handling_is_separate_from_the_original_result(self) -> None:
+        with self._runtime() as value:
+            self._admitted_automation_run(
+                value,
+                "failed-then-handled",
+                created_at=_NOW,
+                status=PersistentTaskStatus.FAILED,
+                job_status=AutomationJobStatus.FAILED,
+                succeeded_items=1,
+            )
+            status, page = _request(value.api, RECORDS_ROUTE)
+            self.assertEqual(status, 200)
+            record = page["items"][0]
+            # The original failed outcome stays a historical fact.
+            self.assertEqual(record["status"], "failed")
+            self.assertFalse(record["result"]["organized"])
+            # No linked follow-up exists, so handling is honestly "unhandled"
+            # rather than inferred from the current Task status.
+            self.assertEqual(record["handling"]["state"], "unhandled")
+            self.assertEqual(record["handling"]["attempts"], 0)
+            self.assertEqual(record["handoff"]["ownership"], "task_center")
+            self.assertIsNotNone(record["nextAction"])
+            self.assertEqual(record["nextAction"]["kind"], "task-center-run")
+
+    # -- R2: full-population definition cards -------------------------------
+
+    def test_inventory_cards_use_full_population_aggregates(self) -> None:
+        """Published/enabled/Draft counts never come from the current page.
+
+        Twenty-five Active definitions plus two Draft-only corrections and a
+        filter that matches nothing still report the same full-population
+        aggregates, so a paged or filtered read cannot change the cards.
+        """
+
+        with self._runtime() as value:
+            active = value.managed.active()
+            draft = value.managed.create_successor_draft(actor="tester")
+            # The one seeded definition is already Active and enabled; these 24
+            # make 25 published definitions in the exact current Active.
+            for index in range(24):
+                draft = value.objects.create_automation_task_definition(
+                    draft.revision_id,
+                    {
+                        "id": f"auto-{index:02d}",
+                        "name": f"Automation {index:02d}",
+                        "resourceLibraryId": "source",
+                        "mode": "automatic-organization",
+                        "intervalSeconds": 3600,
+                        "itemLimit": 5,
+                    },
+                    expected_version=draft.version,
+                    actor="tester",
+                )
+            validated = value.managed.validate(draft.revision_id, actor="tester")
+            value.managed.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="tester",
+            )
+            # Two further Draft-only correction entries in a fresh successor.
+            successor = value.managed.create_successor_draft(actor="tester")
+            for identity in ("draft-only-a", "draft-only-b"):
+                successor = value.objects.create_automation_task_definition(
+                    successor.revision_id,
+                    {
+                        "id": identity,
+                        "name": identity,
+                        "resourceLibraryId": "source",
+                        "mode": "automatic-organization",
+                        "intervalSeconds": 3600,
+                        "itemLimit": 5,
+                    },
+                    expected_version=successor.version,
+                    actor="tester",
+                )
+            self.assertIsNotNone(active)
+
+            status, unfiltered = _request(value.api, DEFINITIONS_ROUTE, query="limit=20")
+            self.assertEqual(status, 200)
+            counts = unfiltered["inventoryCounts"]
+            self.assertEqual(counts["published"], 25)
+            self.assertEqual(counts["draftOnly"], 2)
+            self.assertEqual(counts["total"], 27)
+            self.assertLessEqual(len(unfiltered["items"]), 20)
+
+            # A filter that matches nothing must not zero the cards.
+            status, filtered = _request(value.api, DEFINITIONS_ROUTE, query="q=no-such-definition")
+            self.assertEqual(status, 200)
+            self.assertEqual(filtered["items"], [])
+            self.assertEqual(filtered["inventoryCounts"], counts)
+            self.assertEqual(filtered["metrics"]["inventory"], counts)
+
+            # Paging to the second page keeps the same aggregates.
+            status, second = _request(
+                value.api,
+                DEFINITIONS_ROUTE,
+                query=f"limit=20&cursor={unfiltered['next_cursor']}",
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(second["inventoryCounts"], counts)
+
+    def test_inventory_latest_run_merges_manual_history(self) -> None:
+        """A manual-only definition reports its real latest admitted run."""
+
+        with self._runtime() as value:
+            value.runtime.create_task(
+                _task("manual-task", created_at=_NOW),
+                display=RunDisplayContext(
+                    source_scope="Media/电影",
+                    labels=("电影库",),
+                    origin_definition_id=_DEFINITION["id"],
+                    origin_definition_name="Nightly automation",
+                    origin_kind="definition-run-once",
+                ),
+            )
+            status, page = _request(value.api, DEFINITIONS_ROUTE)
+            self.assertEqual(status, 200)
+            latest = page["latestAdmittedRuns"][_DEFINITION["id"]]
+            self.assertEqual(latest["runId"], "manual-task")
+            self.assertEqual(latest["trigger"], "manual")
+            self.assertEqual(latest["admittedAt"], _NOW.isoformat())
+
+    # -- R4: directional cursors through the client ------------------------
+
+    def test_record_paging_uses_the_submitted_direction(self) -> None:
+        with self._runtime() as value:
+            for index in range(3):
+                self._admitted_automation_run(
+                    value,
+                    f"page-{index}",
+                    created_at=_NOW - timedelta(minutes=index),
+                    succeeded_items=1,
+                )
+            status, first = _request(value.api, RECORDS_ROUTE, query="limit=1")
+            self.assertEqual(status, 200)
+            cursor = first["next_cursor"]
+            self.assertIsNotNone(cursor)
+            # Forward paging needs the matching direction, exactly as the Web
+            # client now submits it.
+            status, second = _request(
+                value.api, RECORDS_ROUTE, query=f"limit=1&direction=next&cursor={cursor}"
+            )
+            self.assertEqual(status, 200)
+            self.assertNotEqual(
+                [item["recordId"] for item in first["items"]],
+                [item["recordId"] for item in second["items"]],
+            )
+            back_cursor = second["previous_cursor"]
+            self.assertIsNotNone(back_cursor)
+            status, back = _request(
+                value.api,
+                RECORDS_ROUTE,
+                query=f"limit=1&direction=previous&cursor={back_cursor}",
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                [item["recordId"] for item in back["items"]],
+                [item["recordId"] for item in first["items"]],
+            )
 
     # -- passive reads ------------------------------------------------------
 

@@ -9,6 +9,8 @@
 
 import type {
   AutomationDefinitionModel,
+  AutomationInventoryCountsModel,
+  AutomationLatestRunModel,
   AutomationMetricWindowModel,
   AutomationMetricsModel,
   AutomationRecordModel,
@@ -66,15 +68,12 @@ export function metricValue(
 
 export function AutomationMetricCards({
   metrics,
-  totalDefinitions,
-  enabledDefinitions,
-  pendingDefinitions,
+  inventoryCounts,
   onOpenDefinitions,
 }: {
   readonly metrics: AutomationMetricsModel;
-  readonly totalDefinitions: number | null;
-  readonly enabledDefinitions: number | null;
-  readonly pendingDefinitions: number | null;
+  /** The full-population aggregates; never derived from the current page. */
+  readonly inventoryCounts: AutomationInventoryCountsModel | null;
   readonly onOpenDefinitions: () => void;
 }) {
   return (
@@ -87,16 +86,20 @@ export function AutomationMetricCards({
           onClick={onOpenDefinitions}
         >
           <span className="mf-count-value">
-            {metricValue(metrics, "definitions", totalDefinitions)}
+            {metricValue(
+              metrics,
+              "definitions",
+              inventoryCounts?.published ?? null,
+            )}
           </span>
         </button>
         <span className="mf-count-label">
-          {enabledDefinitions === null
+          {inventoryCounts === null
             ? "已启用数量不可用"
-            : `已启用 ${enabledDefinitions}${
-                pendingDefinitions === null || pendingDefinitions === 0
+            : `已启用 ${inventoryCounts.enabled}${
+                inventoryCounts.draftOnly === 0
                   ? ""
-                  : ` · 待发布 ${pendingDefinitions}`
+                  : ` · 待发布 ${inventoryCounts.draftOnly}`
               }`}
         </span>
       </li>
@@ -116,7 +119,12 @@ export function AutomationMetricCards({
         <span className="mf-count-value">
           {metricValue(metrics, "success", null)}
         </span>
-        <span className="mf-count-label">{metrics.denominatorStatement}</span>
+        <span className="mf-count-label">
+          {metrics.denominatorStatement}
+          {metrics.monthToDateNoWork === null || metrics.monthToDateNoWork === 0
+            ? ""
+            : ` · 其中无工作完成 ${metrics.monthToDateNoWork}`}
+        </span>
       </li>
       <li className="mf-count-card">
         <span className="mf-count-label">较上月</span>
@@ -160,7 +168,17 @@ export function AutomationMetricBasis({
           : `；上月可比窗口 ${previous.startLocal} → ${previous.endLocal}`}
       </p>
       {metrics.available ? (
-        <p>{metrics.noWorkStatement}</p>
+        <>
+          <p>{metrics.noWorkStatement}</p>
+          <p>
+            成功率只统计已真正整理出条目的执行；已完成的队列或准备记录、无工作完成、
+            以及效果不确定的条目都不计为整理成功。
+            {metrics.monthToDateUncertain === null ||
+            metrics.monthToDateUncertain === 0
+              ? ""
+              : ` 本月有 ${metrics.monthToDateUncertain} 次执行含效果不确定的成功条目。`}
+          </p>
+        </>
       ) : (
         <p>
           指标暂不可用：
@@ -194,21 +212,75 @@ function resultBadgeClass(status: string | null): string {
   }
 }
 
+const LATEST_RUN_TRIGGER_LABELS: Readonly<Record<string, string>> = {
+  scheduled: "定时触发",
+  manual: "手动运行一次",
+  automation: "自动化任务",
+};
+
+/**
+ * One definition's latest *original admitted* run.
+ *
+ * The backend merges scheduled occurrence evidence with the durable manual
+ * Run-once origin, so a manual-only definition reports its real latest result.
+ * An unavailable read is labelled as unavailable, never as "no execution yet".
+ */
+function latestRunCell(latest: AutomationLatestRunModel | null) {
+  if (latest === null) {
+    return {
+      status: null as string | null,
+      text: "尚无执行",
+      meta: [] as string[],
+    };
+  }
+  if (latest.unavailable) {
+    return {
+      status: null as string | null,
+      text: "最近结果不可用",
+      meta: [latest.nextAction ?? "刷新以重新读取该定义的最新执行结果"],
+    };
+  }
+  const meta: string[] = [];
+  if (latest.admittedAt) {
+    meta.push(latest.admittedAt);
+  }
+  meta.push(
+    latest.trigger
+      ? (LATEST_RUN_TRIGGER_LABELS[latest.trigger] ?? latest.trigger)
+      : "触发方式未知",
+  );
+  if (latest.organized === true) {
+    meta.push(`已整理 ${latest.successItems ?? 0} 项`);
+  } else if (latest.noWork === true) {
+    meta.push("无工作完成");
+  } else if ((latest.uncertainSuccessItems ?? 0) > 0) {
+    meta.push(`效果不确定 ${latest.uncertainSuccessItems} 项`);
+  }
+  return {
+    status: latest.status,
+    text: latest.status ?? "状态未知",
+    meta,
+  };
+}
+
 /** One definition row of the reference-style task table. */
 export function AutomationDefinitionRow({
   definition,
+  latestRun,
   onOpen,
   onEdit,
   onRunOnce,
   runOncePath,
 }: {
   readonly definition: AutomationDefinitionModel;
+  readonly latestRun: AutomationLatestRunModel | null;
   readonly onOpen: () => void;
   readonly onEdit: (() => void) | null;
   readonly onRunOnce: (() => void) | null;
   readonly runOncePath: string | null;
 }) {
   const draftOnly = definition.definitionState === "draft-only";
+  const latest = latestRunCell(latestRun);
   return (
     <tr>
       <td>
@@ -232,15 +304,12 @@ export function AutomationDefinitionRow({
       <td>{definition.document.itemLimit}</td>
       <td>{definition.nextRunAt ?? "—"}</td>
       <td>
-        <span className={resultBadgeClass(definition.lastOutcome)}>
-          {definition.lastOutcome ?? "尚无执行"}
-        </span>
-        {definition.lastOccurrenceAt && (
-          <p className="mf-dashboard-meta">{definition.lastOccurrenceAt}</p>
-        )}
-        {definition.lastReason && (
-          <p className="mf-dashboard-meta">{definition.lastReason}</p>
-        )}
+        <span className={resultBadgeClass(latest.status)}>{latest.text}</span>
+        {latest.meta.map((line) => (
+          <p key={line} className="mf-dashboard-meta">
+            {line}
+          </p>
+        ))}
       </td>
       <td>
         <div className="mf-actions">
@@ -287,6 +356,15 @@ const OWNERSHIP_LABELS: Readonly<Record<string, string>> = {
   reconcile: "移交状态不确定：先核对再操作",
 };
 
+const HANDLING_LABELS: Readonly<Record<string, string>> = {
+  unhandled: "尚未处理",
+  handling: "正在处理",
+  resolved: "后续处理已完成",
+  recovery_failed: "后续处理未成功",
+  investigation: "需要核对",
+  unavailable: "后续处理状态不可用",
+};
+
 const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
   completed: "成功",
   partial_success: "部分成功",
@@ -302,9 +380,11 @@ const RECORD_RESULT_LABELS: Readonly<Record<string, string>> = {
 /**
  * One read-only Automation execution record.
  *
- * The row reports the original durable result and its exact next action. It
- * renders no file-decision form, no re-analysis and no execution control: a
- * formal organizing Task sends every recovery command to Task Center.
+ * The row reports the *original* durable result, its real execution window,
+ * its bounded failure stage/reason and the separately linked follow-up handling
+ * state, followed by its exact next action. It renders no file-decision form,
+ * no re-analysis and no execution control: a formal organizing Task sends every
+ * recovery command to Task Center.
  */
 export function AutomationRecordRow({
   record,
@@ -313,9 +393,11 @@ export function AutomationRecordRow({
 }: {
   readonly record: AutomationRecordModel;
   readonly onOpenTaskCenter: (runId: string) => void;
-  readonly onOpenDefinition: (path: string) => void;
+  readonly onOpenDefinition: (definitionId: string) => void;
 }) {
-  const { handoff } = record;
+  const { handoff, result, handling, failureStage, nextAction } = record;
+  const definitionIdentity =
+    handoff.definitionSettings?.split("/").filter(Boolean).pop() ?? null;
   return (
     <tr>
       <td>
@@ -332,9 +414,10 @@ export function AutomationRecordRow({
         <span className={resultBadgeClass(record.status)}>
           {RECORD_RESULT_LABELS[record.status] ?? record.status}
         </span>
+        <p className="mf-dashboard-meta">{result.statement}</p>
       </td>
-      <td>{record.createdAt}</td>
-      <td>{record.updatedAt}</td>
+      <td>{record.executionStartedAt ?? "—"}</td>
+      <td>{record.executionFinishedAt ?? "—"}</td>
       <td>
         {record.totalItems === null
           ? "—"
@@ -343,12 +426,44 @@ export function AutomationRecordRow({
             }`}
       </td>
       <td>
+        {failureStage === null ? (
+          <p className="mf-dashboard-meta">
+            原始结果：{result.organized ? "已整理出条目" : "没有整理成功条目"}
+          </p>
+        ) : (
+          <>
+            <p className="mf-dashboard-meta">阶段：{failureStage.stage}</p>
+            <p className="mf-dashboard-meta">{failureStage.statement}</p>
+            {failureStage.category !== null && (
+              <p className="mf-dashboard-meta">原因：{failureStage.category}</p>
+            )}
+          </>
+        )}
+      </td>
+      <td>
+        <span className="mf-status-badge">
+          {HANDLING_LABELS[handling.state] ?? handling.state}
+        </span>
+        {handling.latestKind !== null && (
+          <p className="mf-dashboard-meta">
+            最近关联：{handling.latestKind}
+            {handling.latestStatus === null
+              ? ""
+              : ` · ${handling.latestStatus}`}
+          </p>
+        )}
+        {handling.nextAction !== null && (
+          <p className="mf-dashboard-meta">{handling.nextAction}</p>
+        )}
+      </td>
+      <td>
         <p className="mf-dashboard-meta">
           {OWNERSHIP_LABELS[handoff.ownership]}
         </p>
         <p className="mf-dashboard-meta">{handoff.explanation}</p>
-      </td>
-      <td>
+        {nextAction !== null && (
+          <p className="mf-dashboard-meta">{nextAction.statement}</p>
+        )}
         <div className="mf-actions">
           {handoff.taskCenterRunId !== null && (
             <button
@@ -361,13 +476,11 @@ export function AutomationRecordRow({
               打开任务中心运行
             </button>
           )}
-          {handoff.definitionSettings !== null && (
+          {definitionIdentity !== null && (
             <button
               type="button"
               className="mf-button mf-button-secondary"
-              onClick={() =>
-                onOpenDefinition(handoff.definitionSettings as string)
-              }
+              onClick={() => onOpenDefinition(definitionIdentity)}
             >
               打开定义设置
             </button>

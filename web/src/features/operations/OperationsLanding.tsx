@@ -48,6 +48,7 @@ import {
 } from "../../shared/auth/AuthorizedReadBoundary";
 import { AuthStateBanner } from "../../shared/auth/AuthStateBanner";
 import { isSafeOperationsSourceScope } from "../../shared/navigation/operations-return";
+import { readAutomationReturnContext } from "../../shared/navigation/automation-return";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
@@ -607,6 +608,10 @@ export function OperationsLanding() {
   const page: RunInventoryPage | null =
     query.data?.ok === true ? query.data.model : null;
 
+  // An Automation record's "打开任务中心运行" carries the exact record list it
+  // came from, so the task center offers one explicit return that restores the
+  // same `执行记录` tab/filters/page instead of losing the context.
+  const automationReturn = readAutomationReturnContext(searchParams);
   const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
   const readinessQuery = useQuery(workerReadinessQueryOptions(token));
   const discoveriesQuery = useQuery(organizeDiscoveriesQueryOptions(token));
@@ -648,6 +653,25 @@ export function OperationsLanding() {
         </div>
         <RefreshControl onRefresh={refreshAll} refreshing={anyFetching} />
       </header>
+      {automationReturn !== null && (
+        <div className="mf-dashboard-meta" role="note">
+          <p>本次运行来自自动化执行记录。</p>
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={() =>
+                void navigate({
+                  to: "/operations/automation",
+                  search: { returnAutomation: automationReturn },
+                })
+              }
+            >
+              返回自动化执行记录
+            </button>
+          </div>
+        </div>
+      )}
       <AuthorizedReadBoundary query={query} unavailableTitle="任务中心暂不可用">
         {({ isFetching, refresh }) => (
           <>

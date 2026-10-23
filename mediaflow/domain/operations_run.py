@@ -377,6 +377,48 @@ class OperationsRunOverview:
     origin_definition_id: str | None = None
     origin_definition_name: str | None = None
     origin_kind: str | None = None
+    #: The exact execution window the durable admission recorded.  A Job row
+    #: publishes its own ``started_at``/``completed_at``; a Task row publishes
+    #: the Task's.  Both stay ``None`` while the stage has not been reached, so
+    #: a pending row never borrows ``created_at``/``updated_at`` as a fake
+    #: execution start or end.
+    execution_started_at: datetime | None = None
+    execution_finished_at: datetime | None = None
+    #: Durable item evidence behind the published outcome: how many primary
+    #: items the exact linked Task persisted as ``success``, and how many of
+    #: those still carry an uncertain latest Result effect.  A completed queue
+    #: or preparation row with no proven successful item is *not* organizing
+    #: success, and a skipped item is not an organized item.
+    organization_success_items: int = 0
+    uncertain_success_items: int = 0
+
+    @property
+    def organized_successfully(self) -> bool:
+        """Whether this run's durable evidence proves successful organization.
+
+        Only a terminal ``completed`` aggregate whose Task persisted at least
+        one genuinely successful primary item, with no success item left
+        uncertain, qualifies.  A no-work completion, a preparation/admission
+        row, a skipped-only run and a terminal-uncertain effect are all
+        excluded, so a Job or queue completion can never be relabelled as
+        successful organization.
+        """
+
+        return (
+            self.status is OperationsRunStatus.COMPLETED
+            and self.organization_success_items > 0
+            and self.uncertain_success_items == 0
+        )
+
+    @property
+    def no_work_completion(self) -> bool:
+        """Whether this run terminally completed without organizing any item."""
+
+        return (
+            self.status is OperationsRunStatus.COMPLETED
+            and self.organization_success_items == 0
+            and self.uncertain_success_items == 0
+        )
 
 
 # -- Selected-run detail: progress, items and operation records (RO-3) -------
