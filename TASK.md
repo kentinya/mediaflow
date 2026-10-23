@@ -320,8 +320,10 @@ composition/style, not sample data, removed modes, validation ranges or executio
 - Status: **READY FOR B REVIEW**. FIX-REQUIRED round R1–R4 delivered; affected-test plan executed on
   the working tree below. B acceptance (T3 gates, Slice Final T4) remains pending.
 - Task Base unchanged (`78ec108d4473e8c140174c1356d0e88a1ae42b34`); reassessment source
-  `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base. The implementation checkpoint is the
-  commit that carries this report (exact SHA in the B review request, not written into history).
+  `533a666860a571e61c78ac49b3e45c44acaa419e` is not a Base.
+- Implementation checkpoint: `f0c42784ad3fe6b748cd9457bc440a83e37346e1` (parent
+  `7e1aa92889932b50044d14d09115577580bb1529`); this report is a documentation successor of that
+  candidate, so B reviews `7e1aa92889932b50044d14d09115577580bb1529..HEAD`.
 
 ### Changed behavior — R1..R4
 
