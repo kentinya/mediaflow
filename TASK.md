@@ -1,4 +1,9 @@
-# Task45.6 — 独立 Preview 完整退出与整理分析/固定计划统一
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task45.6：B PASS；Closure Packet 见下。
+Next Action: SLICE READY FOR A REVIEW; A RETAINS FINAL REVIEW AND CLOSURE
+
+## Task45.6 — 独立 Preview 完整退出与整理分析/固定计划统一
 
 Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 [Preview 退役设计](docs/preview-retirement-spec.md) 与
@@ -9,7 +14,7 @@ Authority：已提交 [SLICE.md](SLICE.md) RO-8 / S-10 / AC-8、
 ```text
 Task ID: 45.6
 Parent Slice: 45
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 2687e5b3eaa6f686d54c51930765e0ba904f69b5
 Difficulty: High
 Test Level: T4
@@ -996,29 +1001,71 @@ Fixed-candidate T4 gates:
   `sha256:5bc4597a5be1e74e3c82050827df52439a5029674479f764dc71020f0dcf0ff4`.
   Scan-retirement browser proof: PASS. Task-center recovery browser proof: PASS (6 cases).
   Release-security smoke: PASS.
-- The historical `docker_restart_fault_smoke_test.py` was executed and stopped at its legacy
-  Preview-schedule fixture with the bounded `workflow_failure`, no Task, and no media mutation.
-  It is N/A/pending for that obsolete harness only; supported organize Worker stop/start was
-  covered by the passing task-center proof and release-security Worker restart. This is a disclosed
-  harness mismatch, not a product failure or a new scope request.
+- Docker restart/fault smoke: PASS on the supplemental fixed candidate below. The former
+  legacy Preview-schedule harness mismatch is resolved; this gate is no longer pending/N/A.
 
 The worktree still contains only pre-existing dirty files plus no generated validation directory;
 none were staged or reverted. B's testing/quality wall time remained below half of this review turn.
 The Closure Packet is submitted below; A retains independent Slice Final Review and closure.
+
+### Supplemental restart gate review — 2026-10-23
+
+```text
+Reviewed range: 2687e5b3eaa6f686d54c51930765e0ba904f69b5..1f07dc24a06b63930b067f29776eaf53dbcd1db4
+Supplemental candidate: 1f07dc24a06b63930b067f29776eaf53dbcd1db4
+Decision: PASS
+Next: SLICE READY FOR A REVIEW; A retains final review and closure
+```
+
+`453cf89` and `1f07dc2` repair only the existing acceptance harness in this same Task.
+The isolated fixture now publishes an automatic-organization definition, obtains its exact
+Worker-produced analysis and an explicit scoped grant, then proves Scheduler occurrence→Job→Task
+and one byte-exact COPY with the read-only source preserved. Analysis/grant leave media unchanged.
+API/Worker/Scheduler/Notification Worker restart preserves durable identities, occurrence and grant;
+stale-owner heartbeat/commit is refused, uncertain effects remain investigation-only, notification
+identities/attempts persist, read projections create no work, and API/execution tokens stay out of logs.
+The separate fencing Job uses the existing local one-shot ticket and authorized remote Organize API;
+the processing Worker is stopped while the installed repository injects the owner race.
+No product safety check was relaxed and frozen Slice43 scope remains unchanged.
+
+Actual fresh command (repository root):
+
+```sh
+TMPDIR="$PWD/.docker-smoke-temp" MEDIAFLOW_SMOKE_TEMP_DIR="$PWD/.docker-smoke-temp" \
+  .venv/bin/python -u scripts/docker_restart_fault_smoke_test.py --image mediaflow:task45-6-restart
+```
+
+Exit 0, `Docker restart/fault smoke acceptance passed.`; run log spans 09:40:27–09:41:52 +0800.
+Image ID: `sha256:49dff5ad9cef46c86db12fff475b8db3da5bfcc56add8cf558d7b1d5ff02fc38`.
+Changed-file Ruff format/check, py_compile and Task Base..candidate whitespace checks: PASS.
+Governance passed before changes and is checked again after the factual closure checkpoint.
+The failed predecessor run remains in the evidence directory; it exposed a fixture missing the
+required remote-execution setting/ticket, correctly refused before any fencing Job admission.
+
+Evidence reuse: `git diff --name-status 0d22fee..1f07dc2` lists only `SLICE.md`, `TASK.md` and this harness. Product source, Python/Web tests, dependency manifests, Dockerfile/ignore and
+Compose overlays are unchanged (explicit scoped `git diff --quiet` passed). Therefore the existing
+full Python/Web/E2E, wheel and Docker scan/recovery/security evidence above is reused for its
+unchanged inputs; the changed harness/configuration has fresh acceptance here. No full rerun claimed.
+This supplement plus the preceding complete Task review covers Task Base..candidate. All RO/S
+remain complete; the sole disclosed gate gap is eliminated, so B stops planning Tasks.
+
+Local stable evidence (not remotely accessible):
+`.git/validation-evidence/task45.6-restart-disclosure/` — `restart-fault-1f07dc2.log`,
+`input-diff.txt`, `worktree-before.txt`; pre-existing dirty/private files remain untouched.
 
 ## Closure Packet
 
 ```text
 Slice / Base SHA / Implementation Head:
   Slice 45 / a72252091d5d46edf3e2114b994036ae21b08e2e /
-  0d22fee894fda24b9f01ce97bb6ed631f205ad8e
+  1f07dc24a06b63930b067f29776eaf53dbcd1db4
 Required Outcomes and Surfaces: complete for B; awaiting A review
 Implemented / Tasks completed: Task45.6 durable intent-page analysis, fenced plan publication,
   cancellation safety, and unified Organize analysis/plan chain
 Final Tests and Safety Evidence: full Python/Web/E2E, wheel, Docker scan/recovery/security and
-  independent real-entry probes listed above; one obsolete restart harness disclosed pending
-Known Non-blocking Issues / Explicitly Deferred: legacy restart-fault fixture still names a removed
-  Preview schedule; no product or Slice boundary changed
+  independent real-entry probes listed above; supplemental four-service restart/fault gate PASS
+Known Non-blocking Issues / Explicitly Deferred: no remaining restart-harness gate gap;
+  existing Slice deferrals remain unchanged, including frozen Slice43 redesign
 Documentation Reconciliation Needed: A Final Review and Slice/Roadmap/Progress closure reconciliation
 Decision: SLICE READY FOR A REVIEW
 ```
