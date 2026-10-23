@@ -6,7 +6,7 @@ Name: V2 Task Center, Recovery and Scan/Preview/FileIndex Retirement
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: a72252091d5d46edf3e2114b994036ae21b08e2e
-Implementation Head: cd01879af0bd46374a0bafe8fcf5e1d66cfe3c5e
+Implementation Head: fbed18171751fc8d72540a145dcd23175a00d406
 Working Branch: main
 Development Authorization: USER-AUTHORIZED A CONTRACT REVISION; B PLANS IN COMMITTED SCOPE
 Risk: High
